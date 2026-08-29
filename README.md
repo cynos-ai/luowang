@@ -1,6 +1,6 @@
 # LuoWang
 
-罗网（LuoWang）是一个独立部署的 AI 场景测试 Harness。当前仓库处于 Phase 1：已经提供可测试、可构建、可通过 Docker 启动的安全配置控制台，后续业务测试闭环会按 `docs/changes/luowang-harness-mvp/plan.md` 的阶段继续实现。
+罗网（LuoWang）是一个独立部署的 AI 场景测试 Harness。当前仓库处于 Phase 2：除了安全配置控制台，还可以连接唯一 GitHub 目标仓库、准备 `scenario-testing` 分支、同步场景/报告 Markdown 索引并在网站中读取事实。后续业务测试闭环会按 `docs/changes/luowang-harness-mvp/plan.md` 的阶段继续实现。
 
 ## 本地启动
 
@@ -27,7 +27,17 @@ docker compose down
 
 Compose 将数据保存到 `luowang-data` 卷，并把宿主机端口绑定到 `127.0.0.1`。管理员密码只在空数据库首次启动时读取；主密钥只用于进程内派生 Secret Store 密钥，二者都不会写入 SQLite。
 
-打开 <http://127.0.0.1:3000/> 后使用管理员密码登录。登录后可以维护 Harness、仓库/测试环境、MCP 和 S3-compatible OSS 的普通配置；Provider Key、Git Token、测试账号和 OSS Access Key 等 Secret 只能覆盖或显式删除，页面只显示“已配置”和固定掩码。Phase 1 只提供测试环境基础 URL 检查，GitHub、模型、MCP 和 OSS 的正式检查会在后续 adapter 阶段提供。
+打开 <http://127.0.0.1:3000/> 后使用管理员密码登录。登录后可以维护 Harness、仓库/测试环境、MCP 和 S3-compatible OSS 的普通配置；Provider Key、Git Token、测试账号和 OSS Access Key 等 Secret 只能覆盖或显式删除，页面只显示“已配置”和固定掩码。Phase 2 提供 GitHub 仓库读取、场景测试分支写入、PR/Issue 权限检查（无法无副作用确认的项目显示 `unknown`），以及场景/报告同步和只读索引页面。模型、MCP 和 OSS 的正式检查会在后续 adapter 阶段提供。
+
+配置 GitHub 仓库后，先在“仓库事实与场景”区域准备 `scenario-testing` 分支，再点击“同步索引”。Git Token 只由 Repository Service 使用，不会写入 Git URL、命令参数、子进程环境、日志或测试 Agent。
+
+真实 GitHub smoke 需要操作者临时通过环境变量提供独立测试仓库和最小权限 Token；命令不会把 Token 写入文件或提交：
+
+```bash
+LUOWANG_SMOKE_REPOSITORY=https://github.com/cynos-ai/cynos-website \
+LUOWANG_SMOKE_GITHUB_TOKEN='<temporary-token>' \
+npm run test:e2e:github
+```
 
 Docker Secret 文件也可以通过 `LUOWANG_ADMIN_PASSWORD_FILE` 和 `LUOWANG_MASTER_KEY_FILE` 提供；直接环境变量优先。生产环境应使用 HTTPS 或可信反向代理，并设置 `LUOWANG_ALLOWED_ORIGIN`。
 

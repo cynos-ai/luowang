@@ -2,11 +2,19 @@ import type Database from 'better-sqlite3';
 
 import type { ConnectivityCheck, ConnectivityResult, ConnectivityStatus } from '../shared/types.js';
 import type { ConfigurationStore } from './configuration.js';
+import type { RepositoryService } from './repository/service.js';
+import { GITHUB_CHECK_IDS, type GithubCheckId } from './repository/github.js';
 
 const TEST_ENVIRONMENT_CHECK = 'test-environment-url';
 
+const GITHUB_CHECKS = [
+  { id: 'github-repository-read', label: 'GitHub 仓库读取' },
+  { id: 'github-scenario-branch-write', label: '场景测试分支非 force 写入' },
+  { id: 'github-pull-request', label: 'GitHub Pull Request 权限' },
+  { id: 'github-issue', label: 'GitHub Issue 权限' },
+] as const;
+
 const UNREGISTERED_CHECKS = [
-  { id: 'github-repository', label: 'GitHub 仓库权限' },
   { id: 'provider-model', label: '模型 Provider 与模型' },
   { id: 'playwright-mcp', label: 'Playwright MCP' },
   { id: 'oss', label: 'OSS 测试对象读写' },
@@ -27,14 +35,16 @@ interface StoredResult {
 export function createConnectivityRegistry(
   database: Database.Database,
   configuration: ConfigurationStore,
+  repository?: RepositoryService,
 ): ConnectivityRegistry {
-  return new DefaultConnectivityRegistry(database, configuration);
+  return new DefaultConnectivityRegistry(database, configuration, repository);
 }
 
 class DefaultConnectivityRegistry implements ConnectivityRegistry {
   constructor(
     private readonly database: Database.Database,
     private readonly configuration: ConfigurationStore,
+    private readonly repository?: RepositoryService,
   ) {}
 
   list(): ConnectivityCheck[] {
@@ -53,6 +63,12 @@ class DefaultConnectivityRegistry implements ConnectivityRegistry {
         available: true,
         result: testEnvironmentResult,
       },
+      ...GITHUB_CHECKS.map(({ id, label }) => ({
+        id,
+        label,
+        available: this.repository !== undefined,
+        result: this.readStoredOrEmpty(id, 'GitHub 检查尚未执行'),
+      })),
       ...UNREGISTERED_CHECKS.map(({ id, label }) => ({
         id,
         label,
@@ -64,6 +80,20 @@ class DefaultConnectivityRegistry implements ConnectivityRegistry {
 
   async run(checkId: string): Promise<ConnectivityCheck> {
     if (checkId !== TEST_ENVIRONMENT_CHECK) {
+      if ((GITHUB_CHECK_IDS as readonly string[]).includes(checkId)) {
+        const label = GITHUB_CHECKS.find((check) => check.id === checkId)?.label ?? checkId;
+        if (!this.repository) {
+          return {
+            id: checkId,
+            label,
+            available: false,
+            result: emptyResult('not_available', '对应能力尚未提供'),
+          };
+        }
+        const result = await this.repository.checkConnectivity(checkId as GithubCheckId);
+        this.writeResult(checkId, result);
+        return { id: checkId, label, available: true, result };
+      }
       if (UNREGISTERED_CHECKS.some((check) => check.id === checkId)) {
         return {
           id: checkId,
@@ -144,6 +174,11 @@ class DefaultConnectivityRegistry implements ConnectivityRegistry {
          FROM connectivity_check_results WHERE check_id = ?`,
       )
       .get(checkId) as StoredResult | undefined;
+  }
+
+  private readStoredOrEmpty(checkId: string, message: string): ConnectivityResult {
+    const stored = this.readResult(checkId);
+    return stored ? toResult(stored) : emptyResult('not_checked', message);
   }
 
   private writeResult(checkId: string, result: ConnectivityResult): void {

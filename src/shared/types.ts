@@ -96,7 +96,14 @@ export interface AuthStatusResponse {
 }
 
 export type ConnectivityStatus =
-  'ok' | 'failed' | 'timeout' | 'unreachable' | 'not_checked' | 'not_configured' | 'not_available';
+  | 'ok'
+  | 'failed'
+  | 'timeout'
+  | 'unreachable'
+  | 'unknown'
+  | 'not_checked'
+  | 'not_configured'
+  | 'not_available';
 
 export interface ConnectivityResult {
   status: ConnectivityStatus;
@@ -110,4 +117,109 @@ export interface ConnectivityCheck {
   label: string;
   available: boolean;
   result: ConnectivityResult;
+}
+
+export type ScenarioStatus = 'draft' | 'approved' | 'deprecated';
+
+export interface GitCommit {
+  sha: string;
+  authoredAt: string;
+  subject: string;
+}
+
+export interface GitTreeEntry {
+  path: string;
+  mode: string;
+  type: 'blob' | 'tree' | 'commit';
+  sha: string;
+}
+
+export interface IndexedScenario {
+  id: string;
+  path: string;
+  name: string;
+  description: string;
+  status: ScenarioStatus;
+  tags: string[];
+  content: string;
+  commitSha: string;
+  indexedAt: string;
+}
+
+export type RunResult = 'passed' | 'failed' | 'blocked';
+
+export interface ScenarioResultSummary {
+  id: string;
+  result: RunResult;
+}
+
+export interface ConfirmedBugSummary {
+  key: string;
+  title: string;
+  scenarioIds: string[];
+  issueAction: 'create' | 'link';
+  issueUrl?: string;
+}
+
+export interface IndexedReport {
+  runId: string;
+  path: string;
+  trigger: 'git' | 'schedule' | 'manual' | 'api';
+  baseCommit: string | null;
+  targetCommit: string;
+  includedCommits: string[];
+  result: RunResult;
+  startedAt: string;
+  finishedAt: string;
+  scenarioResults: ScenarioResultSummary[];
+  confirmedBugs: ConfirmedBugSummary[];
+  files: Record<string, string>;
+  content: string;
+  commitSha: string;
+  indexedAt: string;
+}
+
+export interface IndexErrorItem {
+  path: string;
+  message: string;
+}
+
+export interface RepositoryStatusResponse {
+  configured: boolean;
+  availability: 'available' | 'unavailable' | 'not_configured';
+  errorMessage: string | null;
+  repository: string;
+  scenarioBranch: string;
+  localReady: boolean;
+  remoteHead: string | null;
+  indexedCommit: string | null;
+  lastSyncedAt: string | null;
+  indexErrors: IndexErrorItem[];
+}
+
+export interface RepositorySyncResponse {
+  status: 'synced' | 'not_configured' | 'failed';
+  commitSha: string | null;
+  syncedAt: string | null;
+  scenarios: number;
+  reports: number;
+  errors: IndexErrorItem[];
+  message: string;
+}
+
+export interface RepositoryHistoryResponse {
+  status: 'ok' | 'degraded' | 'not_configured';
+  reports: IndexedReport[];
+  issues: RepositoryIssue[];
+  issuesAvailable: boolean;
+  issuesMessage: string | null;
+}
+
+export interface RepositoryIssue {
+  number: number;
+  title: string;
+  state: 'open' | 'closed';
+  url: string;
+  createdAt: string;
+  updatedAt: string;
 }
