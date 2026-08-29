@@ -2,6 +2,7 @@ import type Database from 'better-sqlite3';
 
 import type { ConnectivityCheck, ConnectivityResult, ConnectivityStatus } from '../shared/types.js';
 import type { ConfigurationStore } from './configuration.js';
+import type { ProviderAdapter } from './runs/provider.js';
 import type { RepositoryService } from './repository/service.js';
 import { GITHUB_CHECK_IDS, type GithubCheckId } from './repository/github.js';
 
@@ -36,8 +37,9 @@ export function createConnectivityRegistry(
   database: Database.Database,
   configuration: ConfigurationStore,
   repository?: RepositoryService,
+  provider?: ProviderAdapter,
 ): ConnectivityRegistry {
-  return new DefaultConnectivityRegistry(database, configuration, repository);
+  return new DefaultConnectivityRegistry(database, configuration, repository, provider);
 }
 
 class DefaultConnectivityRegistry implements ConnectivityRegistry {
@@ -45,6 +47,7 @@ class DefaultConnectivityRegistry implements ConnectivityRegistry {
     private readonly database: Database.Database,
     private readonly configuration: ConfigurationStore,
     private readonly repository?: RepositoryService,
+    private readonly provider?: ProviderAdapter,
   ) {}
 
   list(): ConnectivityCheck[] {
@@ -69,12 +72,20 @@ class DefaultConnectivityRegistry implements ConnectivityRegistry {
         available: this.repository !== undefined,
         result: this.readStoredOrEmpty(id, 'GitHub 检查尚未执行'),
       })),
-      ...UNREGISTERED_CHECKS.map(({ id, label }) => ({
+      ...UNREGISTERED_CHECKS.filter(({ id }) => id !== 'provider-model').map(({ id, label }) => ({
         id,
         label,
         available: false,
         result: emptyResult('not_available', '对应能力尚未提供'),
       })),
+      {
+        id: 'provider-model',
+        label: '模型 Provider 与模型',
+        available: this.provider !== undefined,
+        result: this.provider
+          ? this.readStoredOrEmpty('provider-model', 'Provider 检查尚未执行')
+          : emptyResult('not_available', '对应能力尚未提供'),
+      },
     ];
   }
 
@@ -93,6 +104,19 @@ class DefaultConnectivityRegistry implements ConnectivityRegistry {
         const result = await this.repository.checkConnectivity(checkId as GithubCheckId);
         this.writeResult(checkId, result);
         return { id: checkId, label, available: true, result };
+      }
+      if (checkId === 'provider-model') {
+        if (!this.provider) {
+          return {
+            id: checkId,
+            label: '模型 Provider 与模型',
+            available: false,
+            result: emptyResult('not_available', '对应能力尚未提供'),
+          };
+        }
+        const result = await this.provider.checkConnectivity();
+        this.writeResult(checkId, result);
+        return { id: checkId, label: '模型 Provider 与模型', available: true, result };
       }
       if (UNREGISTERED_CHECKS.some((check) => check.id === checkId)) {
         return {

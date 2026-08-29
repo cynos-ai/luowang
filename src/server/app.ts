@@ -40,6 +40,12 @@ import {
   type RepositoryService,
   validateRepositoryUrl,
 } from './repository/service.js';
+import { createProviderAdapter, type ProviderAdapter } from './runs/provider.js';
+import {
+  createRunOrchestrator,
+  RunOrchestratorError,
+  type RunOrchestrator,
+} from './runs/orchestrator.js';
 
 export interface AppOptions {
   config: AppConfig;
@@ -51,6 +57,8 @@ export interface AppOptions {
   connectivity?: ConnectivityRegistry;
   repository?: RepositoryService;
   indexer?: RepositoryIndexer;
+  provider?: ProviderAdapter;
+  runs?: RunOrchestrator;
 }
 
 interface JsonRecord {
@@ -75,9 +83,21 @@ export async function createApp(options: AppOptions) {
       repoDir: options.config.repoDir,
     });
   const indexer = options.indexer ?? createRepositoryIndexer(options.database.sqlite, repository);
+  const provider = options.provider ?? createProviderAdapter(configuration, secretStore);
   const connectivity =
     options.connectivity ??
-    createConnectivityRegistry(options.database.sqlite, configuration, repository);
+    createConnectivityRegistry(options.database.sqlite, configuration, repository, provider);
+  const runs =
+    options.runs ??
+    createRunOrchestrator({
+      configuration,
+      repository,
+      indexer,
+      reportDir: configuration.getHarness().local.reportDir,
+      secretStore,
+      provider,
+    });
+  await runs.recover();
 
   // Do not retain the bootstrap password or raw master-key string in the shared config object.
   options.config.initialAdminPassword = undefined;
@@ -296,6 +316,50 @@ export async function createApp(options: AppOptions) {
     return reply.send({ report });
   });
 
+  app.get('/api/provider/models', async (_request, reply) => {
+    requireAuth(_request, auth);
+    const harness = configuration.getHarness();
+    return reply.send({ provider: harness.provider, models: await provider.listModels() });
+  });
+
+  app.post('/api/runs', async (request, reply) => {
+    requireAuth(request, auth);
+    const body = readBody(request);
+    if (typeof body.request !== 'string' || body.request.trim() === '') {
+      throw new AppError('RUN_REQUEST_REQUIRED', 'Run 请求内容不能为空', 400);
+    }
+    if (body.targetCommit !== undefined && typeof body.targetCommit !== 'string') {
+      throw new AppError('RUN_TARGET_INVALID', 'targetCommit 必须是字符串', 400);
+    }
+    const trigger = body.trigger === undefined ? 'manual' : body.trigger;
+    if (trigger !== 'manual' && trigger !== 'api') {
+      throw new AppError('RUN_TRIGGER_INVALID', 'Phase 3 只支持 manual 或 api 触发', 400);
+    }
+    const run = await runs.start({
+      request: body.request,
+      trigger,
+      targetCommit: body.targetCommit,
+    });
+    return reply.status(202).send(run);
+  });
+
+  app.get('/api/runs', async (request, reply) => {
+    requireAuth(request, auth);
+    return reply.send({ runs: await runs.list() });
+  });
+
+  app.get('/api/runs/current', async (request, reply) => {
+    requireAuth(request, auth);
+    return reply.send({ run: await runs.current() });
+  });
+
+  app.get('/api/runs/:runId', async (request, reply) => {
+    requireAuth(request, auth);
+    const run = await runs.get(readParam(request, 'runId'));
+    if (!run) throw new AppError('RUN_NOT_FOUND', 'Run 不存在', 404);
+    return reply.send({ run });
+  });
+
   app.get('/api/history', async (request, reply) => {
     requireAuth(request, auth);
     const status = await repository.getStatus();
@@ -399,11 +463,17 @@ export async function createApp(options: AppOptions) {
           ? 503
           : error instanceof RepositoryError
             ? error.statusCode
-            : error instanceof AuthError || possibleError.name === 'ConfigurationError'
-              ? 400
-              : typeof possibleError.statusCode === 'number'
-                ? possibleError.statusCode
-                : 500;
+            : error instanceof RunOrchestratorError
+              ? error.code === 'RUN_ALREADY_ACTIVE'
+                ? 409
+                : error.code === 'RUN_NOT_FOUND'
+                  ? 404
+                  : 400
+              : error instanceof AuthError || possibleError.name === 'ConfigurationError'
+                ? 400
+                : typeof possibleError.statusCode === 'number'
+                  ? possibleError.statusCode
+                  : 500;
     const code =
       error instanceof AppError
         ? error.code
@@ -411,13 +481,15 @@ export async function createApp(options: AppOptions) {
           ? 'SECRET_STORE_UNAVAILABLE'
           : error instanceof RepositoryError
             ? error.code
-            : error instanceof AuthError
+            : error instanceof RunOrchestratorError
               ? error.code
-              : possibleError.name === 'ConfigurationError'
-                ? 'CONFIGURATION_INVALID'
-                : statusCode === 400
-                  ? 'BAD_REQUEST'
-                  : 'INTERNAL_ERROR';
+              : error instanceof AuthError
+                ? error.code
+                : possibleError.name === 'ConfigurationError'
+                  ? 'CONFIGURATION_INVALID'
+                  : statusCode === 400
+                    ? 'BAD_REQUEST'
+                    : 'INTERNAL_ERROR';
     const message =
       error instanceof AppError ||
       error instanceof RepositoryError ||

@@ -257,7 +257,15 @@ function normalizeAgent(value: unknown, fallback: AgentConfig): AgentConfig {
   const source = isRecord(value) ? value : {};
   return {
     model: normalizeText(source.model, fallback.model),
-    thinking: normalizeChoice(source.thinking, fallback.thinking, ['low', 'medium', 'high']),
+    thinking: normalizeChoice(source.thinking, fallback.thinking, [
+      'off',
+      'minimal',
+      'low',
+      'medium',
+      'high',
+      'xhigh',
+      'max',
+    ]),
   };
 }
 
@@ -268,7 +276,7 @@ function readAgent(value: unknown, fallback: AgentConfig, field: string): AgentC
     thinking: readChoice(
       source.thinking,
       fallback.thinking,
-      ['low', 'medium', 'high'],
+      ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'],
       `${field}.thinking`,
     ),
   };

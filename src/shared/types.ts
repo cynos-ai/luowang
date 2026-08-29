@@ -18,7 +18,7 @@ export interface ErrorResponse {
   };
 }
 
-export type ThinkingLevel = 'low' | 'medium' | 'high';
+export type ThinkingLevel = 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max';
 
 export interface AgentConfig {
   model: string;
@@ -110,6 +110,13 @@ export interface ConnectivityResult {
   message: string;
   checkedAt: string | null;
   latencyMs: number | null;
+  code?:
+    | 'AUTH_NOT_CONFIGURED'
+    | 'AUTHENTICATION_FAILED'
+    | 'PROVIDER_NOT_FOUND'
+    | 'MODEL_NOT_FOUND'
+    | 'THINKING_UNSUPPORTED'
+    | 'REQUEST_FAILED';
 }
 
 export interface ConnectivityCheck {
@@ -222,4 +229,39 @@ export interface RepositoryIssue {
   url: string;
   createdAt: string;
   updatedAt: string;
+}
+
+export type RunTrigger = 'git' | 'schedule' | 'manual' | 'api';
+
+export type RunLifecycleStatus = 'queued' | 'running' | 'completed' | 'failed' | 'interrupted';
+
+export type RunPhase =
+  | 'preparing'
+  | 'main-a'
+  | 'runner'
+  | 'reviewer'
+  | 'main-b'
+  | 'finalizing'
+  | 'completed'
+  | 'failed'
+  | 'interrupted';
+
+export interface RunSummary {
+  runId: string;
+  status: RunLifecycleStatus;
+  phase: RunPhase;
+  result: RunResult | null;
+  trigger: RunTrigger;
+  request: string;
+  baseCommit: string | null;
+  targetCommit: string | null;
+  includedCommits: string[];
+  startedAt: string;
+  finishedAt: string | null;
+  errorMessage: string | null;
+  artifactNames: string[];
+}
+
+export interface RunDetail extends RunSummary {
+  artifacts: Record<string, string>;
 }
