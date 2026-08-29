@@ -35,7 +35,7 @@
 
 测试可以在外部边界使用 test double、临时 Git 仓库、临时 HTTP 服务或临时 S3-compatible 服务，但生产路径不得包含只为测试存在的假实现。涉及真实 Provider、GitHub、OSS 和浏览器的阶段还必须执行明确列出的真实 smoke test。
 
-## 3. 分支、发布和自身吃狗粮策略
+## 3. 分支与发布策略
 
 ### 3.1 分支流向
 
@@ -59,15 +59,14 @@ main ──> fix/* ──PR──> main ──> patch tag
 
 这是一套 Gitflow-lite：保留用户指定的 `main + develop`，吸收 GitHub Flow 的短生命周期分支和 PR，不采用完整 Gitflow 的 release/hotfix 长期流程。
 
-### 3.2 与 `scenario-testing` 的关系
+### 3.2 与目标仓库 `scenario-testing` 的关系
 
-`scenario-testing` 是罗网管理测试事实的分支，不属于上述人工开发流：
+`scenario-testing` 只存在于罗网所管理的外部目标仓库，不属于 `cynos-ai/luowang` 的人工开发流：
 
-1. 功能和修复先通过 PR 进入 `develop`；
-2. 罗网自身吃狗粮时，把一个 `develop` 候选批次按目标项目规则合入 `scenario-testing`；
-3. 罗网在 `scenario-testing` 上维护场景和报告；
-4. 人类依据最新相关 Run 决定是否发起 `develop → main` 发布 PR；
-5. MVP 不自动把测试结果变成发布 gate，也不把 `scenario-testing` 合回 `main`。
+1. 罗网项目的功能和修复只按 `feat/* | fix/* → develop → main` 流转；
+2. 不在罗网项目仓库创建或维护场景测试资产分支；
+3. MVP 发布验收使用独立样例仓库和独立本地或非生产样例应用；
+4. MVP 不增加自动发布 gate，也不设计实例互测流程。
 
 ### 3.3 许可证判断
 
@@ -137,12 +136,12 @@ npm run test:e2e
 |---|---|
 | Phase 0 | `cynos-ai/luowang` 组织管理员权限；当前已满足 |
 | Phase 1 | `LUOWANG_ADMIN_PASSWORD`、`LUOWANG_MASTER_KEY` 和可访问的测试 URL |
-| Phase 2 | 对目标测试仓库具备读取、分支写入和 ref 合并权限的 GitHub Token |
+| Phase 2 | 对独立测试仓库具备读取、分支写入和 ref 合并权限的 GitHub Token；不得使用 `cynos-ai/luowang` 作为测试仓库 |
 | Phase 3 | 可用模型 Provider 凭据，以及支持所选 thinking level 的 Main/Runner/Reviewer 模型 |
 | Phase 4 | 非生产 Web 测试环境、Playwright MCP 运行依赖、测试账号和专用 OSS bucket/prefix |
 | Phase 5 | GitHub 报告分支写入、PR 和 Issue 权限；带明确测试标记且可清理的 smoke 目标 |
 | Phase 6–8 | 前述资源保持可用；允许短时间重启测试实例 |
-| Phase 9 | 完整 dogfood 预发布环境、私有 OSS、真实模型和 `cynos-ai/luowang` 写权限 |
+| Phase 9 | 独立验收仓库、独立本地或非生产样例应用、私有 OSS、真实模型，以及该验收仓库的分支/PR/Issue 权限 |
 
 凭据只由操作者通过环境变量或网站 Secret Store 提供，不写入文档、fixture、PR 或 CI 日志。若资源/权限不可用：
 
@@ -164,7 +163,7 @@ npm run test:e2e
 | Phase 6 | `feat/p6-automation-recovery` | Git/Cron/API/人工请求进入同一持久队列，自动合批并可从重启恢复 | `AC-GIT-02`、`AC-TRIGGER-01/02`、`AC-QUEUE-01`、`AC-RECOVERY-01` |
 | Phase 7 | `feat/p7-scenario-lifecycle` | 三种场景模式和陌生项目初始化可在真实 Run/PR/归档流程中闭环 | `AC-SCENARIO-01..05`、`AC-INIT-01` |
 | Phase 8 | `feat/p8-operations-ui` | 控制台完整呈现 Git、场景、Run、当前执行和后台任务事实 | `AC-GIT-VIEW-01`、`AC-SCENARIO-VIEW-01`、`AC-RUN-VIEW-01`、`AC-ACTIVE-VIEW-01` |
-| Phase 9 | `feat/p9-dogfood-release` | 罗网用自身完成首次可信基线和真实回归，MVP 全量验收后发布 | 全部 AC |
+| Phase 9 | `feat/p9-acceptance-release` | 使用独立样例仓库和样例应用完成全量验收后发布 | 全部 AC |
 
 阶段必须按顺序合入。可以在同一阶段内部拆多个原子 commit，但不要并行开发相邻阶段后再一起解决集成问题。
 
@@ -221,26 +220,31 @@ docker compose down
 
 ### 目标和闭环
 
-管理员能够初始化密码、登录控制台、查看和修改 Harness/Repository 两组配置、保存 Secret、看到掩码状态，并对本阶段已经拥有的测试环境 URL 执行连通性检查；后续 adapter 可注册自己的检查。退出或 Token 到期后不能继续访问。
+服务端只在空数据库时使用 `LUOWANG_ADMIN_PASSWORD` 建立管理员 Argon2id 哈希；管理员随后能够登录控制台、修改密码、管理两组配置和 Secret，并对本阶段已有的测试环境 URL 执行连通性检查。未提供初始密码时系统明确未配置，但任何匿名访问者都不能取得管理员身份。
 
 ### 实施范围
 
 1. 建立版本化 schema：普通配置、加密 Secret、管理员密码哈希、登录 Token 哈希和过期时间；
-2. 使用 Argon2id 验证管理员密码；主密钥只从 `LUOWANG_MASTER_KEY` 读取，Secret 使用认证加密并通过统一 `set/get/delete/has` 边界访问；
-3. 实现两小时 opaque Token、SQLite 只存哈希、HttpOnly Cookie、logout、改密撤销、登录限流、写请求 Origin 校验；
-4. API 对 Secret 只返回 `configured`/掩码，空值不意外覆盖已有 Secret，显式删除需单独操作；
-5. 实现 Harness 配置：语言、Provider、三个角色模型/thinking、本地目录/保留、MCP、OSS、管理员认证；
-6. 实现 Repository & Test Environment 配置：仓库、场景分支、Git Token、场景模式、标签、Poll/Cron、环境说明、URL、账号和 Secret；
-7. 建立统一 connectivity check 注册/执行/展示边界，并在本阶段只实现测试环境基础 URL 检查；GitHub、Provider/模型、Playwright MCP、OSS 的正式检查分别由 Phase 2、3、4 中拥有对应 adapter 的阶段注册；
-8. 未注册的检查在网站明确显示“对应能力尚未提供”，不能返回假成功；
-9. 网站提供初始化/登录页、两组配置页、Secret 覆盖/删除确认、检查结果和明确错误状态；
-10. 日志、错误和审计活动统一脱敏。
+2. SQLite 尚无管理员哈希时，只从 `LUOWANG_ADMIN_PASSWORD` 读取初始密码；缺失时保持“尚未配置”并拒绝管理员初始化，不提供匿名设密接口或固定默认密码；
+3. 立即使用 Argon2id 生成并只保存哈希，丢弃原始值；SQLite 已有哈希时忽略环境变量，重启不能自动覆盖密码；
+4. 后续修改密码必须先验证当前管理员，成功后撤销全部既有 Token；
+5. 主密钥只从 `LUOWANG_MASTER_KEY` 读取，Secret 使用认证加密并通过统一 `set/get/delete/has` 边界访问；
+6. 实现两小时 opaque Token、SQLite 只存 Token 哈希、HttpOnly Cookie、logout、登录限流和写请求 Origin 校验；
+7. API 对 Secret 只返回 `configured`/掩码，空值不意外覆盖已有 Secret，显式删除需单独操作；
+8. 实现 Harness 配置：语言、Provider、三个角色模型/thinking、本地目录/保留、MCP、OSS、管理员认证；
+9. 实现 Repository & Test Environment 配置：仓库、场景分支、Git Token、场景模式、标签、Poll/Cron、环境说明、URL、账号和 Secret；
+10. 建立统一 connectivity check 注册/执行/展示边界，并在本阶段只实现测试环境基础 URL 检查；GitHub、Provider/模型、Playwright MCP、OSS 的正式检查分别由 Phase 2、3、4 中拥有对应 adapter 的阶段注册；
+11. 未注册的检查在网站明确显示“对应能力尚未提供”，不能返回假成功；
+12. 网站提供未配置提示、登录页、两组配置页、Secret 覆盖/删除确认、检查结果和明确错误状态；未认证用户除登录和状态提示外不能调用管理 API；
+13. 管理员原始密码和其他 Secret 不进入网页、API、SQLite 明文字段、日志或错误信息。
 
 ### 专项验证
 
-- 从空卷首次启动、初始化密码、登录、保存普通配置和 Secret，重启后普通配置及 `has(secret)` 保持；
-- API、HTML、日志、SQLite 可读列和错误栈中均不能找到原始 Secret；
-- 旧 Cookie 在 logout、改密和两小时过期后返回 `401`；
+- 空卷缺少 `LUOWANG_ADMIN_PASSWORD` 时显示未配置且不能登录，匿名设密/管理请求被拒绝；提供环境变量后首次启动只保存 Argon2id 哈希并可登录；
+- 数据库已有哈希后用不同的 `LUOWANG_ADMIN_PASSWORD` 重启，旧密码仍有效、环境变量不能覆盖；
+- 修改密码必须提交当前密码，成功后所有旧 Cookie 返回 `401`；
+- API、HTML、日志、SQLite 可读列和错误栈中均不能找到管理员原始密码或其他 Secret；
+- Cookie 在 logout、改密和两小时过期后返回 `401`；
 - 错误 Origin 的写请求被拒绝，登录限流生效；
 - connectivity check 框架覆盖已注册、未注册、成功、超时和配置缺失；测试环境 URL 检查另覆盖可达和拒绝连接；
 - 真实 smoke：使用操作者提供的非生产 URL 完成一次真实检查，不把 URL 中的敏感参数写入日志或 PR。
@@ -273,7 +277,7 @@ docker compose down
 - 使用合法/非法/重复场景 ID、最终报告缺字段、其他 Markdown 任意标题和 Git 删除文件验证索引事务；
 - 历史上下文查询覆盖空仓库、已有正式报告、open/closed Issue 和 GitHub 暂时不可达；
 - 同步中断时网站仍显示上一次完整缓存及其 commit/time，不展示半次同步；
-- 真实 smoke：读取 `cynos-ai/luowang`，验证最小权限；在明确确认后创建或验证其 `scenario-testing` 分支，不写场景或报告。
+- 真实 smoke：使用独立、可清理的 GitHub 测试仓库验证最小权限，并在该仓库创建或验证 `scenario-testing` 分支；不得在 `cynos-ai/luowang` 中创建场景测试分支、测试资产、测试 PR 或测试 Issue。
 
 ### 退出条件
 
@@ -283,7 +287,7 @@ docker compose down
 
 ### 目标和闭环
 
-一个人工请求能固定目标 SHA，依次运行隔离的 Main A、Runner、Reviewer、Main B，并在本地完成可信的 `passed | failed | blocked` 结论和五个 Markdown 工件；本阶段先用 API/CLI 样例项目完成，不依赖浏览器和远程归档。
+一个人工请求能固定目标 SHA，依次运行隔离的 Main A、Runner、Reviewer、Main B，并在本地完成可信的 `passed | failed | blocked` 结论和五个 Markdown 工件。本阶段只使用可随时删除的本地 Git 样例仓库、本地 API/CLI fixture 和临时数据，不连接浏览器、OSS、共享测试环境、生产环境或真实外部副作用目标。真实模型 Provider 仅用于运行 Agent 控制面，不是被测系统或外部副作用目标。
 
 ### 实施范围
 
@@ -291,7 +295,7 @@ docker compose down
 2. 建立 Run Orchestrator、ULID、UTC 时间、不可变 commit 范围和唯一 active run；
 3. 建立 `<data>/report/running/<run-id>`，通过受控 writer 管理本阶段正常 Run 的 `plan.md`、`execution.md`、`draft-report.md`、`review.md` 和 `report.md`；`scenario-changes.patch` 到 Phase 7 再加入 writer 允许范围；
 4. Main A 通过 Phase 2 的只读历史上下文查询读取已索引正式报告、GitHub Issues 和场景；首次 Run 接收明确空历史。Phase 5 再在同一查询边界补充 SQLite 详细 Run，不改变 Main 工具契约；
-5. Runner 只获得固定 target 工作树、受控命令、允许的环境信息和本地工件写入能力，顺序执行并写执行记录与草稿报告；
+5. Runner 只获得固定 target 工作树、受控命令、本地 fixture 地址/临时目录和本地工件写入能力，顺序执行并写执行记录与草稿报告；本阶段不向 Runner 暴露网站配置中的共享测试环境账号或外部副作用目标；
 6. Reviewer 使用新 session，只读计划、执行、报告和证据，写独立审核；
 7. Main B 使用新 session 汇总最终报告；只严格校验最终 `report.md` frontmatter、聚合优先级和 Issue 建议，其他四个 Markdown 仅检查存在、非空和角色流程完成；
 8. 每个 session 完成或失败后都 dispose；不共享完整对话，只通过文件交接；
@@ -302,11 +306,11 @@ docker compose down
 
 ### 专项验证
 
-- 准备一个固定 SHA 的最小 API/CLI 样例仓库，真实执行一次 passed Run 并验证五文件内容；
+- 在测试临时目录创建可丢弃的最小 Git 仓库和本地 API/CLI fixture，固定 target SHA 后执行一次 passed Run 并验证五文件内容；测试结束删除仓库、进程和数据；
 - 制造一个确定产品错误，真实执行一次 failed Run，Reviewer 必须以证据确认；
 - 制造凭据/命令不可用，执行一次 blocked Run；
 - 提供纯文档变化，验证零场景 passed；再提供影响不明变化，验证不能借零场景通过；
-- 运行过程中向目标分支推送新 commit，确认当前 target 不变化；
+- 在本地样例仓库的 Run 过程中向目标分支加入新 commit，确认当前 checkout 和 target 不变化；
 - 检查 Runner 子进程环境不包含 Git Token、模型 Key、OSS Secret、管理员密码和 master key；
 - 真实 Provider connectivity check 能区分认证失败、模型不存在和不支持的 thinking level。
 
@@ -353,7 +357,7 @@ completed Run 可由独立 Archiver 重复扫描而不产生重复副作用；�
 
 1. 建立 Run Store 和归档状态，批量导入 Run 文件、commit 范围、结果、场景结果、PR/Issue/报告关系；
 2. Archiver 以 run-id 幂等执行：导入、发布正常测试报告、Issue、推进和本地保留；本阶段只处理没有 `scenario-changes.patch` 的正常 Run；
-3. 正式测试报告发布到 `docs/scenario-testing/reports/<run-id>/`，三文件同一次提交；
+3. 正式测试报告只能新增到 `docs/scenario-testing/reports/<current-run-id>/`，三文件同一次提交；禁止修改、rename 或删除其他历史 Run 报告；当前路径已存在相同内容视为幂等成功，不同内容视为冲突且不得覆盖；
 4. blocked 且只产生待审核场景变更的说明只进 SQLite，不发布为正式 Git 报告；
 5. 按 `luowang-run:<run-id>` 和 `luowang-bug:<bug-key>` 查询后再创建 Issue；link 必须验证目标 Issue；
 6. 同一 Run 支持多个 create/link，单项失败保留其余已成功事实并安全重试；
@@ -373,10 +377,11 @@ completed Run 可由独立 Archiver 重复扫描而不产生重复副作用；�
 - failed + 一个 Issue 失败 → 不推进，重试只补失败项；
 - blocked + 已确认 Bug → 创建/关联 Issue但永不推进；
 - 同一 completed 目录扫描三次 → 只有一份报告 commit、每个 bug 一个 Issue、一次推进；
+- 当前 run-id 目录已存在不同内容 → 报告冲突、不覆盖；其他历史报告在归档前后 blob SHA 不变；
 - Git 发布冲突 → 不 force-push，修复冲突条件后可重试；
 - 旧 Run 被新 Run 关联使用但内容和关系不被回写。
 
-本阶段自动测试使用临时 Git remote 和可记录请求的 GitHub API test double；另外对真实 GitHub 执行最小权限读写 smoke，测试对象必须带明显测试标记并在完成后清理/关闭。
+本阶段自动测试使用临时 Git remote 和可记录请求的 GitHub API test double；另外只在独立 GitHub 测试仓库执行最小权限读写 smoke，测试对象必须带明显测试标记并在完成后清理/关闭，不得写入 `cynos-ai/luowang`。
 
 ### 退出条件
 
@@ -423,15 +428,16 @@ Git Poll、Cron、网站人工请求和 API 请求统一进入 SQLite FIFO 队�
 ### 实施范围
 
 1. 实现场景 schema、稳定 ID、三个状态和标签检索/加权，不增加 suite/catalog；
-2. Main 只在工作树产生规范化 patch，不直接写远程 Git；
-3. 分类 patch 中的新增、修改和 deprecated，严格执行 `autonomous`、`add-only`、`review-all`；
-4. 无需审核时，Runner 执行变更后场景、Reviewer 审核，Archiver 直接提交；
-5. 需要审核时，Run 按 Spec §8 的特殊文件契约只产生 `scenario-changes.patch + report.md` 并以 blocked 结束；其余四文件标记不适用，Archiver 创建指向场景测试分支的 PR并双向记录 run/target/理由/缺口；
-6. 混合 patch 在 add-only 下整体进入 PR，不拆分；场景 PR 默认不创建 Issue；
-7. PR 合并不改写旧 blocked Run，也不自动触发；提供人工重测和下一次产品变化自然使用两条路径；
-8. 初始化实现 Preflight、静态勘察、低风险运行时侦察、临时能力图、候选综合、策略处理、候选验证、独立审核和最终修订；
-9. 冲突证据保持 draft；approved 场景有明确依据，策略允许时至少真实执行一次；
-10. 执行初始化停止条件和危险动作禁令，不物理删除场景。
+2. Main 的 patch writer 只允许新增、修改或目录内 rename `docs/scenario-testing/scenarios/**`，不提供整个 `docs/scenario-testing/**` 或仓库通用写入；
+3. Runner 使用、Reviewer 审核和 Archiver 发布前复用同一 patch 校验：拒绝产品源码、需求、PROJECT、历史报告、越界 rename、symlink、submodule、二进制和物理删除，并重新解析全部变更后场景；
+4. 分类 patch 中的新增、修改和 deprecated，严格执行 `autonomous`、`add-only`、`review-all`；
+5. 无需审核时，Runner 执行变更后场景、Reviewer 审核，Archiver 只原样发布已验证 patch；
+6. 需要审核时，Run 按 Spec §8 的特殊文件契约只产生 `scenario-changes.patch + report.md` 并以 blocked 结束；其余四文件标记不适用，Archiver 创建指向场景测试分支的 PR并双向记录 run/target/理由/缺口；
+7. 混合 patch 在 add-only 下整体进入 PR，不拆分；场景 PR 默认不创建 Issue；
+8. PR 合并不改写旧 blocked Run，也不自动触发；提供人工重测和下一次产品变化自然使用两条路径；
+9. 初始化实现 Preflight、静态勘察、低风险运行时侦察、临时能力图、候选综合、策略处理、候选验证、独立审核和最终修订；
+10. 冲突证据保持 draft；approved 场景有明确依据，策略允许时至少真实执行一次；
+11. 执行初始化停止条件和危险动作禁令，不物理删除场景。
 
 ### 专项验证
 
@@ -443,6 +449,7 @@ Git Poll、Cron、网站人工请求和 API 请求统一进入 SQLite FIFO 队�
 - `review-all`：场景 patch 形成 PR、Run blocked、不挂起 session；两文件 Run 的 `report.md` 仍必须通过 §22.4 frontmatter 校验；
 - PR 合并：旧 Run 仍 blocked，纯场景 commit 不自动测试；人工重测可以执行最新场景；
 - 初始化资料冲突或环境不可用：只产生 draft/覆盖缺口，不伪造 approved；
+- 构造修改产品源码、需求、PROJECT、历史报告、越界 rename、symlink、submodule、二进制、物理删除和无效 frontmatter 的 patch，全部在应用/发布前被拒绝且不产生部分写入；
 - 最终 Git 中不存在 suite、catalog、journey 目录或长期能力图。
 
 同时验证 blocked Run 中存在产品 Bug 时：Bug Issue 正常创建，场景 PR 不关闭或替代产品 Bug。
@@ -481,26 +488,29 @@ Git Poll、Cron、网站人工请求和 API 请求统一进入 SQLite FIFO 队�
 
 `AC-GIT-VIEW-01`、`AC-SCENARIO-VIEW-01`、`AC-RUN-VIEW-01`、`AC-ACTIVE-VIEW-01` 通过，且 `AC-CONFIG-01` 完整回归通过。
 
-## 15. Phase 9：自身吃狗粮、硬化与首次发布
+## 15. Phase 9：独立样例验收、硬化与首次发布
 
 ### 目标和闭环
 
-不增加特殊 self-host 代码，让一个已发布候选实例把 `cynos-ai/luowang` 当作普通目标仓库，完成首次场景基线和至少一个真实开发批次的测试；修复暴露问题后完成全量验收并发布 MVP。
+使用一个独立样例 GitHub 仓库和一个独立本地或非生产样例应用完成 MVP 全量验收。罗网项目仓库不进入目标仓库配置；只运行一个候选罗网实例，不建立实例互测架构。全部验收通过并修复阻断问题后发布 MVP。
 
 ### 实施范围
 
-1. 构建独立候选容器，使用持久化卷和非生产预发布地址；
-2. 把 `cynos-ai/luowang` 配置为唯一目标仓库，目标分支为 `scenario-testing`，测试来源为 `develop` 候选批次；
-3. 配置真实 Provider、Main/Runner/Reviewer、Playwright MCP、私有 OSS 和测试账号；
-4. 按陌生项目流程初始化少量核心场景，禁止为追求数量铺场景；
-5. 至少执行一次 passed 流程、一次可控 blocked/恢复流程和一次同 target 人工重测；
-6. 用真实运行验证报告 Git 提交、Indexer 回读、Issue 幂等、队列、Cron/Poll、重启和保留策略；
-7. 完成威胁检查：非 root、无 Docker socket、端口默认只绑定 `127.0.0.1`、Secret 环境隔离、登录限流、Origin、Cookie、日志脱敏；
-8. 验证数据库备份/恢复和 running/completed 人工清理；
-9. 逐项执行 Spec §23 的 34 个 AC，保存命令、Run URL/ID、commit、PR/Issue 和截图证据；
-10. 发现问题在独立 `fix/*` 修复并重新跑受影响 AC，不在验收分支顺手重构；
-11. 更新公开 README 的实际部署方式、安全边界、许可证和 MVP 限制；
-12. 发起 `develop → main` PR，所有 checks 和验收通过后合并，创建 `v0.1.0` tag。
+1. 构建候选容器，使用持久化卷和仅用于验收的本地部署；
+2. 准备独立、可清理的样例仓库及其 `scenario-testing` 分支；样例仓库包含可控的需求/产品提交，但不复用 `cynos-ai/luowang`；
+3. 启动独立本地或非生产样例应用，提供 API 与 UI 流程以及可控的通过、产品错误和阻塞条件，禁止连接生产数据或真实外部副作用目标；
+4. 使用 `LUOWANG_ADMIN_PASSWORD` 完成首次管理员初始化，并配置真实 Provider、Main/Runner/Reviewer、Playwright MCP、私有 OSS 和样例测试账号；
+5. 按陌生项目流程初始化少量核心场景，禁止为追求数量铺量；
+6. 依次验证 passed、failed、blocked、场景 PR、同一 Run 多个 Bug Issues、同 target 人工重测、报告/场景归档和 Repository Indexer 回读；
+7. 验证 failed 只有在报告及全部 Issues 成功后推进，blocked 即使创建 Issues 也不推进，场景 PR 合并不改写旧 Run；
+8. 验证队列、Cron/Poll、纯测试资产 commit 排除、进程重启、interrupted、归档重试和本地保留/清理；
+9. 验证 Main patch 只能修改样例仓库的场景目录，Archiver 只能新增当前 Run 报告，历史报告在全部验收前后保持不变；
+10. 完成安全检查：非 root、无 Docker socket、端口默认只绑定 `127.0.0.1`、Secret 环境隔离、管理员初始化、登录限流、Origin、Cookie 和日志脱敏；
+11. 验证数据库备份/恢复和 running/completed 人工清理；
+12. 逐项执行 Spec §23 的 34 个 AC，保存命令、Run ID、样例仓库 commit、场景 PR/Issue 和截图证据；
+13. 发现问题在独立 `fix/*` 修复并重新跑受影响 AC，不在验收分支顺手重构；
+14. 更新公开 README 的实际部署方式、安全边界、许可证和 MVP 限制；
+15. 发起 `develop → main` PR，所有 checks 和验收通过后合并，创建 `v0.1.0` tag。
 
 ### 专项验证
 
@@ -510,24 +520,27 @@ Git Poll、Cron、网站人工请求和 API 请求统一进入 SQLite FIFO 队�
 npm run test:acceptance
 ```
 
-该命令负责可自动化的 AC；依赖真实外部系统的 AC 由 dogfood Run 提供证据。最终必须证明：
+该命令负责可自动化的 AC；依赖 GitHub、模型、OSS 和浏览器的 AC 使用独立样例仓库/应用提供证据。最终必须证明：
 
-- 从空卷部署到首次登录和配置成功；
-- 自身场景初始化没有 suite/catalog/长期状态图；
-- 真实 UI Run 的五文件、OSS 证据、Git 三报告、SQLite 详情一致；
-- passed/failed/blocked 的推进矩阵和多个 Issue 幂等行为正确；
+- 空卷缺少 `LUOWANG_ADMIN_PASSWORD` 时不能初始化管理员；提供后只保存哈希并完成登录配置；
+- 样例仓库场景初始化没有 suite、catalog 或长期状态图；
+- 真实 UI Run 的五文件、OSS 证据、Git 三报告和 SQLite 详情一致；
+- passed、failed、blocked、场景 PR、多个 Issues 和人工重测行为符合 Spec；
+- Main/Archiver 路径 allowlist 生效，历史报告未被改写；
 - 纯测试资产 commit 不触发，产品/需求 commit 正确合批；
-- 重启不恢复 Agent 对话、不伪造结果；
+- 重启不恢复 Agent 对话、不伪造结果，归档失败可幂等恢复；
 - 所有 Secret 扫描为阴性；
+- `cynos-ai/luowang` 中没有验收产生的 `scenario-testing` 分支、测试资产、测试 PR 或测试 Issue；
 - `npm test`、typecheck、生产 build、e2e smoke、Docker smoke 和 acceptance 全部通过。
 
 ### 退出条件
 
 1. Spec §23 全部 AC 有可追溯的通过证据，没有“未运行但视为成功”；
-2. dogfood 发现的阻断问题已经修复并复测；
-3. `main` 上的发布 commit 与 `v0.1.0` tag 一致；
-4. 公开仓库被 GitHub 识别为 AGPL-3.0，文案明确商业使用被允许，同时准确说明分发和修改版网络服务的源码义务；
-5. MVP 非目标没有被悄悄实现，后续候选需求回到新的 `docs/changes/<change-id>/`。
+2. 独立样例验收发现的阻断问题已经修复并复测；
+3. 样例仓库和样例应用的测试数据已按保留策略清理，长期场景/报告/PR/Issue 证据仍可复核；
+4. `main` 上的发布 commit 与 `v0.1.0` tag 一致；
+5. 公开仓库被 GitHub 识别为 AGPL-3.0，文案明确商业使用被允许，同时准确说明分发和修改版网络服务的源码义务；
+6. MVP 非目标没有被悄悄实现，后续候选需求回到新的 `docs/changes/<change-id>/`。
 
 ## 16. 验收追踪矩阵
 
@@ -552,7 +565,7 @@ npm run test:acceptance
 
 - Phase 0–9 均通过各自退出条件并已合入 `develop`；
 - Phase 9 全量 AC 通过；
-- dogfood Run 能被公开仓库中的 commit、场景、报告和 Issue 事实复核；
+- 独立样例仓库中的 commit、场景、报告、场景 PR 和 Issues 能复核 Phase 9 的验收结论；
 - `develop → main` 发布 PR 已合并并创建 `v0.1.0`；
 - 没有为了下一版本预先实现多仓库、多租户、并发 worker、通用工作流、发布 gate 或不可信仓库沙箱。
 

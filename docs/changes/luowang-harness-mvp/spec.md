@@ -59,7 +59,8 @@
 - MVP 不做多仓库和多租户；验证完成后再决定演进为单平台多仓库，还是保持单仓库独立部署；
 - 截图、trace 等资源直接写 OSS，报告记录资源地址，不建立复杂 artifact 实体；
 - MVP 使用 SQLite；
-- Harness 不通知或调用开发 Agent，后续修复由人类或另一个系统负责。
+- Harness 不通知或调用开发 Agent，后续修复由人类或另一个系统负责；
+- 罗网项目仓库不进入目标仓库配置，MVP 验收使用独立样例仓库和独立本地或非生产样例应用。
 
 ## 3. MVP 范围与非目标
 
@@ -99,6 +100,7 @@
 - 通用工作流引擎；
 - 复杂场景状态机；
 - 全量 Agent 对话和原始工具结果的结构化建模；
+- 使用一个罗网实例测试另一个罗网实例；
 - ReportPortal、Testkube 等重型外部平台。
 
 ## 4. 目标项目文件约定
@@ -186,6 +188,21 @@ MVP 仅赋予少量标签特殊语义：
 | `autonomous` | AI 可以新增、修改、标记 deprecated，并执行 |
 | `add-only` | AI 可以新增并执行；修改和 deprecated 需要人工确认 |
 | `review-all` | 所有长期场景变更都需要人工确认 |
+
+Main 产生的 `scenario-changes.patch` 只有一个内容写入范围：
+
+```text
+docs/scenario-testing/scenarios/**
+```
+
+Runner 使用、Reviewer 审核和 Archiver 发布前都必须验证：
+
+- patch 没有修改产品源码、`docs/changes/**`、`docs/PROJECT.md` 或任何历史报告；
+- 新增、修改和 rename 的源路径与目标路径都在场景目录内，不存在越界 rename；
+- patch 不包含 symlink、submodule、二进制文件或物理删除场景；
+- 修改后的全部场景仍符合固定 frontmatter、状态和唯一 ID 规则。
+
+任一检查失败时拒绝 patch、记录明确原因并以 `blocked` 结束，不应用或发布部分内容。Main 不能获得任意修改整个 `docs/scenario-testing/**` 的写入能力。
 
 不需要人工确认时：
 
@@ -501,13 +518,15 @@ Harness 当前状态属于 Gateway，不属于 Run。网站从 Gateway 内存状
 独立定时任务扫描 `completed/`：
 
 1. 将 run 文件、`base_commit`、`target_commit`、`included_commits`、触发来源和结果导入 SQLite；
-2. 若存在 `scenario-changes.patch`，按场景变更模式直接提交到场景测试分支，或创建以该分支为目标的 PR并记录 `scenario_pr_url`；PR 写入来源 Run ID、`target_commit`、变更理由和覆盖缺口；
-3. 将正式测试的 `draft-report.md`、`review.md`、`report.md` 提交到场景测试分支；场景审核 blocked Run 的说明只归档 SQLite，不写入 Git 正式报告目录；
+2. 若存在已经通过 §4.2 路径、文件类型和场景格式检查的 `scenario-changes.patch`，按场景变更模式原样提交到场景测试分支，或创建以该分支为目标的 PR并记录 `scenario_pr_url`；Archiver 不扩展或改写 patch 内容；
+3. 只把当前 Run 的 `draft-report.md`、`review.md`、`report.md` 新增到 `docs/scenario-testing/reports/<current-run-id>/`；不得借当前 Run 创建、修改、rename 或删除其他历史 Run 的报告；场景审核 blocked Run 的说明只归档 SQLite，不写入 Git 正式报告目录；
 4. 读取最终报告中的 `confirmed_bugs` 及 Main B 已给出的 Issue 处理建议：关联明显相同的现有 Issue，或创建新 Issue；同一次 Run 可以关联多个 Issues；
 5. Archiver 不重新判断 Bug 语义，只执行报告中的建议；新建 Issue 使用 `run-id + bug-key` 标记，归档重试前先查找，避免同一个 Bug 重复创建；
 6. 满足推进条件时，在一个 SQLite 事务中把“上次已完成测试目标”更新为本次 `target_commit`；
 7. 按保留策略删除或保留本地目录；
 8. 任何步骤失败时保留目录并在下一轮幂等重试。
+
+Archiver 对 Git 的写入边界固定为：发布 Main 已生成且通过验证的场景 patch，以及新增当前 Run 的正式报告目录。若当前 Run 报告路径已经存在，只有内容与本次预期完全一致时才能作为幂等成功；任何不同内容都视为冲突，不能覆盖。Main 负责场景内容，Main B 负责最终报告内容，Archiver 只负责按上述 allowlist 发布，不获得修改产品源码、需求文件或历史报告的通用 Git 写入能力。
 
 推进条件只有两种：
 
@@ -945,6 +964,15 @@ Run 列表展示：
 
 MVP 不做用户系统，只配置一个管理员密码。
 
+管理员密码只按以下方式首次初始化：
+
+1. SQLite 中尚无管理员密码哈希时，服务端只从 `LUOWANG_ADMIN_PASSWORD` 环境变量读取初始密码；
+2. 环境变量缺失时拒绝完成管理员初始化，网站可以显示“尚未配置管理员初始密码”，但登录之外不开放任何匿名管理接口；
+3. 不提供“第一个访问网站的人设置密码”的流程，也不生成或写死默认密码；
+4. 服务端立即生成 Argon2id 哈希并只把哈希写入 SQLite，原始值用后即丢弃；
+5. SQLite 已有密码哈希后忽略 `LUOWANG_ADMIN_PASSWORD`，进程重启不能用环境变量覆盖现有密码；
+6. 后续修改密码必须先通过当前管理员认证，成功后撤销全部既有登录 Token。
+
 登录流程：
 
 1. 用户输入密码；
@@ -971,8 +999,8 @@ SameSite=Strict
 - 写操作校验 Origin；
 - 容器内监听 `0.0.0.0`，默认 Compose 只把端口发布到宿主机 `127.0.0.1`；
 - 远程访问通过 HTTPS、Tailscale 或可信反向代理；
-- 不记录密码、Git Token、模型 Key、测试账号密码和 OSS Secret；
-- 密码首次初始化可以来自 Docker Secret 或 `LUOWANG_ADMIN_PASSWORD`；
+- 管理员原始密码不得进入日志、API 响应、网页、SQLite 明文字段或错误信息；
+- 不记录 Git Token、模型 Key、测试账号密码和 OSS Secret；
 - 加密主密钥只来自 Docker Secret 或环境变量，不写 SQLite。
 
 这是一个能读取仓库、执行命令、访问测试环境和保存凭据的高权限控制台，单密码不等于低安全要求。
@@ -1342,10 +1370,10 @@ MVP 实现 S3-compatible OSS Adapter，不绑定单一厂商。
 
 ### 22.7 Agent 工具和安全边界
 
-- Main 获得目标仓库读取、历史 Run/Issue 查询、场景 patch 和 plan 所需工具，不获得测试账号；
+- Main 获得目标仓库读取、历史 Run/Issue 查询、plan 写入和受限场景 patch 工具；patch 工具只能修改 `docs/scenario-testing/scenarios/**`，不获得仓库通用写入或测试账号；
 - Runner 获得目标仓库读取、受控命令、Playwright MCP、OSS 上传和当前测试环境 Secret 请求能力；
 - Reviewer 只读取本次工件和证据，不获得 Git 写入、测试密码或任意命令执行能力；
-- Main B 通常只读取本次工件并写最终报告；初始化 run 中可以修订本次尚未发布的场景 patch；
+- Main B 通常只读取本次工件并写最终报告；初始化 Run 中只能通过同一个受限 patch 工具修订本次尚未发布的场景 patch；
 - 启动测试命令时使用显式环境 allowlist，不继承 Git Token、模型 API Key、OSS Secret、管理员密码或 `LUOWANG_MASTER_KEY`；
 - Docker 容器使用非 root 用户，不挂载 Docker socket，不挂载无关宿主目录；
 - MVP 的单容器不是针对恶意仓库的安全沙箱，只允许连接操作者信任的仓库和测试环境；不执行 fork/PR 中尚未合并的代码；
@@ -1357,9 +1385,9 @@ SQLite 表、API 路径、React 组件划分、CSS、日志库、迁移文件组
 
 实现阶段继续遵守“遇到真实问题再增加约束和抽象”的原则。
 
-### 22.9 罗网自身的发布、分支与许可证
+### 22.9 项目发布、分支与许可证
 
-本节规定 `cynos-ai/luowang` 自身如何开发和发布，不改变罗网对目标项目 `scenario-testing` 分支的管理规则。
+本节规定 `cynos-ai/luowang` 如何开发和发布，不改变罗网对外部目标项目 `scenario-testing` 分支的管理规则。
 
 #### 公开方式和许可证
 
@@ -1388,22 +1416,13 @@ SQLite 表、API 路径、React 组件划分、CSS、日志库、迁移文件组
 3. PR 必须通过格式检查、lint、typecheck、测试和生产构建；单人维护阶段不强制另一位人工批准，避免自己阻塞自己，有第二位维护者后再启用至少一人审核；
 4. 正常发布直接使用 `develop → main` PR，不创建 `release/*`；
 5. 正式版本紧急修复使用 `fix/*` 从 `main` 创建，合入 `main` 并打补丁版本 tag 后，必须把同一修复同步到 `develop`；不再额外建立 `hotfix/*` 命名；
-6. `scenario-testing` 只承载罗网测试事实，不是开发集成或发布分支。罗网自身吃狗粮时，将 `develop` 的候选批次按目标项目规则合入 `scenario-testing` 测试；测试结果由人类用于决定是否提交 `develop → main` PR，MVP 不增加自动发布 gate。
-
-#### 自身吃狗粮
-
-从具备最小端到端执行能力的阶段开始，`cynos-ai/luowang` 必须作为第一个真实目标仓库：
-
-- 使用普通目标仓库配置，不增加 self-host 特殊代码路径；
-- 测试环境使用本地或预发布部署，禁止指向生产；
-- 先初始化少量核心场景，再用后续阶段的真实开发批次持续验证；
-- 只有自身使用暴露出真实重复需求时才增加抽象，不能为推测中的多仓库、并发或平台化提前设计。
+6. `scenario-testing` 只存在于配置的外部目标仓库中，不是 `cynos-ai/luowang` 的开发集成或发布分支；MVP 发布验收使用独立样例仓库和独立本地或非生产样例应用，不增加自动发布 gate。
 
 ## 23. MVP 验收标准
 
 另一位实现 Agent 交付 MVP 前至少证明：
 
-1. **AC-DEPLOY-01**：单个 Docker 部署可以启动、登录并持久化 SQLite；
+1. **AC-DEPLOY-01**：单个 Docker 部署可以启动、登录并持久化 SQLite；空数据库只使用 `LUOWANG_ADMIN_PASSWORD` 初始化管理员哈希，缺失时拒绝初始化，已有哈希不被环境变量覆盖；
 2. **AC-CONFIG-01**：网站可以查看并配置唯一目标仓库、唯一场景测试分支、测试环境、Provider、三个 Agent、MCP、OSS、Cron 和 commit 触发，Secret 只能覆盖不能取回；
 3. **AC-CONNECT-01**：GitHub、场景测试分支、测试环境、模型、MCP 和 OSS 配置都可以独立执行连通性检查；
 4. **AC-GIT-01**：场景测试分支不存在时，可以从用户指定 commit 创建；
@@ -1425,15 +1444,15 @@ SQLite 表、API 路径、React 组件划分、CSS、日志库、迁移文件组
 20. **AC-AGENT-01**：人工测试请求可以依次完成 Main A、Runner、Reviewer、Main B，并产生五个 Markdown 文件；
 21. **AC-BROWSER-01**：UI 场景可以通过 Playwright MCP 执行，证据上传 OSS，Reviewer 可以查看截图；
 22. **AC-ARCHIVE-01**：正常 Run 完成后由 Archiver 幂等归档、发布、创建/关联 Issues 和决定推进；
-23. **AC-REPORT-01**：Git 中正式报告位于场景测试分支的 `docs/scenario-testing/reports/<run-id>/`，包含三个 Markdown 文件；
+23. **AC-REPORT-01**：Git 中正式报告只新增到场景测试分支的 `docs/scenario-testing/reports/<current-run-id>/`，包含三个 Markdown 文件；重试不得改写当前目录的不同内容，当前 Run 不得修改其他历史报告；
 24. **AC-SCENARIO-02**：`autonomous` 和 `add-only` 中无需审批的场景 patch 由 Archiver 直接提交，不创建 PR；该纯场景 commit 不自动触发重复测试；
-25. **AC-SCENARIO-03**：三种场景修改模式分别符合直接提交或 PR 行为，所有写入目标均为场景测试分支；需要人工审核时当前 Run 以 blocked 结束、不挂起、不推进，并与场景 PR 双向关联；
+25. **AC-SCENARIO-03**：三种场景修改模式分别符合直接提交或 PR 行为；Main patch 只能修改 `docs/scenario-testing/scenarios/**`，且拒绝产品源码、需求、`docs/PROJECT.md`、历史报告、越界 rename、symlink、submodule、二进制和无效场景；需要人工审核时当前 Run 以 blocked 结束、不挂起、不推进，并与场景 PR 双向关联；
 26. **AC-SCENARIO-04**：场景维护 PR 默认不重复创建 Issue；同一 blocked Run 的产品 Bug Issues 与场景 PR 分开记录，合并场景 PR 不关闭产品 Bug；
 27. **AC-SCENARIO-05**：场景 PR 合并后旧 Run 保持 blocked；用户可以人工重测，或由下一次产品/需求变化触发新 Run；
 28. **AC-QUEUE-01**：同时到达的请求只顺序执行，自动触发可以合并，人工 merge 和重测请求不丢失；人工重测能在没有新 commit 时为同一 target 创建新 Run；
 29. **AC-ZERO-01**：Main 与 Reviewer 都确认本批无需场景验证时，零场景 Run 可以 passed、发布报告并推进；场景缺失、影响不明或证据不足时必须 blocked；
 30. **AC-RECOVERY-01**：重启后遗留 Run 显示为 interrupted，不伪造通过结果；
-31. **AC-SECRET-01**：Secrets 不出现在 API 响应、普通日志、Git 报告或启动测试命令的继承环境中；
+31. **AC-SECRET-01**：管理员原始密码和其他 Secrets 不出现在 API 响应、网页、SQLite 明文字段、普通日志、错误信息、Git 报告或启动测试命令的继承环境中；修改管理员密码必须先认证并撤销既有 Token；
 32. **AC-DATA-01**：Runner 清理临时测试数据，清理失败在最终报告中可见；
 33. **AC-INIT-01**：对没有场景资产的样例仓库完成初始化，并且不创建 suite、catalog 或长期状态图；
 34. **AC-QUALITY-01**：`npm test`、typecheck、生产构建和一个端到端 smoke test 全部通过。
