@@ -55,7 +55,7 @@ main ──> fix/* ──PR──> main ──> patch tag
 - `chore/<short-kebab-name>`：只在独立仓库维护无法归入功能或修复时使用；
 - 不创建 `release/*` 或 `hotfix/*`。正常发布直接走 `develop → main` PR，紧急修复仍统一叫 `fix/*`。
 
-`main`、`develop` 都要求 PR、通过必需 checks、解决讨论，并禁止删除和 force-push。单人维护阶段不要求另一位人工批准；出现第二位维护者后再启用至少一人审核。短期分支合并后删除。
+`main`、`develop` 都要求 PR、通过必需 checks、解决讨论，并禁止删除和 force-push。单人维护阶段不要求另一位人工批准；出现第二位维护者后再启用至少一人审核。仓库级“合并后自动删除 head 分支”保持关闭，避免 `develop → main` 时误删长期 `develop`；合并者只手工删除已经合并的短期分支。
 
 这是一套 Gitflow-lite：保留用户指定的 `main + develop`，吸收 GitHub Flow 的短生命周期分支和 PR，不采用完整 Gitflow 的 release/hotfix 长期流程。
 
@@ -182,7 +182,7 @@ npm run test:e2e
 7. 建立多阶段 Dockerfile、非 root 运行用户、Compose、健康检查和持久化目录；
 8. 建立 GitHub Actions，对指向 `develop` 和 `main` 的 PR 执行公共校验和 Docker build；
 9. 提供面向公开仓库的最小根 README：项目状态、非商用许可证说明、本地启动和安全警告，不建立重复文档索引；
-10. 创建 `develop`，并为 `main`、`develop` 配置禁止 force-push/删除、要求 PR 和必需 checks 的 ruleset。
+10. 创建 `develop`，为 `main`、`develop` 配置禁止 force-push/删除、要求 PR 和必需 checks 的 ruleset，并确认 GitHub 的仓库级自动删除 head 分支保持关闭。
 
 ### 专项验证
 
