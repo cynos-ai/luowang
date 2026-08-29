@@ -43,6 +43,7 @@ async function waitForHealth(port: number, child: ReturnType<typeof spawn>): Pro
 
 const dataDir = await mkdtemp(join(tmpdir(), 'luowang-e2e-'));
 const port = await getAvailablePort();
+const adminPassword = 'e2e-admin-password!';
 const child = spawn(process.execPath, ['dist/server/main.js'], {
   cwd: process.cwd(),
   env: {
@@ -52,6 +53,8 @@ const child = spawn(process.execPath, ['dist/server/main.js'], {
     LUOWANG_HOST: '127.0.0.1',
     LUOWANG_PORT: String(port),
     LUOWANG_LOG_LEVEL: 'silent',
+    LUOWANG_ADMIN_PASSWORD: adminPassword,
+    LUOWANG_MASTER_KEY: 'e2e-master-key-material',
   },
   stdio: ['ignore', 'pipe', 'pipe'],
 });
@@ -72,6 +75,24 @@ try {
   const shellResponse = await fetch(`http://127.0.0.1:${port}/`);
   assert.equal(shellResponse.status, 200);
   assert.match(await shellResponse.text(), /LuoWang/);
+
+  const authStatus = await fetch(`http://127.0.0.1:${port}/api/auth/status`);
+  assert.deepEqual(await authStatus.json(), { configured: true, authenticated: false });
+
+  const loginResponse = await fetch(`http://127.0.0.1:${port}/api/auth/login`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ password: adminPassword }),
+  });
+  assert.equal(loginResponse.status, 200);
+  const setCookie = loginResponse.headers.get('set-cookie');
+  assert.ok(setCookie);
+  const sessionCookie = setCookie.split(';', 1)[0];
+  const configResponse = await fetch(`http://127.0.0.1:${port}/api/config`, {
+    headers: { cookie: sessionCookie },
+  });
+  assert.equal(configResponse.status, 200);
+  assert.equal((await configResponse.json()).secretStore.available, true);
 } catch (error) {
   throw new Error(
     `${error instanceof Error ? error.message : String(error)}${stderr ? `\n${stderr}` : ''}`,

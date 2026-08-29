@@ -17,6 +17,16 @@ const REDACTED_PATHS = [
   '*.apiKey',
   'masterKey',
   '*.masterKey',
+  'req.body.password',
+  'req.body.currentPassword',
+  'req.body.newPassword',
+  'req.body.secrets',
+  'body.password',
+  'body.currentPassword',
+  'body.newPassword',
+  'body.secrets',
+  '*.accessKeyId',
+  '*.accessKeySecret',
 ];
 
 export function createLogger(config: Pick<AppConfig, 'logLevel'>): Logger {

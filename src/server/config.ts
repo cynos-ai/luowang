@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 
 import type { LevelWithSilent } from 'pino';
@@ -25,6 +26,9 @@ export interface AppConfig {
   webRoot: string;
   logLevel: LevelWithSilent;
   version: string;
+  initialAdminPassword?: string;
+  masterKey?: string;
+  allowedOrigin?: string;
 }
 
 export class ConfigError extends Error {
@@ -69,6 +73,29 @@ function readPath(value: string | undefined, fallback: string): string {
   return resolve(value && value.trim() !== '' ? value : fallback);
 }
 
+function readSecret(
+  environment: NodeJS.ProcessEnv,
+  directName: string,
+  fileName: string,
+): string | undefined {
+  const directValue = environment[directName];
+  if (directValue !== undefined && directValue !== '') {
+    return directValue;
+  }
+
+  const filePath = environment[fileName];
+  if (!filePath || filePath.trim() === '') {
+    return undefined;
+  }
+
+  try {
+    const fileValue = readFileSync(filePath, 'utf8').trim();
+    return fileValue === '' ? undefined : fileValue;
+  } catch {
+    throw new ConfigError(`${fileName} points to an unreadable secret file`);
+  }
+}
+
 export function loadConfig(environment: NodeJS.ProcessEnv = process.env): AppConfig {
   const dataDir = readPath(environment.LUOWANG_DATA_DIR ?? environment.DATA_DIR, DEFAULT_DATA_DIR);
   const databasePath = readPath(
@@ -90,5 +117,15 @@ export function loadConfig(environment: NodeJS.ProcessEnv = process.env): AppCon
     webRoot,
     logLevel: readLogLevel(environment.LUOWANG_LOG_LEVEL ?? environment.LOG_LEVEL),
     version: environment.LUOWANG_VERSION ?? DEFAULT_VERSION,
+    initialAdminPassword: readSecret(
+      environment,
+      'LUOWANG_ADMIN_PASSWORD',
+      'LUOWANG_ADMIN_PASSWORD_FILE',
+    ),
+    masterKey: readSecret(environment, 'LUOWANG_MASTER_KEY', 'LUOWANG_MASTER_KEY_FILE'),
+    allowedOrigin:
+      environment.LUOWANG_ALLOWED_ORIGIN && environment.LUOWANG_ALLOWED_ORIGIN.trim() !== ''
+        ? environment.LUOWANG_ALLOWED_ORIGIN.trim()
+        : undefined,
   };
 }

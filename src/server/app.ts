@@ -1,38 +1,75 @@
 import { existsSync } from 'node:fs';
 
+import fastifyCookie from '@fastify/cookie';
 import fastifyStatic from '@fastify/static';
-import Fastify from 'fastify';
+import Fastify, { type FastifyReply, type FastifyRequest } from 'fastify';
 import type { Logger } from 'pino';
 
-import type { HealthResponse } from '../shared/types.js';
+import type { ConfigResponse, HealthResponse } from '../shared/types.js';
+import { createConfigurationStore, type ConfigurationStore } from './configuration.js';
+import { createConnectivityRegistry, type ConnectivityRegistry } from './connectivity.js';
 import type { AppConfig } from './config.js';
 import type { DatabaseContext } from './db/client.js';
 import { AppError, toErrorResponse } from './errors.js';
 import { createLogger } from './logger.js';
+import {
+  AuthError,
+  createAuthService,
+  SESSION_COOKIE_NAME,
+  SESSION_TTL_MS,
+  validatePassword,
+  type AuthService,
+} from './security/auth.js';
+import { LoginRateLimiter } from './security/rate-limit.js';
+import {
+  createSecretStore,
+  isSecretKey,
+  SecretStoreError,
+  SECRET_KEYS,
+  type SecretStore,
+} from './security/secret-store.js';
 
 export interface AppOptions {
   config: AppConfig;
   database: DatabaseContext;
   logger?: Logger;
+  auth?: AuthService;
+  secretStore?: SecretStore;
+  configuration?: ConfigurationStore;
+  connectivity?: ConnectivityRegistry;
 }
 
-function makeHealth(config: AppConfig, database: DatabaseContext): HealthResponse {
-  const databaseIsHealthy = database.isHealthy();
-  return {
-    status: databaseIsHealthy ? 'ok' : 'degraded',
-    service: 'luowang',
-    version: config.version,
-    database: databaseIsHealthy ? 'ok' : 'error',
-    timestamp: new Date().toISOString(),
-  };
+interface JsonRecord {
+  [key: string]: unknown;
 }
 
 export async function createApp(options: AppOptions) {
+  const auth =
+    options.auth ??
+    (await createAuthService(options.database.sqlite, options.config.initialAdminPassword));
+  const secretStore =
+    options.secretStore ?? createSecretStore(options.database.sqlite, options.config.masterKey);
+  const configuration =
+    options.configuration ??
+    createConfigurationStore(options.database.sqlite, {
+      repoDir: options.config.repoDir,
+      reportDir: options.config.reportDir,
+    });
+  const connectivity =
+    options.connectivity ?? createConnectivityRegistry(options.database.sqlite, configuration);
+
+  // Do not retain the bootstrap password or raw master-key string in the shared config object.
+  options.config.initialAdminPassword = undefined;
+  options.config.masterKey = undefined;
+
   const app = Fastify({
     loggerInstance: options.logger ?? createLogger(options.config),
     requestIdHeader: 'x-request-id',
   });
   const staticRoot = options.config.webRoot;
+  const loginLimiter = new LoginRateLimiter();
+
+  await app.register(fastifyCookie);
 
   if (existsSync(staticRoot)) {
     await app.register(fastifyStatic, {
@@ -41,6 +78,16 @@ export async function createApp(options: AppOptions) {
       index: 'index.html',
     });
   }
+
+  app.addHook('preHandler', async (request) => {
+    if (
+      isWriteMethod(request.method) &&
+      request.url.startsWith('/api/') &&
+      !isAllowedOrigin(request, options.config.allowedOrigin)
+    ) {
+      throw new AppError('ORIGIN_FORBIDDEN', '请求来源未被允许', 403);
+    }
+  });
 
   app.get('/health', async (request, reply) => {
     const health = makeHealth(options.config, options.database);
@@ -51,6 +98,138 @@ export async function createApp(options: AppOptions) {
   app.get('/api/status', async (request, reply) => {
     reply.header('x-request-id', request.id);
     return reply.send(makeHealth(options.config, options.database));
+  });
+
+  app.get('/api/auth/status', async (request, reply) => {
+    reply.header('x-request-id', request.id);
+    return reply.send({
+      configured: auth.isConfigured(),
+      authenticated: auth.authenticate(request.cookies[SESSION_COOKIE_NAME]),
+    });
+  });
+
+  app.post('/api/auth/login', async (request, reply) => {
+    const body = readBody(request);
+    const password = body.password;
+    if (typeof password !== 'string') {
+      throw new AppError('PASSWORD_REQUIRED', '请输入管理员密码', 400);
+    }
+
+    const rateKey = request.ip || 'unknown';
+    const decision = loginLimiter.check(rateKey);
+    if (!decision.allowed) {
+      reply.header('retry-after', String(decision.retryAfterSeconds));
+      throw new AppError('LOGIN_RATE_LIMITED', '登录尝试过于频繁，请稍后再试', 429);
+    }
+
+    const token = await auth.login(password);
+    if (!token) {
+      loginLimiter.recordFailure(rateKey);
+      throw new AppError('INVALID_CREDENTIALS', '管理员密码不正确', 401);
+    }
+
+    loginLimiter.reset(rateKey);
+    setSessionCookie(request, reply, token);
+    return reply.send({ authenticated: true });
+  });
+
+  app.post('/api/auth/logout', async (request, reply) => {
+    auth.logout(request.cookies[SESSION_COOKIE_NAME]);
+    clearSessionCookie(request, reply);
+    return reply.send({ authenticated: false });
+  });
+
+  app.post('/api/auth/password', async (request, reply) => {
+    const token = requireAuth(request, auth);
+    const body = readBody(request);
+    if (typeof body.currentPassword !== 'string' || typeof body.newPassword !== 'string') {
+      throw new AppError('PASSWORD_REQUIRED', '当前密码和新密码均为必填项', 400);
+    }
+    validatePassword(body.newPassword);
+    const changed = await auth.changePassword(token, body.currentPassword, body.newPassword);
+    if (!changed) {
+      throw new AppError('INVALID_CURRENT_PASSWORD', '当前管理员密码不正确', 401);
+    }
+
+    clearSessionCookie(request, reply);
+    return reply.send({ authenticated: false, passwordChanged: true });
+  });
+
+  app.get('/api/config', async (request, reply) => {
+    requireAuth(request, auth);
+    return reply.send(makeConfigResponse(configuration, secretStore));
+  });
+
+  app.put('/api/config', async (request, reply) => {
+    requireAuth(request, auth);
+    const body = readBody(request);
+    updateConfiguration(body, configuration, secretStore);
+    return reply.send(makeConfigResponse(configuration, secretStore));
+  });
+
+  app.put('/api/config/harness', async (request, reply) => {
+    requireAuth(request, auth);
+    const body = readBody(request);
+    applySecretValues(body.secrets, secretStore);
+    configuration.updateHarness(body);
+    return reply.send(makeConfigResponse(configuration, secretStore));
+  });
+
+  app.put('/api/config/repository', async (request, reply) => {
+    requireAuth(request, auth);
+    const body = readBody(request);
+    applySecretValues(body.secrets, secretStore);
+    configuration.updateRepository(body);
+    return reply.send(makeConfigResponse(configuration, secretStore));
+  });
+
+  app.get('/api/secrets', async (request, reply) => {
+    requireAuth(request, auth);
+    return reply.send({ secrets: secretStore.metadata() });
+  });
+
+  app.delete('/api/secrets/:key', async (request, reply) => {
+    requireAuth(request, auth);
+    const key = readParam(request, 'key');
+    if (!isSecretKey(key)) {
+      throw new AppError('SECRET_KEY_INVALID', '不支持的 Secret 项', 400);
+    }
+    secretStore.delete(key);
+    return reply.send(makeConfigResponse(configuration, secretStore));
+  });
+
+  app.get('/api/connectivity/checks', async (request, reply) => {
+    requireAuth(request, auth);
+    return reply.send({ checks: connectivity.list() });
+  });
+
+  app.get('/api/connectivity', async (request, reply) => {
+    requireAuth(request, auth);
+    return reply.send({ checks: connectivity.list() });
+  });
+
+  app.post('/api/connectivity/checks/:checkId', async (request, reply) => {
+    requireAuth(request, auth);
+    const check = await connectivity.run(readParam(request, 'checkId'));
+    if (!check.available) {
+      return reply.status(501).send(check);
+    }
+    return reply.send(check);
+  });
+
+  app.post('/api/connectivity/:checkId', async (request, reply) => {
+    requireAuth(request, auth);
+    const check = await connectivity.run(readParam(request, 'checkId'));
+    if (!check.available) {
+      return reply.status(501).send(check);
+    }
+    return reply.send(check);
+  });
+
+  app.post('/api/config/repository/check', async (request, reply) => {
+    requireAuth(request, auth);
+    const check = await connectivity.run('test-environment-url');
+    return reply.send(check);
   });
 
   app.setNotFoundHandler(async (request, reply) => {
@@ -67,21 +246,37 @@ export async function createApp(options: AppOptions) {
     const statusCode =
       error instanceof AppError
         ? error.statusCode
-        : typeof possibleError.statusCode === 'number'
-          ? possibleError.statusCode
-          : 500;
+        : error instanceof SecretStoreError
+          ? 503
+          : error instanceof AuthError || possibleError.name === 'ConfigurationError'
+            ? 400
+            : typeof possibleError.statusCode === 'number'
+              ? possibleError.statusCode
+              : 500;
     const code =
       error instanceof AppError
         ? error.code
-        : statusCode === 400
-          ? 'BAD_REQUEST'
-          : 'INTERNAL_ERROR';
+        : error instanceof SecretStoreError
+          ? 'SECRET_STORE_UNAVAILABLE'
+          : error instanceof AuthError
+            ? error.code
+            : possibleError.name === 'ConfigurationError'
+              ? 'CONFIGURATION_INVALID'
+              : statusCode === 400
+                ? 'BAD_REQUEST'
+                : 'INTERNAL_ERROR';
     const message =
-      error instanceof AppError || statusCode < 500
+      error instanceof AppError ||
+      error instanceof AuthError ||
+      possibleError.name === 'ConfigurationError'
         ? typeof possibleError.message === 'string'
           ? possibleError.message
           : 'Request failed'
-        : 'Internal server error';
+        : error instanceof SecretStoreError
+          ? 'Secret Store 当前不可用'
+          : statusCode < 500 && typeof possibleError.message === 'string'
+            ? possibleError.message
+            : 'Internal server error';
 
     request.log.error(
       {
@@ -101,4 +296,141 @@ export async function createApp(options: AppOptions) {
   });
 
   return app;
+}
+
+function makeHealth(config: AppConfig, database: DatabaseContext): HealthResponse {
+  const databaseIsHealthy = database.isHealthy();
+  return {
+    status: databaseIsHealthy ? 'ok' : 'degraded',
+    service: 'luowang',
+    version: config.version,
+    database: databaseIsHealthy ? 'ok' : 'error',
+    timestamp: new Date().toISOString(),
+  };
+}
+
+function makeConfigResponse(
+  configuration: ConfigurationStore,
+  secretStore: SecretStore,
+): ConfigResponse {
+  return {
+    harness: configuration.getHarness(),
+    repository: configuration.getRepository(),
+    secrets: secretStore.metadata(),
+    secretStore: { available: secretStore.isAvailable() },
+  };
+}
+
+function updateConfiguration(
+  body: JsonRecord,
+  configuration: ConfigurationStore,
+  secretStore: SecretStore,
+): void {
+  let updated = false;
+  if (body.harness !== undefined) {
+    const harness = readRecord(body.harness, 'harness must be an object');
+    applySecretValues(harness.secrets, secretStore);
+    configuration.updateHarness(harness);
+    updated = true;
+  }
+  if (body.repository !== undefined) {
+    const repository = readRecord(body.repository, 'repository must be an object');
+    applySecretValues(repository.secrets, secretStore);
+    configuration.updateRepository(repository);
+    updated = true;
+  }
+  applySecretValues(body.secrets, secretStore);
+  if (!updated && body.secrets === undefined) {
+    throw new AppError('CONFIGURATION_REQUIRED', '至少提供一组配置', 400);
+  }
+}
+
+function applySecretValues(value: unknown, secretStore: SecretStore): void {
+  if (value === undefined) {
+    return;
+  }
+  const secrets = readRecord(value, 'secrets must be an object');
+  for (const key of SECRET_KEYS) {
+    const candidate = secrets[key];
+    if (typeof candidate === 'string' && candidate.length > 0) {
+      secretStore.set(key, candidate);
+    }
+  }
+}
+
+function requireAuth(request: FastifyRequest, auth: AuthService): string {
+  const token = request.cookies[SESSION_COOKIE_NAME];
+  if (!auth.authenticate(token)) {
+    throw new AppError('UNAUTHORIZED', '需要管理员认证', 401);
+  }
+  return token as string;
+}
+
+function setSessionCookie(request: FastifyRequest, reply: FastifyReply, token: string): void {
+  reply.setCookie(SESSION_COOKIE_NAME, token, sessionCookieOptions(request));
+}
+
+function clearSessionCookie(request: FastifyRequest, reply: FastifyReply): void {
+  reply.clearCookie(SESSION_COOKIE_NAME, { ...sessionCookieOptions(request), maxAge: 0 });
+}
+
+function sessionCookieOptions(request: FastifyRequest): {
+  httpOnly: boolean;
+  secure: boolean;
+  sameSite: 'strict';
+  path: string;
+  maxAge: number;
+} {
+  return {
+    httpOnly: true,
+    secure: isHttpsRequest(request),
+    sameSite: 'strict',
+    path: '/',
+    maxAge: SESSION_TTL_MS / 1000,
+  };
+}
+
+function isHttpsRequest(request: FastifyRequest): boolean {
+  const forwardedProto = request.headers['x-forwarded-proto'];
+  const firstForwardedProto =
+    typeof forwardedProto === 'string' ? forwardedProto.split(',')[0]?.trim() : undefined;
+  return request.protocol === 'https' || firstForwardedProto === 'https';
+}
+
+function isAllowedOrigin(request: FastifyRequest, configuredOrigin: string | undefined): boolean {
+  const origin = request.headers.origin;
+  if (!origin) {
+    return true;
+  }
+  if (configuredOrigin) {
+    return origin === configuredOrigin;
+  }
+
+  const protocol = isHttpsRequest(request) ? 'https' : 'http';
+  const host = request.headers.host;
+  return typeof host === 'string' && origin === `${protocol}://${host}`;
+}
+
+function isWriteMethod(method: string): boolean {
+  return method === 'POST' || method === 'PUT' || method === 'PATCH' || method === 'DELETE';
+}
+
+function readBody(request: FastifyRequest): JsonRecord {
+  return readRecord(request.body, '请求体必须是 JSON 对象');
+}
+
+function readRecord(value: unknown, message: string): JsonRecord {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    throw new AppError('INVALID_REQUEST', message, 400);
+  }
+  return value as JsonRecord;
+}
+
+function readParam(request: FastifyRequest, name: string): string {
+  const params = request.params as Record<string, unknown>;
+  const value = params[name];
+  if (typeof value !== 'string' || value.length === 0) {
+    throw new AppError('INVALID_REQUEST', '请求参数无效', 400);
+  }
+  return value;
 }

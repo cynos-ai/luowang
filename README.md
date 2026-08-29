@@ -1,6 +1,6 @@
 # LuoWang
 
-罗网（LuoWang）是一个独立部署的 AI 场景测试 Harness。当前仓库处于 Phase 0 基础设施阶段：已经提供可测试、可构建、可通过 Docker 启动的应用骨架，业务测试闭环会按 `docs/changes/luowang-harness-mvp/plan.md` 的阶段继续实现。
+罗网（LuoWang）是一个独立部署的 AI 场景测试 Harness。当前仓库处于 Phase 1：已经提供可测试、可构建、可通过 Docker 启动的安全配置控制台，后续业务测试闭环会按 `docs/changes/luowang-harness-mvp/plan.md` 的阶段继续实现。
 
 ## 本地启动
 
@@ -17,12 +17,19 @@ npm start
 也可以使用 Docker Compose：
 
 ```bash
+# 首次启动空数据卷前必须设置这两个值；不要把真实值提交到 Git。
+export LUOWANG_ADMIN_PASSWORD='replace-with-a-long-random-password'
+export LUOWANG_MASTER_KEY='replace-with-a-long-random-master-key'
 docker compose up -d --build
 curl --fail http://127.0.0.1:3000/health
 docker compose down
 ```
 
-Compose 将数据保存到 `luowang-data` 卷，并把宿主机端口绑定到 `127.0.0.1`。
+Compose 将数据保存到 `luowang-data` 卷，并把宿主机端口绑定到 `127.0.0.1`。管理员密码只在空数据库首次启动时读取；主密钥只用于进程内派生 Secret Store 密钥，二者都不会写入 SQLite。
+
+打开 <http://127.0.0.1:3000/> 后使用管理员密码登录。登录后可以维护 Harness、仓库/测试环境、MCP 和 S3-compatible OSS 的普通配置；Provider Key、Git Token、测试账号和 OSS Access Key 等 Secret 只能覆盖或显式删除，页面只显示“已配置”和固定掩码。Phase 1 只提供测试环境基础 URL 检查，GitHub、模型、MCP 和 OSS 的正式检查会在后续 adapter 阶段提供。
+
+Docker Secret 文件也可以通过 `LUOWANG_ADMIN_PASSWORD_FILE` 和 `LUOWANG_MASTER_KEY_FILE` 提供；直接环境变量优先。生产环境应使用 HTTPS 或可信反向代理，并设置 `LUOWANG_ALLOWED_ORIGIN`。
 
 如果 Docker Hub 访问较慢，可以在构建时切换基础镜像源：
 
