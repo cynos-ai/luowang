@@ -126,15 +126,37 @@ npm run test:e2e
 - `git diff` 和日志样本中没有凭据；
 - 没有未完成核心逻辑、调试代码或依赖下一阶段才能工作的生产分支。
 
+### 4.4 外部前置条件和受阻规则
+
+外部真实 smoke 是阶段退出条件，不用生产 mock 替代。所需条件如下：
+
+| 阶段 | 操作者必须提供的非生产资源 |
+|---|---|
+| Phase 0 | `cynos-ai/luowang` 组织管理员权限；当前已满足 |
+| Phase 1 | `LUOWANG_ADMIN_PASSWORD`、`LUOWANG_MASTER_KEY` 和可访问的测试 URL |
+| Phase 2 | 对目标测试仓库具备读取、分支写入和 ref 合并权限的 GitHub Token |
+| Phase 3 | 可用模型 Provider 凭据，以及支持所选 thinking level 的 Main/Runner/Reviewer 模型 |
+| Phase 4 | 非生产 Web 测试环境、Playwright MCP 运行依赖、测试账号和专用 OSS bucket/prefix |
+| Phase 5 | GitHub 报告分支写入、PR 和 Issue 权限；带明确测试标记且可清理的 smoke 目标 |
+| Phase 6–8 | 前述资源保持可用；允许短时间重启测试实例 |
+| Phase 9 | 完整 dogfood 预发布环境、私有 OSS、真实模型和 `cynos-ai/luowang` 写权限 |
+
+凭据只由操作者通过环境变量或网站 Secret Store 提供，不写入文档、fixture、PR 或 CI 日志。若资源/权限不可用：
+
+1. 仍运行不依赖公网的自动化测试并记录结果；
+2. 将阶段状态明确报告为 **blocked**，列出缺少的资源和最小权限；
+3. 不把 test double 结果当作真实 smoke，也不合并为“阶段完成”；
+4. 资源恢复后从真实 smoke 继续，不要求重做仍与当前 commit 匹配的本地证明。
+
 ## 5. 阶段总览
 
 | 阶段 | 建议分支 | 独立闭环结果 | 主要验收 |
 |---|---|---|---|
 | Phase 0 | `feat/p0-foundation` | 公共仓库中的应用骨架可测试、可构建、可用 Docker 启动 | `AC-QUALITY-01` 基线、`AC-DEPLOY-01` 部分 |
-| Phase 1 | `feat/p1-secure-console` | 管理员可安全登录、持久化配置、保存但不能取回 Secret，并执行连通性检查 | `AC-DEPLOY-01`、`AC-CONFIG-01`、`AC-CONNECT-01`、`AC-SECRET-01` 部分 |
-| Phase 2 | `feat/p2-repository-control` | 可连接唯一 GitHub 仓库、准备场景测试分支、同步并查看场景/报告事实 | `AC-GIT-01`、`AC-GIT-03`、`AC-INDEX-01` |
-| Phase 3 | `feat/p3-agent-run` | 人工请求可完成 Main → Runner → Reviewer → Main 的本地完整 Run | `AC-RUN-01`、`AC-AGENT-01`、`AC-ZERO-01` |
-| Phase 4 | `feat/p4-browser-evidence` | UI 场景可真实执行、上传稳定证据、独立看图审核并清理数据 | `AC-BROWSER-01`、`AC-DATA-01` |
+| Phase 1 | `feat/p1-secure-console` | 管理员可安全登录、持久化配置、保存但不能取回 Secret；后续 adapter 可注册独立检查 | `AC-DEPLOY-01`、`AC-CONFIG-01`、`AC-SECRET-01` 部分 |
+| Phase 2 | `feat/p2-repository-control` | 可连接唯一 GitHub 仓库、准备场景测试分支、同步并查看场景/报告事实 | `AC-GIT-01`、`AC-GIT-03`、`AC-INDEX-01`、`AC-CONNECT-01` 的 GitHub 部分 |
+| Phase 3 | `feat/p3-agent-run` | 人工请求可完成 Main → Runner → Reviewer → Main 的本地完整 Run | `AC-RUN-01`、`AC-AGENT-01`、`AC-ZERO-01`、`AC-CONNECT-01` 的 Provider 部分 |
+| Phase 4 | `feat/p4-browser-evidence` | UI 场景可真实执行、上传稳定证据、独立看图审核并清理数据 | `AC-BROWSER-01`、`AC-DATA-01`，并闭环 `AC-CONNECT-01` |
 | Phase 5 | `feat/p5-archive-progress` | completed Run 可幂等归档、发布报告、处理多个 Issue 并正确推进 | `AC-PROGRESS-01/02`、`AC-ISSUE-01`、`AC-HISTORY-01`、`AC-ARCHIVE-01`、`AC-REPORT-01` |
 | Phase 6 | `feat/p6-automation-recovery` | Git/Cron/API/人工请求进入同一持久队列，自动合批并可从重启恢复 | `AC-GIT-02`、`AC-TRIGGER-01/02`、`AC-QUEUE-01`、`AC-RECOVERY-01` |
 | Phase 7 | `feat/p7-scenario-lifecycle` | 三种场景模式和陌生项目初始化可在真实 Run/PR/归档流程中闭环 | `AC-SCENARIO-01..05`、`AC-INIT-01` |
@@ -196,7 +218,7 @@ docker compose down
 
 ### 目标和闭环
 
-管理员能够初始化密码、登录控制台、查看和修改 Harness/Repository 两组配置、保存 Secret、看到掩码状态并分别执行连通性检查；退出或 Token 到期后不能继续访问。
+管理员能够初始化密码、登录控制台、查看和修改 Harness/Repository 两组配置、保存 Secret、看到掩码状态，并对本阶段已经拥有的测试环境 URL 执行连通性检查；后续 adapter 可注册自己的检查。退出或 Token 到期后不能继续访问。
 
 ### 实施范围
 
@@ -206,9 +228,10 @@ docker compose down
 4. API 对 Secret 只返回 `configured`/掩码，空值不意外覆盖已有 Secret，显式删除需单独操作；
 5. 实现 Harness 配置：语言、Provider、三个角色模型/thinking、本地目录/保留、MCP、OSS、管理员认证；
 6. 实现 Repository & Test Environment 配置：仓库、场景分支、Git Token、场景模式、标签、Poll/Cron、环境说明、URL、账号和 Secret；
-7. 实现 GitHub、测试环境、Provider/模型、Playwright MCP、OSS 的独立 connectivity check，检查与保存分离；
-8. 网站提供初始化/登录页、两组配置页、Secret 覆盖/删除确认、检查结果和明确错误状态；
-9. 日志、错误和审计活动统一脱敏。
+7. 建立统一 connectivity check 注册/执行/展示边界，并在本阶段只实现测试环境基础 URL 检查；GitHub、Provider/模型、Playwright MCP、OSS 的正式检查分别由 Phase 2、3、4 中拥有对应 adapter 的阶段注册；
+8. 未注册的检查在网站明确显示“对应能力尚未提供”，不能返回假成功；
+9. 网站提供初始化/登录页、两组配置页、Secret 覆盖/删除确认、检查结果和明确错误状态；
+10. 日志、错误和审计活动统一脱敏。
 
 ### 专项验证
 
@@ -216,12 +239,12 @@ docker compose down
 - API、HTML、日志、SQLite 可读列和错误栈中均不能找到原始 Secret；
 - 旧 Cookie 在 logout、改密和两小时过期后返回 `401`；
 - 错误 Origin 的写请求被拒绝，登录限流生效；
-- 每个 connectivity check 分别覆盖成功、认证失败、超时和配置缺失；
-- 真实 smoke：使用操作者提供的 GitHub/Provider/OSS 测试配置各完成一次最小权限检查，不把值写入测试快照或 PR。
+- connectivity check 框架覆盖已注册、未注册、成功、超时和配置缺失；测试环境 URL 检查另覆盖可达和拒绝连接；
+- 真实 smoke：使用操作者提供的非生产 URL 完成一次真实检查，不把 URL 中的敏感参数写入日志或 PR。
 
 ### 退出条件
 
-`AC-DEPLOY-01`、`AC-CONFIG-01`、`AC-CONNECT-01` 的本阶段范围通过；任何上层模块都不能绕过 Secret Store 直接读写加密列。
+`AC-DEPLOY-01`、`AC-CONFIG-01` 和 `AC-SECRET-01` 的本阶段范围通过；connectivity check 扩展点和测试环境 URL 检查可用。`AC-CONNECT-01` 要到 Phase 4 的全部正式 adapter 检查通过后才算完整。任何上层模块都不能绕过 Secret Store 直接读写加密列。
 
 ## 8. Phase 2：唯一仓库控制与 Git 事实索引
 
@@ -232,23 +255,26 @@ docker compose down
 ### 实施范围
 
 1. 实现仅面向 GitHub 的 Repository Service：clone/fetch、凭据注入、ref 解析、祖先检查、固定 SHA checkout 和工作树清理；
-2. 场景测试分支不存在时，从用户确认的初始 branch/tag/SHA 创建；存在时只允许向前同步，检测历史断裂并停止；
-3. 人工指定其他 ref 时执行 `merge --no-ff`；冲突时保留诊断、清理合并状态并停止，绝不让 Agent 解决产品代码冲突；
-4. 实现场景 Markdown frontmatter 校验和报告 frontmatter 校验；无效文件记录索引错误，不能污染有效缓存；
-5. Repository Indexer 原子同步场景、报告、文件路径、内容、commit、最近同步 SHA/时间，并删除 Git 已不存在的缓存；
-6. 提供仓库状态、同步动作、最小 Git 树、场景列表/详情和报告读取页面；
-7. Git Token 只在 Repository Service 内使用，不传给命令环境、Agent 或日志。
+2. 注册 GitHub/场景测试分支 connectivity check，分别验证读取、非 force 分支写入、PR 和 Issue 所需权限；每项返回可验证依据，无法通过非破坏方式确认的权限标为 `unknown` 而不是假报通过；
+3. 场景测试分支不存在时，从用户确认的初始 branch/tag/SHA 创建；存在时只允许向前同步，检测历史断裂并停止；
+4. 人工指定其他 ref 时，操作者确认后在最新远端 HEAD 上执行 `merge --no-ff`，记录来源和原 HEAD，使用 non-force push 发布；远端竞争、冲突或失败时清理本地状态并停止，重试通过祖先检查避免重复 merge；
+5. 实现场景 Markdown frontmatter 和最终 `report.md` frontmatter 校验；其余 Run Markdown 作为不透明正文索引，无效机器字段记录索引错误且不能污染有效缓存；
+6. Repository Indexer 原子同步场景、报告、文件路径、内容、commit、最近同步 SHA/时间，并删除 Git 已不存在的缓存；
+7. 建立只读历史上下文查询，统一暴露已索引正式报告和 GitHub Issues；结果必须区分“查询成功但无历史”和“GitHub/索引暂时不可用”，首次运行只在查询成功时返回明确空集合；
+8. 提供仓库状态、同步动作、最小 Git 树、场景列表/详情和报告读取页面；
+9. Git Token 只在 Repository Service 内使用，不传给命令环境、Agent 或日志。
 
 ### 专项验证
 
-- 使用临时 bare Git 仓库覆盖：首次建分支、正常 fetch、前进、历史重写、source 已是祖先、成功 merge 和冲突停止；
-- 使用合法/非法/重复场景 ID、缺字段报告和 Git 删除文件验证索引事务；
+- 使用临时 bare Git 仓库覆盖：首次建分支、正常 fetch、前进、历史重写、source 已是祖先、成功 merge+push、远端竞争、重复请求和冲突停止；
+- 使用合法/非法/重复场景 ID、最终报告缺字段、其他 Markdown 任意标题和 Git 删除文件验证索引事务；
+- 历史上下文查询覆盖空仓库、已有正式报告、open/closed Issue 和 GitHub 暂时不可达；
 - 同步中断时网站仍显示上一次完整缓存及其 commit/time，不展示半次同步；
-- 真实 smoke：读取 `cynos-ai/luowang`，验证权限；在明确确认后创建或验证其 `scenario-testing` 分支，不写场景或报告。
+- 真实 smoke：读取 `cynos-ai/luowang`，验证最小权限；在明确确认后创建或验证其 `scenario-testing` 分支，不写场景或报告。
 
 ### 退出条件
 
-`AC-GIT-01`、`AC-GIT-03`、`AC-INDEX-01` 通过；目标仓库工作树在每次成功或失败操作后都回到可预测状态。
+`AC-GIT-01`、`AC-GIT-03`、`AC-INDEX-01` 和 `AC-CONNECT-01` 的 GitHub 部分通过；目标仓库工作树在每次成功或失败操作后都回到可预测状态。
 
 ## 9. Phase 3：人工请求的 Agent Run 本地闭环
 
@@ -258,17 +284,18 @@ docker compose down
 
 ### 实施范围
 
-1. 固定并审核 Pi SDK 相关版本，建立 Provider/模型能力和 thinking level 校验；
+1. 固定并审核 Pi SDK 相关版本，建立 Provider/模型能力和 thinking level 校验，并向 Phase 1 的 connectivity check 边界注册 Provider 认证及三个角色模型检查；
 2. 建立 Run Orchestrator、ULID、UTC 时间、不可变 commit 范围和唯一 active run；
-3. 建立 `<data>/report/running/<run-id>`，通过受控 writer 管理 `plan.md`、`execution.md`、`draft-report.md`、`review.md`、`report.md` 和可选 patch；
-4. Main A 读取项目理解、需求、累计 diff、历史 Run/Issue 和场景，完成影响分析、选择及 `plan.md`；
+3. 建立 `<data>/report/running/<run-id>`，通过受控 writer 管理本阶段正常 Run 的 `plan.md`、`execution.md`、`draft-report.md`、`review.md` 和 `report.md`；`scenario-changes.patch` 到 Phase 7 再加入 writer 允许范围；
+4. Main A 通过 Phase 2 的只读历史上下文查询读取已索引正式报告、GitHub Issues 和场景；首次 Run 接收明确空历史。Phase 5 再在同一查询边界补充 SQLite 详细 Run，不改变 Main 工具契约；
 5. Runner 只获得固定 target 工作树、受控命令、允许的环境信息和本地工件写入能力，顺序执行并写执行记录与草稿报告；
 6. Reviewer 使用新 session，只读计划、执行、报告和证据，写独立审核；
-7. Main B 使用新 session 汇总最终报告，严格校验 frontmatter、聚合优先级和 Issue 建议；
+7. Main B 使用新 session 汇总最终报告；只严格校验最终 `report.md` frontmatter、聚合优先级和 Issue 建议，其他四个 Markdown 仅检查存在、非空和角色流程完成；
 8. 每个 session 完成或失败后都 dispose；不共享完整对话，只通过文件交接；
 9. `finalizeRun` 校验完整性并原子移动到 completed；Agent/进程异常留下明确失败，不伪造报告；
 10. 启动被测命令使用显式环境 allowlist，不继承 Harness 高权限 Secret；
-11. 支持 Main 与 Reviewer 一致确认后的零场景 passed；场景缺失或影响不明必须 blocked。
+11. 支持 Main 与 Reviewer 一致确认后的零场景 passed；场景缺失或影响不明必须 blocked；
+12. Phase 7 之前长期场景是只读资产：Main 可以报告覆盖缺口并 blocked，但不产生 `scenario-changes.patch`。场景 patch、策略和 PR 全部由 Phase 7 一次性实现。
 
 ### 专项验证
 
@@ -277,11 +304,12 @@ docker compose down
 - 制造凭据/命令不可用，执行一次 blocked Run；
 - 提供纯文档变化，验证零场景 passed；再提供影响不明变化，验证不能借零场景通过；
 - 运行过程中向目标分支推送新 commit，确认当前 target 不变化；
-- 检查 Runner 子进程环境不包含 Git Token、模型 Key、OSS Secret、管理员密码和 master key。
+- 检查 Runner 子进程环境不包含 Git Token、模型 Key、OSS Secret、管理员密码和 master key；
+- 真实 Provider connectivity check 能区分认证失败、模型不存在和不支持的 thinking level。
 
 ### 退出条件
 
-`AC-RUN-01`、`AC-AGENT-01`、`AC-ZERO-01` 通过；本地 completed Run 足以由下一阶段之外的独立程序归档，不依赖进程内隐藏状态。
+`AC-RUN-01`、`AC-AGENT-01`、`AC-ZERO-01` 和 `AC-CONNECT-01` 的 Provider/模型部分通过；本地 completed Run 足以由后续独立 Archiver 归档，不依赖进程内隐藏状态。
 
 ## 10. Phase 4：浏览器、OSS 证据与测试数据闭环
 
@@ -291,10 +319,10 @@ Runner 能在非生产 Web 测试环境完成 UI 场景、保存并上传证据�
 
 ### 实施范围
 
-1. 接入固定版本 `pi-mcp-adapter` 与 `@playwright/mcp`，使用 headless、isolated 和当前 Run evidence 目录；
+1. 接入固定版本 `pi-mcp-adapter` 与 `@playwright/mcp`，使用 headless、isolated 和当前 Run evidence 目录，并注册 MCP 进程启动/工具发现 connectivity check；
 2. 默认使用 accessibility snapshot/ref 操作，禁用 unsafe 任意代码工具；
 3. Runner 模型视觉能力与计划需求不匹配时提前 blocked，不伪造视觉结论；
-4. 实现 S3-compatible OSS Adapter：上传、读取/探测、删除测试对象、稳定 object key 和长期地址；
+4. 实现 S3-compatible OSS Adapter：上传、读取/探测、删除测试对象、稳定 object key 和长期地址，并注册使用独立测试对象的 OSS connectivity check；
 5. 私有 bucket 未配置 public base URL 时由 Gateway 登录鉴权后临时签名或代理，Git 工件只保存稳定地址；
 6. Reviewer 可以通过受控只读方式获取截图证据，不获得测试密码或任意命令；
 7. 测试数据以 run-id 标记，场景结束清理，Run 结束兜底清理；外部副作用只允许配置白名单目标；
@@ -310,7 +338,7 @@ Runner 能在非生产 Web 测试环境完成 UI 场景、保存并上传证据�
 
 ### 退出条件
 
-`AC-BROWSER-01`、`AC-DATA-01` 通过；UI Run 与 Phase 3 相同地完成五文件闭环，且证据在 Run 结束后仍可按权限访问。
+`AC-BROWSER-01`、`AC-DATA-01` 通过；GitHub、测试环境、Provider/模型、MCP 和 OSS 的正式独立检查全部可用，`AC-CONNECT-01` 首次完整通过；UI Run 与 Phase 3 相同地完成五文件闭环，且证据在 Run 结束后仍可按权限访问。
 
 ## 11. Phase 5：归档、Issue 与推进闭环
 
@@ -321,7 +349,7 @@ completed Run 可由独立 Archiver 重复扫描而不产生重复副作用；�
 ### 实施范围
 
 1. 建立 Run Store 和归档状态，批量导入 Run 文件、commit 范围、结果、场景结果、PR/Issue/报告关系；
-2. Archiver 以 run-id 幂等执行：导入、发布报告、处理场景 patch hook、Issue、推进和本地保留；
+2. Archiver 以 run-id 幂等执行：导入、发布正常测试报告、Issue、推进和本地保留；本阶段只处理没有 `scenario-changes.patch` 的正常 Run；
 3. 正式测试报告发布到 `docs/scenario-testing/reports/<run-id>/`，三文件同一次提交；
 4. blocked 且只产生待审核场景变更的说明只进 SQLite，不发布为正式 Git 报告；
 5. 按 `luowang-run:<run-id>` 和 `luowang-bug:<bug-key>` 查询后再创建 Issue；link 必须验证目标 Issue；
@@ -329,7 +357,8 @@ completed Run 可由独立 Archiver 重复扫描而不产生重复副作用；�
 7. 在同一 SQLite 事务中执行推进判断和 last target 更新；
 8. passed、failed、blocked、interrupted、报告冲突、Issue 部分失败分别遵循 Spec 推进矩阵；
 9. 发布前 fetch，冲突时不 force-push，保留 completed 目录和可见错误；
-10. 成功发布后触发 Repository Indexer，保留旧 Run/Issue 历史不变。
+10. 成功发布后触发 Repository Indexer，保留旧 Run/Issue 历史不变；
+11. 通过 Phase 2 已建立的历史上下文查询暴露 SQLite 详细 Run；场景 patch 的解析、策略、提交、PR 和幂等发布均不在本阶段实现，统一归 Phase 7。
 
 ### 专项验证
 
@@ -394,7 +423,7 @@ Git Poll、Cron、网站人工请求和 API 请求统一进入 SQLite FIFO 队�
 2. Main 只在工作树产生规范化 patch，不直接写远程 Git；
 3. 分类 patch 中的新增、修改和 deprecated，严格执行 `autonomous`、`add-only`、`review-all`；
 4. 无需审核时，Runner 执行变更后场景、Reviewer 审核，Archiver 直接提交；
-5. 需要审核时，Run 以 blocked 结束，Archiver 创建指向场景测试分支的 PR并双向记录 run/target/理由/缺口；
+5. 需要审核时，Run 按 Spec §8 的特殊文件契约只产生 `scenario-changes.patch + report.md` 并以 blocked 结束；其余四文件标记不适用，Archiver 创建指向场景测试分支的 PR并双向记录 run/target/理由/缺口；
 6. 混合 patch 在 add-only 下整体进入 PR，不拆分；场景 PR 默认不创建 Issue；
 7. PR 合并不改写旧 blocked Run，也不自动触发；提供人工重测和下一次产品变化自然使用两条路径；
 8. 初始化实现 Preflight、静态勘察、低风险运行时侦察、临时能力图、候选综合、策略处理、候选验证、独立审核和最终修订；
@@ -408,7 +437,7 @@ Git Poll、Cron、网站人工请求和 API 请求统一进入 SQLite FIFO 队�
 - `autonomous`：候选场景真实执行并由 Archiver 直接提交；
 - `add-only` 纯新增：直接提交；
 - `add-only` 新增+修改混合：整体 PR、Run blocked；
-- `review-all`：场景 patch 形成 PR、Run blocked、不挂起 session；
+- `review-all`：场景 patch 形成 PR、Run blocked、不挂起 session；两文件 Run 的 `report.md` 仍必须通过 §22.4 frontmatter 校验；
 - PR 合并：旧 Run 仍 blocked，纯场景 commit 不自动测试；人工重测可以执行最新场景；
 - 初始化资料冲突或环境不可用：只产生 draft/覆盖缺口，不伪造 approved；
 - 最终 Git 中不存在 suite、catalog、journey 目录或长期能力图。
@@ -430,7 +459,7 @@ Git Poll、Cron、网站人工请求和 API 请求统一进入 SQLite FIFO 队�
 1. Dashboard 完整呈现场景测试分支 HEAD、last completed target、未纳入 commit、active run、队列、后台任务和依赖健康；
 2. Git 树只按 Run Store 标记 included/target/result/PR/Issues，同一 commit 可显示多次 Run；
 3. 场景页提供状态/标签/关键词筛选、正文、Git commit、历史 Run 和待审 PR，只读 Git 缓存；
-4. Runs 页展示范围、状态、五文件、每场景结果、confirmed Bugs、OSS 证据、commit、PR/Issues 和归档重试；
+4. Runs 页展示范围、状态、正常 Run 的五文件、特殊场景审核 blocked Run 的实际文件/不适用标记、每场景结果、confirmed Bugs、OSS 证据、commit、PR/Issues 和归档重试；
 5. 当前测试页展示阶段、角色、base/target、当前场景、进度、脱敏活动、文件和明确阻塞；
 6. 配置页补齐所有字段、掩码、覆盖/删除和检查体验；
 7. 采用普通 HTTP + 网站轮询，不提前增加 SSE/WebSocket；
@@ -502,13 +531,14 @@ npm run test:acceptance
 | Spec 验收 ID | 首次闭环阶段 | 最终复验 |
 |---|---:|---:|
 | `AC-DEPLOY-01` | Phase 1 | Phase 9 |
-| `AC-CONFIG-01`、`AC-CONNECT-01` | Phase 1 | Phase 8、9 |
+| `AC-CONFIG-01` | Phase 1 | Phase 8、9 |
+| `AC-CONNECT-01` | Phase 2 完成 GitHub、Phase 3 完成 Provider、Phase 4 完成 MCP/OSS 后闭环 | Phase 9 |
 | `AC-GIT-01`、`AC-GIT-03`、`AC-INDEX-01` | Phase 2 | Phase 9 |
 | `AC-RUN-01`、`AC-AGENT-01`、`AC-ZERO-01` | Phase 3 | Phase 9 |
 | `AC-BROWSER-01`、`AC-DATA-01` | Phase 4 | Phase 9 |
 | `AC-PROGRESS-01/02`、`AC-ISSUE-01`、`AC-HISTORY-01`、`AC-ARCHIVE-01`、`AC-REPORT-01` | Phase 5 | Phase 9 |
 | `AC-GIT-02`、`AC-TRIGGER-01/02`、`AC-QUEUE-01`、`AC-RECOVERY-01` | Phase 6 | Phase 9 |
-| `AC-SCENARIO-01..05`、`AC-INIT-01` | Phase 7 | Phase 9 |
+| `AC-SCENARIO-01`、`AC-SCENARIO-02`、`AC-SCENARIO-03`、`AC-SCENARIO-04`、`AC-SCENARIO-05`、`AC-INIT-01` | Phase 7 | Phase 9 |
 | `AC-GIT-VIEW-01`、`AC-SCENARIO-VIEW-01`、`AC-RUN-VIEW-01`、`AC-ACTIVE-VIEW-01` | Phase 8 | Phase 9 |
 | `AC-SECRET-01` | Phase 1、3 持续建立 | 每阶段回归，Phase 9 汇总 |
 | `AC-QUALITY-01` | Phase 0 建立 | 每阶段必须通过，Phase 9 汇总 |
