@@ -31,6 +31,14 @@ Compose 将数据保存到 `luowang-data` 卷，并把宿主机端口绑定到 `
 
 配置 GitHub 仓库后，先在“仓库事实与场景”区域准备 `scenario-testing` 分支，再点击“同步索引”。Git Token 只由 Repository Service 使用，不会写入 Git URL、命令参数、子进程环境、日志或测试 Agent。
 
+真实 GitHub smoke 需要操作者临时通过环境变量提供独立测试仓库和最小权限 Token；命令不会把 Token 写入文件或提交：
+
+```bash
+LUOWANG_SMOKE_REPOSITORY=https://github.com/cynos-ai/cynos-website \
+LUOWANG_SMOKE_GITHUB_TOKEN='<temporary-token>' \
+npm run test:e2e:github
+```
+
 Docker Secret 文件也可以通过 `LUOWANG_ADMIN_PASSWORD_FILE` 和 `LUOWANG_MASTER_KEY_FILE` 提供；直接环境变量优先。生产环境应使用 HTTPS 或可信反向代理，并设置 `LUOWANG_ALLOWED_ORIGIN`。
 
 如果 Docker Hub 访问较慢，可以在构建时切换基础镜像源：
