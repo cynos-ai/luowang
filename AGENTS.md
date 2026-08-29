@@ -15,7 +15,13 @@
 - 普通缺陷从最新 `develop` 创建 `fix/<short-kebab-name>`，完成后向 `develop` 提交 PR；正式版本紧急缺陷从 `main` 创建同样的 `fix/*`，合入 `main` 后必须同步到 `develop`。
 - 不预设 `release/*`、`hotfix/*` 等额外分支。独立文档、CI 或依赖维护确有需要时可使用 `chore/*`。
 - 发布通过 `develop → main` PR 完成，并在 `main` 使用 SemVer tag。仓库级“合并后自动删除 head 分支”保持关闭，避免发布 PR 删除长期 `develop`；合并者只手工删除 `feat/*`、`fix/*`、`chore/*`。
-- `scenario-testing` 是罗网管理测试事实的长期分支，不是人工开发分支，也不能代替 `develop` 或 `main`。
+- `scenario-testing` 只存在于罗网所管理的外部目标仓库中，用于保存该目标项目的测试事实；它不是 `cynos-ai/luowang` 的开发或发布分支。MVP 验收使用独立样例仓库和独立非生产样例应用。
+
+## 固定安全边界
+
+- 空数据库的管理员密码只从 `LUOWANG_ADMIN_PASSWORD` 初始化；不提供匿名设密或默认密码，已有哈希不被环境变量覆盖。
+- Main 的场景 patch 只能修改 `docs/scenario-testing/scenarios/**`，必须拒绝产品/需求/历史报告变更、越界 rename、symlink、submodule、二进制和无效场景。
+- Archiver 只原样发布已验证场景 patch，并只为当前 Run 新增 `docs/scenario-testing/reports/<current-run-id>/**`；不得改写其他历史报告。
 
 ## 文档归档规则
 
