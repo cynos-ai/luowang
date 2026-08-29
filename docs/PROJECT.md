@@ -8,7 +8,7 @@
 
 项目的主要使用者是负责配置测试环境、触发测试、审核场景资产和处理测试结果的项目负责人或测试操作者。开发和需求系统消费罗网写入 GitHub 的报告与 Issue，但不由罗网直接调度。
 
-项目公开托管在 `cynos-ai/luowang`，采用 PolyForm Noncommercial 1.0.0。源码可公开查看、修改和按许可证传播，但商业用途没有被默认授权，因此不能将其描述为 OSI Open Source。
+项目公开托管在 `cynos-ai/luowang`，采用 GNU Affero General Public License v3.0（AGPL-3.0）。许可证允许商业使用，但要求分发的衍生作品继续使用同一许可证；修改版通过网络提供服务时，也必须向用户提供完整对应源码。
 
 ## 关键概念
 

@@ -4,7 +4,7 @@
 - 关联 Intent：[intent.md](./intent.md)
 - 关联 Spec：[spec.md](./spec.md)
 - 正式仓库：公开的 `cynos-ai/luowang`
-- 许可证：`PolyForm-Noncommercial-1.0.0`
+- 许可证：GNU Affero General Public License v3.0（`AGPL-3.0`）
 - 实施方式：阶段顺序执行；每一阶段独立分支、独立 PR、独立验证、独立闭环
 
 ## 1. 计划目标
@@ -71,12 +71,15 @@ main ──> fix/* ──PR──> main ──> patch tag
 
 ### 3.3 许可证判断
 
-选择 PolyForm Noncommercial 1.0.0，因为它明确只许可非商业目的及列出的个人、教育、公益、政府等用途，符合“公开但不默认授权商业使用”的要求。它限制商业使用，因此不符合 OSI Open Source Definition，项目对外统一称为“公开源码”或 source-available。
+选择 GNU Affero General Public License v3.0。它比非商业许可证宽松，明确允许商业使用、修改、分发和收费；同时是最强的常用 copyleft 许可证之一，要求分发衍生作品时提供完整对应源码，并要求通过网络提供服务的修改版向用户提供对应源码。它适合罗网这类长期运行的服务端软件，也能被 GitHub 直接识别为 `AGPL-3.0`。
+
+本项目采用 AGPL v3 only：根目录使用官方 v3 文本，未来 `package.json` 使用 `AGPL-3.0-only`。这不能阻止第三方商用或收费；保护重点是修改和网络服务场景下的源码回馈，而不是禁止商业用途。
 
 参考依据：
 
-- [PolyForm Noncommercial 1.0.0 官方文本](https://polyformproject.org/licenses/noncommercial/1.0.0)；
-- [OSI Open Source Definition](https://opensource.org/osd) 第 1、6 条；
+- [GNU AGPL v3 官方文本](https://www.gnu.org/licenses/agpl-3.0.html)；
+- [GitHub Choose a License：AGPL-3.0](https://choosealicense.com/licenses/agpl-3.0/)；
+- [OSI：AGPL-3.0](https://opensource.org/license/agpl-v3)；
 - [GitHub Flow](https://docs.github.com/en/get-started/using-github/github-flow)；
 - [GitHub protected branches](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-protected-branches/managing-a-branch-protection-rule)；
 - [Atlassian Gitflow 说明](https://www.atlassian.com/git/tutorials/comparing-workflows/gitflow-workflow)：完整 Gitflow 已偏重且不适合现代持续交付，因此本项目不照搬 release/hotfix 分支。
@@ -173,7 +176,7 @@ npm run test:e2e
 
 ### 实施范围
 
-1. 初始化 npm/TypeScript ESM 工程并提交 lockfile，声明 Node 24 和 `license: PolyForm-Noncommercial-1.0.0`；
+1. 初始化 npm/TypeScript ESM 工程并提交 lockfile，声明 Node 24 和 `license: AGPL-3.0-only`；
 2. 建立 Fastify 应用入口、React/Vite 控制台入口和共享类型边界；
 3. Fastify 生产模式提供构建后的静态网站和 `/health`；
 4. 建立 SQLite 连接、migration runner 和最小系统元数据表，数据位置可配置并默认落到 `/data`；
@@ -181,7 +184,7 @@ npm run test:e2e
 6. 建立 Vitest、格式化、lint、typecheck、build、e2e 脚本；
 7. 建立多阶段 Dockerfile、非 root 运行用户、Compose、健康检查和持久化目录；
 8. 建立 GitHub Actions，对指向 `develop` 和 `main` 的 PR 执行公共校验和 Docker build；
-9. 提供面向公开仓库的最小根 README：项目状态、非商用许可证说明、本地启动和安全警告，不建立重复文档索引；
+9. 提供面向公开仓库的最小根 README：项目状态、AGPL 强 copyleft/网络源码义务、本地启动和安全警告，不建立重复文档索引；
 10. 创建 `develop`，为 `main`、`develop` 配置禁止 force-push/删除、要求 PR 和必需 checks 的 ruleset，并确认 GitHub 的仓库级自动删除 head 分支保持关闭。
 
 ### 专项验证
@@ -205,7 +208,7 @@ docker compose down
 - 容器进程不是 root；
 - 重启容器后 SQLite 系统元数据仍存在；
 - GitHub PR 上 required checks 实际运行；
-- GitHub 仓库为 Public，默认分支为 `main`，根目录许可证文本与官方 PolyForm 1.0.0 一致。
+- GitHub 仓库为 Public，默认分支为 `main`，许可证被 GitHub 识别为 AGPL-3.0，根目录正文与官方 GNU AGPL v3 一致。
 
 ### 退出条件
 
@@ -523,7 +526,7 @@ npm run test:acceptance
 1. Spec §23 全部 AC 有可追溯的通过证据，没有“未运行但视为成功”；
 2. dogfood 发现的阻断问题已经修复并复测；
 3. `main` 上的发布 commit 与 `v0.1.0` tag 一致；
-4. 公开仓库明确显示 PolyForm Noncommercial 1.0.0，且文案没有误称 OSI Open Source；
+4. 公开仓库被 GitHub 识别为 AGPL-3.0，文案明确商业使用被允许，同时准确说明分发和修改版网络服务的源码义务；
 5. MVP 非目标没有被悄悄实现，后续候选需求回到新的 `docs/changes/<change-id>/`。
 
 ## 16. 验收追踪矩阵

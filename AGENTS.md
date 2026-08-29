@@ -9,7 +9,7 @@
 
 ## 仓库与分支
 
-- 正式仓库是公开的 `cynos-ai/luowang`；许可证为 `PolyForm-Noncommercial-1.0.0`。它是非商用公开源码许可证，不要将项目描述为 OSI Open Source。
+- 正式仓库是公开的 `cynos-ai/luowang`；许可证为 GNU Affero General Public License v3.0（`AGPL-3.0`）。它允许商业使用，但分发衍生作品或通过网络提供修改版时必须按 AGPL 提供对应源码。
 - `main` 只保存正式发布历史；`develop` 是日常开发集成分支。两者都禁止直接提交和 force-push，通过 Pull Request 合并。
 - 功能从最新 `develop` 创建 `feat/<short-kebab-name>`，完成后向 `develop` 提交 PR。
 - 普通缺陷从最新 `develop` 创建 `fix/<short-kebab-name>`，完成后向 `develop` 提交 PR；正式版本紧急缺陷从 `main` 创建同样的 `fix/*`，合入 `main` 后必须同步到 `develop`。

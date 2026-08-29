@@ -8,7 +8,7 @@
 - 中文名：罗网
 - 英文名：LuoWang
 - GitHub 目标：公开仓库 `cynos-ai/luowang`
-- 许可证：`PolyForm-Noncommercial-1.0.0`（公开源码、限制商业用途，不属于 OSI Open Source）
+- 许可证：GNU Affero General Public License v3.0（`AGPL-3.0`，允许商业使用的强 copyleft）
 - 本地目录：`/home/sj/Codes/cynos/luowang`
 - 项目定位：AI Scenario Testing Harness
 - MVP 部署范围：单租户、单目标仓库、每个部署一个测试环境
@@ -1364,9 +1364,10 @@ SQLite 表、API 路径、React 组件划分、CSS、日志库、迁移文件组
 #### 公开方式和许可证
 
 - 正式仓库为 GitHub `cynos-ai/luowang`，可见性为 Public；
-- 根目录保存完整的 PolyForm Noncommercial License 1.0.0，`package.json` 使用 SPDX 标识 `PolyForm-Noncommercial-1.0.0`；
-- 该许可证允许非商业用途及许可证列出的个人、教育、公益、政府等用途，但不默认授权商业用途；商业使用必须另行取得许可；
-- 因为许可证限制商业使用，不符合 OSI Open Source Definition 的自由再分发和不得限制使用领域要求；项目对外应称为“公开源码”或 source-available，不称为 OSI Open Source。
+- 根目录保存完整的 GNU Affero General Public License v3.0 官方文本，GitHub 识别为 `AGPL-3.0`，`package.json` 使用精确 SPDX 标识 `AGPL-3.0-only`；
+- 允许个人和商业使用、修改、分发和收费，但许可证与版权声明必须保留；
+- 分发基于本项目的作品时，完整对应源码必须按 AGPL-3.0 提供；修改版通过网络与用户交互时，同样必须向这些用户提供完整对应源码；
+- AGPL-3.0 是 OSI 认可的强 copyleft 开源许可证。它不禁止第三方商用或收费，项目依靠源码回馈义务而不是非商业限制保护开放性。
 
 #### 轻量分支策略
 
