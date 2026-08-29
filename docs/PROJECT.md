@@ -57,4 +57,4 @@
 
 ## 当前基线
 
-当前 MVP 的已确认产品、架构、安全和验收边界记录在 `docs/changes/luowang-harness-mvp/spec.md`，分阶段实现顺序和每阶段证明记录在同目录 `plan.md`。项目尚未进入源码实现阶段。
+当前 MVP 的已确认产品、架构、安全和验收边界记录在 `docs/changes/luowang-harness-mvp/spec.md`，分阶段实现顺序和每阶段证明记录在同目录 `plan.md`。当前已完成 Phase 0、Phase 1，并在 `feat/p2-repository-index` 实现 Phase 2 的 GitHub Repository Service、场景分支控制、Markdown 索引和只读查询边界；Agent Run、浏览器、OSS 归档与自动化仍属于后续阶段。

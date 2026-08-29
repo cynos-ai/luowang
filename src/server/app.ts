@@ -5,7 +5,12 @@ import fastifyStatic from '@fastify/static';
 import Fastify, { type FastifyReply, type FastifyRequest } from 'fastify';
 import type { Logger } from 'pino';
 
-import type { ConfigResponse, HealthResponse } from '../shared/types.js';
+import type {
+  ConfigResponse,
+  HealthResponse,
+  RepositoryHistoryResponse,
+  RepositoryStatusResponse,
+} from '../shared/types.js';
 import { createConfigurationStore, type ConfigurationStore } from './configuration.js';
 import { createConnectivityRegistry, type ConnectivityRegistry } from './connectivity.js';
 import type { AppConfig } from './config.js';
@@ -28,6 +33,13 @@ import {
   SECRET_KEYS,
   type SecretStore,
 } from './security/secret-store.js';
+import { createRepositoryIndexer, type RepositoryIndexer } from './repository/indexer.js';
+import { RepositoryError } from './repository/errors.js';
+import {
+  createRepositoryService,
+  type RepositoryService,
+  validateRepositoryUrl,
+} from './repository/service.js';
 
 export interface AppOptions {
   config: AppConfig;
@@ -37,6 +49,8 @@ export interface AppOptions {
   secretStore?: SecretStore;
   configuration?: ConfigurationStore;
   connectivity?: ConnectivityRegistry;
+  repository?: RepositoryService;
+  indexer?: RepositoryIndexer;
 }
 
 interface JsonRecord {
@@ -55,8 +69,15 @@ export async function createApp(options: AppOptions) {
       repoDir: options.config.repoDir,
       reportDir: options.config.reportDir,
     });
+  const repository =
+    options.repository ??
+    createRepositoryService(options.database.sqlite, configuration, secretStore, {
+      repoDir: options.config.repoDir,
+    });
+  const indexer = options.indexer ?? createRepositoryIndexer(options.database.sqlite, repository);
   const connectivity =
-    options.connectivity ?? createConnectivityRegistry(options.database.sqlite, configuration);
+    options.connectivity ??
+    createConnectivityRegistry(options.database.sqlite, configuration, repository);
 
   // Do not retain the bootstrap password or raw master-key string in the shared config object.
   options.config.initialAdminPassword = undefined;
@@ -179,8 +200,136 @@ export async function createApp(options: AppOptions) {
     requireAuth(request, auth);
     const body = readBody(request);
     applySecretValues(body.secrets, secretStore);
+    if (body.repository !== undefined && typeof body.repository === 'string') {
+      validateRepositoryUrl(body.repository);
+    }
     configuration.updateRepository(body);
     return reply.send(makeConfigResponse(configuration, secretStore));
+  });
+
+  app.get('/api/repository/status', async (request, reply) => {
+    requireAuth(request, auth);
+    const status: RepositoryStatusResponse = await repository.getStatus();
+    return reply.send(status);
+  });
+
+  app.post('/api/repository/sync', async (request, reply) => {
+    requireAuth(request, auth);
+    return reply.send(await indexer.sync());
+  });
+
+  app.post('/api/repository/scenario-branch', async (request, reply) => {
+    requireAuth(request, auth);
+    const body = readBody(request);
+    const initialRef = body.initialRef;
+    if (initialRef !== undefined && typeof initialRef !== 'string') {
+      throw new AppError('INVALID_REQUEST', 'initialRef 必须是字符串', 400);
+    }
+    return reply.send(await repository.ensureScenarioBranch(initialRef));
+  });
+
+  app.post('/api/repository/merge', async (request, reply) => {
+    requireAuth(request, auth);
+    const body = readBody(request);
+    if (typeof body.sourceRef !== 'string' || body.sourceRef.trim() === '') {
+      throw new AppError('INVALID_REQUEST', 'sourceRef 必须是非空字符串', 400);
+    }
+    if (typeof body.confirmed !== 'boolean') {
+      throw new AppError('MERGE_CONFIRMATION_REQUIRED', '需要明确确认后才能合并', 400);
+    }
+    return reply.send(await repository.mergeSourceRef(body.sourceRef, body.confirmed));
+  });
+
+  app.get('/api/repository/tree', async (request, reply) => {
+    requireAuth(request, auth);
+    const commit = readOptionalQuery(request, 'commit');
+    const target = commit ?? (await repository.getStatus()).remoteHead;
+    if (!target) {
+      throw new RepositoryError('SCENARIO_BRANCH_NOT_FOUND', '场景测试分支尚未创建', 409);
+    }
+    return reply.send({ commit: target, entries: await repository.listTree(target) });
+  });
+
+  app.get('/api/repository/history', async (request, reply) => {
+    requireAuth(request, auth);
+    const commit = readOptionalQuery(request, 'commit');
+    const status = await repository.getStatus();
+    const target = commit ?? status.remoteHead;
+    if (!target) {
+      throw new RepositoryError('SCENARIO_BRANCH_NOT_FOUND', '场景测试分支尚未创建', 409);
+    }
+    const git = await repository.getRepository();
+    return reply.send({ commit: target, entries: await git.history(target) });
+  });
+
+  app.get('/api/scenarios', async (request, reply) => {
+    requireAuth(request, auth);
+    const status = readOptionalQuery(request, 'status');
+    const tag = readOptionalQuery(request, 'tag');
+    if (status !== undefined && !['draft', 'approved', 'deprecated'].includes(status)) {
+      throw new AppError('INVALID_REQUEST', 'status 筛选值无效', 400);
+    }
+    return reply.send({
+      scenarios: indexer.listScenarios({
+        status: status as 'draft' | 'approved' | 'deprecated' | undefined,
+        tag,
+      }),
+    });
+  });
+
+  app.get('/api/scenarios/:scenarioId', async (request, reply) => {
+    requireAuth(request, auth);
+    const scenario = indexer.getScenario(readParam(request, 'scenarioId'));
+    if (!scenario) throw new AppError('SCENARIO_NOT_FOUND', '场景不存在或尚未索引', 404);
+    return reply.send({ scenario });
+  });
+
+  app.get('/api/reports', async (request, reply) => {
+    requireAuth(request, auth);
+    return reply.send({ reports: indexer.listReports() });
+  });
+
+  app.get('/api/reports/:runId', async (request, reply) => {
+    requireAuth(request, auth);
+    const report = indexer.getReport(readParam(request, 'runId'));
+    if (!report) throw new AppError('REPORT_NOT_FOUND', '报告不存在或尚未索引', 404);
+    return reply.send({ report });
+  });
+
+  app.get('/api/history', async (request, reply) => {
+    requireAuth(request, auth);
+    const status = await repository.getStatus();
+    const reports = indexer.listReports();
+    if (!status.configured) {
+      const response: RepositoryHistoryResponse = {
+        status: 'not_configured',
+        reports,
+        issues: [],
+        issuesAvailable: false,
+        issuesMessage: '目标 GitHub 仓库尚未配置',
+      };
+      return reply.send(response);
+    }
+    let issues = [] as RepositoryHistoryResponse['issues'];
+    let issuesAvailable = true;
+    let issuesMessage: string | null = null;
+    try {
+      issues = await repository.listIssues();
+    } catch {
+      issuesAvailable = false;
+      issuesMessage = 'GitHub Issues 暂时不可用；已保留本地索引历史';
+    }
+    if (status.availability === 'unavailable') {
+      issuesMessage = status.errorMessage ?? '目标仓库索引暂时不可用；已保留本地历史';
+    }
+    const response: RepositoryHistoryResponse = {
+      status: status.availability === 'unavailable' || !issuesAvailable ? 'degraded' : 'ok',
+      reports,
+      issues,
+      issuesAvailable,
+      issuesMessage,
+    };
+    return reply.send(response);
   });
 
   app.get('/api/secrets', async (request, reply) => {
@@ -248,25 +397,30 @@ export async function createApp(options: AppOptions) {
         ? error.statusCode
         : error instanceof SecretStoreError
           ? 503
-          : error instanceof AuthError || possibleError.name === 'ConfigurationError'
-            ? 400
-            : typeof possibleError.statusCode === 'number'
-              ? possibleError.statusCode
-              : 500;
+          : error instanceof RepositoryError
+            ? error.statusCode
+            : error instanceof AuthError || possibleError.name === 'ConfigurationError'
+              ? 400
+              : typeof possibleError.statusCode === 'number'
+                ? possibleError.statusCode
+                : 500;
     const code =
       error instanceof AppError
         ? error.code
         : error instanceof SecretStoreError
           ? 'SECRET_STORE_UNAVAILABLE'
-          : error instanceof AuthError
+          : error instanceof RepositoryError
             ? error.code
-            : possibleError.name === 'ConfigurationError'
-              ? 'CONFIGURATION_INVALID'
-              : statusCode === 400
-                ? 'BAD_REQUEST'
-                : 'INTERNAL_ERROR';
+            : error instanceof AuthError
+              ? error.code
+              : possibleError.name === 'ConfigurationError'
+                ? 'CONFIGURATION_INVALID'
+                : statusCode === 400
+                  ? 'BAD_REQUEST'
+                  : 'INTERNAL_ERROR';
     const message =
       error instanceof AppError ||
+      error instanceof RepositoryError ||
       error instanceof AuthError ||
       possibleError.name === 'ConfigurationError'
         ? typeof possibleError.message === 'string'
@@ -336,6 +490,9 @@ function updateConfiguration(
   if (body.repository !== undefined) {
     const repository = readRecord(body.repository, 'repository must be an object');
     applySecretValues(repository.secrets, secretStore);
+    if (repository.repository !== undefined && typeof repository.repository === 'string') {
+      validateRepositoryUrl(repository.repository);
+    }
     configuration.updateRepository(repository);
     updated = true;
   }
@@ -431,6 +588,16 @@ function readParam(request: FastifyRequest, name: string): string {
   const value = params[name];
   if (typeof value !== 'string' || value.length === 0) {
     throw new AppError('INVALID_REQUEST', '请求参数无效', 400);
+  }
+  return value;
+}
+
+function readOptionalQuery(request: FastifyRequest, name: string): string | undefined {
+  const query = request.query as Record<string, unknown> | undefined;
+  const value = query?.[name];
+  if (value === undefined) return undefined;
+  if (typeof value !== 'string' || value.length === 0) {
+    throw new AppError('INVALID_REQUEST', '查询参数无效', 400);
   }
   return value;
 }

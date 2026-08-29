@@ -21,6 +21,7 @@
     "start": "node dist/server/main.js",
     "test": "vitest run",
     "test:e2e": "npm run build && tsx tests/e2e/smoke.ts",
+    "test:e2e:github": "npm run build && tsx tests/e2e/phase2-github-smoke.ts",
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.web.json"
   },
   "dependencies": {
@@ -32,7 +33,8 @@
     "fastify": "^5.4.0",
     "pino": "^9.9.0",
     "react": "^19.1.1",
-    "react-dom": "^19.1.1"
+    "react-dom": "^19.1.1",
+    "yaml": "^2.9.0"
   },
   "devDependencies": {
     "@eslint/js": "^9.33.0",

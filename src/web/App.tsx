@@ -4,9 +4,14 @@ import type {
   AuthStatusResponse,
   ConfigResponse,
   ConnectivityCheck,
+  GitTreeEntry,
   HarnessConfig,
   HealthResponse,
+  IndexedReport,
+  IndexedScenario,
   RepositoryConfig,
+  RepositoryHistoryResponse,
+  RepositoryStatusResponse,
   SecretKey,
 } from '../shared/types';
 
@@ -210,12 +215,12 @@ export default function App() {
     }
   };
 
-  const runCheck = async () => {
+  const runCheck = async (checkId = 'test-environment-url') => {
     setBusy('check');
     setError('');
     try {
       const next = await requestJson<ConnectivityCheck>(
-        '/api/connectivity/checks/test-environment-url',
+        `/api/connectivity/checks/${encodeURIComponent(checkId)}`,
         { method: 'POST' },
       );
       setChecks((current) => [...current.filter((item) => item.id !== next.id), next]);
@@ -715,6 +720,8 @@ export default function App() {
         </div>
       </section>
 
+      <RepositoryWorkspace />
+
       <section className="panel" aria-labelledby="checks-title">
         <div className="section-heading">
           <div>
@@ -730,7 +737,11 @@ export default function App() {
             {busy === 'check' ? '检查中…' : '检查测试环境'}
           </button>
         </div>
-        <CheckList checks={checks} />
+        <CheckList
+          checks={checks}
+          busy={busy === 'check'}
+          onRun={(checkId) => void runCheck(checkId)}
+        />
       </section>
 
       <section className="panel" aria-labelledby="password-title">
@@ -764,6 +775,289 @@ export default function App() {
       </section>
     </Shell>
   );
+}
+
+function RepositoryWorkspace() {
+  const [status, setStatus] = useState<RepositoryStatusResponse | null>(null);
+  const [scenarios, setScenarios] = useState<IndexedScenario[]>([]);
+  const [reports, setReports] = useState<IndexedReport[]>([]);
+  const [history, setHistory] = useState<RepositoryHistoryResponse | null>(null);
+  const [tree, setTree] = useState<GitTreeEntry[]>([]);
+  const [busy, setBusy] = useState<'load' | 'sync' | 'branch' | 'merge' | null>('load');
+  const [error, setError] = useState('');
+  const [message, setMessage] = useState('');
+
+  const load = async () => {
+    setBusy('load');
+    setError('');
+    try {
+      const [nextStatus, nextScenarios, nextReports, nextHistory] = await Promise.all([
+        requestJson<RepositoryStatusResponse>('/api/repository/status'),
+        requestJson<{ scenarios: IndexedScenario[] }>('/api/scenarios'),
+        requestJson<{ reports: IndexedReport[] }>('/api/reports'),
+        requestJson<RepositoryHistoryResponse>('/api/history'),
+      ]);
+      setStatus(nextStatus);
+      setScenarios(nextScenarios.scenarios);
+      setReports(nextReports.reports);
+      setHistory(nextHistory);
+      if (nextStatus.remoteHead) {
+        const nextTree = await requestJson<{ entries: GitTreeEntry[] }>(
+          `/api/repository/tree?commit=${encodeURIComponent(nextStatus.remoteHead)}`,
+        );
+        setTree(nextTree.entries);
+      } else {
+        setTree([]);
+      }
+    } catch (cause: unknown) {
+      setError(toUserMessage(cause, '无法读取仓库索引'));
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  useEffect(() => {
+    void load();
+  }, []);
+
+  const sync = async () => {
+    setBusy('sync');
+    setError('');
+    setMessage('');
+    try {
+      const result = await requestJson<{
+        status: string;
+        message: string;
+        errors: Array<{ path: string; message: string }>;
+      }>('/api/repository/sync', { method: 'POST' });
+      setMessage(result.message);
+      await load();
+    } catch (cause: unknown) {
+      setError(toUserMessage(cause, '仓库同步失败'));
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const createBranch = async () => {
+    const initialRef = window.prompt('输入用于创建场景测试分支的 branch、tag 或 SHA', 'main');
+    if (!initialRef) return;
+    setBusy('branch');
+    setError('');
+    try {
+      const result = await requestJson<{ head: string }>('/api/repository/scenario-branch', {
+        method: 'POST',
+        body: JSON.stringify({ initialRef }),
+      });
+      setMessage(`场景测试分支已准备：${result.head.slice(0, 12)}`);
+      await load();
+    } catch (cause: unknown) {
+      setError(toUserMessage(cause, '场景测试分支创建失败'));
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const merge = async () => {
+    const sourceRef = window.prompt('输入要合并到场景测试分支的 branch、tag 或 SHA');
+    if (!sourceRef || !window.confirm(`确认以 --no-ff 合并 ${sourceRef}？`)) return;
+    setBusy('merge');
+    setError('');
+    try {
+      const result = await requestJson<{ scenarioBranchHead: string; alreadyIncluded: boolean }>(
+        '/api/repository/merge',
+        { method: 'POST', body: JSON.stringify({ sourceRef, confirmed: true }) },
+      );
+      setMessage(
+        result.alreadyIncluded
+          ? '来源 ref 已经在场景测试分支历史中，不重复合并'
+          : `合并已发布：${result.scenarioBranchHead.slice(0, 12)}`,
+      );
+      await load();
+    } catch (cause: unknown) {
+      setError(toUserMessage(cause, '来源 ref 合并失败'));
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const statusLabel = status
+    ? status.configured
+      ? status.remoteHead
+        ? '已连接'
+        : '待准备分支'
+      : '未配置'
+    : '读取中';
+
+  return (
+    <section className="panel repository-workspace" aria-labelledby="repository-workspace-title">
+      <div className="section-heading">
+        <div>
+          <p className="eyebrow">REPOSITORY INDEX</p>
+          <h2 id="repository-workspace-title">仓库事实与场景</h2>
+        </div>
+        <div className="action-row">
+          <button
+            className="button button-ghost"
+            type="button"
+            disabled={busy !== null}
+            onClick={() => void load()}
+          >
+            刷新
+          </button>
+          <button
+            className="button"
+            type="button"
+            disabled={busy !== null || !status?.configured}
+            onClick={() => void sync()}
+          >
+            {busy === 'sync' ? '同步中…' : '同步索引'}
+          </button>
+        </div>
+      </div>
+      {message && <p className="notice notice-success">{message}</p>}
+      {error && <p className="notice notice-error">{error}</p>}
+      <div className="repository-summary">
+        <div>
+          <span>状态</span>
+          <strong>{statusLabel}</strong>
+        </div>
+        <div>
+          <span>场景分支</span>
+          <strong>{status?.scenarioBranch ?? '—'}</strong>
+        </div>
+        <div>
+          <span>远端 HEAD</span>
+          <strong>{shortSha(status?.remoteHead)}</strong>
+        </div>
+        <div>
+          <span>最近索引</span>
+          <strong>{status?.lastSyncedAt ? formatDate(status.lastSyncedAt) : '—'}</strong>
+        </div>
+      </div>
+      <div className="action-row repository-actions">
+        <button
+          className="button button-ghost"
+          type="button"
+          disabled={busy !== null || !status?.configured}
+          onClick={() => void createBranch()}
+        >
+          准备场景测试分支
+        </button>
+        <button
+          className="button button-ghost"
+          type="button"
+          disabled={busy !== null || !status?.configured}
+          onClick={() => void merge()}
+        >
+          合并指定来源 ref
+        </button>
+      </div>
+      {status?.indexErrors.length ? (
+        <div className="index-errors" role="status">
+          <strong>索引错误</strong>
+          {status.indexErrors.map((item) => (
+            <p key={`${item.path}:${item.message}`}>
+              <code>{item.path}</code>：{item.message}
+            </p>
+          ))}
+        </div>
+      ) : null}
+      <div className="repository-columns">
+        <div>
+          <div className="subheading">
+            <h3>场景（{scenarios.length}）</h3>
+            <span>SQLite 读模型</span>
+          </div>
+          {scenarios.length === 0 ? (
+            <p className="muted">暂无已索引场景</p>
+          ) : (
+            scenarios.map((scenario) => <ScenarioCard key={scenario.id} scenario={scenario} />)
+          )}
+        </div>
+        <div>
+          <div className="subheading">
+            <h3>正式报告（{reports.length}）</h3>
+            <span>
+              {history?.issuesAvailable ? `Issues ${history.issues.length}` : 'Issues 暂不可用'}
+            </span>
+          </div>
+          {reports.length === 0 ? (
+            <p className="muted">暂无已索引报告</p>
+          ) : (
+            reports.map((report) => <ReportCard key={report.runId} report={report} />)
+          )}
+        </div>
+      </div>
+      <details className="tree-view">
+        <summary>Git 树（{tree.length} 个文件）</summary>
+        <ul>
+          {tree.slice(0, 100).map((entry) => (
+            <li key={entry.path}>
+              <code>{entry.mode}</code> {entry.path}
+            </li>
+          ))}
+        </ul>
+      </details>
+    </section>
+  );
+}
+
+function ScenarioCard({ scenario }: { scenario: IndexedScenario }) {
+  return (
+    <details className="indexed-card">
+      <summary>
+        <span>
+          <strong>{scenario.id}</strong> {scenario.name}
+        </span>
+        <em className={`scenario-${scenario.status}`}>{scenario.status}</em>
+      </summary>
+      <p>{scenario.description}</p>
+      <div className="tag-row">
+        {scenario.tags.map((tag) => (
+          <span key={tag}>{tag}</span>
+        ))}
+      </div>
+      <p className="file-meta">
+        <code>{scenario.path}</code> · {shortSha(scenario.commitSha)}
+      </p>
+      <pre>{scenario.content}</pre>
+    </details>
+  );
+}
+
+function ReportCard({ report }: { report: IndexedReport }) {
+  return (
+    <details className="indexed-card">
+      <summary>
+        <span>
+          <strong>{report.runId}</strong> {report.trigger}
+        </span>
+        <em className={`report-${report.result}`}>{report.result}</em>
+      </summary>
+      <p>
+        target <code>{shortSha(report.targetCommit)}</code> · {formatDate(report.finishedAt)}
+      </p>
+      {report.confirmedBugs.length > 0 && (
+        <p>confirmed bugs：{report.confirmedBugs.map((bug) => bug.title).join('、')}</p>
+      )}
+      <div className="file-list">
+        {Object.keys(report.files)
+          .sort()
+          .map((file) => (
+            <span key={file}>{file}</span>
+          ))}
+      </div>
+      <p className="file-meta">
+        <code>{report.path}</code> · indexed {shortSha(report.commitSha)}
+      </p>
+      <pre>{report.content}</pre>
+    </details>
+  );
+}
+
+function shortSha(value: string | null | undefined): string {
+  return value ? value.slice(0, 12) : '—';
 }
 
 function Shell({ health, children }: { health: HealthResponse | null; children: ReactNode }) {
@@ -897,7 +1191,15 @@ function SecretField({
   );
 }
 
-function CheckList({ checks }: { checks: ConnectivityCheck[] }) {
+function CheckList({
+  checks,
+  busy,
+  onRun,
+}: {
+  checks: ConnectivityCheck[];
+  busy: boolean;
+  onRun: (checkId: string) => void;
+}) {
   return (
     <div className="check-list">
       {checks.map((check) => (
@@ -910,6 +1212,16 @@ function CheckList({ checks }: { checks: ConnectivityCheck[] }) {
             {checkStatusLabel(check.result.status)}
             {check.result.latencyMs !== null && <small>{check.result.latencyMs} ms</small>}
           </div>
+          {check.available && (
+            <button
+              className="button-link"
+              type="button"
+              disabled={busy}
+              onClick={() => onRun(check.id)}
+            >
+              重新检查
+            </button>
+          )}
         </div>
       ))}
       {checks.length === 0 && <p className="muted">暂无检查项</p>}
@@ -988,6 +1300,8 @@ function checkStatusLabel(status: ConnectivityCheck['result']['status']): string
       return '超时';
     case 'unreachable':
       return '不可达';
+    case 'unknown':
+      return '无法确认';
     case 'not_checked':
       return '未检查';
     case 'not_configured':

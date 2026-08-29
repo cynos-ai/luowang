@@ -47,3 +47,48 @@ export const connectivityCheckResults = sqliteTable('connectivity_check_results'
   checkedAt: text('checked_at').notNull(),
   latencyMs: integer('latency_ms'),
 });
+
+export const repositoryIndexState = sqliteTable('repository_index_state', {
+  id: integer('id').primaryKey(),
+  repository: text('repository').notNull(),
+  scenarioBranch: text('scenario_branch').notNull(),
+  commitSha: text('commit_sha'),
+  syncedAt: text('synced_at'),
+});
+
+export const indexedScenarios = sqliteTable('indexed_scenarios', {
+  path: text('path').primaryKey(),
+  scenarioId: text('scenario_id').notNull().unique(),
+  name: text('name').notNull(),
+  description: text('description').notNull(),
+  status: text('status').notNull(),
+  tagsJson: text('tags_json').notNull(),
+  content: text('content').notNull(),
+  commitSha: text('commit_sha').notNull(),
+  indexedAt: text('indexed_at').notNull(),
+});
+
+export const indexedReports = sqliteTable('indexed_reports', {
+  runId: text('run_id').primaryKey(),
+  path: text('path').notNull().unique(),
+  trigger: text('trigger').notNull(),
+  baseCommit: text('base_commit'),
+  targetCommit: text('target_commit').notNull(),
+  includedCommitsJson: text('included_commits_json').notNull(),
+  result: text('result').notNull(),
+  startedAt: text('started_at').notNull(),
+  finishedAt: text('finished_at').notNull(),
+  scenarioResultsJson: text('scenario_results_json').notNull(),
+  confirmedBugsJson: text('confirmed_bugs_json').notNull(),
+  filesJson: text('files_json').notNull(),
+  content: text('content').notNull(),
+  commitSha: text('commit_sha').notNull(),
+  indexedAt: text('indexed_at').notNull(),
+});
+
+export const repositoryIndexErrors = sqliteTable('repository_index_errors', {
+  path: text('path').primaryKey(),
+  message: text('message').notNull(),
+  commitSha: text('commit_sha').notNull(),
+  indexedAt: text('indexed_at').notNull(),
+});
