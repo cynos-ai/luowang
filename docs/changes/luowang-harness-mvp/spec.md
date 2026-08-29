@@ -465,6 +465,13 @@ MVP 不复制 OpenClaw 的完整 WebSocket 协议、设备配对、角色、scop
 - `scenario-changes.patch`：本次 Main 产生的长期场景变更，只有发生变更时存在；
 - `evidence/`：浏览器或命令先产生本地文件时的临时目录，上传后可以删除。
 
+五个 Markdown 文件不建立额外 frontmatter 或结构化结果协议：
+
+- 只有最终 `report.md` 的 §22.4 frontmatter 是 Archiver 和网站必须解析的机器契约；
+- `plan.md`、`execution.md`、`draft-report.md`、`review.md` 按上述职责保存面向人类和后续 Agent 的 Markdown，生成语言由仓库配置决定；
+- `finalizeRun` 对这四个文件只检查存在、非空和本次角色流程确实已完成，不依赖固定中文/英文标题解析语义；
+- 内容是否支持结论由 Reviewer 和 Main B 负责，自动化测试使用固定样例验证各角色确实写入其职责要求的信息，不增加自定义 ToolResult 或重复状态文件。
+
 不保存：
 
 - `request.json`；
@@ -477,7 +484,13 @@ MVP 不复制 OpenClaw 的完整 WebSocket 协议、设备配对、角色、scop
 
 Harness 当前状态属于 Gateway，不属于 Run。网站从 Gateway 内存状态、当前任务和 `running/` 目录获得实时信息。
 
-一个简单 `finalizeRun` 只做文件完整性检查，然后将目录从 `running/` 原子重命名到 `completed/`：正常测试 run 要求五个 Markdown 文件；需要人工审核场景变更、尚不能执行测试时，当前 Run 以 `blocked` 结束，并允许只有 `scenario-changes.patch` 和说明覆盖缺口的 `report.md`。它不等待 PR 合并，不实现 workflow gate。
+一个简单 `finalizeRun` 只做文件完整性检查，然后将目录从 `running/` 原子重命名到 `completed/`：
+
+- 正常测试 Run，包括普通 `passed | failed | blocked`，要求五个 Markdown 文件；
+- 需要人工审核场景变更且尚不能执行测试的特殊 blocked Run，只要求 `scenario-changes.patch` 和说明覆盖缺口的 `report.md`，其余四个文件明确为“不适用”，不是丢失或归档错误；
+- 网站和 API 对特殊 blocked Run 只展示实际存在的文件，并把未产生文件标为“不适用”；Git 正式报告目录不接收这种两文件说明。
+
+它不等待 PR 合并，不实现 workflow gate。§23 的 `AC-AGENT-01` 只验收正常人工测试 Run，不要求特殊场景审核 blocked Run 伪造五文件。
 
 进程异常退出后遗留的 `running/` 目录作为中断证据，由 Gateway 启动扫描展示并允许人工重跑或清理。
 
@@ -907,7 +920,7 @@ Run 列表展示：
 - run-id、触发来源、请求文本、目标 commit 和变更范围；
 - 开始/结束时间、当前状态和最终结果；
 - 选择的场景及每个场景结果；
-- `plan.md`、`execution.md`、`draft-report.md`、`review.md` 和 `report.md`；
+- 正常 Run 的 `plan.md`、`execution.md`、`draft-report.md`、`review.md` 和 `report.md`；特殊场景审核 blocked Run 展示 `scenario-changes.patch`、`report.md` 和其余文件“不适用”；
 - OSS 证据；
 - 产生的场景 PR、`scenario_pr_url`、报告 commit，以及每个 confirmed Bug 创建或关联的 Issues；
 - 归档/发布失败及重试状态。
@@ -1041,9 +1054,10 @@ Cron 到点后检查场景测试分支：
 
 1. 场景测试分支不存在时，从用户指定 commit 创建；
 2. 指定 commit 已经是场景测试分支祖先时，不重复 merge；
-3. 尚未进入场景测试分支时，执行 `git merge --no-ff <source>`；
-4. merge 成功后，以新的场景测试分支最新可测试 commit 创建批量测试；
-5. merge 冲突时停止，不让 Agent 修改产品代码或自动解决冲突，也不推进测试进度。
+3. 尚未进入场景测试分支时，操作者确认后由 Repository Service 在最新远端 HEAD 上执行 `git merge --no-ff <source>`，产生明确 merge commit；
+4. Repository Service 使用非 force push 发布 merge commit；push 前若远端 HEAD 已变化则停止、fetch 后由操作者重试，不能覆盖并发更新；
+5. merge 和 push 成功后记录来源 ref、合并前 HEAD、merge commit、操作者和时间，再以远端新的场景测试分支 HEAD 创建批量测试；重试时若 source 已成为祖先，不重复产生 merge commit；
+6. merge 冲突或 push 竞争时停止，清理本地合并状态，不让 Agent 修改产品代码或自动解决冲突，也不推进测试进度。
 
 手工请求进入同一个顺序队列，不绕开固定测试分支。用户可以附加自然语言说明；无论是重测还是指定来源，target 始终是场景测试分支上的 commit。
 
@@ -1396,7 +1410,7 @@ SQLite 表、API 路径、React 组件划分、CSS、日志库、迁移文件组
 6. **AC-INDEX-01**：Repository Indexer 能把场景测试分支中的场景和报告同步到 SQLite，网站显示对应 commit 和同步时间；
 7. **AC-TRIGGER-01**：commit 触发和 Cron 能排除只修改场景或报告目录的 commit，并把其余待测试 commit 合成一个批次；
 8. **AC-RUN-01**：Run 稳定记录 `base_commit`、`target_commit` 和 `included_commits`，Runner 始终 checkout 不可变 target；
-9. **AC-GIT-03**：用户指定其他 branch/tag/SHA 时，罗网能 `merge --no-ff` 到场景测试分支后测试新的 HEAD；merge 冲突时停止且不修改产品代码；
+9. **AC-GIT-03**：用户指定其他 branch/tag/SHA 时，罗网能在操作者确认后 `merge --no-ff`、non-force push 到场景测试分支并测试远端新的 HEAD；重复请求不重复 merge，远端竞争或 merge 冲突时停止且不修改产品代码；
 10. **AC-PROGRESS-01**：passed Run 在报告发布成功后推进；failed Run 只有在报告发布且所有 confirmed Bugs 都成功创建或关联 Issues 后推进；
 11. **AC-PROGRESS-02**：blocked Run 可以为其中已确认的多个 Bugs 创建或关联 Issues，但 blocked、interrupted、执行失败、报告发布失败或 failed 中任一 Bug 缺少 Issue 时都不能推进；
 12. **AC-ISSUE-01**：同一 Run 可以关联多个 Issues；新建 Issue 可幂等重试，Agent 也可以把明显相同的问题关联到现有 Issue；
@@ -1405,7 +1419,7 @@ SQLite 表、API 路径、React 组件划分、CSS、日志库、迁移文件组
 15. **AC-SCENARIO-01**：场景 PR 合并后可以人工重测包含最新场景的分支 HEAD，纯场景 commit 不计入 `included_commits`；不立即重测时，下一次产品/需求变化触发的 Run 使用最新场景；
 16. **AC-GIT-VIEW-01**：网站 Git 树只根据 Run Store 标记 included commit、实际 target、结果、场景 PR 和 Issues，不从其他分支推断覆盖；
 17. **AC-SCENARIO-VIEW-01**：网站可以查看场景列表、状态/标签筛选、场景正文、历史 Run 和待审核 PR，且不会绕过 Git 直接修改缓存正文；
-18. **AC-RUN-VIEW-01**：网站可以查看 Run 列表、五个 Markdown 工件、每场景结果、confirmed Bugs、OSS 证据、场景/报告 commit、Issues 和归档错误；
+18. **AC-RUN-VIEW-01**：网站可以查看 Run 列表、正常 Run 的五个 Markdown 工件、特殊场景审核 blocked Run 的实际文件/不适用标记、每场景结果、confirmed Bugs、OSS 证据、场景/报告 commit、Issues 和归档错误；
 19. **AC-ACTIVE-VIEW-01**：当前测试页可以展示 base/target、阶段、当前场景、进度和脱敏活动，不展示隐藏推理或 Secret；
 20. **AC-AGENT-01**：人工测试请求可以依次完成 Main A、Runner、Reviewer、Main B，并产生五个 Markdown 文件；
 21. **AC-BROWSER-01**：UI 场景可以通过 Playwright MCP 执行，证据上传 OSS，Reviewer 可以查看截图；
