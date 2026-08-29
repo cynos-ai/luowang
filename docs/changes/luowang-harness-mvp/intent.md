@@ -5,7 +5,7 @@
 - 实现计划：[plan.md](./plan.md)
 - 项目定位：AI Scenario Testing Harness
 - 正式仓库：公开的 `cynos-ai/luowang`
-- 许可证：`PolyForm-Noncommercial-1.0.0`
+- 许可证：GNU Affero General Public License v3.0（`AGPL-3.0`）
 
 ## 1. 当前问题
 
@@ -54,7 +54,7 @@ MVP 成功的核心不是场景数量或代码覆盖率，而是形成一个**�
 
 - 罗网必须独立于写需求、写代码和修复 Bug 的 Agent，不自动修改产品代码，也不调度开发 Agent；
 - MVP 为单租户、单目标仓库、单场景测试分支、单测试环境、单实例顺序执行；
-- 项目源码公开托管在 GitHub `cynos-ai` 组织下，但采用限制商业用途的 PolyForm Noncommercial 1.0.0；这是 source-available 而不是 OSI 认可的 Open Source；
+- 项目源码公开托管在 GitHub `cynos-ai` 组织下，采用 AGPL-3.0；允许商业使用，但要求分发衍生作品以及通过网络提供服务的修改版按 AGPL 提供完整对应源码；
 - `main` 是正式发布分支，`develop` 是开发集成分支，功能和缺陷使用短生命周期分支与 Pull Request；
 - 场景和正式 Markdown 报告以目标项目 Git 为长期事实源；详细运行记录、配置和 Secret 不写入目标项目；
 - Runner 的执行结论必须经过独立 Reviewer 审核，不能只相信执行 Agent 的自述；
