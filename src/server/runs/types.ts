@@ -1,11 +1,12 @@
 import type {
   AgentConfig,
+  EvidenceReference,
   RepositoryIssue,
   RunPhase,
   RunSummary,
   RunTrigger,
 } from '../../shared/types.js';
-import type { ToolDefinition } from '@earendil-works/pi-coding-agent';
+import type { InlineExtension, ToolDefinition } from '@earendil-works/pi-coding-agent';
 
 export type AgentRole = 'main-a' | 'runner' | 'reviewer' | 'main-b';
 
@@ -36,6 +37,9 @@ export interface RunContext {
   runDirectory: string;
   historyIssues: RepositoryIssue[];
   historyIssuesAvailable: boolean;
+  evidence: EvidenceReference[];
+  blockingReasons: string[];
+  browserRequired: boolean;
 }
 
 export interface AgentSessionInput {
@@ -45,6 +49,7 @@ export interface AgentSessionInput {
   toolNames: string[];
   customTools: ToolDefinition[];
   systemPrompt: string;
+  extensionFactories?: InlineExtension[];
 }
 
 export interface AgentSession {

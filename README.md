@@ -1,6 +1,6 @@
 # LuoWang
 
-罗网（LuoWang）是一个独立部署的 AI 场景测试 Harness。当前仓库处于 Phase 2：除了安全配置控制台，还可以连接唯一 GitHub 目标仓库、准备 `scenario-testing` 分支、同步场景/报告 Markdown 索引并在网站中读取事实。后续业务测试闭环会按 `docs/changes/luowang-harness-mvp/plan.md` 的阶段继续实现。
+罗网（LuoWang）是一个独立部署的 AI 场景测试 Harness。当前仓库处于 Phase 4：除了安全配置控制台和唯一 GitHub 目标仓库索引，还支持 Main → Runner → Reviewer → Main 的本地 Run、受控 Playwright MCP UI 执行、S3-compatible OSS 证据上传及私有证据 Gateway。归档、队列和场景生命周期会按 `docs/changes/luowang-harness-mvp/plan.md` 的后续阶段继续实现。
 
 ## 本地启动
 
@@ -27,7 +27,7 @@ docker compose down
 
 Compose 将数据保存到 `luowang-data` 卷，并把宿主机端口绑定到 `127.0.0.1`。管理员密码只在空数据库首次启动时读取；主密钥只用于进程内派生 Secret Store 密钥，二者都不会写入 SQLite。
 
-打开 <http://127.0.0.1:3000/> 后使用管理员密码登录。登录后可以维护 Harness、仓库/测试环境、MCP 和 S3-compatible OSS 的普通配置；Provider Key、Git Token、测试账号和 OSS Access Key 等 Secret 只能覆盖或显式删除，页面只显示“已配置”和固定掩码。Phase 2 提供 GitHub 仓库读取、场景测试分支写入、PR/Issue 权限检查（无法无副作用确认的项目显示 `unknown`），以及场景/报告同步和只读索引页面。模型、MCP 和 OSS 的正式检查会在后续 adapter 阶段提供。
+打开 <http://127.0.0.1:3000/> 后使用管理员密码登录。登录后可以维护 Harness、仓库/测试环境、MCP 和 S3-compatible OSS 的普通配置；Provider Key、Git Token、测试账号和 OSS Access Key 等 Secret 只能覆盖或显式删除，页面只显示“已配置”和固定掩码。当前版本提供 GitHub 仓库读取、场景测试分支写入、PR/Issue 权限检查（无法无副作用确认的项目显示 `unknown`）、场景/报告同步和只读索引页面，并注册 Provider、Playwright MCP 与 OSS 的独立连通性检查。启用 MCP 后，Runner 使用 headless、isolated 浏览器上下文和 accessibility snapshot/ref；截图等证据上传到 OSS，私有 bucket 使用登录后的 `/api/evidence/<id>` 稳定地址。完整 Git 归档和自动队列仍属于后续阶段。
 
 配置 GitHub 仓库后，先在“仓库事实与场景”区域准备 `scenario-testing` 分支，再点击“同步索引”。Git Token 只由 Repository Service 使用，不会写入 Git URL、命令参数、子进程环境、日志或测试 Agent。
 

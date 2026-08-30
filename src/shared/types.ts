@@ -160,6 +160,17 @@ export interface ScenarioResultSummary {
   result: RunResult;
 }
 
+export interface EvidenceReference {
+  id: string;
+  filename: string;
+  objectKey: string;
+  url: string;
+  contentType: string;
+  sizeBytes: number;
+  sha256: string;
+  uploadedAt: string;
+}
+
 export interface ConfirmedBugSummary {
   key: string;
   title: string;
@@ -260,6 +271,7 @@ export interface RunSummary {
   finishedAt: string | null;
   errorMessage: string | null;
   artifactNames: string[];
+  evidence?: EvidenceReference[];
 }
 
 export interface RunDetail extends RunSummary {

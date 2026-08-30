@@ -4,6 +4,7 @@ import {
   SessionManager,
   SettingsManager,
   type AgentToolResult,
+  type InlineExtension,
   type ToolDefinition,
 } from '@earendil-works/pi-coding-agent';
 import { Type, type Static } from 'typebox';
@@ -49,6 +50,7 @@ class PiAgentSessionFactory implements AgentSessionFactory {
       noPromptTemplates: true,
       noThemes: true,
       noContextFiles: true,
+      extensionFactories: input.extensionFactories ?? [],
       systemPrompt: input.systemPrompt,
       appendSystemPrompt: [],
     });
@@ -249,8 +251,17 @@ export function buildSessionInput(
   cwd: string,
   customTools: ToolDefinition[],
   systemPrompt: string,
+  extensionFactories: InlineExtension[] = [],
 ): AgentSessionInput {
-  return { role, config, cwd, toolNames: [], customTools, systemPrompt };
+  return {
+    role,
+    config,
+    cwd,
+    toolNames: [],
+    customTools,
+    systemPrompt,
+    extensionFactories,
+  };
 }
 
 function errorMessage(error: unknown): string {
