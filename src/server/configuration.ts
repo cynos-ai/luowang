@@ -145,6 +145,11 @@ class SqliteConfigurationStore implements ConfigurationStore {
         'environmentDescription',
       ),
       baseUrl: readText(patch.baseUrl, current.baseUrl, 'baseUrl'),
+      externalDatabase: readText(
+        patch.externalDatabase,
+        current.externalDatabase,
+        'externalDatabase',
+      ),
     };
     this.write(REPOSITORY_KEY, next);
     return next;
@@ -256,6 +261,7 @@ function normalizeRepository(value: unknown): RepositoryConfig {
     triggerOnCommit: normalizeBoolean(source.triggerOnCommit, false),
     environmentDescription: normalizeText(source.environmentDescription, ''),
     baseUrl: normalizeText(source.baseUrl, ''),
+    externalDatabase: normalizeText(source.externalDatabase, ''),
   };
 }
 

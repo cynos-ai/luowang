@@ -8,6 +8,7 @@ import type { Logger } from 'pino';
 import type {
   ConfigResponse,
   HealthResponse,
+  OperationsDashboardResponse,
   RepositoryHistoryResponse,
   RepositoryStatusResponse,
 } from '../shared/types.js';
@@ -61,6 +62,7 @@ import {
 } from './runs/orchestrator.js';
 import { createRunArchiver, type RunArchiver } from './runs/archiver.js';
 import { createRunStore, type RunStore } from './runs/store.js';
+import { createOperationsService, type OperationsService } from './operations/service.js';
 
 export interface AppOptions {
   config: AppConfig;
@@ -79,6 +81,7 @@ export interface AppOptions {
   recoveryStore?: RunRecoveryStore;
   automation?: AutomationService;
   scheduler?: AutomationScheduler;
+  operations?: OperationsService;
   backgroundTasks?: boolean;
   browser?: BrowserMcpAdapter;
   oss?: OssAdapter;
@@ -172,6 +175,22 @@ export async function createApp(options: AppOptions) {
       indexer,
       state: automation.state(),
       logger: options.logger,
+    });
+  const operations =
+    options.operations ??
+    createOperationsService({
+      database: options.database.sqlite,
+      databaseContext: options.database,
+      configuration,
+      connectivity,
+      repository,
+      indexer,
+      runs,
+      runStore,
+      recoveryStore,
+      automation,
+      scheduler,
+      reportDir: configuration.getHarness().local.reportDir,
     });
   await automation.recover();
 
@@ -366,20 +385,22 @@ export async function createApp(options: AppOptions) {
     requireAuth(request, auth);
     const status = readOptionalQuery(request, 'status');
     const tag = readOptionalQuery(request, 'tag');
+    const query = readOptionalQuery(request, 'query') ?? readOptionalQuery(request, 'q');
     if (status !== undefined && !['draft', 'approved', 'deprecated'].includes(status)) {
       throw new AppError('INVALID_REQUEST', 'status 筛选值无效', 400);
     }
     return reply.send({
-      scenarios: indexer.listScenarios({
+      scenarios: operations.listScenarios({
         status: status as 'draft' | 'approved' | 'deprecated' | undefined,
         tag,
+        query,
       }),
     });
   });
 
   app.get('/api/scenarios/:scenarioId', async (request, reply) => {
     requireAuth(request, auth);
-    const scenario = indexer.getScenario(readParam(request, 'scenarioId'));
+    const scenario = operations.getScenario(readParam(request, 'scenarioId'));
     if (!scenario) throw new AppError('SCENARIO_NOT_FOUND', '场景不存在或尚未索引', 404);
     return reply.send({ scenario });
   });
@@ -450,7 +471,7 @@ export async function createApp(options: AppOptions) {
 
   app.get('/api/runs', async (request, reply) => {
     requireAuth(request, auth);
-    return reply.send({ runs: await runs.list() });
+    return reply.send({ runs: await operations.listRuns() });
   });
 
   app.get('/api/runs/current', async (request, reply) => {
@@ -532,9 +553,71 @@ export async function createApp(options: AppOptions) {
 
   app.get('/api/runs/:runId', async (request, reply) => {
     requireAuth(request, auth);
-    const run = await runs.get(readParam(request, 'runId'));
+    const run = await operations.getRun(readParam(request, 'runId'));
     if (!run) throw new AppError('RUN_NOT_FOUND', 'Run 不存在', 404);
     return reply.send({ run });
+  });
+
+  app.get('/api/operations/dashboard', async (request, reply) => {
+    requireAuth(request, auth);
+    const dashboard: OperationsDashboardResponse = await operations.dashboard();
+    return reply.send(dashboard);
+  });
+
+  app.get('/api/dashboard', async (request, reply) => {
+    requireAuth(request, auth);
+    return reply.send(await operations.dashboard());
+  });
+
+  app.get('/api/operations/git-tree', async (request, reply) => {
+    requireAuth(request, auth);
+    return reply.send(await operations.gitTree(readOptionalQuery(request, 'commit')));
+  });
+
+  app.get('/api/operations/scenarios', async (request, reply) => {
+    requireAuth(request, auth);
+    const status = readOptionalQuery(request, 'status');
+    const tag = readOptionalQuery(request, 'tag');
+    const query = readOptionalQuery(request, 'query') ?? readOptionalQuery(request, 'q');
+    if (status !== undefined && !['draft', 'approved', 'deprecated'].includes(status)) {
+      throw new AppError('INVALID_REQUEST', 'status 筛选值无效', 400);
+    }
+    return reply.send({
+      scenarios: operations.listScenarios({
+        status: status as 'draft' | 'approved' | 'deprecated' | undefined,
+        tag,
+        query,
+      }),
+    });
+  });
+
+  app.get('/api/operations/scenarios/:scenarioId', async (request, reply) => {
+    requireAuth(request, auth);
+    const scenario = operations.getScenario(readParam(request, 'scenarioId'));
+    if (!scenario) throw new AppError('SCENARIO_NOT_FOUND', '场景不存在或尚未索引', 404);
+    return reply.send({ scenario });
+  });
+
+  app.get('/api/operations/runs', async (request, reply) => {
+    requireAuth(request, auth);
+    return reply.send({ runs: await operations.listRuns() });
+  });
+
+  app.get('/api/operations/runs/:runId', async (request, reply) => {
+    requireAuth(request, auth);
+    const run = await operations.getRun(readParam(request, 'runId'));
+    if (!run) throw new AppError('RUN_NOT_FOUND', 'Run 不存在', 404);
+    return reply.send({ run });
+  });
+
+  app.get('/api/operations/current', async (request, reply) => {
+    requireAuth(request, auth);
+    return reply.send(await operations.current());
+  });
+
+  app.get('/api/operations/active', async (request, reply) => {
+    requireAuth(request, auth);
+    return reply.send(await operations.current());
   });
 
   app.get('/api/history', async (request, reply) => {

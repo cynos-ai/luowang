@@ -64,6 +64,7 @@ export interface RepositoryConfig {
   triggerOnCommit: boolean;
   environmentDescription: string;
   baseUrl: string;
+  externalDatabase: string;
 }
 
 export type ScenarioMode = 'autonomous' | 'add-only' | 'review-all';
@@ -277,8 +278,213 @@ export interface RunSummary {
   scenarioMode?: ScenarioMode;
   initialization?: boolean;
   scenarioPrUrl?: string | null;
+  currentScenario?: string | null;
+  scenarioProgress?: {
+    completed: number;
+    total: number;
+  };
+  activities?: RunActivity[];
+  blockingReasons?: string[];
+  updatedAt?: string;
 }
 
 export interface RunDetail extends RunSummary {
   artifacts: Record<string, string>;
+}
+
+export interface RunActivity {
+  at: string;
+  message: string;
+  kind: 'phase' | 'info' | 'warning';
+}
+
+export type StoredReportStatus = 'pending' | 'published' | 'not_applicable' | 'conflict' | 'failed';
+
+export type StoredArchiveStatus = 'pending' | 'partial' | 'completed' | 'failed';
+
+export type StoredScenarioStatus =
+  'not_applicable' | 'pending' | 'published' | 'pull_request' | 'failed';
+
+export type StoredIssueStatus = 'pending' | 'succeeded' | 'failed';
+
+export interface OperationsIssueLink {
+  bugKey: string;
+  title: string;
+  scenarioIds: string[];
+  issueAction: 'create' | 'link';
+  requestedIssueUrl: string | null;
+  status: StoredIssueStatus;
+  issueNumber: number | null;
+  issueUrl: string | null;
+  errorMessage: string | null;
+  attempts: number;
+}
+
+export interface OperationsArchiveView {
+  reportStatus: StoredReportStatus;
+  reportCommitSha: string | null;
+  archiveStatus: StoredArchiveStatus;
+  archiveError: string | null;
+  progressed: boolean;
+  progressedAt: string | null;
+  scenarioStatus: StoredScenarioStatus;
+  scenarioCommitSha: string | null;
+  scenarioPrUrl: string | null;
+  scenarioError: string | null;
+}
+
+export interface OperationsRunSummary extends RunSummary {
+  archive: OperationsArchiveView | null;
+  scenarioResults: ScenarioResultSummary[];
+  confirmedBugs: ConfirmedBugSummary[];
+  issues: OperationsIssueLink[];
+}
+
+export interface OperationsRunDetail extends OperationsRunSummary {
+  artifacts: Record<string, string>;
+}
+
+export interface ScenarioRunHistory {
+  runId: string;
+  result: RunResult;
+  finishedAt: string;
+  targetCommit: string;
+}
+
+export interface OperationsScenario extends IndexedScenario {
+  history: ScenarioRunHistory[];
+  pendingPullRequests: Array<{
+    runId: string;
+    url: string;
+    targetCommit: string;
+  }>;
+}
+
+export interface OperationsScenarioReview {
+  runId: string;
+  url: string;
+  targetCommit: string;
+  result: RunResult;
+  createdAt: string;
+  errorMessage: string | null;
+}
+
+export interface OperationsGitCommit extends GitCommit {
+  includedRuns: Array<{
+    runId: string;
+    result: RunResult;
+    targetCommit: string;
+  }>;
+  targetRuns: Array<{
+    runId: string;
+    result: RunResult;
+    issueUrls: string[];
+    scenarioPrUrl: string | null;
+  }>;
+}
+
+export interface OperationsGitTreeResponse {
+  branch: string;
+  commit: string;
+  entries: OperationsGitCommit[];
+  stale: boolean;
+  staleReason: string | null;
+}
+
+export interface OperationsCurrentRun {
+  run: OperationsRunSummary;
+  role: 'main-a' | 'runner' | 'reviewer' | 'main-b' | null;
+  stage: string;
+  currentScenario: string | null;
+  progress: {
+    completed: number;
+    total: number;
+  };
+  activities: RunActivity[];
+  blockingReasons: string[];
+  files: string[];
+  updatedAt: string;
+}
+
+export interface OperationsCurrentResponse {
+  current: OperationsCurrentRun | null;
+  fetchedAt: string;
+}
+
+export interface OperationsQueueItem {
+  queueId: number;
+  requestId: string;
+  trigger: RunTrigger;
+  triggerSources: RunTrigger[];
+  requestIds: string[];
+  request: string;
+  targetRef: string | null;
+  status: 'queued' | 'running' | 'waiting_archive' | 'completed' | 'failed' | 'interrupted';
+  runId: string | null;
+  claimedAt: string | null;
+  waitingArchiveAt: string | null;
+  completedAt: string | null;
+  errorMessage: string | null;
+  archiveStatus: StoredArchiveStatus | null;
+  progressed: boolean | null;
+  createdAt: string;
+  updatedAt: string;
+  initialization: boolean;
+}
+
+export interface OperationsSchedulerStatus {
+  running: boolean;
+  lastPollAt: string | null;
+  nextPollAt: string | null;
+  lastArchiveAt: string | null;
+  nextArchiveAt: string | null;
+  lastIndexerAt: string | null;
+  nextIndexerAt: string | null;
+  lastCleanupAt: string | null;
+  nextCleanupAt: string | null;
+  lastCronKey: string | null;
+  lastError: string | null;
+}
+
+export interface OperationsDependencyHealth {
+  id: string;
+  label: string;
+  status: 'ok' | 'degraded' | 'unavailable' | 'not_configured' | 'unknown';
+  message: string;
+  checkedAt: string | null;
+  stale: boolean;
+}
+
+export interface OperationsDashboardResponse {
+  fetchedAt: string;
+  stale: boolean;
+  staleReason: string | null;
+  repository: RepositoryStatusResponse;
+  branch: {
+    name: string;
+    head: string | null;
+    indexedCommit: string | null;
+    lastSyncedAt: string | null;
+  };
+  progress: {
+    lastCompleted: OperationsRunSummary | null;
+    lastCompletedTarget: string | null;
+    latestTestableCommit: string | null;
+    pendingCommits: string[];
+    pendingCount: number;
+  };
+  activeRun: OperationsCurrentRun | null;
+  queue: OperationsQueueItem[];
+  workspace: {
+    running: number;
+    completed: number;
+    pendingArchive: number;
+  };
+  automation: {
+    scheduler: OperationsSchedulerStatus;
+    lastArchiveError: string | null;
+    pendingScenarioReviews: OperationsScenarioReview[];
+  };
+  dependencies: OperationsDependencyHealth[];
+  recentRuns: OperationsRunSummary[];
 }

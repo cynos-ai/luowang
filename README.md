@@ -1,6 +1,6 @@
 # LuoWang
 
-罗网（LuoWang）是一个独立部署的 AI 场景测试 Harness。当前仓库已完成 Phase 7：除了安全配置控制台、唯一 GitHub 目标仓库索引、Main → Runner → Reviewer → Main 的本地 Run、受控 Playwright MCP UI 执行、S3-compatible OSS 证据 Gateway、幂等归档和持久 FIFO 自动化队列，还支持长期场景的稳定 ID、状态/标签、受控场景 patch、`autonomous`/`add-only`/`review-all` 三种维护模式、直接发布或 PR 发布，以及陌生项目的最小场景初始化。后续阶段会按 `docs/changes/luowang-harness-mvp/plan.md` 继续实现。
+罗网（LuoWang）是一个独立部署的 AI 场景测试 Harness。当前仓库已完成 Phase 8：除了安全配置控制台、唯一 GitHub 目标仓库索引、Main → Runner → Reviewer → Main 的本地 Run、受控 Playwright MCP UI 执行、S3-compatible OSS 证据 Gateway、幂等归档和持久 FIFO 自动化队列，还支持长期场景生命周期、三种场景维护模式、陌生项目初始化，以及展示 Git 树标记、场景历史、Run 工件/证据/归档、当前执行、队列、后台任务、依赖健康和陈旧缓存恢复的完整运维控制台。后续阶段会按 `docs/changes/luowang-harness-mvp/plan.md` 继续实现。
 
 ## 本地启动
 

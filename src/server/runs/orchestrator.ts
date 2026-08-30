@@ -8,6 +8,7 @@ import type {
   RepositoryIssue,
   RepositoryConfig,
   RunDetail,
+  RunPhase,
   RunResult,
   RunSummary,
 } from '../../shared/types.js';
@@ -187,6 +188,11 @@ class DefaultRunOrchestrator implements RunOrchestrator {
         evidence: [],
         scenarioMode: this.options.configuration.getRepository().scenarioMode,
         initialization: input.initialization === true,
+        currentScenario: null,
+        scenarioProgress: { completed: 0, total: 0 },
+        activities: [{ at: startedAt, message: 'Run 已创建，等待准备', kind: 'phase' }],
+        blockingReasons: [],
+        updatedAt: startedAt,
       };
       this.runs.set(runId, state);
       this.activeRun = state;
@@ -291,7 +297,7 @@ class DefaultRunOrchestrator implements RunOrchestrator {
   private async execute(state: RunState, workspace: RunWorkspace, input: RunInput): Promise<void> {
     try {
       state.status = 'running';
-      state.phase = 'preparing';
+      this.setPhase(state, 'preparing', '正在固定 base、target 和提交范围');
       const prepared = await this.prepareRun(state, input);
       const history = await this.readHistoryIssues(state.runId);
       const context: RunContext = {
@@ -398,14 +404,16 @@ class DefaultRunOrchestrator implements RunOrchestrator {
         context,
         patchBeforeFinalMain,
       );
+      state.blockingReasons = [...context.blockingReasons];
+      state.updatedAt = this.now().toISOString();
       await this.forceInfrastructureBlockedReport(workspace, context);
 
-      state.phase = 'finalizing';
+      this.setPhase(state, 'finalizing', '正在校验最终报告并准备归档');
       const report = await this.validateFinalReport(state, workspace, context);
       await workspace.finalize();
       state.result = report.result;
       state.status = 'completed';
-      state.phase = 'completed';
+      this.setPhase(state, 'completed', `Run 已完成：${report.result}`);
       state.finishedAt = this.now().toISOString();
       state.completedDirectory = workspace.completedDirectory;
       state.runningDirectory = null;
@@ -495,7 +503,7 @@ class DefaultRunOrchestrator implements RunOrchestrator {
     repository: GitRepository,
     context: RunContext,
   ): Promise<void> {
-    state.phase = 'main-a';
+    this.setPhase(state, 'main-a', 'Main A 正在分析变更并选择场景');
     const tools = [
       ...createTargetContextTools(this.targetToolOptions(repository, context)),
       createArtifactWriterTool(
@@ -556,7 +564,7 @@ class DefaultRunOrchestrator implements RunOrchestrator {
     repository: GitRepository,
     context: RunContext,
   ): Promise<void> {
-    state.phase = 'main-a';
+    this.setPhase(state, 'main-a', 'Main A 正在整理初始化候选场景');
     const tools = [
       ...createTargetContextTools(this.targetToolOptions(repository, context)),
       createReadArtifactTool((name) =>
@@ -651,10 +659,12 @@ class DefaultRunOrchestrator implements RunOrchestrator {
       `${workspace.runningDirectory}/report.md`,
       state.runId,
     );
+    state.blockingReasons = [...context.blockingReasons];
+    state.updatedAt = this.now().toISOString();
     await workspace.finalize({ specialScenarioReview: true });
     state.result = report.result;
     state.status = 'completed';
-    state.phase = 'completed';
+    this.setPhase(state, 'completed', `场景审核 Run 已完成：${report.result}`);
     state.finishedAt = finishedAt;
     state.completedDirectory = workspace.completedDirectory;
     state.runningDirectory = null;
@@ -698,7 +708,7 @@ class DefaultRunOrchestrator implements RunOrchestrator {
     evidenceStore: RunEvidenceStore | undefined,
     purpose: 'standard' | 'initialization-reconnaissance' | 'initialization-validation',
   ): Promise<void> {
-    state.phase = 'runner';
+    this.setPhase(state, 'runner', 'Runner 正在执行场景并收集证据');
     const tools = [
       ...createTargetContextTools(this.targetToolOptions(repository, context)),
       ...createWorkingScenarioTools({
@@ -937,7 +947,7 @@ class DefaultRunOrchestrator implements RunOrchestrator {
     context: RunContext,
     evidenceStore: RunEvidenceStore | undefined,
   ): Promise<void> {
-    state.phase = 'reviewer';
+    this.setPhase(state, 'reviewer', 'Reviewer 正在独立审核执行结果');
     const tools = [
       createReadArtifactTool((name) =>
         readAllowedArtifact(workspace, name, [
@@ -987,7 +997,7 @@ class DefaultRunOrchestrator implements RunOrchestrator {
     workspace: RunWorkspace,
     context: RunContext,
   ): Promise<void> {
-    state.phase = 'main-b';
+    this.setPhase(state, 'main-b', 'Main B 正在汇总最终报告');
     const tools = [
       createReadArtifactTool((name) =>
         readAllowedArtifact(workspace, name, [
@@ -1242,9 +1252,10 @@ class DefaultRunOrchestrator implements RunOrchestrator {
   private markExecutionFailure(state: RunState, error: unknown): void {
     if (state.status === 'completed' || state.status === 'interrupted') return;
     state.status = 'failed';
-    state.phase = 'failed';
+    this.setPhase(state, 'failed', 'Run 执行失败，未形成可信最终结论', 'warning');
     state.finishedAt = this.now().toISOString();
     state.errorMessage = safeMessage(error);
+    state.blockingReasons = [state.errorMessage];
     this.options.logger?.error(
       {
         runId: state.runId,
@@ -1253,6 +1264,18 @@ class DefaultRunOrchestrator implements RunOrchestrator {
       },
       'run failed',
     );
+  }
+
+  private setPhase(
+    state: RunState,
+    phase: RunPhase,
+    message: string,
+    kind: 'phase' | 'info' | 'warning' = 'phase',
+  ): void {
+    state.phase = phase;
+    const at = this.now().toISOString();
+    state.updatedAt = at;
+    state.activities = [...(state.activities ?? []), { at, message, kind }].slice(-20);
   }
 
   private async readStateDetail(state: RunState): Promise<RunDetail> {
@@ -1549,6 +1572,14 @@ function toSummary(state: RunSnapshot): RunSummary {
   if (state.scenarioMode !== undefined) summary.scenarioMode = state.scenarioMode;
   if (state.initialization !== undefined) summary.initialization = state.initialization;
   if (state.scenarioPrUrl !== undefined) summary.scenarioPrUrl = state.scenarioPrUrl;
+  if (state.currentScenario !== undefined) summary.currentScenario = state.currentScenario;
+  if (state.scenarioProgress !== undefined) {
+    summary.scenarioProgress = { ...state.scenarioProgress };
+  }
+  if (state.activities !== undefined)
+    summary.activities = state.activities.map((activity) => ({ ...activity }));
+  if (state.blockingReasons !== undefined) summary.blockingReasons = [...state.blockingReasons];
+  if (state.updatedAt !== undefined) summary.updatedAt = state.updatedAt;
   return summary;
 }
 
