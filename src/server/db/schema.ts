@@ -148,3 +148,45 @@ export const runStoreProgress = sqliteTable('run_store_progress', {
   runId: text('run_id'),
   updatedAt: text('updated_at'),
 });
+
+export const testRequestQueue = sqliteTable('test_request_queue', {
+  queueId: integer('queue_id').primaryKey({ autoIncrement: true }),
+  requestId: text('request_id').notNull().unique(),
+  trigger: text('trigger').notNull(),
+  request: text('request').notNull(),
+  targetRef: text('target_ref'),
+  triggerSourcesJson: text('trigger_sources_json').notNull(),
+  requestIdsJson: text('request_ids_json').notNull(),
+  status: text('status').notNull(),
+  runId: text('run_id'),
+  claimedAt: text('claimed_at'),
+  waitingArchiveAt: text('waiting_archive_at'),
+  completedAt: text('completed_at'),
+  errorMessage: text('error_message'),
+  archiveStatus: text('archive_status'),
+  progressed: integer('progressed'),
+  createdAt: text('created_at').notNull(),
+  updatedAt: text('updated_at').notNull(),
+});
+
+export const automationState = sqliteTable('automation_state', {
+  key: text('key').primaryKey(),
+  value: text('value').notNull(),
+  updatedAt: text('updated_at').notNull(),
+});
+
+export const interruptedRunRecords = sqliteTable('interrupted_run_records', {
+  runId: text('run_id').primaryKey(),
+  trigger: text('trigger').notNull(),
+  request: text('request').notNull(),
+  baseCommit: text('base_commit'),
+  targetCommit: text('target_commit'),
+  includedCommitsJson: text('included_commits_json').notNull(),
+  startedAt: text('started_at').notNull(),
+  interruptedAt: text('interrupted_at').notNull(),
+  runningDirectory: text('running_directory'),
+  artifactNamesJson: text('artifact_names_json').notNull(),
+  errorMessage: text('error_message').notNull(),
+  createdAt: text('created_at').notNull(),
+  updatedAt: text('updated_at').notNull(),
+});

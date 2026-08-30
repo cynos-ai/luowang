@@ -188,7 +188,7 @@ function normalizeHarness(
       runner: { model: '', thinking: 'medium' },
       reviewer: { model: '', thinking: 'medium' },
     },
-    local: { repoDir: paths.repoDir, reportDir: paths.reportDir, retentionDays: 30 },
+    local: { repoDir: paths.repoDir, reportDir: paths.reportDir, retentionDays: 1 },
     mcp: { enabled: false, browser: 'chromium', headless: true, timeoutMs: 30_000 },
     oss: {
       endpoint: '',
@@ -245,7 +245,7 @@ function normalizeRepository(value: unknown): RepositoryConfig {
       'pr-required',
     ]),
     scenarioLabels: normalizeStringArray(source.scenarioLabels),
-    pollIntervalSeconds: normalizeInteger(source.pollIntervalSeconds, 300, 0, 31_536_000),
+    pollIntervalSeconds: normalizeInteger(source.pollIntervalSeconds, 60, 0, 31_536_000),
     cron: normalizeText(source.cron, ''),
     triggerOnCommit: normalizeBoolean(source.triggerOnCommit, false),
     environmentDescription: normalizeText(source.environmentDescription, ''),

@@ -57,4 +57,4 @@
 
 ## 当前基线
 
-当前 MVP 的已确认产品、架构、安全和验收边界记录在 `docs/changes/luowang-harness-mvp/spec.md`，分阶段实现顺序和每阶段证明记录在同目录 `plan.md`。当前已完成 Phase 0、Phase 1，并在 `feat/p2-repository-index` 实现 Phase 2 的 GitHub Repository Service、场景分支控制、Markdown 索引和只读查询边界；Agent Run、浏览器、OSS 归档与自动化仍属于后续阶段。
+当前 MVP 的已确认产品、架构、安全和验收边界记录在 `docs/changes/luowang-harness-mvp/spec.md`，分阶段实现顺序和每阶段证明记录在同目录 `plan.md`。当前已完成 Phase 0–6：包括 GitHub Repository Service、场景分支控制、Markdown 索引、Agent Run、headless 浏览器与 OSS 证据、幂等归档，以及 Git/Cron/API/人工请求共用的 SQLite FIFO 队列、自动合批、定时任务和 interrupted 恢复。目标测试项目固定为 `cynos-ai/cynos-website`，其凭证只保存在 LuoWang 本地被忽略的 `.env` 或网站 Secret Store，不进入项目理解文档和 Git。

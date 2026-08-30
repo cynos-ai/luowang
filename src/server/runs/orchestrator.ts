@@ -44,6 +44,7 @@ import {
 import { createProviderAdapter, type ProviderAdapter } from './provider.js';
 import { createTestDataManager, createTestDataTools, type TestDataManager } from './test-data.js';
 import type { RunStore } from './store.js';
+import type { RunRecoveryStore } from '../automation/recovery.js';
 import { createRunId, RunWorkspace, RunWorkspaceError, RunWorkspaceStore } from './workspace.js';
 import type {
   AgentRole,
@@ -77,6 +78,7 @@ export interface RunOrchestratorOptions {
   oss?: OssAdapter;
   testData?: TestDataManager;
   runStore?: RunStore;
+  recoveryStore?: RunRecoveryStore;
   now?: () => Date;
   id?: () => string;
   logger?: Logger;
@@ -225,6 +227,9 @@ class DefaultRunOrchestrator implements RunOrchestrator {
       const state = await this.readFilesystemRun(runId, 'running');
       if (state) result.push(toSummary(state));
     }
+    for (const recovered of this.options.recoveryStore?.list() ?? []) {
+      if (!seen.has(recovered.runId)) result.push(recovered);
+    }
     return result.sort((left, right) => right.startedAt.localeCompare(left.startedAt));
   }
 
@@ -239,7 +244,8 @@ class DefaultRunOrchestrator implements RunOrchestrator {
       const recovered = await this.readFilesystemRun(runId, 'running');
       return recovered ? this.readStateDetail(recovered) : null;
     }
-    return null;
+    const interrupted = this.options.recoveryStore?.get(runId);
+    return interrupted ? { ...interrupted, artifacts: {} } : null;
   }
 
   async recover(): Promise<void> {
@@ -248,7 +254,7 @@ class DefaultRunOrchestrator implements RunOrchestrator {
       const workspace = this.workspaceStore.open(runId, 'running');
       const artifacts = await workspace.list();
       const timestamp = this.now().toISOString();
-      this.runs.set(runId, {
+      const state: RunState = {
         runId,
         status: 'interrupted',
         phase: 'interrupted',
@@ -265,6 +271,11 @@ class DefaultRunOrchestrator implements RunOrchestrator {
         completedDirectory: null,
         runningDirectory: workspace.runningDirectory,
         evidence: [],
+      };
+      this.runs.set(runId, state);
+      this.options.recoveryStore?.record(toSummary(state), {
+        interruptedAt: timestamp,
+        runningDirectory: workspace.runningDirectory,
       });
     }
   }
@@ -347,6 +358,7 @@ class DefaultRunOrchestrator implements RunOrchestrator {
         await this.workspaceStore.open(state.runId, 'completed').list(),
       );
       await this.persistCompletedRun(state, report);
+      this.options.recoveryStore?.remove(state.runId);
       if (report.result === 'passed' && !this.options.runStore) {
         // Phase 5 moves progression to the SQLite-backed Archiver. Keep the
         // in-memory fallback for callers that intentionally use the Phase 3
@@ -1044,8 +1056,8 @@ function assertRunInput(input: RunInput): void {
   if (!input || typeof input.request !== 'string' || input.request.trim() === '') {
     throw new RunOrchestratorError('RUN_REQUEST_INVALID', 'Run 请求内容不能为空');
   }
-  if (!['manual', 'api'].includes(input.trigger)) {
-    throw new RunOrchestratorError('RUN_REQUEST_INVALID', 'Phase 3 只支持 manual 或 api 触发');
+  if (!['git', 'schedule', 'manual', 'api'].includes(input.trigger)) {
+    throw new RunOrchestratorError('RUN_REQUEST_INVALID', '测试请求来源无效');
   }
   if (input.targetCommit !== undefined && input.targetCommit.trim() === '') {
     throw new RunOrchestratorError('RUN_REQUEST_INVALID', 'targetCommit 不能为空');
