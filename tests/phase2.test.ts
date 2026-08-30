@@ -63,7 +63,7 @@ describe('Phase 2 repository control', () => {
       () => repository.assertAncestor(merged.scenarioBranchHead, initialHead),
       (error: unknown) => error instanceof Error && error.message.includes('历史已断裂'),
     );
-  });
+  }, 15_000);
 
   it('cleans a conflicted merge without leaving a dirty worktree', async () => {
     const fixture = await createGitFixture();

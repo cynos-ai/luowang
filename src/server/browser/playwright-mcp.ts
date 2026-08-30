@@ -111,7 +111,10 @@ class DefaultPlaywrightMcpAdapter implements BrowserMcpAdapter {
         '--codegen=none',
       ],
       env: safeBrowserEnvironment(),
-      ...(this.options.cwd ? { cwd: this.options.cwd } : {}),
+      // Playwright MCP resolves explicit screenshot filenames relative to its
+      // process cwd. Keep that cwd inside this Run's evidence directory unless
+      // a caller deliberately supplied an isolated development cwd.
+      cwd: this.options.cwd ?? evidenceDirectory,
       lifecycle: 'lazy',
       directTools: false,
       excludeTools: [...EXCLUDED_TOOL_NAMES],
@@ -304,7 +307,7 @@ async function loadPiMcpAdapter(): Promise<PiMcpAdapterModule> {
 }
 
 export function browserNeedsVision(plan: string): boolean {
-  return /视觉|截图\s*(?:差异|对比|一致性|核对|判断)|(?:核对|比较|对比).{0,20}(?:截图|图像|图片)|布局|canvas|pixel|visual(?:\s+(?:check|comparison|assertion|regression))?/i.test(
+  return /(?:视觉|图像|图片)\s*(?:差异|对比|一致性|核对|判断|断言|回归)|截图\s*(?:差异|对比|一致性|核对|判断|断言|回归)|(?:核对|比较|对比|验证).{0,20}(?:截图|图像|图片)|布局|canvas|pixel|visual(?:\s+(?:check|comparison|assertion|regression))?/i.test(
     plan,
   );
 }

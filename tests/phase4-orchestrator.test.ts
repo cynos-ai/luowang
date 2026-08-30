@@ -56,9 +56,51 @@ describe('Phase 4 Run blocking boundaries', () => {
       );
     }
   });
+
+  it('checks visual capability on the Reviewer instead of the text-only Runner', async () => {
+    const fixture = await createGitFixture();
+    const context = await createRunContext(fixture, 'vision-reviewer');
+
+    const result = await context.orchestrator.run({
+      request: '验证截图视觉差异由 Reviewer 审核',
+      trigger: 'manual',
+    });
+
+    assert.equal(result.status, 'completed', JSON.stringify(result));
+    assert.equal(result.result, 'passed', JSON.stringify(result));
+  });
+
+  it('does not complete a Run when Main B writes a non-schema scenario result', async () => {
+    const fixture = await createGitFixture();
+    const context = await createRunContext(fixture, 'malformed-report');
+
+    const result = await context.orchestrator.run({
+      request: '验证最终报告 schema 校验',
+      trigger: 'manual',
+    });
+
+    assert.equal(result.status, 'failed', JSON.stringify(result));
+    assert.equal(result.result, null, JSON.stringify(result));
+    assert.equal(result.errorMessage, 'Run 执行失败，未生成可信最终结论');
+    assert.match(result.artifacts['report.md'] ?? '', /scenario: PHASE4-FIXTURE/);
+    assert.equal(
+      await pathExists(join(context.reportDir, 'completed', result.runId, 'report.md')),
+      false,
+    );
+    assert.equal(
+      await pathExists(join(context.reportDir, 'running', result.runId, 'report.md')),
+      true,
+    );
+  });
 });
 
-type FailureMode = 'upload-failure' | 'cleanup-failure' | 'browser-missing' | 'review-read-failure';
+type FailureMode =
+  | 'upload-failure'
+  | 'cleanup-failure'
+  | 'browser-missing'
+  | 'review-read-failure'
+  | 'vision-reviewer'
+  | 'malformed-report';
 
 interface Fixture {
   rootDir: string;
@@ -83,7 +125,9 @@ class FailureBoundarySessionFactory implements AgentSessionFactory {
             content:
               this.mode === 'cleanup-failure'
                 ? '# Plan\n\n无需场景测试：本次只验证非 UI 的清理边界。\n'
-                : '# Plan\n\nUI 登录场景：打开登录页面并保存 screenshot 证据。\n',
+                : this.mode === 'vision-reviewer'
+                  ? '# Plan\n\nUI 登录场景：打开登录页面并核对截图差异。\n'
+                  : '# Plan\n\nUI 登录场景：打开登录页面并保存 screenshot 证据。\n',
           });
           return;
         }
@@ -113,7 +157,11 @@ class FailureBoundarySessionFactory implements AgentSessionFactory {
           for (const name of ['plan.md', 'execution.md', 'draft-report.md']) {
             await invokeTool(input, 'read_run_artifact', { name });
           }
-          if (this.mode === 'review-read-failure') {
+          if (
+            this.mode === 'review-read-failure' ||
+            this.mode === 'vision-reviewer' ||
+            this.mode === 'malformed-report'
+          ) {
             await invokeTool(input, 'list_evidence_files', {});
             await invokeTool(input, 'read_evidence_image', { filename: 'login.png' });
           }
@@ -127,7 +175,12 @@ class FailureBoundarySessionFactory implements AgentSessionFactory {
           await invokeTool(input, 'read_run_artifact', { name });
         }
         const context = parsePromptContext(input.systemPrompt);
-        await invokeTool(input, 'write_report', { content: passedReport(context) });
+        await invokeTool(input, 'write_report', {
+          content:
+            this.mode === 'malformed-report'
+              ? malformedReport(context)
+              : passedReport(context, this.mode === 'vision-reviewer'),
+        });
       },
       dispose: () => undefined,
     };
@@ -172,7 +225,7 @@ async function createRunContext(fixture: Fixture, mode: FailureMode): Promise<Ru
     configuration,
     repository,
     reportDir,
-    provider: {} as ProviderAdapter,
+    provider: mode === 'vision-reviewer' ? visualReviewerProvider() : ({} as ProviderAdapter),
     browser: fakeBrowser(mode !== 'browser-missing'),
     oss: mode === 'cleanup-failure' || mode === 'browser-missing' ? undefined : fakeOss(mode),
     testData: createTestDataManager(
@@ -182,6 +235,23 @@ async function createRunContext(fixture: Fixture, mode: FailureMode): Promise<Ru
     logger: pino({ level: 'silent' }),
   });
   return { orchestrator, reportDir };
+}
+
+function visualReviewerProvider(): ProviderAdapter {
+  return {
+    getRuntime: async () => ({}) as never,
+    resolveModel: async (role) => {
+      assert.notEqual(role, 'runner');
+      return { input: ['image'] } as never;
+    },
+    listModels: async () => [],
+    checkConnectivity: async () => ({
+      status: 'ok',
+      message: 'fixture provider available',
+      checkedAt: new Date().toISOString(),
+      latencyMs: 0,
+    }),
+  };
 }
 
 function fakeBrowser(enabled: boolean): BrowserMcpAdapter {
@@ -308,7 +378,10 @@ function parsePromptContext(prompt: string): {
   return JSON.parse(match[1]) as ReturnType<typeof parsePromptContext>;
 }
 
-function passedReport(context: ReturnType<typeof parsePromptContext>): string {
+function passedReport(
+  context: ReturnType<typeof parsePromptContext>,
+  includeScenario = false,
+): string {
   return `---
 run_id: ${context.runId}
 trigger: manual
@@ -318,13 +391,36 @@ included_commits: []
 result: passed
 started_at: 2026-08-30T00:00:00.000Z
 finished_at: 2026-08-30T00:01:00.000Z
-scenario_results: []
+scenario_results: ${includeScenario ? '\n  - id: PHASE4-FIXTURE\n    result: passed' : ' []'}
 confirmed_bugs: []
 ---
 
 # Report
 
-无需场景测试：这是 Phase 4 故障边界 fixture。\n`;
+${includeScenario ? '截图视觉审核 fixture 已通过。' : '无需场景测试：这是 Phase 4 故障边界 fixture。'}\n`;
+}
+
+function malformedReport(context: ReturnType<typeof parsePromptContext>): string {
+  return `---
+run_id: ${context.runId}
+trigger: manual
+base_commit: ${context.baseCommit ?? 'null'}
+target_commit: ${context.targetCommit}
+included_commits: []
+result: passed
+started_at: 2026-08-30T00:00:00.000Z
+finished_at: 2026-08-30T00:01:00.000Z
+scenario_results:
+  - scenario: PHASE4-FIXTURE
+    title: 错误字段
+    status: passed
+    evidence: []
+confirmed_bugs: []
+---
+
+# Report
+
+报告 schema fixture。\n`;
 }
 
 function fakeSecretStore(): SecretStore {

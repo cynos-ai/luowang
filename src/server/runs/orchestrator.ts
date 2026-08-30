@@ -522,13 +522,16 @@ class DefaultRunOrchestrator implements RunOrchestrator {
     if (browserNeedsVision(plan)) {
       let visionAvailable = false;
       try {
-        const model = await this.options.provider?.resolveModel('runner');
+        // Runner only captures and describes evidence. Visual assertions are
+        // owned by the independent Reviewer, so check the Reviewer model
+        // rather than requiring image input from the text-only Runner.
+        const model = await this.options.provider?.resolveModel('reviewer');
         visionAvailable = model ? supportsVision(model) : false;
       } catch {
         visionAvailable = false;
       }
       if (!visionAvailable) {
-        this.addBlockingReason(context, '计划需要视觉判断，但 Runner 模型不支持图像输入');
+        this.addBlockingReason(context, '计划需要视觉判断，但 Reviewer 模型不支持图像输入');
       }
     }
   }
@@ -887,7 +890,8 @@ class DefaultRunOrchestrator implements RunOrchestrator {
   ): Promise<void> {
     if (context.blockingReasons.length === 0) return;
     const report = await workspace.read('report.md');
-    const resultLine = /^result:\s*(?:passed|failed|blocked)\s*$/m;
+    const resultLine =
+      /^result:\s*(?:passed|failed|blocked|['"](?:passed|failed|blocked)['"])\s*$/m;
     if (!resultLine.test(report)) {
       throw new RunOrchestratorError('RUN_ARTIFACT_INVALID', '最终报告缺少可更新的 result 字段');
     }
@@ -1189,7 +1193,7 @@ function runnerPrompt(context: RunContext): string {
 固定 Run 上下文：
 ${JSON.stringify(context, null, 2)}
 
-先读取 plan.md，再按计划使用 read_target_file、search_target_files 和 run_fixture_command。UI 场景只能使用受控的 headless、isolated Playwright MCP，优先使用 accessibility snapshot/ref；需要截图时保存到当前 Run 的 evidence 目录。可以通过 get_test_environment 请求当前非生产测试环境和账号，密码只能用于当前操作，绝不能写入日志、命令输出、任何 Markdown 或证据。使用 get_test_data_prefix 标记临时数据，登记后在场景结束调用 cleanup_test_data。run_fixture_command 只允许受控本地命令，不能读取或猜测其他 Harness Secret，不能写产品源码，不能使用 shell 管道/重定向。每个场景记录实际观察、命令退出码、证据和清理结果；通过 upload_evidence 可提前上传证据，Harness 也会在 Runner 结束后兜底上传。最后必须分别通过 write_execution 写完整 execution.md、通过 write_draft_report 写完整 draft-report.md。环境/命令/凭据不可用时记录为 blocked，不伪造通过。`;
+先读取 plan.md，再按计划使用 read_target_file、search_target_files 和 run_fixture_command。UI 场景只能使用受控的 headless、isolated Playwright MCP，优先使用 accessibility snapshot/ref；需要截图时必须使用相对文件名（例如 auth-login-001-after-login.png），截图会自动写入当前 Run 的 evidence 目录；截图后必须调用 list_evidence_files 确认 PNG/JPEG/WebP 确实存在，并在 execution.md 中记录文件名。可以通过 get_test_environment 请求当前非生产测试环境和账号，密码只能用于当前操作，绝不能写入日志、命令输出、任何 Markdown 或证据。使用 get_test_data_prefix 标记临时数据，登记后在场景结束调用 cleanup_test_data。run_fixture_command 只允许受控本地命令，不能读取或猜测其他 Harness Secret，不能写产品源码，不能使用 shell 管道/重定向。每个场景记录实际观察、命令退出码、证据和清理结果；通过 upload_evidence 可提前上传证据，Harness 也会在 Runner 结束后兜底上传。最后必须分别通过 write_execution 写完整 execution.md、通过 write_draft_report 写完整 draft-report.md。环境/命令/凭据不可用时记录为 blocked，不伪造通过。`;
 }
 
 function reviewerPrompt(context: RunContext): string {
@@ -1207,5 +1211,13 @@ function mainBPrompt(context: RunContext): string {
 固定 Run 上下文：
 ${JSON.stringify(context, null, 2)}
 
-必须先读取 plan.md、execution.md、draft-report.md、review.md。最终 report.md 只能包含以下 frontmatter 字段：run_id、trigger、base_commit、target_commit、included_commits、result、started_at、finished_at、scenario_results、confirmed_bugs。字段值必须与固定 Run 一致；result 聚合优先级为 blocked > failed > passed。只要固定上下文中的 blockingReasons 非空，最终结果必须是 blocked，并在正文说明这些阻塞原因；不要把 Harness 自动追加的证据地址或清理状态写入 frontmatter。failed 必须至少有一个 confirmed_bugs；confirmed bug 的 issue_action 只能是 create 或 link，link 必须有 issue_url。零场景 passed 必须在 plan、review 和本报告中都保留“无需场景测试”的依据。不要写隐藏推理、Secret、密码、短期签名 URL、绝对证据路径或额外状态文件；证据只能引用固定上下文中的稳定 URL。结束前必须通过 write_report 写完整 report.md。`;
+必须先读取 plan.md、execution.md、draft-report.md、review.md。最终 report.md 只能包含以下 frontmatter 字段：run_id、trigger、base_commit、target_commit、included_commits、result、started_at、finished_at、scenario_results、confirmed_bugs；不得增加任何其他 frontmatter 字段。字段值必须与固定 Run 一致；result 聚合优先级为 blocked > failed > passed。只要固定上下文中的 blockingReasons 非空，最终结果必须是 blocked，并在正文说明这些阻塞原因；不要把 Harness 自动追加的证据地址或清理状态写入 frontmatter。“scenario_results”必须始终是 YAML 数组；每个元素只能有 “id” 和 “result” 两个字段，严格使用以下形状：
+
+~~~yaml
+scenario_results:
+  - id: AUTH-LOGIN-001
+    result: passed
+~~~
+
+将示例中的场景 ID 和结果替换为实际值。禁止使用 “scenario_id”、“scenario”、“title”、“status” 或 “evidence” 作为 “scenario_results” 元素字段；证据只能写在 Markdown 正文中。“confirmed_bugs”的元素只能使用 parser 支持的字段：“key”、“title”、“scenario_ids”、“issue_action”，以及在 “issue_action: link” 时必需的 “issue_url”。failed 必须至少有一个 confirmed_bugs；confirmed bug 的 issue_action 只能是 create 或 link，link 必须有 issue_url。零场景 passed 必须在 plan、review 和本报告中都保留“无需场景测试”的依据。测试环境账号是 Runner 专用 Secret：即使前置工件中出现，也绝不能在最终报告中写出或复述 username、password、email、userId、displayName、账号标识或任何 get_test_environment 返回值；只写脱敏的状态码、通用 UI 文案和行为事实。不要写隐藏推理、Secret、密码、短期签名 URL、绝对证据路径或额外状态文件；证据只能引用固定上下文中的稳定 URL。结束前必须通过 write_report 写完整 report.md。`;
 }

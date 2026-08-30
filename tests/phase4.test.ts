@@ -1,5 +1,5 @@
 import { strict as assert } from 'node:assert';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { access, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -88,6 +88,7 @@ describe('Phase 4 browser and evidence boundaries', () => {
       }),
     });
     const definition = adapter.serverDefinition('C:/runs/evidence');
+    assert.equal(definition.cwd, 'C:/runs/evidence');
     assert.ok(definition.args.includes(`@playwright/mcp@${PLAYWRIGHT_MCP_VERSION}`));
     assert.ok(definition.args.includes('--headless'));
     assert.ok(definition.args.includes('--isolated'));
@@ -101,6 +102,8 @@ describe('Phase 4 browser and evidence boundaries', () => {
     assert.equal(browserScenarioRequested('登录页面点击提交按钮'), true);
     assert.equal(browserNeedsVision('核对截图差异'), true);
     assert.equal(browserNeedsVision('登录成功后保存 screenshot 证据'), false);
+    assert.equal(browserNeedsVision('Reviewer 从 OSS 读取截图完成视觉审核'), false);
+    assert.equal(browserNeedsVision('比较两张截图的一致性'), true);
   });
 
   it('blocks cleanup when data was registered without a real cleanup adapter', async () => {
@@ -166,9 +169,17 @@ describe('Phase 4 browser and evidence boundaries', () => {
       createReviewerEvidenceTools(store).some((item) => item.name === 'run_fixture_command'),
       false,
     );
+    await store.cleanupLocal();
+    assert.deepEqual(
+      (await store.list()).map((file) => file.name),
+      ['login.png'],
+    );
     assert.equal(
-      (await readFile(join(workspace.evidenceDirectory, 'login.png'))).toString(),
-      'png-bytes',
+      await access(join(workspace.evidenceDirectory, 'login.png')).then(
+        () => true,
+        () => false,
+      ),
+      false,
     );
   });
 });

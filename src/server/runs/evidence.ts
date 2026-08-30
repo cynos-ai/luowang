@@ -54,8 +54,19 @@ class DefaultRunEvidenceStore implements RunEvidenceStore {
     private readonly oss: OssAdapter,
   ) {}
 
-  list(): Promise<RunEvidenceFile[]> {
-    return this.workspace.listEvidence();
+  async list(): Promise<RunEvidenceFile[]> {
+    const files = await this.workspace.listEvidence();
+    const byName = new Map(files.map((file) => [file.name, file]));
+    for (const reference of this.references.values()) {
+      if (!byName.has(reference.filename)) {
+        byName.set(reference.filename, {
+          name: reference.filename,
+          path: '',
+          sizeBytes: reference.sizeBytes,
+        });
+      }
+    }
+    return [...byName.values()].sort((left, right) => left.name.localeCompare(right.name));
   }
 
   async upload(filename: string): Promise<EvidenceReference> {
