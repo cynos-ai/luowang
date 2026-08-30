@@ -22,6 +22,11 @@ export interface GitLogEntry {
   subject: string;
 }
 
+export interface GitCommitChanges {
+  sha: string;
+  paths: string[];
+}
+
 export interface GitTreeEntry {
   path: string;
   mode: string;
@@ -364,6 +369,31 @@ export class GitRepository {
     const baseSha = await this.resolveCommit(base);
     const output = await this.run(['diff', '--name-only', '-z', baseSha, targetSha, '--']);
     return output.stdout.split('\0').filter(Boolean);
+  }
+
+  async commitsBetween(base: string, target: string): Promise<GitCommitChanges[]> {
+    const baseSha = await this.resolveCommit(base);
+    const targetSha = await this.resolveCommit(target);
+    await this.assertAncestor(baseSha, targetSha);
+    const commits = (await this.run(['rev-list', '--reverse', `${baseSha}..${targetSha}`])).stdout
+      .split(/\r?\n/)
+      .map((sha) => sha.trim())
+      .filter((sha) => SHA_PATTERN.test(sha));
+    const changes: GitCommitChanges[] = [];
+    for (const sha of commits) {
+      const output = await this.run([
+        'diff-tree',
+        '--root',
+        '--no-commit-id',
+        '--name-only',
+        '-r',
+        '-z',
+        sha,
+        '--',
+      ]);
+      changes.push({ sha: sha.toLowerCase(), paths: output.stdout.split('\0').filter(Boolean) });
+    }
+    return changes;
   }
 
   private async isGitWorktree(): Promise<boolean> {
