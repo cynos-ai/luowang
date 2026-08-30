@@ -298,6 +298,15 @@ export class RunWorkspaceStore {
     }
   }
 
+  async remove(runId: string, placement: 'running' | 'completed'): Promise<void> {
+    assertRunId(runId);
+    const workspace = this.open(runId, placement);
+    await rm(placement === 'running' ? workspace.runningDirectory : workspace.completedDirectory, {
+      recursive: true,
+      force: true,
+    });
+  }
+
   get root(): string {
     return this.reportRoot;
   }

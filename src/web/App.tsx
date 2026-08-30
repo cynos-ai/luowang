@@ -23,7 +23,7 @@ const DEFAULT_HARNESS: HarnessConfig = {
     runner: { model: '', thinking: 'medium' },
     reviewer: { model: '', thinking: 'medium' },
   },
-  local: { repoDir: '', reportDir: '', retentionDays: 30 },
+  local: { repoDir: '', reportDir: '', retentionDays: 1 },
   mcp: { enabled: false, browser: 'chromium', headless: true, timeoutMs: 30_000 },
   oss: {
     endpoint: '',
@@ -40,7 +40,7 @@ const DEFAULT_REPOSITORY: RepositoryConfig = {
   scenarioBranch: 'scenario-testing',
   scenarioMode: 'pr-required',
   scenarioLabels: [],
-  pollIntervalSeconds: 300,
+  pollIntervalSeconds: 60,
   cron: '',
   triggerOnCommit: false,
   environmentDescription: '',
