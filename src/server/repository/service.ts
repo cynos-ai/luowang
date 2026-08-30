@@ -17,7 +17,13 @@ import {
   isGitHubRepository,
   type GithubCheckId,
 } from './github.js';
-import { GitRepository, type GitMergeResult, type GitTreeEntry } from './git-repository.js';
+import {
+  GitRepository,
+  type GitMergeResult,
+  type GitTreeEntry,
+  type ReportFileName,
+  type ReportPublishResult,
+} from './git-repository.js';
 import { RepositoryError } from './errors.js';
 
 export interface RepositoryService {
@@ -37,6 +43,13 @@ export interface RepositoryService {
   getScenarioBranch(): string;
   checkConnectivity(checkId: GithubCheckId): Promise<ConnectivityResult>;
   listIssues(): Promise<RepositoryIssue[]>;
+  findIssuesByMarkers(markers: readonly string[]): Promise<RepositoryIssue[]>;
+  createIssue(title: string, body: string): Promise<RepositoryIssue>;
+  getIssueByUrl(issueUrl: string): Promise<RepositoryIssue>;
+  publishRunReports(
+    runId: string,
+    files: Record<ReportFileName, string>,
+  ): Promise<ReportPublishResult>;
   listTree(commit: string): Promise<GitTreeEntry[]>;
 }
 
@@ -204,6 +217,41 @@ class DefaultRepositoryService implements RepositoryService {
       tokenProvider: () => this.secretStore.get('gitToken'),
     });
     return client.listIssues();
+  }
+
+  async findIssuesByMarkers(markers: readonly string[]): Promise<RepositoryIssue[]> {
+    const config = this.requireRepositoryConfig();
+    const client = new GitHubClient({
+      repositoryUrl: config.repository,
+      tokenProvider: () => this.secretStore.get('gitToken'),
+    });
+    return client.findIssuesByMarkers(markers);
+  }
+
+  async createIssue(title: string, body: string): Promise<RepositoryIssue> {
+    const config = this.requireRepositoryConfig();
+    const client = new GitHubClient({
+      repositoryUrl: config.repository,
+      tokenProvider: () => this.secretStore.get('gitToken'),
+    });
+    return client.createIssue(title, body);
+  }
+
+  async getIssueByUrl(issueUrl: string): Promise<RepositoryIssue> {
+    const config = this.requireRepositoryConfig();
+    const client = new GitHubClient({
+      repositoryUrl: config.repository,
+      tokenProvider: () => this.secretStore.get('gitToken'),
+    });
+    return client.getIssueByUrl(issueUrl);
+  }
+
+  async publishRunReports(
+    runId: string,
+    files: Record<ReportFileName, string>,
+  ): Promise<ReportPublishResult> {
+    const config = this.requireRepositoryConfig();
+    return (await this.getRepository()).publishRunReports(config.scenarioBranch, runId, files);
   }
 
   async listTree(commit: string): Promise<GitTreeEntry[]> {

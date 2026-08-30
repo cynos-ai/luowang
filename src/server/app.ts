@@ -48,6 +48,8 @@ import {
   RunOrchestratorError,
   type RunOrchestrator,
 } from './runs/orchestrator.js';
+import { createRunArchiver, type RunArchiver } from './runs/archiver.js';
+import { createRunStore, type RunStore } from './runs/store.js';
 
 export interface AppOptions {
   config: AppConfig;
@@ -61,6 +63,8 @@ export interface AppOptions {
   indexer?: RepositoryIndexer;
   provider?: ProviderAdapter;
   runs?: RunOrchestrator;
+  runStore?: RunStore;
+  archiver?: RunArchiver;
   browser?: BrowserMcpAdapter;
   oss?: OssAdapter;
 }
@@ -90,6 +94,16 @@ export async function createApp(options: AppOptions) {
   const provider = options.provider ?? createProviderAdapter(configuration, secretStore);
   const browser = options.browser ?? createPlaywrightMcpAdapter(configuration);
   const oss = options.oss ?? createOssAdapter(configuration, secretStore);
+  const runStore = options.runStore ?? createRunStore(options.database.sqlite);
+  const archiver =
+    options.archiver ??
+    createRunArchiver({
+      database: options.database.sqlite,
+      reportDir: configuration.getHarness().local.reportDir,
+      repository,
+      indexer,
+      runStore,
+    });
   const connectivity =
     options.connectivity ??
     createConnectivityRegistry(
@@ -111,6 +125,7 @@ export async function createApp(options: AppOptions) {
       provider,
       browser,
       oss,
+      runStore,
     });
   await runs.recover();
 
@@ -366,6 +381,46 @@ export async function createApp(options: AppOptions) {
   app.get('/api/runs/current', async (request, reply) => {
     requireAuth(request, auth);
     return reply.send({ run: await runs.current() });
+  });
+
+  app.post('/api/archive/scan', async (request, reply) => {
+    requireAuth(request, auth);
+    return reply.send({ runs: await archiver.scan() });
+  });
+
+  app.post('/api/runs/:runId/archive', async (request, reply) => {
+    requireAuth(request, auth);
+    return reply.send({ archive: await archiver.archive(readParam(request, 'runId')) });
+  });
+
+  app.get('/api/runs/:runId/archive', async (request, reply) => {
+    requireAuth(request, auth);
+    const archived = runStore.get(readParam(request, 'runId'));
+    if (!archived) throw new AppError('RUN_NOT_FOUND', 'Run 归档记录不存在', 404);
+    return reply.send({
+      archive: {
+        runId: archived.runId,
+        status:
+          archived.archiveStatus === 'failed'
+            ? 'failed'
+            : archived.archiveStatus === 'partial'
+              ? 'partial'
+              : 'completed',
+        reportStatus: archived.reportStatus,
+        reportCommitSha: archived.reportCommitSha,
+        issues: archived.issues.map((issue) => ({
+          bugKey: issue.bugKey,
+          status: issue.status,
+          issueNumber: issue.issueNumber,
+          issueUrl: issue.issueUrl,
+          errorMessage: issue.errorMessage,
+        })),
+        progressed: archived.progressed,
+        archiveStatus: archived.archiveStatus,
+        errorMessage: archived.archiveError,
+        indexerTriggered: false,
+      },
+    });
   });
 
   app.get('/api/evidence/:objectId', async (request, reply) => {
