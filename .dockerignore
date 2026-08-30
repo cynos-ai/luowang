@@ -1,0 +1,15 @@
+.git
+.github
+.cache
+.cynos
+.env
+.env.*
+!.env.example
+node_modules
+dist
+coverage
+test-results
+playwright-report
+data
+*.db
+*.sqlite
