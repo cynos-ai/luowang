@@ -1,11 +1,17 @@
 import { randomBytes } from 'node:crypto';
-import { lstat, mkdir, readFile, readdir, rename, writeFile } from 'node:fs/promises';
+import { lstat, mkdir, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises';
 import { dirname, isAbsolute, relative, resolve } from 'node:path';
 
-import { RUN_ARTIFACT_NAMES, type AgentRole, type RunArtifactName } from './types.js';
+import {
+  RUN_ARTIFACT_NAMES,
+  SCENARIO_PATCH_ARTIFACT_NAME,
+  type AgentRole,
+  type RunArtifactName,
+} from './types.js';
 
 const RUN_ID_PATTERN = /^[0-9A-HJKMNP-TV-Z]{26}$/;
 const MAX_ARTIFACT_BYTES = 4 * 1024 * 1024;
+const MAX_EVIDENCE_BYTES = 32 * 1024 * 1024;
 
 export class RunWorkspaceError extends Error {
   readonly code:
@@ -30,12 +36,19 @@ export interface RunArtifactWriter {
   writeDraftReport(content: string): Promise<void>;
   writeReview(content: string): Promise<void>;
   writeReport(content: string): Promise<void>;
+  writeScenarioPatch(content: string): Promise<void>;
 }
 
 export interface RunArtifactReader {
   read(name: RunArtifactName): Promise<string>;
   exists(name: RunArtifactName): Promise<boolean>;
   list(): Promise<Record<string, string>>;
+}
+
+export interface RunEvidenceFile {
+  name: string;
+  path: string;
+  sizeBytes: number;
 }
 
 export class RunWorkspace implements RunArtifactReader {
@@ -56,6 +69,10 @@ export class RunWorkspace implements RunArtifactReader {
 
   private readonly directory: string;
 
+  get evidenceDirectory(): string {
+    return resolve(this.directory, 'evidence');
+  }
+
   async create(): Promise<void> {
     await mkdir(dirname(this.runningDirectory), { recursive: true });
     await mkdir(dirname(this.completedDirectory), { recursive: true });
@@ -74,6 +91,7 @@ export class RunWorkspace implements RunArtifactReader {
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
     }
     await mkdir(this.runningDirectory, { recursive: false });
+    await mkdir(this.evidenceDirectory, { recursive: false });
   }
 
   writer(role: AgentRole): RunArtifactWriter {
@@ -84,6 +102,8 @@ export class RunWorkspace implements RunArtifactReader {
       writeDraftReport: (content) => this.writeForRole(role, 'draft-report.md', content, allowed),
       writeReview: (content) => this.writeForRole(role, 'review.md', content, allowed),
       writeReport: (content) => this.writeForRole(role, 'report.md', content, allowed),
+      writeScenarioPatch: (content) =>
+        this.writeForRole(role, SCENARIO_PATCH_ARTIFACT_NAME, content, allowed),
     };
   }
 
@@ -116,7 +136,7 @@ export class RunWorkspace implements RunArtifactReader {
 
   async list(): Promise<Record<string, string>> {
     const files: Record<string, string> = {};
-    for (const name of RUN_ARTIFACT_NAMES) {
+    for (const name of [...RUN_ARTIFACT_NAMES, SCENARIO_PATCH_ARTIFACT_NAME]) {
       if (await this.exists(name)) files[name] = await this.read(name);
     }
     return files;
@@ -131,8 +151,18 @@ export class RunWorkspace implements RunArtifactReader {
     }
   }
 
-  async finalize(): Promise<void> {
-    await this.assertComplete();
+  async assertScenarioReviewComplete(): Promise<void> {
+    for (const name of [SCENARIO_PATCH_ARTIFACT_NAME, 'report.md'] as const) {
+      const content = await this.read(name);
+      if (content.trim() === '') {
+        throw new RunWorkspaceError('ARTIFACT_INVALID', `Run 工件不能为空：${name}`);
+      }
+    }
+  }
+
+  async finalize(options: { specialScenarioReview?: boolean } = {}): Promise<void> {
+    if (options.specialScenarioReview) await this.assertScenarioReviewComplete();
+    else await this.assertComplete();
     try {
       await lstat(this.completedDirectory);
       throw new RunWorkspaceError('RUN_ALREADY_COMPLETED', `完成目录已存在：${this.runId}`);
@@ -141,6 +171,36 @@ export class RunWorkspace implements RunArtifactReader {
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
     }
     await rename(this.runningDirectory, this.completedDirectory);
+  }
+
+  async listEvidence(): Promise<RunEvidenceFile[]> {
+    const files: RunEvidenceFile[] = [];
+    await this.walkEvidence(this.evidenceDirectory, '', files);
+    return files.sort((left, right) => left.name.localeCompare(right.name));
+  }
+
+  async readEvidence(name: string): Promise<Buffer> {
+    const path = this.evidencePath(name);
+    try {
+      const info = await lstat(path);
+      if (!info.isFile() || info.isSymbolicLink()) {
+        throw new RunWorkspaceError('ARTIFACT_INVALID', `证据不是普通文件：${name}`);
+      }
+      if (info.size > MAX_EVIDENCE_BYTES) {
+        throw new RunWorkspaceError('ARTIFACT_INVALID', `证据超出大小限制：${name}`);
+      }
+      return await readFile(path);
+    } catch (error) {
+      if (error instanceof RunWorkspaceError) throw error;
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+        throw new RunWorkspaceError('ARTIFACT_MISSING', `证据不存在：${name}`);
+      }
+      throw error;
+    }
+  }
+
+  async removeEvidence(): Promise<void> {
+    await rm(this.evidenceDirectory, { recursive: true, force: true });
   }
 
   private async writeForRole(
@@ -172,7 +232,7 @@ export class RunWorkspace implements RunArtifactReader {
   }
 
   private artifactPath(name: RunArtifactName): string {
-    if (!RUN_ARTIFACT_NAMES.includes(name)) {
+    if (![...RUN_ARTIFACT_NAMES, SCENARIO_PATCH_ARTIFACT_NAME].includes(name)) {
       throw new RunWorkspaceError('ARTIFACT_NOT_ALLOWED', `不支持的 Run 工件：${name}`);
     }
     const path = resolve(this.directory, name);
@@ -181,6 +241,47 @@ export class RunWorkspace implements RunArtifactReader {
       throw new RunWorkspaceError('ARTIFACT_NOT_ALLOWED', `Run 工件路径越界：${name}`);
     }
     return path;
+  }
+
+  private evidencePath(name: string): string {
+    assertEvidenceName(name);
+    const path = resolve(this.evidenceDirectory, name);
+    const relativePath = relative(this.evidenceDirectory, path);
+    if (isAbsolute(relativePath) || relativePath !== name) {
+      throw new RunWorkspaceError('ARTIFACT_NOT_ALLOWED', `证据路径越界：${name}`);
+    }
+    return path;
+  }
+
+  private async walkEvidence(
+    directory: string,
+    prefix: string,
+    files: RunEvidenceFile[],
+  ): Promise<void> {
+    let entries;
+    try {
+      entries = await readdir(directory, { withFileTypes: true });
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return;
+      throw error;
+    }
+    for (const entry of entries) {
+      const name = prefix ? `${prefix}/${entry.name}` : entry.name;
+      assertEvidenceName(name);
+      const path = resolve(directory, entry.name);
+      const info = await lstat(path);
+      if (info.isSymbolicLink()) {
+        throw new RunWorkspaceError('ARTIFACT_INVALID', `拒绝读取符号链接证据：${name}`);
+      }
+      if (info.isDirectory()) {
+        await this.walkEvidence(path, name, files);
+      } else if (info.isFile()) {
+        if (info.size > MAX_EVIDENCE_BYTES) {
+          throw new RunWorkspaceError('ARTIFACT_INVALID', `证据超出大小限制：${name}`);
+        }
+        files.push({ name, path, sizeBytes: info.size });
+      }
+    }
   }
 }
 
@@ -215,6 +316,15 @@ export class RunWorkspaceStore {
     }
   }
 
+  async remove(runId: string, placement: 'running' | 'completed'): Promise<void> {
+    assertRunId(runId);
+    const workspace = this.open(runId, placement);
+    await rm(placement === 'running' ? workspace.runningDirectory : workspace.completedDirectory, {
+      recursive: true,
+      force: true,
+    });
+  }
+
   get root(): string {
     return this.reportRoot;
   }
@@ -226,6 +336,19 @@ export function assertRunId(runId: string): void {
   }
 }
 
+export function assertEvidenceName(name: string): void {
+  if (
+    typeof name !== 'string' ||
+    name.trim() === '' ||
+    name.includes('\\') ||
+    name.startsWith('/') ||
+    name.split('/').some((part) => part === '' || part === '.' || part === '..') ||
+    name.split('/').some((part) => part.startsWith('.'))
+  ) {
+    throw new RunWorkspaceError('ARTIFACT_NOT_ALLOWED', '证据文件名无效');
+  }
+}
+
 export function createRunId(now = Date.now(), random = cryptoRandomBytes(10)): string {
   const timestamp = encodeBase32(BigInt(now), 10);
   const entropy = encodeBase32(BigInt(`0x${random.toString('hex')}`), 16);
@@ -233,10 +356,10 @@ export function createRunId(now = Date.now(), random = cryptoRandomBytes(10)): s
 }
 
 const ROLE_ARTIFACTS: Record<AgentRole, readonly RunArtifactName[]> = {
-  'main-a': ['plan.md'],
+  'main-a': ['plan.md', SCENARIO_PATCH_ARTIFACT_NAME],
   runner: ['execution.md', 'draft-report.md'],
   reviewer: ['review.md'],
-  'main-b': ['report.md'],
+  'main-b': ['report.md', SCENARIO_PATCH_ARTIFACT_NAME],
 };
 
 function encodeBase32(value: bigint, length: number): string {

@@ -4,6 +4,7 @@ services:
       context: .
       args:
         NODE_IMAGE: ${NODE_IMAGE:-node:24.14.1-bookworm-slim}
+        NPM_REGISTRY: ${NPM_REGISTRY:-https://registry.npmjs.org}
     image: luowang:local
     environment:
       NODE_ENV: production

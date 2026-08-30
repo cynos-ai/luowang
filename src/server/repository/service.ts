@@ -7,6 +7,7 @@ import type {
   ConnectivityResult,
   RepositoryIssue,
   RepositoryStatusResponse,
+  ScenarioMode,
 } from '../../shared/types.js';
 import type { ConfigurationStore } from '../configuration.js';
 import type { AppConfig } from '../config.js';
@@ -17,8 +18,16 @@ import {
   isGitHubRepository,
   type GithubCheckId,
 } from './github.js';
-import { GitRepository, type GitMergeResult, type GitTreeEntry } from './git-repository.js';
+import {
+  GitRepository,
+  type GitMergeResult,
+  type GitTreeEntry,
+  type ReportFileName,
+  type ReportPublishResult,
+  type ScenarioPatchPublishResult,
+} from './git-repository.js';
 import { RepositoryError } from './errors.js';
+import type { ScenarioPatchValidation } from './scenario-patch.js';
 
 export interface RepositoryService {
   getStatus(): Promise<RepositoryStatusResponse>;
@@ -37,7 +46,35 @@ export interface RepositoryService {
   getScenarioBranch(): string;
   checkConnectivity(checkId: GithubCheckId): Promise<ConnectivityResult>;
   listIssues(): Promise<RepositoryIssue[]>;
+  findIssuesByMarkers(markers: readonly string[]): Promise<RepositoryIssue[]>;
+  createIssue(title: string, body: string): Promise<RepositoryIssue>;
+  getIssueByUrl(issueUrl: string): Promise<RepositoryIssue>;
+  publishRunReports(
+    runId: string,
+    files: Record<ReportFileName, string>,
+  ): Promise<ReportPublishResult>;
+  getScenarioMode?: () => ScenarioMode;
+  validateScenarioPatch?: (baseCommit: string, patch: string) => Promise<ScenarioPatchValidation>;
+  publishScenarioChanges?: (
+    runId: string,
+    patch: string,
+    mode: 'direct' | 'pull-request',
+    details?: ScenarioPublicationDetails,
+  ) => Promise<ScenarioChangePublication>;
   listTree(commit: string): Promise<GitTreeEntry[]>;
+}
+
+export interface ScenarioPublicationDetails {
+  targetCommit: string;
+  reason?: string;
+  blockingReasons?: readonly string[];
+}
+
+export interface ScenarioChangePublication {
+  status: 'published' | 'pull_request' | 'already_published';
+  commitSha: string | null;
+  scenarioBranchHead: string | null;
+  scenarioPrUrl: string | null;
 }
 
 export function createRepositoryService(
@@ -167,6 +204,15 @@ class DefaultRepositoryService implements RepositoryService {
     return this.configuration.getRepository().scenarioBranch;
   }
 
+  getScenarioMode(): ScenarioMode {
+    return this.configuration.getRepository().scenarioMode;
+  }
+
+  async validateScenarioPatch(baseCommit: string, patch: string): Promise<ScenarioPatchValidation> {
+    this.requireRepositoryConfig();
+    return (await this.getRepository()).validateScenarioPatch(baseCommit, patch);
+  }
+
   getRepositoryUrl(): string {
     return this.configuration.getRepository().repository;
   }
@@ -206,6 +252,99 @@ class DefaultRepositoryService implements RepositoryService {
     return client.listIssues();
   }
 
+  async findIssuesByMarkers(markers: readonly string[]): Promise<RepositoryIssue[]> {
+    const config = this.requireRepositoryConfig();
+    const client = new GitHubClient({
+      repositoryUrl: config.repository,
+      tokenProvider: () => this.secretStore.get('gitToken'),
+    });
+    return client.findIssuesByMarkers(markers);
+  }
+
+  async createIssue(title: string, body: string): Promise<RepositoryIssue> {
+    const config = this.requireRepositoryConfig();
+    const client = new GitHubClient({
+      repositoryUrl: config.repository,
+      tokenProvider: () => this.secretStore.get('gitToken'),
+    });
+    return client.createIssue(title, body);
+  }
+
+  async getIssueByUrl(issueUrl: string): Promise<RepositoryIssue> {
+    const config = this.requireRepositoryConfig();
+    const client = new GitHubClient({
+      repositoryUrl: config.repository,
+      tokenProvider: () => this.secretStore.get('gitToken'),
+    });
+    return client.getIssueByUrl(issueUrl);
+  }
+
+  async publishRunReports(
+    runId: string,
+    files: Record<ReportFileName, string>,
+  ): Promise<ReportPublishResult> {
+    const config = this.requireRepositoryConfig();
+    return (await this.getRepository()).publishRunReports(config.scenarioBranch, runId, files);
+  }
+
+  async publishScenarioChanges(
+    runId: string,
+    patch: string,
+    mode: 'direct' | 'pull-request',
+    details: ScenarioPublicationDetails = { targetCommit: '' },
+  ): Promise<ScenarioChangePublication> {
+    const config = this.requireRepositoryConfig();
+    const repository = await this.getRepository();
+    const publication: ScenarioPatchPublishResult = await repository.publishScenarioPatch(
+      config.scenarioBranch,
+      runId,
+      patch,
+      mode,
+    );
+    if (mode === 'direct') {
+      return {
+        status: publication.status,
+        commitSha: publication.commitSha,
+        scenarioBranchHead: publication.scenarioBranchHead,
+        scenarioPrUrl: null,
+      };
+    }
+
+    if (!publication.branchName) {
+      throw new RepositoryError('SCENARIO_PR_CREATE_FAILED', '场景 PR 分支创建失败', 502);
+    }
+    const client = new GitHubClient({
+      repositoryUrl: config.repository,
+      tokenProvider: () => this.secretStore.get('gitToken'),
+    });
+    try {
+      const existing = await client.findPullRequest(publication.branchName, config.scenarioBranch);
+      if (existing) {
+        return {
+          status: 'pull_request',
+          commitSha: publication.commitSha,
+          scenarioBranchHead: publication.scenarioBranchHead,
+          scenarioPrUrl: existing.url,
+        };
+      }
+      const pullRequest = await client.createPullRequest(
+        `test: review scenario changes for run ${runId}`,
+        scenarioPullRequestBody(runId, details),
+        publication.branchName,
+        config.scenarioBranch,
+      );
+      return {
+        status: 'pull_request',
+        commitSha: publication.commitSha,
+        scenarioBranchHead: publication.scenarioBranchHead,
+        scenarioPrUrl: pullRequest.url,
+      };
+    } catch (error) {
+      if (error instanceof RepositoryError) throw error;
+      throw new RepositoryError('SCENARIO_PR_CREATE_FAILED', '场景 PR 创建失败', 502);
+    }
+  }
+
   async listTree(commit: string): Promise<GitTreeEntry[]> {
     this.requireRepositoryConfig();
     return (await this.getRepository()).listTree(commit);
@@ -236,6 +375,28 @@ class DefaultRepositoryService implements RepositoryService {
       .all()
       .map((row) => row as { path: string; message: string });
   }
+}
+
+function scenarioPullRequestBody(runId: string, details: ScenarioPublicationDetails): string {
+  const reason = safeDetailsText(details.reason ?? '本次 Run 发现需要维护长期场景资产。');
+  const gaps = details.blockingReasons?.map(safeDetailsText).filter(Boolean) ?? [];
+  return [
+    '由 LuoWang 生成的场景测试资产变更。',
+    '',
+    `- luowang-run:${runId}`,
+    `- target_commit: ${safeDetailsText(details.targetCommit) || 'unknown'}`,
+    `- 变更理由：${reason}`,
+    `- 覆盖缺口：${gaps.length > 0 ? gaps.join('；') : '无'}`,
+    '',
+    '该 PR 只允许修改 docs/scenario-testing/scenarios/**，不替代产品 Bug Issue。',
+  ].join('\n');
+}
+
+function safeDetailsText(value: string): string {
+  return value
+    .replace(/[\r\n]+/g, ' ')
+    .trim()
+    .slice(0, 2_000);
 }
 
 export function validateRepositoryUrl(value: string, allowLocalRepository = false): void {

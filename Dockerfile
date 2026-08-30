@@ -1,6 +1,9 @@
 ARG NODE_IMAGE=node:24.14.1-bookworm-slim
+ARG NPM_REGISTRY=https://registry.npmjs.org
 
 FROM ${NODE_IMAGE} AS dependencies
+
+ARG NPM_REGISTRY
 
 WORKDIR /app
 
@@ -9,7 +12,7 @@ RUN apt-get update \
   && rm -rf /var/lib/apt/lists/*
 
 COPY package.json package-lock.json ./
-RUN npm ci
+RUN npm ci --registry=${NPM_REGISTRY}
 
 FROM dependencies AS build
 
@@ -22,7 +25,8 @@ FROM ${NODE_IMAGE} AS runtime
 ENV NODE_ENV=production \
   LUOWANG_HOST=0.0.0.0 \
   LUOWANG_PORT=3000 \
-  LUOWANG_DATA_DIR=/data
+  LUOWANG_DATA_DIR=/data \
+  PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 
 WORKDIR /app
 
@@ -35,6 +39,10 @@ RUN apt-get update \
 COPY --from=build --chown=node:node /app/package.json /app/package-lock.json ./
 COPY --from=build --chown=node:node /app/node_modules ./node_modules
 COPY --from=build --chown=node:node /app/dist ./dist
+
+RUN mkdir -p /ms-playwright \
+  && npx --no-install playwright install --with-deps chromium \
+  && chmod -R a+rX /ms-playwright
 
 USER node
 

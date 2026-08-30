@@ -1,14 +1,25 @@
-import { chmod, mkdir, mkdtemp, readdir, rm, writeFile } from 'node:fs/promises';
+import { chmod, lstat, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { promisify } from 'node:util';
 import { execFile } from 'node:child_process';
 
 import { GitCommandError, RepositoryError } from './errors.js';
+import {
+  SCENARIO_DIRECTORY,
+  ScenarioPatchError,
+  validateScenarioContents,
+  validateScenarioPatchText,
+  type ScenarioPatchChange,
+  type ScenarioPatchValidation,
+} from './scenario-patch.js';
 
 const execFileAsync = promisify(execFile);
 const SHA_PATTERN = /^[0-9a-f]{40}$/i;
 const REF_PATTERN = /^[^\s~^:?*\\[\]]{1,255}$/;
+const REPORT_FILE_NAMES = ['draft-report.md', 'review.md', 'report.md'] as const;
+
+export type ReportFileName = (typeof REPORT_FILE_NAMES)[number];
 
 export interface GitRepositoryOptions {
   directory: string;
@@ -40,6 +51,21 @@ export interface GitMergeResult {
   mergeCommit: string | null;
   scenarioBranchHead: string;
   alreadyIncluded: boolean;
+}
+
+export interface ReportPublishResult {
+  status: 'published' | 'already_published';
+  commitSha: string;
+  scenarioBranchHead: string;
+}
+
+export type ScenarioPublicationMode = 'direct' | 'pull-request';
+
+export interface ScenarioPatchPublishResult {
+  status: 'published' | 'already_published';
+  commitSha: string;
+  scenarioBranchHead: string;
+  branchName: string | null;
 }
 
 export class GitRepository {
@@ -313,6 +339,279 @@ export class GitRepository {
     }
   }
 
+  async publishRunReports(
+    branch: string,
+    runId: string,
+    files: Record<ReportFileName, string>,
+  ): Promise<ReportPublishResult> {
+    assertBranchName(branch);
+    assertRunId(runId);
+    for (const name of REPORT_FILE_NAMES) assertReportContent(name, files[name]);
+
+    await this.fetch();
+    const originalHead = await this.remoteBranchHead(branch);
+    if (!originalHead) {
+      throw new RepositoryError('SCENARIO_BRANCH_NOT_FOUND', '场景测试分支尚未创建', 409);
+    }
+
+    try {
+      await this.checkoutTarget(originalHead);
+      const paths = REPORT_FILE_NAMES.map(
+        (name) => `docs/scenario-testing/reports/${runId}/${name}`,
+      );
+      await ensureSafeDirectory(this.directory, `docs/scenario-testing/reports/${runId}`);
+      const missing: ReportFileName[] = [];
+      for (const name of REPORT_FILE_NAMES) {
+        const path = `docs/scenario-testing/reports/${runId}/${name}`;
+        const localPath = join(this.directory, path);
+        let existing: string | undefined;
+        try {
+          const info = await lstat(localPath);
+          if (info.isSymbolicLink() || !info.isFile()) {
+            throw new RepositoryError(
+              'REPORT_CONFLICT',
+              `报告路径不是普通文件，拒绝覆盖：${path}`,
+              409,
+            );
+          }
+          existing = (await this.run(['show', `${originalHead}:${path}`])).stdout;
+        } catch (error) {
+          if (error instanceof RepositoryError) throw error;
+          if (
+            !(error instanceof GitCommandError) &&
+            (error as NodeJS.ErrnoException).code !== 'ENOENT'
+          ) {
+            throw error;
+          }
+        }
+        if (existing !== undefined && existing !== files[name]) {
+          throw new RepositoryError(
+            'REPORT_CONFLICT',
+            `报告文件已存在且内容不同，拒绝覆盖：${path}`,
+            409,
+          );
+        }
+        if (existing === undefined) missing.push(name);
+      }
+
+      if (missing.length === 0) {
+        return {
+          status: 'already_published',
+          commitSha: originalHead,
+          scenarioBranchHead: originalHead,
+        };
+      }
+
+      for (const name of missing) {
+        const path = `docs/scenario-testing/reports/${runId}/${name}`;
+        await mkdir(dirname(join(this.directory, path)), { recursive: true });
+        await writeFile(join(this.directory, path), files[name], {
+          encoding: 'utf8',
+          mode: 0o600,
+        });
+      }
+      await this.run(['add', '--', ...paths]);
+      const staged = (await this.run(['diff', '--cached', '--name-only', '-z', '--'])).stdout
+        .split('\0')
+        .filter(Boolean);
+      const expected = new Set(
+        missing.map((name) => `docs/scenario-testing/reports/${runId}/${name}`),
+      );
+      if (staged.length !== expected.size || staged.some((path) => !expected.has(path))) {
+        throw new RepositoryError('REPORT_CONFLICT', '报告发布超出当前 Run 的文件 allowlist', 409);
+      }
+      await this.run([
+        '-c',
+        'user.name=LuoWang Report Archiver',
+        '-c',
+        'user.email=luowang-report-archiver@localhost',
+        'commit',
+        '-m',
+        `test: archive run ${runId}`,
+      ]);
+
+      // Re-read the remote head after the local commit. A normal push is
+      // deliberately used below; a concurrent update must never be replaced.
+      await this.fetch();
+      const latestRemoteHead = await this.remoteBranchHead(branch);
+      if (latestRemoteHead !== originalHead) {
+        throw new RepositoryError(
+          'REPORT_PUBLISH_CONFLICT',
+          '报告发布期间远端场景测试分支发生变化，请重试',
+          409,
+        );
+      }
+      try {
+        await this.run(['push', 'origin', `HEAD:refs/heads/${branch}`]);
+      } catch (error) {
+        if (error instanceof GitCommandError) {
+          throw new RepositoryError(
+            'REPORT_PUBLISH_CONFLICT',
+            '报告发布被远端并发更新拒绝，未执行 force push',
+            409,
+          );
+        }
+        throw error;
+      }
+      const scenarioBranchHead = await this.remoteBranchHead(branch);
+      if (!scenarioBranchHead) {
+        throw new RepositoryError('PUSH_REJECTED', '报告提交后无法读取远端场景测试分支 HEAD', 502);
+      }
+      const commitSha = (await this.run(['rev-parse', 'HEAD'])).stdout.trim().toLowerCase();
+      return { status: 'published', commitSha, scenarioBranchHead };
+    } finally {
+      await this.cleanWorkspace();
+    }
+  }
+
+  async validateScenarioPatch(baseCommit: string, patch: string): Promise<ScenarioPatchValidation> {
+    const baseSha = await this.resolveCommit(baseCommit);
+    try {
+      await this.checkoutTarget(baseSha);
+      return await this.materializeScenarioPatch(baseSha, patch);
+    } finally {
+      await this.cleanWorkspace();
+    }
+  }
+
+  /** Apply a validated scenario patch to the exclusive Run worktree. */
+  async applyScenarioPatch(baseCommit: string, patch: string): Promise<ScenarioPatchValidation> {
+    const baseSha = await this.resolveCommit(baseCommit);
+    await this.checkoutTarget(baseSha);
+    try {
+      return await this.materializeScenarioPatch(baseSha, patch);
+    } catch (error) {
+      await this.cleanWorkspace();
+      throw error;
+    }
+  }
+
+  async listWorkingScenarioFiles(): Promise<string[]> {
+    const files = await this.readWorkingScenarioFiles();
+    return [...files.keys()].sort();
+  }
+
+  async readWorkingScenarioFile(path: string): Promise<string> {
+    assertRelativePath(path);
+    if (!path.startsWith(SCENARIO_DIRECTORY) || !path.endsWith('.md')) {
+      throw new RepositoryError('TARGET_INVALID', '只能读取场景目录中的 Markdown 文件', 400);
+    }
+    const localPath = join(this.directory, path);
+    try {
+      const info = await lstat(localPath);
+      if (!info.isFile() || info.isSymbolicLink()) {
+        throw new RepositoryError('SCENARIO_PATCH_INVALID', `场景文件不是普通文件：${path}`, 422);
+      }
+      return await readFile(localPath, 'utf8');
+    } catch (error) {
+      if (error instanceof RepositoryError) throw error;
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+        throw new RepositoryError('TARGET_INVALID', `场景文件不存在：${path}`, 404);
+      }
+      throw error;
+    }
+  }
+
+  async publishScenarioPatch(
+    branch: string,
+    runId: string,
+    patch: string,
+    mode: ScenarioPublicationMode,
+  ): Promise<ScenarioPatchPublishResult> {
+    assertBranchName(branch);
+    assertRunId(runId);
+    const metadata = validateScenarioPatchText(patch);
+    const branchName = mode === 'pull-request' ? `luowang/scenario/${runId}` : null;
+    if (branchName) assertBranchName(branchName);
+
+    await this.fetch();
+    const originalHead = await this.remoteBranchHead(branch);
+    if (!originalHead) {
+      throw new RepositoryError('SCENARIO_BRANCH_NOT_FOUND', '场景测试分支尚未创建', 409);
+    }
+
+    if (branchName) {
+      const existingBranch = await this.remoteBranchHead(branchName);
+      if (existingBranch) {
+        return {
+          status: 'already_published',
+          commitSha: existingBranch,
+          scenarioBranchHead: originalHead,
+          branchName,
+        };
+      }
+    }
+
+    try {
+      await this.checkoutTarget(originalHead);
+      if (mode === 'direct' && (await this.canApplyPatch(patch, true))) {
+        return {
+          status: 'already_published',
+          commitSha: originalHead,
+          scenarioBranchHead: originalHead,
+          branchName: null,
+        };
+      }
+      const applied = await this.materializeScenarioPatch(originalHead, patch);
+      // Keep the pure metadata and the resulting worktree in lockstep. This
+      // also makes it impossible for a future caller to stage an unrelated
+      // file accidentally.
+      if (applied.changedPaths.join('\u0000') !== metadata.changedPaths.join('\u0000')) {
+        throw new ScenarioPatchError('patch 解析结果不一致，拒绝发布');
+      }
+      await this.stageScenarioPatch(applied.changes);
+      await this.run([
+        '-c',
+        'user.name=LuoWang Scenario Archiver',
+        '-c',
+        'user.email=luowang-scenario-archiver@localhost',
+        'commit',
+        '-m',
+        `test: update scenarios for run ${runId}`,
+      ]);
+      const commitSha = (await this.run(['rev-parse', 'HEAD'])).stdout.trim().toLowerCase();
+
+      await this.fetch();
+      if (mode === 'direct') {
+        const latestRemoteHead = await this.remoteBranchHead(branch);
+        if (latestRemoteHead !== originalHead) {
+          throw new RepositoryError(
+            'SCENARIO_PUBLISH_CONFLICT',
+            '场景变更发布期间远端分支发生变化，请重试',
+            409,
+          );
+        }
+        await this.pushScenarioCommit(branch);
+        const scenarioBranchHead = await this.remoteBranchHead(branch);
+        if (!scenarioBranchHead) {
+          throw new RepositoryError('PUSH_REJECTED', '场景变更提交后无法读取远端 HEAD', 502);
+        }
+        return { status: 'published', commitSha, scenarioBranchHead, branchName: null };
+      }
+
+      try {
+        await this.run(['push', 'origin', `HEAD:refs/heads/${branchName}`]);
+      } catch (error) {
+        if (error instanceof GitCommandError) {
+          throw new RepositoryError(
+            'SCENARIO_PUBLISH_CONFLICT',
+            '场景 PR 分支已被远端并发创建，未执行 force push',
+            409,
+          );
+        }
+        throw error;
+      }
+      return {
+        status: 'published',
+        commitSha,
+        scenarioBranchHead: originalHead,
+        branchName,
+      };
+    } finally {
+      await this.cleanWorkspace();
+    }
+  }
+
   async listTree(commit: string): Promise<GitTreeEntry[]> {
     const sha = await this.resolveCommit(commit);
     const output = await this.run(['ls-tree', '-r', '-z', '--full-tree', sha, '--']);
@@ -332,6 +631,137 @@ export class GitRepository {
           sha: objectSha,
         };
       });
+  }
+
+  private async materializeScenarioPatch(
+    baseCommit: string,
+    patch: string,
+  ): Promise<ScenarioPatchValidation> {
+    const metadata = validateScenarioPatchText(patch);
+    const baseFiles = await this.readScenarioFilesAtCommit(baseCommit);
+    const patchDirectory = await mkdtemp(join(tmpdir(), 'luowang-scenario-patch-'));
+    const patchPath = join(patchDirectory, 'changes.patch');
+    try {
+      await writeFile(patchPath, patch, { encoding: 'utf8', mode: 0o600 });
+      try {
+        await this.run(['apply', '--check', '--recount', '--whitespace=nowarn', patchPath]);
+        await this.run(['apply', '--recount', '--whitespace=nowarn', patchPath]);
+      } catch (error) {
+        if (error instanceof GitCommandError) {
+          throw new ScenarioPatchError('patch 无法干净地应用到固定 target，未发布任何部分变更');
+        }
+        throw error;
+      }
+      const files = await this.readWorkingScenarioFiles();
+      validateScenarioContents(files, baseFiles, metadata.changes);
+      return metadata;
+    } finally {
+      await rm(patchDirectory, { recursive: true, force: true }).catch(() => undefined);
+    }
+  }
+
+  private async canApplyPatch(patch: string, reverse: boolean): Promise<boolean> {
+    const patchDirectory = await mkdtemp(join(tmpdir(), 'luowang-scenario-patch-check-'));
+    const patchPath = join(patchDirectory, 'changes.patch');
+    try {
+      await writeFile(patchPath, patch, { encoding: 'utf8', mode: 0o600 });
+      try {
+        await this.run([
+          'apply',
+          '--check',
+          '--recount',
+          '--whitespace=nowarn',
+          ...(reverse ? ['--reverse'] : []),
+          patchPath,
+        ]);
+        return true;
+      } catch (error) {
+        if (error instanceof GitCommandError) return false;
+        throw error;
+      }
+    } finally {
+      await rm(patchDirectory, { recursive: true, force: true }).catch(() => undefined);
+    }
+  }
+
+  private async stageScenarioPatch(changes: readonly ScenarioPatchChange[]): Promise<void> {
+    const expected = new Set(
+      changes
+        .flatMap((change) => [change.oldPath, change.newPath])
+        .filter((path): path is string => path !== null),
+    );
+    await this.run(['add', '-A', '--', SCENARIO_DIRECTORY.slice(0, -1)]);
+    const staged = stagedPaths(
+      (await this.run(['diff', '--cached', '--name-status', '--find-renames', '-z', '--'])).stdout,
+    );
+    if (
+      staged.length !== expected.size ||
+      staged.some((path) => !expected.has(path)) ||
+      [...expected].some((path) => !staged.includes(path))
+    ) {
+      throw new ScenarioPatchError('场景 patch 试图提交 allowlist 之外的文件');
+    }
+  }
+
+  private async pushScenarioCommit(branch: string): Promise<void> {
+    try {
+      await this.run(['push', 'origin', `HEAD:refs/heads/${branch}`]);
+    } catch (error) {
+      if (error instanceof GitCommandError) {
+        throw new RepositoryError(
+          'SCENARIO_PUBLISH_CONFLICT',
+          '场景变更发布被远端并发更新拒绝，未执行 force push',
+          409,
+        );
+      }
+      throw error;
+    }
+  }
+
+  private async readScenarioFilesAtCommit(commit: string): Promise<Map<string, string>> {
+    const files = new Map<string, string>();
+    for (const entry of await this.listTree(commit)) {
+      if (!entry.path.startsWith(SCENARIO_DIRECTORY)) continue;
+      if (entry.type !== 'blob' || (entry.mode !== '100644' && entry.mode !== '100755')) {
+        throw new ScenarioPatchError(`场景文件必须是普通 Markdown 文件：${entry.path}`);
+      }
+      if (!entry.path.endsWith('.md')) continue;
+      files.set(entry.path, await this.readFile(commit, entry.path));
+    }
+    validateScenarioContents(files);
+    return files;
+  }
+
+  private async readWorkingScenarioFiles(): Promise<Map<string, string>> {
+    const files = new Map<string, string>();
+    const root = join(this.directory, SCENARIO_DIRECTORY);
+    const walk = async (directory: string, prefix: string): Promise<void> => {
+      let entries;
+      try {
+        entries = await readdir(directory, { withFileTypes: true });
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT') return;
+        throw error;
+      }
+      for (const entry of entries) {
+        const relativePath = `${prefix}${entry.name}`;
+        const localPath = join(directory, entry.name);
+        const info = await lstat(localPath);
+        if (info.isSymbolicLink()) {
+          throw new ScenarioPatchError(`场景目录不允许符号链接：${relativePath}`);
+        }
+        if (info.isDirectory()) {
+          await walk(localPath, `${relativePath}/`);
+          continue;
+        }
+        if (!info.isFile()) continue;
+        if (!relativePath.endsWith('.md')) continue;
+        const path = `${SCENARIO_DIRECTORY}${relativePath}`;
+        files.set(path, await readFile(localPath, 'utf8'));
+      }
+    };
+    await walk(root, '');
+    return files;
   }
 
   async readFile(commit: string, path: string): Promise<string> {
@@ -522,5 +952,57 @@ function assertRelativePath(path: string): void {
     path.includes('\u0000')
   ) {
     throw new RepositoryError('TARGET_INVALID', 'Git 文件路径无效', 400);
+  }
+}
+
+function assertRunId(runId: string): void {
+  if (!/^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/.test(runId)) {
+    throw new RepositoryError('TARGET_INVALID', 'Run ID 格式无效', 400);
+  }
+}
+
+function assertReportContent(name: ReportFileName, content: string): void {
+  if (typeof content !== 'string' || content.trim() === '' || content.includes('\u0000')) {
+    throw new RepositoryError('REPORT_CONFLICT', `报告文件不能为空：${name}`, 400);
+  }
+}
+
+function stagedPaths(output: string): string[] {
+  const tokens = output.split('\0').filter(Boolean);
+  const paths: string[] = [];
+  for (let index = 0; index < tokens.length;) {
+    const status = tokens[index++];
+    if (!status) continue;
+    if (status.startsWith('R') || status.startsWith('C')) {
+      const oldPath = tokens[index++];
+      const newPath = tokens[index++];
+      if (oldPath) paths.push(oldPath);
+      if (newPath) paths.push(newPath);
+    } else {
+      const path = tokens[index++];
+      if (path) paths.push(path);
+    }
+  }
+  return paths;
+}
+
+async function ensureSafeDirectory(root: string, relativePath: string): Promise<void> {
+  let current = root;
+  for (const part of relativePath.split('/')) {
+    current = join(current, part);
+    try {
+      const info = await lstat(current);
+      if (info.isSymbolicLink() || !info.isDirectory()) {
+        throw new RepositoryError(
+          'REPORT_CONFLICT',
+          `报告目录不是普通目录，拒绝写入：${relativePath}`,
+          409,
+        );
+      }
+    } catch (error) {
+      if (error instanceof RepositoryError) throw error;
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+      await mkdir(current);
+    }
   }
 }

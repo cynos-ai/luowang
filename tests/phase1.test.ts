@@ -73,7 +73,6 @@ describe('Phase 1 secure console', () => {
         provider: 'test-provider',
         oss: {
           endpoint: 'https://object-storage.example.test',
-          region: 'test-region',
           bucket: 'test-bucket',
         },
         secrets: { ossAccessKeyId: secretId, ossAccessKeySecret: secretValue },

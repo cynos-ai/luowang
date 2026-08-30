@@ -4,6 +4,8 @@ import {
   SessionManager,
   SettingsManager,
   type AgentToolResult,
+  type InlineExtension,
+  type SessionShutdownEvent,
   type ToolDefinition,
 } from '@earendil-works/pi-coding-agent';
 import { Type, type Static } from 'typebox';
@@ -49,6 +51,7 @@ class PiAgentSessionFactory implements AgentSessionFactory {
       noPromptTemplates: true,
       noThemes: true,
       noContextFiles: true,
+      extensionFactories: input.extensionFactories ?? [],
       systemPrompt: input.systemPrompt,
       appendSystemPrompt: [],
     });
@@ -62,9 +65,12 @@ class PiAgentSessionFactory implements AgentSessionFactory {
       settingsManager: settings,
       resourceLoader,
       noTools: 'builtin',
-      tools: [],
       customTools: input.customTools,
     });
+    // The SDK creates the extension registry but does not bind it automatically.
+    // Binding emits session_start, which initializes session-scoped extensions
+    // such as the Playwright MCP adapter before the first prompt is handled.
+    await session.bindExtensions({ mode: 'print' });
     return new ManagedAgentSession(session);
   }
 }
@@ -73,7 +79,13 @@ class ManagedAgentSession implements AgentSession {
   private disposed = false;
 
   constructor(
-    private readonly session: { prompt(message: string): Promise<void>; dispose(): void },
+    private readonly session: {
+      prompt(message: string): Promise<void>;
+      dispose(): void;
+      extensionRunner: {
+        emit(event: SessionShutdownEvent): Promise<unknown>;
+      };
+    },
   ) {}
 
   prompt(message: string): Promise<void> {
@@ -81,10 +93,17 @@ class ManagedAgentSession implements AgentSession {
     return this.session.prompt(message);
   }
 
-  dispose(): void {
+  async dispose(): Promise<void> {
     if (this.disposed) return;
     this.disposed = true;
-    this.session.dispose();
+    try {
+      // AgentSession.dispose() is synchronous and does not await async
+      // extension shutdown handlers. MCP owns a child process whose cwd is the
+      // Run evidence directory, so wait for session_shutdown before cleanup.
+      await this.session.extensionRunner.emit({ type: 'session_shutdown', reason: 'quit' });
+    } finally {
+      this.session.dispose();
+    }
   }
 }
 
@@ -129,7 +148,7 @@ export function createReadArtifactTool(read: (name: string) => Promise<string>):
     name: 'read_run_artifact',
     label: '读取 Run 工件',
     description:
-      '读取本次 Run 已落盘的 plan.md、execution.md、draft-report.md 或 review.md；不能读取其他路径。',
+      '读取本次 Run 已落盘的 plan.md、execution.md、draft-report.md、review.md 或 scenario-changes.patch；不能读取其他路径。',
     parameters,
     execute: async (_toolCallId, params: Static<typeof parameters>) => {
       try {
@@ -204,6 +223,43 @@ export function createTargetContextTools(options: {
   ];
 }
 
+export function createWorkingScenarioTools(options: {
+  list: () => Promise<string[]>;
+  read: (path: string) => Promise<string>;
+}): ToolDefinition[] {
+  const readParameters = Type.Object({
+    path: Type.String({ description: '场景 Markdown 相对路径' }),
+  });
+  return [
+    {
+      name: 'list_working_scenarios',
+      label: '列出当前场景',
+      description: '列出当前 Run 已应用 patch 后工作树中的场景 Markdown 文件，只读。',
+      parameters: Type.Object({}),
+      execute: async () => {
+        try {
+          return createTextResult((await options.list()).join('\n'));
+        } catch (error) {
+          return createTextResult(errorMessage(error), { error: true });
+        }
+      },
+    },
+    {
+      name: 'read_working_scenario',
+      label: '读取当前场景',
+      description: '读取当前 Run 工作树中的场景 Markdown，只允许场景目录内文件。',
+      parameters: readParameters,
+      execute: async (_toolCallId, params: Static<typeof readParameters>) => {
+        try {
+          return createTextResult(await options.read(params.path));
+        } catch (error) {
+          return createTextResult(errorMessage(error), { error: true });
+        }
+      },
+    },
+  ];
+}
+
 export function createRunnerCommandTool(
   run: (
     command: string,
@@ -249,8 +305,17 @@ export function buildSessionInput(
   cwd: string,
   customTools: ToolDefinition[],
   systemPrompt: string,
+  extensionFactories: InlineExtension[] = [],
 ): AgentSessionInput {
-  return { role, config, cwd, toolNames: [], customTools, systemPrompt };
+  return {
+    role,
+    config,
+    cwd,
+    toolNames: [],
+    customTools,
+    systemPrompt,
+    extensionFactories,
+  };
 }
 
 function errorMessage(error: unknown): string {

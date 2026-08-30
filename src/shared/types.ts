@@ -57,7 +57,7 @@ export interface HarnessConfig {
 export interface RepositoryConfig {
   repository: string;
   scenarioBranch: string;
-  scenarioMode: 'autonomous' | 'add-only' | 'pr-required';
+  scenarioMode: ScenarioMode;
   scenarioLabels: string[];
   pollIntervalSeconds: number;
   cron: string;
@@ -65,6 +65,8 @@ export interface RepositoryConfig {
   environmentDescription: string;
   baseUrl: string;
 }
+
+export type ScenarioMode = 'autonomous' | 'add-only' | 'review-all';
 
 export interface SecretMetadata {
   configured: boolean;
@@ -158,6 +160,17 @@ export type RunResult = 'passed' | 'failed' | 'blocked';
 export interface ScenarioResultSummary {
   id: string;
   result: RunResult;
+}
+
+export interface EvidenceReference {
+  id: string;
+  filename: string;
+  objectKey: string;
+  url: string;
+  contentType: string;
+  sizeBytes: number;
+  sha256: string;
+  uploadedAt: string;
 }
 
 export interface ConfirmedBugSummary {
@@ -260,6 +273,10 @@ export interface RunSummary {
   finishedAt: string | null;
   errorMessage: string | null;
   artifactNames: string[];
+  evidence?: EvidenceReference[];
+  scenarioMode?: ScenarioMode;
+  initialization?: boolean;
+  scenarioPrUrl?: string | null;
 }
 
 export interface RunDetail extends RunSummary {

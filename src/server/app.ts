@@ -11,8 +11,20 @@ import type {
   RepositoryHistoryResponse,
   RepositoryStatusResponse,
 } from '../shared/types.js';
+import {
+  createAutomationScheduler,
+  createAutomationService,
+  AutomationServiceError,
+  type AutomationScheduler,
+  type AutomationService,
+  type AutomationSubmission,
+} from './automation/index.js';
+import { TestRequestQueueError } from './automation/queue.js';
+import { createRunRecoveryStore, type RunRecoveryStore } from './automation/recovery.js';
+import { createGitPoller } from './automation/poller.js';
 import { createConfigurationStore, type ConfigurationStore } from './configuration.js';
 import { createConnectivityRegistry, type ConnectivityRegistry } from './connectivity.js';
+import { createPlaywrightMcpAdapter, type BrowserMcpAdapter } from './browser/playwright-mcp.js';
 import type { AppConfig } from './config.js';
 import type { DatabaseContext } from './db/client.js';
 import { AppError, toErrorResponse } from './errors.js';
@@ -35,6 +47,7 @@ import {
 } from './security/secret-store.js';
 import { createRepositoryIndexer, type RepositoryIndexer } from './repository/indexer.js';
 import { RepositoryError } from './repository/errors.js';
+import { createOssAdapter, OssError, type OssAdapter } from './storage/oss.js';
 import {
   createRepositoryService,
   type RepositoryService,
@@ -46,6 +59,8 @@ import {
   RunOrchestratorError,
   type RunOrchestrator,
 } from './runs/orchestrator.js';
+import { createRunArchiver, type RunArchiver } from './runs/archiver.js';
+import { createRunStore, type RunStore } from './runs/store.js';
 
 export interface AppOptions {
   config: AppConfig;
@@ -59,6 +74,14 @@ export interface AppOptions {
   indexer?: RepositoryIndexer;
   provider?: ProviderAdapter;
   runs?: RunOrchestrator;
+  runStore?: RunStore;
+  archiver?: RunArchiver;
+  recoveryStore?: RunRecoveryStore;
+  automation?: AutomationService;
+  scheduler?: AutomationScheduler;
+  backgroundTasks?: boolean;
+  browser?: BrowserMcpAdapter;
+  oss?: OssAdapter;
 }
 
 interface JsonRecord {
@@ -84,9 +107,29 @@ export async function createApp(options: AppOptions) {
     });
   const indexer = options.indexer ?? createRepositoryIndexer(options.database.sqlite, repository);
   const provider = options.provider ?? createProviderAdapter(configuration, secretStore);
+  const browser = options.browser ?? createPlaywrightMcpAdapter(configuration);
+  const oss = options.oss ?? createOssAdapter(configuration, secretStore);
+  const runStore = options.runStore ?? createRunStore(options.database.sqlite);
+  const recoveryStore = options.recoveryStore ?? createRunRecoveryStore(options.database.sqlite);
+  const archiver =
+    options.archiver ??
+    createRunArchiver({
+      database: options.database.sqlite,
+      reportDir: configuration.getHarness().local.reportDir,
+      repository,
+      indexer,
+      runStore,
+    });
   const connectivity =
     options.connectivity ??
-    createConnectivityRegistry(options.database.sqlite, configuration, repository, provider);
+    createConnectivityRegistry(
+      options.database.sqlite,
+      configuration,
+      repository,
+      provider,
+      browser,
+      oss,
+    );
   const runs =
     options.runs ??
     createRunOrchestrator({
@@ -96,8 +139,41 @@ export async function createApp(options: AppOptions) {
       reportDir: configuration.getHarness().local.reportDir,
       secretStore,
       provider,
+      browser,
+      oss,
+      runStore,
+      recoveryStore,
     });
-  await runs.recover();
+  const automation =
+    options.automation ??
+    createAutomationService({
+      database: options.database.sqlite,
+      configuration,
+      repository,
+      indexer,
+      runs,
+      archiver,
+      runStore,
+      recoveryStore,
+      reportDir: configuration.getHarness().local.reportDir,
+    });
+  const scheduler =
+    options.scheduler ??
+    createAutomationScheduler({
+      configuration,
+      poller: createGitPoller({
+        configuration,
+        repository,
+        submitter: automation,
+        state: automation.state(),
+        runStore,
+      }),
+      automation,
+      indexer,
+      state: automation.state(),
+      logger: options.logger,
+    });
+  await automation.recover();
 
   // Do not retain the bootstrap password or raw master-key string in the shared config object.
   options.config.initialAdminPassword = undefined;
@@ -111,6 +187,10 @@ export async function createApp(options: AppOptions) {
   const loginLimiter = new LoginRateLimiter();
 
   await app.register(fastifyCookie);
+
+  if (options.backgroundTasks ?? options.config.environment !== 'test') {
+    scheduler.start();
+  }
 
   if (existsSync(staticRoot)) {
     await app.register(fastifyStatic, {
@@ -331,16 +411,41 @@ export async function createApp(options: AppOptions) {
     if (body.targetCommit !== undefined && typeof body.targetCommit !== 'string') {
       throw new AppError('RUN_TARGET_INVALID', 'targetCommit 必须是字符串', 400);
     }
+    if (typeof body.targetCommit === 'string' && body.targetCommit.trim() === '') {
+      throw new AppError('RUN_TARGET_INVALID', 'targetCommit 不能为空', 400);
+    }
+    if (body.initialization !== undefined && typeof body.initialization !== 'boolean') {
+      throw new AppError('RUN_REQUEST_INVALID', 'initialization 必须是布尔值', 400);
+    }
     const trigger = body.trigger === undefined ? 'manual' : body.trigger;
     if (trigger !== 'manual' && trigger !== 'api') {
       throw new AppError('RUN_TRIGGER_INVALID', 'Phase 3 只支持 manual 或 api 触发', 400);
     }
-    const run = await runs.start({
+    const submission = await automation.submitTestRequest({
       request: body.request,
       trigger,
-      targetCommit: body.targetCommit,
+      targetCommit: body.targetCommit as string | undefined,
+      ...(body.initialization === true ? { initialization: true } : {}),
     });
-    return reply.status(202).send(run);
+    return reply.status(202).send(formatAutomationSubmission(submission));
+  });
+
+  app.get('/api/queue', async (request, reply) => {
+    requireAuth(request, auth);
+    return reply.send({ queue: automation.listQueue() });
+  });
+
+  app.get('/api/queue/:queueId', async (request, reply) => {
+    requireAuth(request, auth);
+    const queueId = readQueueId(request);
+    const item = automation.getQueue(queueId);
+    if (!item) throw new AppError('QUEUE_NOT_FOUND', '队列请求不存在', 404);
+    return reply.send({ queue: item });
+  });
+
+  app.get('/api/automation/status', async (request, reply) => {
+    requireAuth(request, auth);
+    return reply.send({ scheduler: scheduler.status(), queue: automation.listQueue() });
   });
 
   app.get('/api/runs', async (request, reply) => {
@@ -351,6 +456,78 @@ export async function createApp(options: AppOptions) {
   app.get('/api/runs/current', async (request, reply) => {
     requireAuth(request, auth);
     return reply.send({ run: await runs.current() });
+  });
+
+  app.post('/api/archive/scan', async (request, reply) => {
+    requireAuth(request, auth);
+    return reply.send({ runs: await automation.scanArchives() });
+  });
+
+  app.post('/api/runs/:runId/archive', async (request, reply) => {
+    requireAuth(request, auth);
+    return reply.send({ archive: await archiver.archive(readParam(request, 'runId')) });
+  });
+
+  app.post('/api/runs/:runId/rerun', async (request, reply) => {
+    requireAuth(request, auth);
+    const body = readBody(request);
+    if (body.request !== undefined && typeof body.request !== 'string') {
+      throw new AppError('RUN_REQUEST_INVALID', 'request 必须是字符串', 400);
+    }
+    const submission = await automation.rerun(
+      readParam(request, 'runId'),
+      body.request as string | undefined,
+    );
+    return reply.status(202).send(formatAutomationSubmission(submission));
+  });
+
+  app.delete('/api/runs/:runId/cleanup', async (request, reply) => {
+    requireAuth(request, auth);
+    await automation.cleanupRun(readParam(request, 'runId'));
+    return reply.send({ cleaned: true });
+  });
+
+  app.get('/api/runs/:runId/archive', async (request, reply) => {
+    requireAuth(request, auth);
+    const archived = runStore.get(readParam(request, 'runId'));
+    if (!archived) throw new AppError('RUN_NOT_FOUND', 'Run 归档记录不存在', 404);
+    return reply.send({
+      archive: {
+        runId: archived.runId,
+        status:
+          archived.archiveStatus === 'failed'
+            ? 'failed'
+            : archived.archiveStatus === 'partial'
+              ? 'partial'
+              : 'completed',
+        reportStatus: archived.reportStatus,
+        reportCommitSha: archived.reportCommitSha,
+        issues: archived.issues.map((issue) => ({
+          bugKey: issue.bugKey,
+          status: issue.status,
+          issueNumber: issue.issueNumber,
+          issueUrl: issue.issueUrl,
+          errorMessage: issue.errorMessage,
+        })),
+        progressed: archived.progressed,
+        archiveStatus: archived.archiveStatus,
+        errorMessage: archived.archiveError,
+        indexerTriggered: false,
+        scenarioStatus: archived.scenarioStatus,
+        scenarioCommitSha: archived.scenarioCommitSha,
+        scenarioPrUrl: archived.scenarioPrUrl,
+        scenarioError: archived.scenarioError,
+      },
+    });
+  });
+
+  app.get('/api/evidence/:objectId', async (request, reply) => {
+    requireAuth(request, auth);
+    const evidence = await oss.getEvidenceByStableId(readParam(request, 'objectId'));
+    const contentType = safeContentType(evidence.contentType);
+    reply.header('cache-control', 'private, no-store');
+    reply.type(contentType);
+    return reply.send(evidence.body);
   });
 
   app.get('/api/runs/:runId', async (request, reply) => {
@@ -461,48 +638,74 @@ export async function createApp(options: AppOptions) {
         ? error.statusCode
         : error instanceof SecretStoreError
           ? 503
-          : error instanceof RepositoryError
-            ? error.statusCode
-            : error instanceof RunOrchestratorError
-              ? error.code === 'RUN_ALREADY_ACTIVE'
-                ? 409
-                : error.code === 'RUN_NOT_FOUND'
-                  ? 404
-                  : 400
-              : error instanceof AuthError || possibleError.name === 'ConfigurationError'
-                ? 400
-                : typeof possibleError.statusCode === 'number'
-                  ? possibleError.statusCode
-                  : 500;
+          : error instanceof OssError
+            ? ossStatusCode(error)
+            : error instanceof RepositoryError
+              ? error.statusCode
+              : error instanceof RunOrchestratorError
+                ? error.code === 'RUN_ALREADY_ACTIVE'
+                  ? 409
+                  : error.code === 'RUN_NOT_FOUND'
+                    ? 404
+                    : 400
+                : error instanceof AutomationServiceError
+                  ? error.code === 'AUTOMATION_RUN_NOT_FOUND'
+                    ? 404
+                    : error.code === 'AUTOMATION_RUN_ACTIVE'
+                      ? 409
+                      : error.code === 'AUTOMATION_CLEANUP_FAILED'
+                        ? 409
+                        : 400
+                  : error instanceof TestRequestQueueError
+                    ? error.code === 'QUEUE_NOT_FOUND'
+                      ? 404
+                      : error.code === 'QUEUE_STATE_INVALID'
+                        ? 409
+                        : 400
+                    : error instanceof AuthError || possibleError.name === 'ConfigurationError'
+                      ? 400
+                      : typeof possibleError.statusCode === 'number'
+                        ? possibleError.statusCode
+                        : 500;
     const code =
       error instanceof AppError
         ? error.code
         : error instanceof SecretStoreError
           ? 'SECRET_STORE_UNAVAILABLE'
-          : error instanceof RepositoryError
+          : error instanceof OssError
             ? error.code
-            : error instanceof RunOrchestratorError
+            : error instanceof RepositoryError
               ? error.code
-              : error instanceof AuthError
+              : error instanceof RunOrchestratorError
                 ? error.code
-                : possibleError.name === 'ConfigurationError'
-                  ? 'CONFIGURATION_INVALID'
-                  : statusCode === 400
-                    ? 'BAD_REQUEST'
-                    : 'INTERNAL_ERROR';
+                : error instanceof AutomationServiceError
+                  ? error.code
+                  : error instanceof TestRequestQueueError
+                    ? error.code
+                    : error instanceof AuthError
+                      ? error.code
+                      : possibleError.name === 'ConfigurationError'
+                        ? 'CONFIGURATION_INVALID'
+                        : statusCode === 400
+                          ? 'BAD_REQUEST'
+                          : 'INTERNAL_ERROR';
     const message =
       error instanceof AppError ||
       error instanceof RepositoryError ||
       error instanceof AuthError ||
+      error instanceof AutomationServiceError ||
+      error instanceof TestRequestQueueError ||
       possibleError.name === 'ConfigurationError'
         ? typeof possibleError.message === 'string'
           ? possibleError.message
           : 'Request failed'
         : error instanceof SecretStoreError
           ? 'Secret Store 当前不可用'
-          : statusCode < 500 && typeof possibleError.message === 'string'
-            ? possibleError.message
-            : 'Internal server error';
+          : error instanceof OssError
+            ? ossMessage(error)
+            : statusCode < 500 && typeof possibleError.message === 'string'
+              ? possibleError.message
+              : 'Internal server error';
 
     request.log.error(
       {
@@ -518,6 +721,7 @@ export async function createApp(options: AppOptions) {
   });
 
   app.addHook('onClose', async () => {
+    scheduler.stop();
     options.database.close();
   });
 
@@ -533,6 +737,37 @@ function makeHealth(config: AppConfig, database: DatabaseContext): HealthRespons
     database: databaseIsHealthy ? 'ok' : 'error',
     timestamp: new Date().toISOString(),
   };
+}
+
+function formatAutomationSubmission(submission: AutomationSubmission): Record<string, unknown> {
+  const queue = submission.queue;
+  if (submission.run) {
+    return {
+      ...submission.run,
+      queueId: queue.queueId,
+      queueStatus: queue.status,
+      requestId: queue.requestId,
+    };
+  }
+  return {
+    queueId: queue.queueId,
+    requestId: queue.requestId,
+    status: queue.status,
+    trigger: queue.trigger,
+    request: queue.request,
+    targetCommit: queue.targetRef,
+    run: null,
+    errorMessage: queue.errorMessage,
+  };
+}
+
+function readQueueId(request: FastifyRequest): number {
+  const value = readParam(request, 'queueId');
+  const queueId = Number(value);
+  if (!Number.isSafeInteger(queueId) || queueId <= 0) {
+    throw new AppError('QUEUE_ID_INVALID', '队列 ID 无效', 400);
+  }
+  return queueId;
 }
 
 function makeConfigResponse(
@@ -672,4 +907,29 @@ function readOptionalQuery(request: FastifyRequest, name: string): string | unde
     throw new AppError('INVALID_REQUEST', '查询参数无效', 400);
   }
   return value;
+}
+
+function safeContentType(value: string): string {
+  const normalized = value.split(';', 1)[0]?.trim().toLowerCase() ?? '';
+  return /^[a-z0-9][a-z0-9!#$&^_.+-]*\/[a-z0-9][a-z0-9!#$&^_.+-]*$/.test(normalized)
+    ? normalized
+    : 'application/octet-stream';
+}
+
+function ossStatusCode(error: OssError): number {
+  switch (error.code) {
+    case 'OSS_OBJECT_INVALID':
+    case 'OSS_CONFIGURATION_INVALID':
+      return 400;
+    case 'OSS_OBJECT_NOT_FOUND':
+      return 404;
+    case 'OSS_NOT_CONFIGURED':
+      return 503;
+    case 'OSS_REQUEST_FAILED':
+      return 502;
+  }
+}
+
+function ossMessage(error: OssError): string {
+  return error.code === 'OSS_REQUEST_FAILED' ? '对象存储请求失败' : error.message;
 }

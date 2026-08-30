@@ -23,7 +23,7 @@ const DEFAULT_HARNESS: HarnessConfig = {
     runner: { model: '', thinking: 'medium' },
     reviewer: { model: '', thinking: 'medium' },
   },
-  local: { repoDir: '', reportDir: '', retentionDays: 30 },
+  local: { repoDir: '', reportDir: '', retentionDays: 1 },
   mcp: { enabled: false, browser: 'chromium', headless: true, timeoutMs: 30_000 },
   oss: {
     endpoint: '',
@@ -38,9 +38,9 @@ const DEFAULT_HARNESS: HarnessConfig = {
 const DEFAULT_REPOSITORY: RepositoryConfig = {
   repository: '',
   scenarioBranch: 'scenario-testing',
-  scenarioMode: 'pr-required',
+  scenarioMode: 'review-all',
   scenarioLabels: [],
-  pollIntervalSeconds: 300,
+  pollIntervalSeconds: 60,
   cron: '',
   triggerOnCommit: false,
   environmentDescription: '',
@@ -630,7 +630,7 @@ export default function App() {
                 }))
               }
             >
-              <option value="pr-required">PR required</option>
+              <option value="review-all">Review all changes</option>
               <option value="add-only">Add only</option>
               <option value="autonomous">Autonomous</option>
             </select>
