@@ -1,6 +1,6 @@
 # LuoWang
 
-罗网（LuoWang）是一个独立部署的 AI 场景测试 Harness。当前仓库已完成 Phase 8：除了安全配置控制台、唯一 GitHub 目标仓库索引、Main → Runner → Reviewer → Main 的本地 Run、受控 Playwright MCP UI 执行、S3-compatible OSS 证据 Gateway、幂等归档和持久 FIFO 自动化队列，还支持长期场景生命周期、三种场景维护模式、陌生项目初始化，以及展示 Git 树标记、场景历史、Run 工件/证据/归档、当前执行、队列、后台任务、依赖健康和陈旧缓存恢复的完整运维控制台。后续阶段会按 `docs/changes/luowang-harness-mvp/plan.md` 继续实现。
+罗网（LuoWang）是一个独立部署的 AI 场景测试 Harness。当前仓库已完成 Phase 8，并提供 Phase 9 本地验收入口：除了安全配置控制台、唯一 GitHub 目标仓库索引、Main → Runner → Reviewer → Main 的本地 Run、受控 Playwright MCP UI 执行、S3-compatible OSS 证据 Gateway、幂等归档和持久 FIFO 自动化队列，还支持长期场景生命周期、三种场景维护模式、陌生项目初始化，以及展示 Git 树标记、场景历史、Run 工件/证据/归档、当前执行、队列、后台任务、依赖健康和陈旧缓存恢复的完整运维控制台。Phase 9 的本地验收会创建隔离的样例仓库和样例 Web 应用，并在结束后清理临时资源。
 
 ## 本地启动
 
@@ -24,6 +24,14 @@ docker compose up -d --build
 curl --fail http://127.0.0.1:3000/health
 docker compose down
 ```
+
+执行 Phase 9 本地验收：
+
+```bash
+npm run test:acceptance
+```
+
+该命令会在隔离环境中运行公共质量命令，使用临时 Git bare 仓库、Cynos 官网登录/注册样例应用、SQLite、队列、归档和 headless Chromium 验证 34 个 AC，并在 `.cynos/acceptance/<timestamp>/` 保存不含凭据的 JSON/Markdown 报告。真实 GitHub、DeepSeek、OSS 和非生产测试环境 smoke 不会默认执行；如需运行已存在的 GitHub 只读 smoke，必须显式提供 `LUOWANG_ACCEPTANCE_LIVE=1`、`LUOWANG_SMOKE_REPOSITORY=https://github.com/cynos-ai/cynos-website` 和临时 `LUOWANG_SMOKE_GITHUB_TOKEN`。
 
 Compose 将数据保存到 `luowang-data` 卷，并把宿主机端口绑定到 `127.0.0.1`。管理员密码只在空数据库首次启动时读取；主密钥只用于进程内派生 Secret Store 密钥，二者都不会写入 SQLite。
 
