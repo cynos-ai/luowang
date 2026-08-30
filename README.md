@@ -41,15 +41,16 @@ npm run test:e2e:github
 
 Docker Secret 文件也可以通过 `LUOWANG_ADMIN_PASSWORD_FILE` 和 `LUOWANG_MASTER_KEY_FILE` 提供；直接环境变量优先。生产环境应使用 HTTPS 或可信反向代理，并设置 `LUOWANG_ALLOWED_ORIGIN`。
 
-如果 Docker Hub 访问较慢，可以在构建时切换基础镜像源：
+Docker 构建默认使用 DaoCloud 的 Node 基础镜像和 npmmirror 的 npm 源；如需替换为公司内网、阿里云或其他可达镜像，可通过构建参数覆盖：
 
 ```bash
 docker build \
   --build-arg NODE_IMAGE=docker.m.daocloud.io/library/node:24.14.1-bookworm-slim \
+  --build-arg NPM_REGISTRY=https://registry.npmmirror.com \
   --tag luowang:local .
 ```
 
-阿里云镜像地址需要替换为你在容器镜像服务控制台获得的加速地址。Compose 的 `NPM_REGISTRY` 和 `NODE_IMAGE` 都支持通过本地 `.env` 或命令行覆盖；本地 `.env` 必须保持未提交。
+阿里云镜像地址需要替换为你在容器镜像服务控制台获得的加速地址。Compose 的 `NPM_REGISTRY` 和 `NODE_IMAGE` 默认使用上述镜像，也支持通过本地 `.env` 或命令行覆盖；本地 `.env` 必须保持未提交。
 
 ## 安全边界
 
