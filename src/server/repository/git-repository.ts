@@ -1,4 +1,4 @@
-import { chmod, mkdir, mkdtemp, readdir, rm, writeFile } from 'node:fs/promises';
+import { chmod, lstat, mkdir, mkdtemp, readdir, rm, writeFile } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { promisify } from 'node:util';
@@ -9,6 +9,9 @@ import { GitCommandError, RepositoryError } from './errors.js';
 const execFileAsync = promisify(execFile);
 const SHA_PATTERN = /^[0-9a-f]{40}$/i;
 const REF_PATTERN = /^[^\s~^:?*\\[\]]{1,255}$/;
+const REPORT_FILE_NAMES = ['draft-report.md', 'review.md', 'report.md'] as const;
+
+export type ReportFileName = (typeof REPORT_FILE_NAMES)[number];
 
 export interface GitRepositoryOptions {
   directory: string;
@@ -40,6 +43,12 @@ export interface GitMergeResult {
   mergeCommit: string | null;
   scenarioBranchHead: string;
   alreadyIncluded: boolean;
+}
+
+export interface ReportPublishResult {
+  status: 'published' | 'already_published';
+  commitSha: string;
+  scenarioBranchHead: string;
 }
 
 export class GitRepository {
@@ -313,6 +322,131 @@ export class GitRepository {
     }
   }
 
+  async publishRunReports(
+    branch: string,
+    runId: string,
+    files: Record<ReportFileName, string>,
+  ): Promise<ReportPublishResult> {
+    assertBranchName(branch);
+    assertRunId(runId);
+    for (const name of REPORT_FILE_NAMES) assertReportContent(name, files[name]);
+
+    await this.fetch();
+    const originalHead = await this.remoteBranchHead(branch);
+    if (!originalHead) {
+      throw new RepositoryError('SCENARIO_BRANCH_NOT_FOUND', '场景测试分支尚未创建', 409);
+    }
+
+    try {
+      await this.checkoutTarget(originalHead);
+      const paths = REPORT_FILE_NAMES.map(
+        (name) => `docs/scenario-testing/reports/${runId}/${name}`,
+      );
+      await ensureSafeDirectory(this.directory, `docs/scenario-testing/reports/${runId}`);
+      const missing: ReportFileName[] = [];
+      for (const name of REPORT_FILE_NAMES) {
+        const path = `docs/scenario-testing/reports/${runId}/${name}`;
+        const localPath = join(this.directory, path);
+        let existing: string | undefined;
+        try {
+          const info = await lstat(localPath);
+          if (info.isSymbolicLink() || !info.isFile()) {
+            throw new RepositoryError(
+              'REPORT_CONFLICT',
+              `报告路径不是普通文件，拒绝覆盖：${path}`,
+              409,
+            );
+          }
+          existing = (await this.run(['show', `${originalHead}:${path}`])).stdout;
+        } catch (error) {
+          if (error instanceof RepositoryError) throw error;
+          if (
+            !(error instanceof GitCommandError) &&
+            (error as NodeJS.ErrnoException).code !== 'ENOENT'
+          ) {
+            throw error;
+          }
+        }
+        if (existing !== undefined && existing !== files[name]) {
+          throw new RepositoryError(
+            'REPORT_CONFLICT',
+            `报告文件已存在且内容不同，拒绝覆盖：${path}`,
+            409,
+          );
+        }
+        if (existing === undefined) missing.push(name);
+      }
+
+      if (missing.length === 0) {
+        return {
+          status: 'already_published',
+          commitSha: originalHead,
+          scenarioBranchHead: originalHead,
+        };
+      }
+
+      for (const name of missing) {
+        const path = `docs/scenario-testing/reports/${runId}/${name}`;
+        await mkdir(dirname(join(this.directory, path)), { recursive: true });
+        await writeFile(join(this.directory, path), files[name], {
+          encoding: 'utf8',
+          mode: 0o600,
+        });
+      }
+      await this.run(['add', '--', ...paths]);
+      const staged = (await this.run(['diff', '--cached', '--name-only', '-z', '--'])).stdout
+        .split('\0')
+        .filter(Boolean);
+      const expected = new Set(
+        missing.map((name) => `docs/scenario-testing/reports/${runId}/${name}`),
+      );
+      if (staged.length !== expected.size || staged.some((path) => !expected.has(path))) {
+        throw new RepositoryError('REPORT_CONFLICT', '报告发布超出当前 Run 的文件 allowlist', 409);
+      }
+      await this.run([
+        '-c',
+        'user.name=LuoWang Report Archiver',
+        '-c',
+        'user.email=luowang-report-archiver@localhost',
+        'commit',
+        '-m',
+        `test: archive run ${runId}`,
+      ]);
+
+      // Re-read the remote head after the local commit. A normal push is
+      // deliberately used below; a concurrent update must never be replaced.
+      await this.fetch();
+      const latestRemoteHead = await this.remoteBranchHead(branch);
+      if (latestRemoteHead !== originalHead) {
+        throw new RepositoryError(
+          'REPORT_PUBLISH_CONFLICT',
+          '报告发布期间远端场景测试分支发生变化，请重试',
+          409,
+        );
+      }
+      try {
+        await this.run(['push', 'origin', `HEAD:refs/heads/${branch}`]);
+      } catch (error) {
+        if (error instanceof GitCommandError) {
+          throw new RepositoryError(
+            'REPORT_PUBLISH_CONFLICT',
+            '报告发布被远端并发更新拒绝，未执行 force push',
+            409,
+          );
+        }
+        throw error;
+      }
+      const scenarioBranchHead = await this.remoteBranchHead(branch);
+      if (!scenarioBranchHead) {
+        throw new RepositoryError('PUSH_REJECTED', '报告提交后无法读取远端场景测试分支 HEAD', 502);
+      }
+      const commitSha = (await this.run(['rev-parse', 'HEAD'])).stdout.trim().toLowerCase();
+      return { status: 'published', commitSha, scenarioBranchHead };
+    } finally {
+      await this.cleanWorkspace();
+    }
+  }
+
   async listTree(commit: string): Promise<GitTreeEntry[]> {
     const sha = await this.resolveCommit(commit);
     const output = await this.run(['ls-tree', '-r', '-z', '--full-tree', sha, '--']);
@@ -522,5 +656,38 @@ function assertRelativePath(path: string): void {
     path.includes('\u0000')
   ) {
     throw new RepositoryError('TARGET_INVALID', 'Git 文件路径无效', 400);
+  }
+}
+
+function assertRunId(runId: string): void {
+  if (!/^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/.test(runId)) {
+    throw new RepositoryError('TARGET_INVALID', 'Run ID 格式无效', 400);
+  }
+}
+
+function assertReportContent(name: ReportFileName, content: string): void {
+  if (typeof content !== 'string' || content.trim() === '' || content.includes('\u0000')) {
+    throw new RepositoryError('REPORT_CONFLICT', `报告文件不能为空：${name}`, 400);
+  }
+}
+
+async function ensureSafeDirectory(root: string, relativePath: string): Promise<void> {
+  let current = root;
+  for (const part of relativePath.split('/')) {
+    current = join(current, part);
+    try {
+      const info = await lstat(current);
+      if (info.isSymbolicLink() || !info.isDirectory()) {
+        throw new RepositoryError(
+          'REPORT_CONFLICT',
+          `报告目录不是普通目录，拒绝写入：${relativePath}`,
+          409,
+        );
+      }
+    } catch (error) {
+      if (error instanceof RepositoryError) throw error;
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+      await mkdir(current);
+    }
   }
 }

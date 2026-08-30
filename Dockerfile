@@ -1,6 +1,9 @@
 ARG NODE_IMAGE=node:24.14.1-bookworm-slim
+ARG NPM_REGISTRY=https://registry.npmjs.org
 
 FROM ${NODE_IMAGE} AS dependencies
+
+ARG NPM_REGISTRY
 
 WORKDIR /app
 
@@ -9,7 +12,7 @@ RUN apt-get update \
   && rm -rf /var/lib/apt/lists/*
 
 COPY package.json package-lock.json ./
-RUN npm ci
+RUN npm ci --registry=${NPM_REGISTRY}
 
 FROM dependencies AS build
 

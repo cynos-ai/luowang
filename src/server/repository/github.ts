@@ -34,6 +34,16 @@ interface GitHubResponse {
   body: unknown;
 }
 
+interface GitHubIssuePayload {
+  number: number;
+  title: string;
+  state: 'open' | 'closed';
+  url: string;
+  createdAt: string;
+  updatedAt: string;
+  body: string;
+}
+
 export class GitHubClient {
   private readonly repository: { owner: string; name: string };
   private readonly tokenProvider?: () => string | undefined;
@@ -161,28 +171,82 @@ export class GitHubClient {
   }
 
   async listIssues(): Promise<RepositoryIssue[]> {
-    const response = await this.request(
-      `/repos/${this.repository.owner}/${this.repository.name}/issues?state=all&per_page=100`,
-    );
-    if (response.status !== 200 || !Array.isArray(response.body)) {
-      throw new GitHubApiError(response.status, 'GitHub Issues 读取失败');
-    }
-    return response.body
-      .filter(
-        (item): item is Record<string, unknown> => isRecord(item) && !('pull_request' in item),
-      )
-      .map((item) => ({
-        number: typeof item.number === 'number' ? item.number : 0,
-        title: readString(item.title, ''),
-        state: (item.state === 'closed' ? 'closed' : 'open') as 'open' | 'closed',
-        url: readString(item.html_url, ''),
-        createdAt: readString(item.created_at, ''),
-        updatedAt: readString(item.updated_at, ''),
-      }))
-      .filter((issue) => issue.number > 0 && issue.title !== '');
+    return (await this.listIssuePayloads()).map(toRepositoryIssue);
   }
 
-  private async request(path: string): Promise<GitHubResponse> {
+  async findIssuesByMarkers(markers: readonly string[]): Promise<RepositoryIssue[]> {
+    if (markers.length === 0) return [];
+    const normalizedMarkers = markers.map((marker) => marker.trim()).filter(Boolean);
+    if (normalizedMarkers.length !== markers.length) {
+      throw new RepositoryError('ISSUE_URL_INVALID', 'Issue 标记不能为空', 400);
+    }
+    return (await this.listIssuePayloads())
+      .filter((issue) => normalizedMarkers.every((marker) => issue.body.includes(marker)))
+      .map(toRepositoryIssue);
+  }
+
+  async createIssue(title: string, body: string): Promise<RepositoryIssue> {
+    if (title.trim() === '' || body.trim() === '') {
+      throw new RepositoryError('ISSUE_CREATE_FAILED', 'Issue 标题和正文不能为空', 400);
+    }
+    const response = await this.request(
+      `/repos/${this.repository.owner}/${this.repository.name}/issues`,
+      { method: 'POST', body: JSON.stringify({ title, body }) },
+    );
+    if (response.status !== 201 || !isRecord(response.body)) {
+      throw new GitHubApiError(response.status, 'GitHub Issue 创建失败');
+    }
+    const issue = toIssuePayload(response.body);
+    if (!issue) throw new GitHubApiError(response.status, 'GitHub Issue 响应无效');
+    return toRepositoryIssue(issue);
+  }
+
+  async getIssueByUrl(issueUrl: string): Promise<RepositoryIssue> {
+    const number = parseGitHubIssueUrl(issueUrl, this.repository);
+    const response = await this.request(
+      `/repos/${this.repository.owner}/${this.repository.name}/issues/${number}`,
+    );
+    if (response.status === 404) {
+      throw new RepositoryError('ISSUE_NOT_FOUND', '指定的 GitHub Issue 不存在', 404);
+    }
+    if (response.status !== 200 || !isRecord(response.body)) {
+      throw new GitHubApiError(response.status, 'GitHub Issue 读取失败');
+    }
+    if ('pull_request' in response.body) {
+      throw new RepositoryError('ISSUE_URL_INVALID', 'issue_url 不能指向 Pull Request', 400);
+    }
+    const issue = toIssuePayload(response.body);
+    if (!issue) throw new GitHubApiError(response.status, 'GitHub Issue 响应无效');
+    return toRepositoryIssue(issue);
+  }
+
+  private async listIssuePayloads(): Promise<GitHubIssuePayload[]> {
+    const issues: GitHubIssuePayload[] = [];
+    for (let page = 1; page <= 10; page += 1) {
+      const query = page === 1 ? '' : `&page=${page}`;
+      const response = await this.request(
+        `/repos/${this.repository.owner}/${this.repository.name}/issues?state=all&per_page=100${query}`,
+      );
+      if (response.status !== 200 || !Array.isArray(response.body)) {
+        throw new GitHubApiError(response.status, 'GitHub Issues 读取失败');
+      }
+      issues.push(
+        ...response.body
+          .filter(
+            (item): item is Record<string, unknown> => isRecord(item) && !('pull_request' in item),
+          )
+          .map(toIssuePayload)
+          .filter((issue): issue is GitHubIssuePayload => issue !== null),
+      );
+      if (response.body.length < 100) break;
+    }
+    return issues;
+  }
+
+  private async request(
+    path: string,
+    options: { method?: 'GET' | 'POST'; body?: string } = {},
+  ): Promise<GitHubResponse> {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 10_000);
     try {
@@ -193,9 +257,11 @@ export class GitHubClient {
         'user-agent': 'luowang-repository-service',
       };
       if (token) headers.authorization = `Bearer ${token}`;
+      if (options.body !== undefined) headers['content-type'] = 'application/json';
       const response = await fetch(`${this.apiBaseUrl}${path}`, {
-        method: 'GET',
+        method: options.method ?? 'GET',
         headers,
+        body: options.body,
         redirect: 'error',
         signal: controller.signal,
       });
@@ -270,4 +336,65 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function readString(value: unknown, fallback: string): string {
   return typeof value === 'string' ? value : fallback;
+}
+
+function toIssuePayload(value: Record<string, unknown>): GitHubIssuePayload | null {
+  const number = typeof value.number === 'number' ? value.number : 0;
+  const title = readString(value.title, '');
+  const url = readString(value.html_url, '');
+  if (number <= 0 || title === '' || url === '') return null;
+  return {
+    number,
+    title,
+    state: (value.state === 'closed' ? 'closed' : 'open') as 'open' | 'closed',
+    url,
+    createdAt: readString(value.created_at, ''),
+    updatedAt: readString(value.updated_at, ''),
+    body: readString(value.body, ''),
+  };
+}
+
+function toRepositoryIssue(issue: GitHubIssuePayload): RepositoryIssue {
+  return {
+    number: issue.number,
+    title: issue.title,
+    state: issue.state,
+    url: issue.url,
+    createdAt: issue.createdAt,
+    updatedAt: issue.updatedAt,
+  };
+}
+
+function parseGitHubIssueUrl(value: string, repository: { owner: string; name: string }): number {
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    throw new RepositoryError('ISSUE_URL_INVALID', 'issue_url 不是有效的 GitHub Issue URL', 400);
+  }
+  const parts = url.pathname.split('/').filter(Boolean);
+  if (
+    url.protocol !== 'https:' ||
+    url.hostname.toLowerCase() !== 'github.com' ||
+    url.username ||
+    url.password ||
+    url.search ||
+    url.hash ||
+    parts.length !== 4 ||
+    parts[0]?.toLowerCase() !== repository.owner.toLowerCase() ||
+    parts[1]?.toLowerCase() !== repository.name.toLowerCase() ||
+    parts[2] !== 'issues' ||
+    !/^\d+$/.test(parts[3] ?? '')
+  ) {
+    throw new RepositoryError(
+      'ISSUE_URL_INVALID',
+      'issue_url 必须指向当前 GitHub 仓库的 Issue',
+      400,
+    );
+  }
+  const number = Number(parts[3]);
+  if (!Number.isSafeInteger(number) || number <= 0) {
+    throw new RepositoryError('ISSUE_URL_INVALID', 'issue_url 中的 Issue 编号无效', 400);
+  }
+  return number;
 }

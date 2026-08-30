@@ -43,6 +43,7 @@ import {
 } from './evidence.js';
 import { createProviderAdapter, type ProviderAdapter } from './provider.js';
 import { createTestDataManager, createTestDataTools, type TestDataManager } from './test-data.js';
+import type { RunStore } from './store.js';
 import { createRunId, RunWorkspace, RunWorkspaceError, RunWorkspaceStore } from './workspace.js';
 import type {
   AgentRole,
@@ -75,6 +76,7 @@ export interface RunOrchestratorOptions {
   browser?: BrowserMcpAdapter;
   oss?: OssAdapter;
   testData?: TestDataManager;
+  runStore?: RunStore;
   now?: () => Date;
   id?: () => string;
   logger?: Logger;
@@ -344,7 +346,13 @@ class DefaultRunOrchestrator implements RunOrchestrator {
       state.artifactNames = Object.keys(
         await this.workspaceStore.open(state.runId, 'completed').list(),
       );
-      if (report.result === 'passed') this.progressedTarget = report.targetCommit;
+      await this.persistCompletedRun(state, report);
+      if (report.result === 'passed' && !this.options.runStore) {
+        // Phase 5 moves progression to the SQLite-backed Archiver. Keep the
+        // in-memory fallback for callers that intentionally use the Phase 3
+        // orchestrator without an Archiver.
+        this.progressedTarget = report.targetCommit;
+      }
     } catch (error) {
       this.markExecutionFailure(state, error);
     } finally {
@@ -368,7 +376,7 @@ class DefaultRunOrchestrator implements RunOrchestrator {
         '无法固定目标 SHA：场景测试分支不存在或目标 ref 无效',
       );
     }
-    const baseCommit = this.progressedTarget;
+    const baseCommit = this.options.runStore?.getLastCompletedTarget() ?? this.progressedTarget;
     if (baseCommit) await this.options.repository.assertScenarioHistory(baseCommit, targetCommit);
     state.baseCommit = baseCommit;
     state.targetCommit = targetCommit;
@@ -882,6 +890,33 @@ class DefaultRunOrchestrator implements RunOrchestrator {
       }
     }
     return parsed;
+  }
+
+  private async persistCompletedRun(state: RunState, report: ParsedReport): Promise<void> {
+    if (!this.options.runStore || !state.completedDirectory) return;
+    try {
+      const artifacts = await this.workspaceStore.open(state.runId, 'completed').list();
+      this.options.runStore.importCompleted({
+        runId: state.runId,
+        trigger: report.trigger,
+        request: state.request,
+        baseCommit: report.baseCommit,
+        targetCommit: report.targetCommit,
+        includedCommits: report.includedCommits,
+        result: report.result,
+        startedAt: report.startedAt,
+        finishedAt: report.finishedAt,
+        completedDirectory: state.completedDirectory,
+        artifacts,
+        scenarioResults: report.scenarioResults,
+        confirmedBugs: report.confirmedBugs,
+      });
+    } catch (error) {
+      this.options.logger?.warn(
+        { runId: state.runId, errorName: error instanceof Error ? error.name : 'UnknownError' },
+        'completed Run metadata was not preloaded into Run Store',
+      );
+    }
   }
 
   private async forceInfrastructureBlockedReport(

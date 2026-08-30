@@ -92,3 +92,59 @@ export const repositoryIndexErrors = sqliteTable('repository_index_errors', {
   commitSha: text('commit_sha').notNull(),
   indexedAt: text('indexed_at').notNull(),
 });
+
+export const runStoreRuns = sqliteTable('run_store_runs', {
+  runId: text('run_id').primaryKey(),
+  status: text('status').notNull(),
+  trigger: text('trigger').notNull(),
+  request: text('request').notNull(),
+  baseCommit: text('base_commit'),
+  targetCommit: text('target_commit').notNull(),
+  includedCommitsJson: text('included_commits_json').notNull(),
+  result: text('result').notNull(),
+  scenarioResultsJson: text('scenario_results_json').notNull(),
+  confirmedBugsJson: text('confirmed_bugs_json').notNull(),
+  startedAt: text('started_at').notNull(),
+  finishedAt: text('finished_at').notNull(),
+  completedDirectory: text('completed_directory').notNull(),
+  reportPath: text('report_path').notNull(),
+  reportStatus: text('report_status').notNull(),
+  reportCommitSha: text('report_commit_sha'),
+  archiveStatus: text('archive_status').notNull(),
+  archiveError: text('archive_error'),
+  progressed: integer('progressed').notNull(),
+  progressedAt: text('progressed_at'),
+  createdAt: text('created_at').notNull(),
+  updatedAt: text('updated_at').notNull(),
+});
+
+export const runStoreArtifacts = sqliteTable('run_store_artifacts', {
+  runId: text('run_id').notNull(),
+  name: text('name').notNull(),
+  content: text('content').notNull(),
+  createdAt: text('created_at').notNull(),
+  updatedAt: text('updated_at').notNull(),
+});
+
+export const runStoreIssues = sqliteTable('run_store_issues', {
+  runId: text('run_id').notNull(),
+  bugKey: text('bug_key').notNull(),
+  title: text('title').notNull(),
+  scenarioIdsJson: text('scenario_ids_json').notNull(),
+  issueAction: text('issue_action').notNull(),
+  requestedIssueUrl: text('requested_issue_url'),
+  status: text('status').notNull(),
+  issueNumber: integer('issue_number'),
+  issueUrl: text('issue_url'),
+  errorMessage: text('error_message'),
+  attempts: integer('attempts').notNull(),
+  createdAt: text('created_at').notNull(),
+  updatedAt: text('updated_at').notNull(),
+});
+
+export const runStoreProgress = sqliteTable('run_store_progress', {
+  id: integer('id').primaryKey(),
+  lastCompletedTarget: text('last_completed_target'),
+  runId: text('run_id'),
+  updatedAt: text('updated_at'),
+});
