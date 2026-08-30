@@ -414,6 +414,9 @@ export async function createApp(options: AppOptions) {
     if (typeof body.targetCommit === 'string' && body.targetCommit.trim() === '') {
       throw new AppError('RUN_TARGET_INVALID', 'targetCommit 不能为空', 400);
     }
+    if (body.initialization !== undefined && typeof body.initialization !== 'boolean') {
+      throw new AppError('RUN_REQUEST_INVALID', 'initialization 必须是布尔值', 400);
+    }
     const trigger = body.trigger === undefined ? 'manual' : body.trigger;
     if (trigger !== 'manual' && trigger !== 'api') {
       throw new AppError('RUN_TRIGGER_INVALID', 'Phase 3 只支持 manual 或 api 触发', 400);
@@ -422,6 +425,7 @@ export async function createApp(options: AppOptions) {
       request: body.request,
       trigger,
       targetCommit: body.targetCommit as string | undefined,
+      ...(body.initialization === true ? { initialization: true } : {}),
     });
     return reply.status(202).send(formatAutomationSubmission(submission));
   });
@@ -509,6 +513,10 @@ export async function createApp(options: AppOptions) {
         archiveStatus: archived.archiveStatus,
         errorMessage: archived.archiveError,
         indexerTriggered: false,
+        scenarioStatus: archived.scenarioStatus,
+        scenarioCommitSha: archived.scenarioCommitSha,
+        scenarioPrUrl: archived.scenarioPrUrl,
+        scenarioError: archived.scenarioError,
       },
     });
   });

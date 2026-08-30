@@ -116,6 +116,12 @@ export const runStoreRuns = sqliteTable('run_store_runs', {
   progressedAt: text('progressed_at'),
   createdAt: text('created_at').notNull(),
   updatedAt: text('updated_at').notNull(),
+  scenarioMode: text('scenario_mode').notNull().default('review-all'),
+  scenarioStatus: text('scenario_status').notNull().default('not_applicable'),
+  scenarioCommitSha: text('scenario_commit_sha'),
+  scenarioPrUrl: text('scenario_pr_url'),
+  scenarioError: text('scenario_error'),
+  initialization: integer('initialization').notNull().default(0),
 });
 
 export const runStoreArtifacts = sqliteTable('run_store_artifacts', {
@@ -167,6 +173,7 @@ export const testRequestQueue = sqliteTable('test_request_queue', {
   progressed: integer('progressed'),
   createdAt: text('created_at').notNull(),
   updatedAt: text('updated_at').notNull(),
+  initialization: integer('initialization').notNull().default(0),
 });
 
 export const automationState = sqliteTable('automation_state', {

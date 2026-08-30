@@ -148,7 +148,7 @@ export function createReadArtifactTool(read: (name: string) => Promise<string>):
     name: 'read_run_artifact',
     label: '读取 Run 工件',
     description:
-      '读取本次 Run 已落盘的 plan.md、execution.md、draft-report.md 或 review.md；不能读取其他路径。',
+      '读取本次 Run 已落盘的 plan.md、execution.md、draft-report.md、review.md 或 scenario-changes.patch；不能读取其他路径。',
     parameters,
     execute: async (_toolCallId, params: Static<typeof parameters>) => {
       try {
@@ -215,6 +215,43 @@ export function createTargetContextTools(options: {
       execute: async (_toolCallId, params: Static<typeof searchParameters>) => {
         try {
           return createTextResult(await options.search(params.query));
+        } catch (error) {
+          return createTextResult(errorMessage(error), { error: true });
+        }
+      },
+    },
+  ];
+}
+
+export function createWorkingScenarioTools(options: {
+  list: () => Promise<string[]>;
+  read: (path: string) => Promise<string>;
+}): ToolDefinition[] {
+  const readParameters = Type.Object({
+    path: Type.String({ description: '场景 Markdown 相对路径' }),
+  });
+  return [
+    {
+      name: 'list_working_scenarios',
+      label: '列出当前场景',
+      description: '列出当前 Run 已应用 patch 后工作树中的场景 Markdown 文件，只读。',
+      parameters: Type.Object({}),
+      execute: async () => {
+        try {
+          return createTextResult((await options.list()).join('\n'));
+        } catch (error) {
+          return createTextResult(errorMessage(error), { error: true });
+        }
+      },
+    },
+    {
+      name: 'read_working_scenario',
+      label: '读取当前场景',
+      description: '读取当前 Run 工作树中的场景 Markdown，只允许场景目录内文件。',
+      parameters: readParameters,
+      execute: async (_toolCallId, params: Static<typeof readParameters>) => {
+        try {
+          return createTextResult(await options.read(params.path));
         } catch (error) {
           return createTextResult(errorMessage(error), { error: true });
         }

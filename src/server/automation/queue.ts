@@ -14,6 +14,7 @@ export interface TestRequestInput {
   targetRef?: string | null;
   /** Backwards-compatible spelling used by the Run API. */
   targetCommit?: string | null;
+  initialization?: boolean;
 }
 
 export interface TestRequestRecord {
@@ -34,6 +35,7 @@ export interface TestRequestRecord {
   progressed: boolean | null;
   createdAt: string;
   updatedAt: string;
+  initialization: boolean;
 }
 
 export interface QueueCompletion {
@@ -106,7 +108,12 @@ class SqliteTestRequestQueue implements TestRequestQueue {
         )
         .get() as QueueRow | undefined;
 
-      if (tail && isAutomatic(tail.trigger) && isAutomatic(normalized.trigger)) {
+      if (
+        tail &&
+        isAutomatic(tail.trigger) &&
+        isAutomatic(normalized.trigger) &&
+        tail.initialization === (normalized.initialization ? 1 : 0)
+      ) {
         const sources = uniqueTriggers([
           ...parseJson<RunTrigger[]>(tail.trigger_sources_json, [tail.trigger]),
           normalized.trigger,
@@ -140,8 +147,8 @@ class SqliteTestRequestQueue implements TestRequestQueue {
           `INSERT INTO test_request_queue
            (request_id, trigger, request, target_ref, trigger_sources_json, request_ids_json,
             status, run_id, claimed_at, waiting_archive_at, completed_at, error_message,
-            archive_status, progressed, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, 'queued', NULL, NULL, NULL, NULL, NULL, NULL, NULL, ?, ?)`,
+            archive_status, progressed, created_at, updated_at, initialization)
+           VALUES (?, ?, ?, ?, ?, ?, 'queued', NULL, NULL, NULL, NULL, NULL, NULL, NULL, ?, ?, ?)`,
         )
         .run(
           requestId,
@@ -152,6 +159,7 @@ class SqliteTestRequestQueue implements TestRequestQueue {
           JSON.stringify([requestId]),
           timestamp,
           timestamp,
+          normalized.initialization ? 1 : 0,
         );
       return Number(result.lastInsertRowid);
     });
@@ -357,12 +365,14 @@ interface QueueRow {
   progressed: number | null;
   created_at: string;
   updated_at: string;
+  initialization: number;
 }
 
 function normalizeInput(input: TestRequestInput): {
   request: string;
   trigger: RunTrigger;
   targetRef: string | null;
+  initialization: boolean;
 } {
   if (!input || typeof input.request !== 'string' || input.request.trim() === '') {
     throw new TestRequestQueueError('QUEUE_REQUEST_INVALID', '测试请求内容不能为空');
@@ -372,6 +382,9 @@ function normalizeInput(input: TestRequestInput): {
   }
   if (!['git', 'schedule', 'manual', 'api'].includes(input.trigger)) {
     throw new TestRequestQueueError('QUEUE_REQUEST_INVALID', '测试请求来源无效');
+  }
+  if (input.initialization !== undefined && typeof input.initialization !== 'boolean') {
+    throw new TestRequestQueueError('QUEUE_REQUEST_INVALID', 'initialization 必须是布尔值');
   }
   if (input.targetRef !== undefined && input.targetCommit !== undefined) {
     if (
@@ -397,7 +410,12 @@ function normalizeInput(input: TestRequestInput): {
       throw new TestRequestQueueError('QUEUE_REQUEST_INVALID', 'target ref 格式无效');
     }
   }
-  return { request: input.request.trim(), trigger: input.trigger, targetRef };
+  return {
+    request: input.request.trim(),
+    trigger: input.trigger,
+    targetRef,
+    initialization: input.initialization === true,
+  };
 }
 
 function normalizeRequestId(value: string): string {
@@ -457,6 +475,7 @@ function toRecord(row: QueueRow): TestRequestRecord {
     progressed: row.progressed === null ? null : row.progressed === 1,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+    initialization: row.initialization === 1,
   };
 }
 

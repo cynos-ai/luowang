@@ -38,7 +38,7 @@ const DEFAULT_HARNESS: HarnessConfig = {
 const DEFAULT_REPOSITORY: RepositoryConfig = {
   repository: '',
   scenarioBranch: 'scenario-testing',
-  scenarioMode: 'pr-required',
+  scenarioMode: 'review-all',
   scenarioLabels: [],
   pollIntervalSeconds: 60,
   cron: '',
@@ -630,7 +630,7 @@ export default function App() {
                 }))
               }
             >
-              <option value="pr-required">PR required</option>
+              <option value="review-all">Review all changes</option>
               <option value="add-only">Add only</option>
               <option value="autonomous">Autonomous</option>
             </select>

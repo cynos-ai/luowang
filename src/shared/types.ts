@@ -57,7 +57,7 @@ export interface HarnessConfig {
 export interface RepositoryConfig {
   repository: string;
   scenarioBranch: string;
-  scenarioMode: 'autonomous' | 'add-only' | 'pr-required';
+  scenarioMode: ScenarioMode;
   scenarioLabels: string[];
   pollIntervalSeconds: number;
   cron: string;
@@ -65,6 +65,8 @@ export interface RepositoryConfig {
   environmentDescription: string;
   baseUrl: string;
 }
+
+export type ScenarioMode = 'autonomous' | 'add-only' | 'review-all';
 
 export interface SecretMetadata {
   configured: boolean;
@@ -272,6 +274,9 @@ export interface RunSummary {
   errorMessage: string | null;
   artifactNames: string[];
   evidence?: EvidenceReference[];
+  scenarioMode?: ScenarioMode;
+  initialization?: boolean;
+  scenarioPrUrl?: string | null;
 }
 
 export interface RunDetail extends RunSummary {

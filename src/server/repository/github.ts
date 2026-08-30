@@ -22,6 +22,11 @@ export interface GitHubRepositoryInfo {
   };
 }
 
+export interface GitHubPullRequest {
+  number: number;
+  url: string;
+}
+
 interface GitHubClientOptions {
   repositoryUrl: string;
   tokenProvider?: () => string | undefined;
@@ -199,6 +204,46 @@ export class GitHubClient {
     const issue = toIssuePayload(response.body);
     if (!issue) throw new GitHubApiError(response.status, 'GitHub Issue 响应无效');
     return toRepositoryIssue(issue);
+  }
+
+  async findPullRequest(head: string, base: string): Promise<GitHubPullRequest | null> {
+    const response = await this.request(
+      `/repos/${this.repository.owner}/${this.repository.name}/pulls?state=open&head=${encodeURIComponent(`${this.repository.owner}:${head}`)}&base=${encodeURIComponent(base)}&per_page=10`,
+    );
+    if (response.status !== 200 || !Array.isArray(response.body)) {
+      throw new GitHubApiError(response.status, 'GitHub Pull Request 查询失败');
+    }
+    for (const item of response.body) {
+      if (!isRecord(item)) continue;
+      const url = readString(item.html_url, '');
+      const number = typeof item.number === 'number' ? item.number : 0;
+      if (number > 0 && isPullRequestUrl(url, this.repository)) return { number, url };
+    }
+    return null;
+  }
+
+  async createPullRequest(
+    title: string,
+    body: string,
+    head: string,
+    base: string,
+  ): Promise<GitHubPullRequest> {
+    if (title.trim() === '' || body.trim() === '' || head.trim() === '' || base.trim() === '') {
+      throw new RepositoryError('SCENARIO_PR_CREATE_FAILED', '场景 PR 参数不能为空', 400);
+    }
+    const response = await this.request(
+      `/repos/${this.repository.owner}/${this.repository.name}/pulls`,
+      { method: 'POST', body: JSON.stringify({ title, body, head, base }) },
+    );
+    if (response.status !== 201 || !isRecord(response.body)) {
+      throw new GitHubApiError(response.status, 'GitHub 场景 PR 创建失败');
+    }
+    const url = readString(response.body.html_url, '');
+    const number = typeof response.body.number === 'number' ? response.body.number : 0;
+    if (number <= 0 || !isPullRequestUrl(url, this.repository)) {
+      throw new GitHubApiError(response.status, 'GitHub 场景 PR 响应无效');
+    }
+    return { number, url };
   }
 
   async getIssueByUrl(issueUrl: string): Promise<RepositoryIssue> {
@@ -397,4 +442,26 @@ function parseGitHubIssueUrl(value: string, repository: { owner: string; name: s
     throw new RepositoryError('ISSUE_URL_INVALID', 'issue_url 中的 Issue 编号无效', 400);
   }
   return number;
+}
+
+function isPullRequestUrl(value: string, repository: { owner: string; name: string }): boolean {
+  try {
+    const url = new URL(value);
+    const parts = url.pathname.split('/').filter(Boolean);
+    return (
+      url.protocol === 'https:' &&
+      url.hostname.toLowerCase() === 'github.com' &&
+      !url.username &&
+      !url.password &&
+      !url.search &&
+      !url.hash &&
+      parts.length === 4 &&
+      parts[0]?.toLowerCase() === repository.owner.toLowerCase() &&
+      parts[1]?.toLowerCase() === repository.name.toLowerCase() &&
+      parts[2] === 'pull' &&
+      /^\d+$/.test(parts[3] ?? '')
+    );
+  } catch {
+    return false;
+  }
 }

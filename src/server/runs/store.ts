@@ -4,13 +4,16 @@ import type {
   ConfirmedBugSummary,
   RunResult,
   RunTrigger,
+  ScenarioMode,
   ScenarioResultSummary,
 } from '../../shared/types.js';
-import { RUN_ARTIFACT_NAMES, type RunArtifactName } from './types.js';
+import { RUN_ARTIFACT_NAMES, SCENARIO_PATCH_ARTIFACT_NAME, type RunArtifactName } from './types.js';
 
 export type StoredReportStatus = 'pending' | 'published' | 'not_applicable' | 'conflict' | 'failed';
 export type StoredIssueStatus = 'pending' | 'succeeded' | 'failed';
 export type StoredArchiveStatus = 'pending' | 'partial' | 'completed' | 'failed';
+export type StoredScenarioStatus =
+  'not_applicable' | 'pending' | 'published' | 'pull_request' | 'failed';
 
 export interface CompletedRunImport {
   runId: string;
@@ -28,6 +31,8 @@ export interface CompletedRunImport {
   scenarioResults: ScenarioResultSummary[];
   confirmedBugs: ConfirmedBugSummary[];
   specialRun?: boolean;
+  scenarioMode?: ScenarioMode;
+  initialization?: boolean;
 }
 
 export interface StoredRunIssue {
@@ -70,6 +75,12 @@ export interface StoredRun {
   confirmedBugs: ConfirmedBugSummary[];
   issues: StoredRunIssue[];
   specialRun: boolean;
+  scenarioMode: ScenarioMode;
+  scenarioStatus: StoredScenarioStatus;
+  scenarioCommitSha: string | null;
+  scenarioPrUrl: string | null;
+  scenarioError: string | null;
+  initialization: boolean;
   createdAt: string;
   updatedAt: string;
 }
@@ -77,6 +88,13 @@ export interface StoredRun {
 export interface ReportPublicationUpdate {
   status: StoredReportStatus;
   commitSha?: string | null;
+  errorMessage?: string | null;
+}
+
+export interface ScenarioPublicationUpdate {
+  status: StoredScenarioStatus;
+  commitSha?: string | null;
+  scenarioPrUrl?: string | null;
   errorMessage?: string | null;
 }
 
@@ -89,6 +107,7 @@ export interface IssueAttemptUpdate {
 
 export interface ArchiveCompletion {
   reportReady: boolean;
+  scenarioReady?: boolean;
   errorMessage?: string | null;
 }
 
@@ -99,6 +118,7 @@ export interface RunStore {
   listPending(): StoredRun[];
   getLastCompletedTarget(): string | null;
   markReport(runId: string, update: ReportPublicationUpdate): StoredRun;
+  markScenario(runId: string, update: ScenarioPublicationUpdate): StoredRun;
   markIssueAttempt(runId: string, bugKey: string, update: IssueAttemptUpdate): StoredRun;
   markArchiveFailure(runId: string, message: string): StoredRun;
   completeArchive(runId: string, completion: ArchiveCompletion): StoredRun;
@@ -134,6 +154,12 @@ class SqliteRunStore implements RunStore {
   importCompleted(input: CompletedRunImport): StoredRun {
     assertImport(input);
     const timestamp = this.now();
+    const hasScenarioPatch = input.artifacts[SCENARIO_PATCH_ARTIFACT_NAME] !== undefined;
+    const scenarioStatus: StoredScenarioStatus = input.specialRun
+      ? 'not_applicable'
+      : hasScenarioPatch
+        ? 'pending'
+        : 'not_applicable';
     this.database.transaction(() => {
       const existing = this.readRunRow(input.runId);
       if (existing) {
@@ -156,8 +182,9 @@ class SqliteRunStore implements RunStore {
             result, scenario_results_json, confirmed_bugs_json, started_at, finished_at,
             completed_directory, report_path, report_status,
             report_commit_sha, archive_status, archive_error, progressed, progressed_at,
-            created_at, updated_at)
-           VALUES (?, 'completed', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, 'pending', NULL, 0, NULL, ?, ?)`,
+            created_at, updated_at, scenario_mode, scenario_status, scenario_commit_sha,
+            scenario_pr_url, scenario_error, initialization)
+           VALUES (?, 'completed', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, 'pending', NULL, 0, NULL, ?, ?, ?, ?, NULL, NULL, NULL, ?)`,
         )
         .run(
           input.runId,
@@ -176,6 +203,9 @@ class SqliteRunStore implements RunStore {
           input.specialRun === true ? 'not_applicable' : 'pending',
           timestamp,
           timestamp,
+          input.scenarioMode ?? 'review-all',
+          scenarioStatus,
+          input.initialization === true ? 1 : 0,
         );
       for (const [name, content] of Object.entries(input.artifacts)) {
         if (content === undefined) continue;
@@ -258,6 +288,32 @@ class SqliteRunStore implements RunStore {
     return this.requireStoredRun(runId);
   }
 
+  markScenario(runId: string, update: ScenarioPublicationUpdate): StoredRun {
+    const timestamp = this.now();
+    this.database
+      .prepare(
+        `UPDATE run_store_runs
+         SET scenario_status = ?, scenario_commit_sha = ?, scenario_pr_url = ?,
+             scenario_error = ?,
+             archive_status = CASE WHEN ? = 'failed' THEN 'failed' ELSE archive_status END,
+             archive_error = CASE WHEN ? = 'failed' THEN ? ELSE archive_error END,
+             updated_at = ?
+         WHERE run_id = ?`,
+      )
+      .run(
+        update.status,
+        update.commitSha ?? null,
+        update.scenarioPrUrl ?? null,
+        update.errorMessage ?? null,
+        update.status,
+        update.status,
+        update.errorMessage ?? null,
+        timestamp,
+        runId,
+      );
+    return this.requireStoredRun(runId);
+  }
+
   markIssueAttempt(runId: string, bugKey: string, update: IssueAttemptUpdate): StoredRun {
     const timestamp = this.now();
     this.database.transaction(() => {
@@ -319,11 +375,15 @@ class SqliteRunStore implements RunStore {
       const reportReady =
         completion.reportReady &&
         (run.report_status === 'published' || run.report_status === 'not_applicable');
+      const scenarioReady =
+        (completion.scenarioReady ?? true) &&
+        ['published', 'pull_request', 'not_applicable'].includes(run.scenario_status);
       const canProgress =
         run.report_status === 'published' &&
+        scenarioReady &&
         allIssuesSucceeded &&
         (run.result === 'passed' || run.result === 'failed');
-      const canComplete = reportReady && allIssuesSucceeded;
+      const canComplete = reportReady && scenarioReady && allIssuesSucceeded;
       let progressed = run.progressed === 1;
       let progressedAt = run.progressed_at;
 
@@ -365,9 +425,11 @@ class SqliteRunStore implements RunStore {
         : (completion.errorMessage ??
           (!reportReady
             ? '正式报告尚未发布'
-            : !allIssuesSucceeded
-              ? '仍有 confirmed Bug 未完成 Issue 归档'
-              : 'Run 不满足推进条件'));
+            : !scenarioReady
+              ? '场景变更尚未发布或创建 PR'
+              : !allIssuesSucceeded
+                ? '仍有 confirmed Bug 未完成 Issue 归档'
+                : 'Run 不满足推进条件'));
       this.database
         .prepare(
           `UPDATE run_store_runs
@@ -457,6 +519,12 @@ interface RunRow {
   progressed_at: string | null;
   created_at: string;
   updated_at: string;
+  scenario_mode: ScenarioMode;
+  scenario_status: StoredScenarioStatus;
+  scenario_commit_sha: string | null;
+  scenario_pr_url: string | null;
+  scenario_error: string | null;
+  initialization: number;
 }
 
 interface IssueRow {
@@ -497,12 +565,20 @@ function toStoredRun(
     reportCommitSha: row.report_commit_sha,
     archiveStatus: row.archive_status,
     archiveError: row.archive_error,
+    scenarioMode: normalizeScenarioMode(row.scenario_mode),
+    scenarioStatus: normalizeScenarioStatus(row.scenario_status),
+    scenarioCommitSha: row.scenario_commit_sha,
+    scenarioPrUrl: row.scenario_pr_url,
+    scenarioError: row.scenario_error,
+    initialization: row.initialization === 1,
     progressed: row.progressed === 1,
     progressedAt: row.progressed_at,
     artifacts: Object.fromEntries(
       artifacts
-        .filter((item): item is { name: RunArtifactName; content: string } =>
-          RUN_ARTIFACT_NAMES.includes(item.name as RunArtifactName),
+        .filter(
+          (item): item is { name: RunArtifactName; content: string } =>
+            RUN_ARTIFACT_NAMES.includes(item.name as (typeof RUN_ARTIFACT_NAMES)[number]) ||
+            item.name === SCENARIO_PATCH_ARTIFACT_NAME,
         )
         .map((item) => [item.name, item.content]),
     ),
@@ -549,7 +625,13 @@ function assertImport(input: CompletedRunImport): void {
     throw new RunStoreError('RUN_STORE_INVALID', 'completed Run 元数据不完整');
   }
   const keys = Object.keys(input.artifacts);
-  if (keys.some((name) => !RUN_ARTIFACT_NAMES.includes(name as RunArtifactName))) {
+  if (
+    keys.some(
+      (name) =>
+        !RUN_ARTIFACT_NAMES.includes(name as (typeof RUN_ARTIFACT_NAMES)[number]) &&
+        name !== SCENARIO_PATCH_ARTIFACT_NAME,
+    )
+  ) {
     throw new RunStoreError('RUN_STORE_INVALID', '包含不允许归档的 Run 工件');
   }
   const bugKeys = input.confirmedBugs.map((bug) => bug.key);
@@ -567,6 +649,25 @@ function assertSameImmutableRun(row: RunRow, input: CompletedRunImport): void {
     row.result === input.result &&
     row.started_at === input.startedAt &&
     row.finished_at === input.finishedAt &&
-    row.included_commits_json === JSON.stringify(input.includedCommits);
+    row.included_commits_json === JSON.stringify(input.includedCommits) &&
+    (input.initialization === undefined || row.initialization === (input.initialization ? 1 : 0));
   if (!same) throw new RunStoreError('RUN_STORE_CONFLICT', `Run 元数据冲突：${input.runId}`);
+}
+
+function normalizeScenarioMode(value: string | null | undefined): ScenarioMode {
+  if (value === 'autonomous' || value === 'add-only' || value === 'review-all') return value;
+  return 'review-all';
+}
+
+function normalizeScenarioStatus(value: string | null | undefined): StoredScenarioStatus {
+  if (
+    value === 'pending' ||
+    value === 'published' ||
+    value === 'pull_request' ||
+    value === 'failed' ||
+    value === 'not_applicable'
+  ) {
+    return value;
+  }
+  return 'not_applicable';
 }

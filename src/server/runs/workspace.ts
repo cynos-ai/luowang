@@ -2,7 +2,12 @@ import { randomBytes } from 'node:crypto';
 import { lstat, mkdir, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises';
 import { dirname, isAbsolute, relative, resolve } from 'node:path';
 
-import { RUN_ARTIFACT_NAMES, type AgentRole, type RunArtifactName } from './types.js';
+import {
+  RUN_ARTIFACT_NAMES,
+  SCENARIO_PATCH_ARTIFACT_NAME,
+  type AgentRole,
+  type RunArtifactName,
+} from './types.js';
 
 const RUN_ID_PATTERN = /^[0-9A-HJKMNP-TV-Z]{26}$/;
 const MAX_ARTIFACT_BYTES = 4 * 1024 * 1024;
@@ -31,6 +36,7 @@ export interface RunArtifactWriter {
   writeDraftReport(content: string): Promise<void>;
   writeReview(content: string): Promise<void>;
   writeReport(content: string): Promise<void>;
+  writeScenarioPatch(content: string): Promise<void>;
 }
 
 export interface RunArtifactReader {
@@ -96,6 +102,8 @@ export class RunWorkspace implements RunArtifactReader {
       writeDraftReport: (content) => this.writeForRole(role, 'draft-report.md', content, allowed),
       writeReview: (content) => this.writeForRole(role, 'review.md', content, allowed),
       writeReport: (content) => this.writeForRole(role, 'report.md', content, allowed),
+      writeScenarioPatch: (content) =>
+        this.writeForRole(role, SCENARIO_PATCH_ARTIFACT_NAME, content, allowed),
     };
   }
 
@@ -128,7 +136,7 @@ export class RunWorkspace implements RunArtifactReader {
 
   async list(): Promise<Record<string, string>> {
     const files: Record<string, string> = {};
-    for (const name of RUN_ARTIFACT_NAMES) {
+    for (const name of [...RUN_ARTIFACT_NAMES, SCENARIO_PATCH_ARTIFACT_NAME]) {
       if (await this.exists(name)) files[name] = await this.read(name);
     }
     return files;
@@ -141,6 +149,28 @@ export class RunWorkspace implements RunArtifactReader {
         throw new RunWorkspaceError('ARTIFACT_INVALID', `Run 工件不能为空：${name}`);
       }
     }
+  }
+
+  async assertScenarioReviewComplete(): Promise<void> {
+    for (const name of [SCENARIO_PATCH_ARTIFACT_NAME, 'report.md'] as const) {
+      const content = await this.read(name);
+      if (content.trim() === '') {
+        throw new RunWorkspaceError('ARTIFACT_INVALID', `Run 工件不能为空：${name}`);
+      }
+    }
+  }
+
+  async finalize(options: { specialScenarioReview?: boolean } = {}): Promise<void> {
+    if (options.specialScenarioReview) await this.assertScenarioReviewComplete();
+    else await this.assertComplete();
+    try {
+      await lstat(this.completedDirectory);
+      throw new RunWorkspaceError('RUN_ALREADY_COMPLETED', `完成目录已存在：${this.runId}`);
+    } catch (error) {
+      if (error instanceof RunWorkspaceError) throw error;
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    }
+    await rename(this.runningDirectory, this.completedDirectory);
   }
 
   async listEvidence(): Promise<RunEvidenceFile[]> {
@@ -173,18 +203,6 @@ export class RunWorkspace implements RunArtifactReader {
     await rm(this.evidenceDirectory, { recursive: true, force: true });
   }
 
-  async finalize(): Promise<void> {
-    await this.assertComplete();
-    try {
-      await lstat(this.completedDirectory);
-      throw new RunWorkspaceError('RUN_ALREADY_COMPLETED', `完成目录已存在：${this.runId}`);
-    } catch (error) {
-      if (error instanceof RunWorkspaceError) throw error;
-      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
-    }
-    await rename(this.runningDirectory, this.completedDirectory);
-  }
-
   private async writeForRole(
     role: AgentRole,
     name: RunArtifactName,
@@ -214,7 +232,7 @@ export class RunWorkspace implements RunArtifactReader {
   }
 
   private artifactPath(name: RunArtifactName): string {
-    if (!RUN_ARTIFACT_NAMES.includes(name)) {
+    if (![...RUN_ARTIFACT_NAMES, SCENARIO_PATCH_ARTIFACT_NAME].includes(name)) {
       throw new RunWorkspaceError('ARTIFACT_NOT_ALLOWED', `不支持的 Run 工件：${name}`);
     }
     const path = resolve(this.directory, name);
@@ -338,10 +356,10 @@ export function createRunId(now = Date.now(), random = cryptoRandomBytes(10)): s
 }
 
 const ROLE_ARTIFACTS: Record<AgentRole, readonly RunArtifactName[]> = {
-  'main-a': ['plan.md'],
+  'main-a': ['plan.md', SCENARIO_PATCH_ARTIFACT_NAME],
   runner: ['execution.md', 'draft-report.md'],
   reviewer: ['review.md'],
-  'main-b': ['report.md'],
+  'main-b': ['report.md', SCENARIO_PATCH_ARTIFACT_NAME],
 };
 
 function encodeBase32(value: bigint, length: number): string {

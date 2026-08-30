@@ -1,6 +1,3 @@
-import { lstat } from 'node:fs/promises';
-import { join } from 'node:path';
-
 import type Database from 'better-sqlite3';
 import type { Logger } from 'pino';
 
@@ -10,6 +7,7 @@ import type { ReportFileName, ReportPublishResult } from '../repository/git-repo
 import type { RepositoryIndexer } from '../repository/indexer.js';
 import { RepositoryError } from '../repository/errors.js';
 import { parseGitHubRepository } from '../repository/github.js';
+import type { ScenarioPatchValidation } from '../repository/scenario-patch.js';
 import type { RepositoryService } from '../repository/service.js';
 import {
   createRunStore,
@@ -19,7 +17,7 @@ import {
   type StoredRun,
 } from './store.js';
 import { RunWorkspaceError, RunWorkspaceStore } from './workspace.js';
-import { RUN_ARTIFACT_NAMES } from './types.js';
+import { RUN_ARTIFACT_NAMES, SCENARIO_PATCH_ARTIFACT_NAME } from './types.js';
 
 export type ArchiveResultStatus = 'completed' | 'partial' | 'failed';
 
@@ -41,6 +39,10 @@ export interface ArchiveResult {
   archiveStatus: StoredArchiveStatus;
   errorMessage: string | null;
   indexerTriggered: boolean;
+  scenarioStatus?: StoredRun['scenarioStatus'];
+  scenarioCommitSha?: string | null;
+  scenarioPrUrl?: string | null;
+  scenarioError?: string | null;
 }
 
 export interface RunArchiver {
@@ -99,10 +101,15 @@ class DefaultRunArchiver implements RunArchiver {
     let imported: StoredRun;
     let report: ReturnType<typeof parseReportMarkdown>;
     let specialRun = false;
+    let scenarioPatch: string | undefined;
     try {
       const workspace = this.workspaceStore.open(runId, 'completed');
       const artifacts = await workspace.list();
-      specialRun = await hasScenarioPatch(workspace.completedDirectory);
+      specialRun = isSpecialScenarioReviewRun(artifacts);
+      scenarioPatch = artifacts[SCENARIO_PATCH_ARTIFACT_NAME];
+      if (specialRun && scenarioPatch === undefined) {
+        throw new RunWorkspaceError('ARTIFACT_MISSING', '场景变更 patch 无法读取');
+      }
       if (!specialRun) {
         const missing = RUN_ARTIFACT_NAMES.filter((name) => artifacts[name] === undefined);
         if (missing.length > 0) {
@@ -168,6 +175,62 @@ class DefaultRunArchiver implements RunArchiver {
     if (imported.archiveStatus === 'completed') return this.toResult(imported, false);
 
     let indexerTriggered = false;
+    if (
+      scenarioPatch !== undefined &&
+      imported.scenarioStatus !== 'published' &&
+      imported.scenarioStatus !== 'pull_request' &&
+      (!imported.specialRun || this.options.repository.publishScenarioChanges !== undefined)
+    ) {
+      try {
+        const metadata = await this.validateScenarioPatch(imported.targetCommit, scenarioPatch);
+        const mode = scenarioPublicationMode(imported, metadata);
+        if (!this.options.repository.publishScenarioChanges) {
+          throw new RepositoryError(
+            'SCENARIO_PR_CREATE_FAILED',
+            'Repository Service 未提供场景变更归档能力',
+            503,
+          );
+        }
+        const publication = await this.options.repository.publishScenarioChanges(
+          runId,
+          scenarioPatch,
+          mode,
+          scenarioPublicationDetails(imported),
+        );
+        if (publication.status === 'pull_request') {
+          if (!publication.scenarioPrUrl) {
+            throw new RepositoryError('SCENARIO_PR_CREATE_FAILED', '场景 PR 地址缺失', 502);
+          }
+          imported = this.options.runStore.markScenario(runId, {
+            status: 'pull_request',
+            commitSha: publication.commitSha,
+            scenarioPrUrl: publication.scenarioPrUrl,
+            errorMessage: null,
+          });
+        } else {
+          if (!publication.commitSha) {
+            throw new RepositoryError('SCENARIO_PUBLISH_CONFLICT', '场景提交 SHA 缺失', 502);
+          }
+          imported = this.options.runStore.markScenario(runId, {
+            status: 'published',
+            commitSha: publication.commitSha,
+            scenarioPrUrl: null,
+            errorMessage: null,
+          });
+        }
+      } catch (error) {
+        const message = safeArchiveMessage(error);
+        imported = this.options.runStore.markScenario(runId, {
+          status: 'failed',
+          errorMessage: message,
+        });
+        this.options.logger?.warn(
+          { runId, errorName: error instanceof Error ? error.name : 'UnknownError' },
+          'scenario change archive failed',
+        );
+      }
+    }
+
     if (
       imported.reportStatus === 'pending' ||
       imported.reportStatus === 'failed' ||
@@ -315,7 +378,22 @@ class DefaultRunArchiver implements RunArchiver {
       archiveStatus: run.archiveStatus,
       errorMessage: run.archiveError,
       indexerTriggered,
+      scenarioStatus: run.scenarioStatus,
+      scenarioCommitSha: run.scenarioCommitSha,
+      scenarioPrUrl: run.scenarioPrUrl,
+      scenarioError: run.scenarioError,
     };
+  }
+
+  private async validateScenarioPatch(
+    baseCommit: string,
+    patch: string,
+  ): Promise<ScenarioPatchValidation> {
+    if (this.options.repository.validateScenarioPatch) {
+      return this.options.repository.validateScenarioPatch(baseCommit, patch);
+    }
+    const repository = await this.options.repository.getRepository();
+    return repository.validateScenarioPatch(baseCommit, patch);
   }
 }
 
@@ -327,18 +405,43 @@ function pickReportFiles(artifacts: StoredRun['artifacts']): Record<ReportFileNa
   return { 'draft-report.md': draft, 'review.md': review, 'report.md': report };
 }
 
-async function hasScenarioPatch(directory: string): Promise<boolean> {
-  try {
-    const info = await lstat(join(directory, 'scenario-changes.patch'));
-    if (!info.isFile() || info.isSymbolicLink()) {
-      throw new RunWorkspaceError('ARTIFACT_INVALID', 'scenario-changes.patch 必须是普通文件');
-    }
-    return true;
-  } catch (error) {
-    if (error instanceof RunWorkspaceError) throw error;
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false;
-    throw error;
+function isSpecialScenarioReviewRun(artifacts: Record<string, string>): boolean {
+  return (
+    artifacts[SCENARIO_PATCH_ARTIFACT_NAME] !== undefined &&
+    artifacts['report.md'] !== undefined &&
+    RUN_ARTIFACT_NAMES.filter((name) => name !== 'report.md').every(
+      (name) => artifacts[name] === undefined,
+    )
+  );
+}
+
+function scenarioPublicationMode(
+  run: StoredRun,
+  metadata: ScenarioPatchValidation,
+): 'direct' | 'pull-request' {
+  if (run.specialRun) return 'pull-request';
+  if (run.scenarioMode === 'autonomous') return 'direct';
+  if (run.scenarioMode === 'add-only' && metadata.onlyAdds) return 'direct';
+  return 'pull-request';
+}
+
+function scenarioPublicationDetails(run: StoredRun): {
+  targetCommit: string;
+  reason: string;
+  blockingReasons: readonly string[];
+} {
+  if (run.specialRun) {
+    return {
+      targetCommit: run.targetCommit,
+      reason: '当前场景变更模式要求人工审核，Run 以 blocked 结束。',
+      blockingReasons: ['场景变更等待人工审核，合并后可人工重测。'],
+    };
   }
+  return {
+    targetCommit: run.targetCommit,
+    reason: '本次 Run 验证了场景变更后需要维护的长期测试资产。',
+    blockingReasons: [],
+  };
 }
 
 function isGitHubIssueUrl(value: string): boolean {

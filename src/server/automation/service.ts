@@ -226,11 +226,13 @@ class DefaultAutomationService implements AutomationService {
 
       this.activeQueueId = item.queueId;
       try {
-        const run = await this.options.runs.start({
+        const runInput = {
           request: item.request,
           trigger: item.trigger,
           targetCommit: item.targetRef ?? undefined,
-        });
+          ...(item.initialization ? { initialization: true as const } : {}),
+        };
+        const run = await this.options.runs.start(runInput);
         this.options.queue.markStarted(item.queueId, run.runId);
         this.activeRunId = run.runId;
         void this.monitorRun(item.queueId, run.runId);

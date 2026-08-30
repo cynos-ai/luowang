@@ -1,6 +1,11 @@
 import type Database from 'better-sqlite3';
 
-import type { AgentConfig, HarnessConfig, RepositoryConfig } from '../shared/types.js';
+import type {
+  AgentConfig,
+  HarnessConfig,
+  RepositoryConfig,
+  ScenarioMode,
+} from '../shared/types.js';
 import type { AppConfig } from './config.js';
 
 const HARNESS_KEY = 'harness';
@@ -116,7 +121,7 @@ class SqliteConfigurationStore implements ConfigurationStore {
       scenarioMode: readChoice(
         patch.scenarioMode,
         current.scenarioMode,
-        ['autonomous', 'add-only', 'pr-required'],
+        ['autonomous', 'add-only', 'review-all'],
         'scenarioMode',
       ),
       scenarioLabels:
@@ -236,14 +241,15 @@ function normalizeHarness(
 
 function normalizeRepository(value: unknown): RepositoryConfig {
   const source = isRecord(value) ? value : {};
+  const storedMode = source.scenarioMode === 'pr-required' ? 'review-all' : source.scenarioMode;
   return {
     repository: normalizeText(source.repository, ''),
     scenarioBranch: normalizeText(source.scenarioBranch, 'scenario-testing'),
-    scenarioMode: normalizeChoice(source.scenarioMode, 'pr-required', [
+    scenarioMode: normalizeChoice(storedMode, 'review-all', [
       'autonomous',
       'add-only',
-      'pr-required',
-    ]),
+      'review-all',
+    ]) as ScenarioMode,
     scenarioLabels: normalizeStringArray(source.scenarioLabels),
     pollIntervalSeconds: normalizeInteger(source.pollIntervalSeconds, 60, 0, 31_536_000),
     cron: normalizeText(source.cron, ''),

@@ -33,6 +33,7 @@ import {
   createRunnerCommandTool,
   createTargetContextTools,
   createTextResult,
+  createWorkingScenarioTools,
 } from './agent-session.js';
 import { createControlledCommandRunner, type ControlledCommandRunner } from './command-runner.js';
 import {
@@ -46,6 +47,11 @@ import { createTestDataManager, createTestDataTools, type TestDataManager } from
 import type { RunStore } from './store.js';
 import type { RunRecoveryStore } from '../automation/recovery.js';
 import { createRunId, RunWorkspace, RunWorkspaceError, RunWorkspaceStore } from './workspace.js';
+import {
+  ScenarioPatchError,
+  validateScenarioPatchText,
+  type ScenarioPatchValidation,
+} from '../repository/scenario-patch.js';
 import type {
   AgentRole,
   AgentSession,
@@ -179,6 +185,8 @@ class DefaultRunOrchestrator implements RunOrchestrator {
         completedDirectory: null,
         runningDirectory: workspace.runningDirectory,
         evidence: [],
+        scenarioMode: this.options.configuration.getRepository().scenarioMode,
+        initialization: input.initialization === true,
       };
       this.runs.set(runId, state);
       this.activeRun = state;
@@ -300,19 +308,58 @@ class DefaultRunOrchestrator implements RunOrchestrator {
         evidence: [],
         blockingReasons: [],
         browserRequired: false,
+        scenarioMode: this.options.configuration.getRepository().scenarioMode,
+        initialization: input.initialization === true,
       };
       const evidenceStore = this.options.oss
         ? createRunEvidenceStore(workspace, this.options.oss)
         : undefined;
 
+      if (context.initialization)
+        await this.assessInitializationPreflight(context, prepared.repository);
       await this.runMainA(state, workspace, prepared.repository, context);
       await this.assessBrowserRequirements(workspace, context);
+      let scenarioDecision: ScenarioPatchDecision = 'none';
+      if (context.initialization) {
+        await this.runRunner(
+          state,
+          workspace,
+          prepared.repository,
+          context,
+          evidenceStore,
+          'initialization-reconnaissance',
+        );
+        await this.runInitializationCandidateMain(state, workspace, prepared.repository, context);
+      }
+      scenarioDecision = await this.prepareScenarioPatch(workspace, prepared.repository, context);
+      if (scenarioDecision === 'review') {
+        await this.finishScenarioReviewRun(state, workspace, context);
+        return;
+      }
       let runnerCleanup: { uploaded: boolean; uploadFailed: boolean } = {
         uploaded: false,
         uploadFailed: false,
       };
       try {
-        await this.runRunner(state, workspace, prepared.repository, context, evidenceStore);
+        if (context.initialization && scenarioDecision === 'applied') {
+          await this.runRunner(
+            state,
+            workspace,
+            prepared.repository,
+            context,
+            evidenceStore,
+            'initialization-validation',
+          );
+        } else if (!context.initialization) {
+          await this.runRunner(
+            state,
+            workspace,
+            prepared.repository,
+            context,
+            evidenceStore,
+            'standard',
+          );
+        }
       } finally {
         try {
           runnerCleanup = await this.finishRunner(state, workspace, context, evidenceStore);
@@ -323,6 +370,7 @@ class DefaultRunOrchestrator implements RunOrchestrator {
           ]).catch(() => undefined);
         }
       }
+      await this.validateScenarioPatchForReview(workspace, prepared.repository, context);
       await this.runReviewer(state, workspace, context, evidenceStore);
       if ((evidenceStore?.readFailureCount?.() ?? 0) > 0) {
         this.addBlockingReason(context, 'Reviewer 无法读取一项或多项 evidence');
@@ -342,7 +390,14 @@ class DefaultRunOrchestrator implements RunOrchestrator {
       if (runnerCleanup.uploaded && !runnerCleanup.uploadFailed) {
         await this.cleanupRetainedEvidence(workspace, context, evidenceStore);
       }
+      const patchBeforeFinalMain = await readOptionalScenarioPatch(workspace);
       await this.runMainB(state, workspace, context);
+      await this.validateInitializationFinalPatch(
+        workspace,
+        prepared.repository,
+        context,
+        patchBeforeFinalMain,
+      );
       await this.forceInfrastructureBlockedReport(workspace, context);
 
       state.phase = 'finalizing';
@@ -357,7 +412,11 @@ class DefaultRunOrchestrator implements RunOrchestrator {
       state.artifactNames = Object.keys(
         await this.workspaceStore.open(state.runId, 'completed').list(),
       );
-      await this.persistCompletedRun(state, report);
+      await this.persistCompletedRun(state, report, {
+        specialRun: false,
+        scenarioMode: context.scenarioMode,
+        initialization: context.initialization,
+      });
       this.options.recoveryStore?.remove(state.runId);
       if (report.result === 'passed' && !this.options.runStore) {
         // Phase 5 moves progression to the SQLite-backed Archiver. Keep the
@@ -445,6 +504,16 @@ class DefaultRunOrchestrator implements RunOrchestrator {
         '写入本次 Run 唯一的 plan.md。必须写完整 Markdown，不得写其他文件。',
         (content) => workspace.writer('main-a').writePlan(content),
       ),
+      ...(context.initialization
+        ? []
+        : [
+            createArtifactWriterTool(
+              'write_scenario_patch',
+              '写入场景变更 patch',
+              '只写入 docs/scenario-testing/scenarios/** 范围内的标准 git unified patch；不能直接修改目标仓库或其他目录。',
+              (content) => workspace.writer('main-a').writeScenarioPatch(content),
+            ),
+          ]),
     ];
     await this.invoke(
       'main-a',
@@ -456,16 +525,186 @@ class DefaultRunOrchestrator implements RunOrchestrator {
     await assertArtifact(workspace, 'plan.md');
   }
 
+  private async assessInitializationPreflight(
+    context: RunContext,
+    repository: GitRepository,
+  ): Promise<void> {
+    const config = this.options.configuration.getRepository();
+    if (!isValidTestEnvironmentUrl(config.baseUrl.trim())) {
+      this.addBlockingReason(context, '初始化所需的非生产测试环境基础 URL 未配置或无效');
+    }
+    try {
+      if (
+        !this.options.secretStore?.has('testUsername') ||
+        !this.options.secretStore.has('testPassword')
+      ) {
+        this.addBlockingReason(context, '初始化所需的测试账号未配置');
+      }
+    } catch {
+      this.addBlockingReason(context, '初始化所需的测试账号不可读取');
+    }
+    try {
+      await repository.listTree(context.targetCommit);
+    } catch {
+      this.addBlockingReason(context, '初始化无法读取固定 target 的仓库树');
+    }
+  }
+
+  private async runInitializationCandidateMain(
+    state: RunState,
+    workspace: RunWorkspace,
+    repository: GitRepository,
+    context: RunContext,
+  ): Promise<void> {
+    state.phase = 'main-a';
+    const tools = [
+      ...createTargetContextTools(this.targetToolOptions(repository, context)),
+      createReadArtifactTool((name) =>
+        readAllowedArtifact(workspace, name, ['plan.md', 'execution.md', 'draft-report.md']),
+      ),
+      createArtifactWriterTool(
+        'write_scenario_patch',
+        '写入候选场景 patch',
+        '只写入 docs/scenario-testing/scenarios/** 范围内的标准 git unified patch；不能直接修改目标仓库或创建 suite、catalog、journey 或能力图文件。',
+        (content) => workspace.writer('main-a').writeScenarioPatch(content),
+      ),
+    ];
+    await this.invoke(
+      'main-a',
+      this.options.configuration.getHarness().agents.main,
+      context.repositoryDirectory,
+      tools,
+      initializationCandidatePrompt(context),
+    );
+  }
+
+  private async prepareScenarioPatch(
+    workspace: RunWorkspace,
+    repository: GitRepository,
+    context: RunContext,
+  ): Promise<ScenarioPatchDecision> {
+    const patch = await readOptionalScenarioPatch(workspace);
+    if (patch === undefined) {
+      if (context.initialization) {
+        const targetScenes = (await repository.listTree(context.targetCommit)).filter(
+          (entry) =>
+            entry.type === 'blob' &&
+            entry.path.startsWith('docs/scenario-testing/scenarios/') &&
+            entry.path.endsWith('.md'),
+        );
+        if (targetScenes.length === 0) {
+          this.addBlockingReason(context, '初始化未生成候选场景 patch，无法建立可信场景基线');
+        }
+      }
+      return 'none';
+    }
+
+    let metadata: ScenarioPatchValidation;
+    try {
+      metadata = validateScenarioPatchText(patch);
+    } catch (error) {
+      this.addBlockingReason(context, `场景 patch 校验失败：${safeMessage(error)}`);
+      return 'review';
+    }
+    context.scenarioChanges = metadata;
+
+    const requiresReview =
+      context.scenarioMode === 'review-all' ||
+      (context.scenarioMode === 'add-only' && !metadata.onlyAdds);
+    try {
+      if (requiresReview) {
+        context.scenarioChanges = await repository.validateScenarioPatch(
+          context.targetCommit,
+          patch,
+        );
+      } else {
+        context.scenarioChanges = await repository.applyScenarioPatch(context.targetCommit, patch);
+      }
+    } catch (error) {
+      this.addBlockingReason(context, `场景 patch 校验失败：${safeMessage(error)}`);
+      return 'review';
+    }
+
+    if (requiresReview) {
+      this.addBlockingReason(
+        context,
+        context.scenarioMode === 'review-all'
+          ? '当前场景模式 review-all 要求人工审核场景变更'
+          : 'add-only 只允许直接发布纯新增 patch，本次 patch 含修改或 rename，需要人工审核',
+      );
+      return 'review';
+    }
+    return 'applied';
+  }
+
+  private async finishScenarioReviewRun(
+    state: RunState,
+    workspace: RunWorkspace,
+    context: RunContext,
+  ): Promise<void> {
+    this.addBlockingReason(context, 'Run 等待场景变更人工审核，不等待 PR 合并');
+    const finishedAt = this.now().toISOString();
+    const reportContent = buildScenarioReviewReport(state, context, finishedAt);
+    await workspace.writer('main-b').writeReport(reportContent);
+    const report = parseReportMarkdown(
+      reportContent,
+      `${workspace.runningDirectory}/report.md`,
+      state.runId,
+    );
+    await workspace.finalize({ specialScenarioReview: true });
+    state.result = report.result;
+    state.status = 'completed';
+    state.phase = 'completed';
+    state.finishedAt = finishedAt;
+    state.completedDirectory = workspace.completedDirectory;
+    state.runningDirectory = null;
+    state.artifactNames = Object.keys(
+      await this.workspaceStore.open(state.runId, 'completed').list(),
+    );
+    await this.persistCompletedRun(state, report, {
+      specialRun: true,
+      scenarioMode: context.scenarioMode,
+      initialization: context.initialization,
+    });
+    this.options.recoveryStore?.remove(state.runId);
+  }
+
+  private async validateInitializationFinalPatch(
+    workspace: RunWorkspace,
+    repository: GitRepository,
+    context: RunContext,
+    before: string | undefined,
+  ): Promise<void> {
+    if (!context.initialization) return;
+    const after = await readOptionalScenarioPatch(workspace);
+    if (after === before) return;
+    if (after === undefined) {
+      this.addBlockingReason(context, '初始化最终修订移除了候选场景 patch，未形成可发布基线');
+      return;
+    }
+    try {
+      context.scenarioChanges = await repository.validateScenarioPatch(context.targetCommit, after);
+      this.addBlockingReason(context, '初始化最终 Main 修改了场景 patch，修订内容未重新执行');
+    } catch (error) {
+      this.addBlockingReason(context, `初始化最终场景 patch 校验失败：${safeMessage(error)}`);
+    }
+  }
+
   private async runRunner(
     state: RunState,
     workspace: RunWorkspace,
     repository: GitRepository,
     context: RunContext,
     evidenceStore: RunEvidenceStore | undefined,
+    purpose: 'standard' | 'initialization-reconnaissance' | 'initialization-validation',
   ): Promise<void> {
     state.phase = 'runner';
     const tools = [
       ...createTargetContextTools(this.targetToolOptions(repository, context)),
+      ...createWorkingScenarioTools({
+        list: () => repository.listWorkingScenarioFiles(),
+        read: (path) => repository.readWorkingScenarioFile(path),
+      }),
       createReadArtifactTool((name) => readAllowedArtifact(workspace, name, ['plan.md'])),
       createRunnerCommandTool((command, signal) =>
         this.commandRunner.run(command, {
@@ -499,7 +738,7 @@ class DefaultRunOrchestrator implements RunOrchestrator {
       this.options.configuration.getHarness().agents.runner,
       context.repositoryDirectory,
       tools,
-      runnerPrompt(context),
+      runnerPrompt(context, purpose),
       context.browserRequired && this.options.browser?.isEnabled()
         ? [this.options.browser.extension(workspace.evidenceDirectory)]
         : [],
@@ -701,7 +940,12 @@ class DefaultRunOrchestrator implements RunOrchestrator {
     state.phase = 'reviewer';
     const tools = [
       createReadArtifactTool((name) =>
-        readAllowedArtifact(workspace, name, ['plan.md', 'execution.md', 'draft-report.md']),
+        readAllowedArtifact(workspace, name, [
+          'plan.md',
+          'execution.md',
+          'draft-report.md',
+          'scenario-changes.patch',
+        ]),
       ),
       ...(evidenceStore ? createReviewerEvidenceTools(evidenceStore) : []),
       createArtifactWriterTool(
@@ -721,6 +965,23 @@ class DefaultRunOrchestrator implements RunOrchestrator {
     await assertArtifact(workspace, 'review.md');
   }
 
+  private async validateScenarioPatchForReview(
+    workspace: RunWorkspace,
+    repository: GitRepository,
+    context: RunContext,
+  ): Promise<void> {
+    const patch = await readOptionalScenarioPatch(workspace);
+    if (patch === undefined) return;
+    try {
+      context.scenarioChanges = await repository.validateScenarioPatch(context.targetCommit, patch);
+    } catch (error) {
+      this.addBlockingReason(context, `Reviewer 前场景 patch 校验失败：${safeMessage(error)}`);
+      await this.appendExecutionNotes(workspace, [
+        `Reviewer 前场景 patch 校验失败：${safeMessage(error)}`,
+      ]).catch(() => undefined);
+    }
+  }
+
   private async runMainB(
     state: RunState,
     workspace: RunWorkspace,
@@ -734,6 +995,7 @@ class DefaultRunOrchestrator implements RunOrchestrator {
           'execution.md',
           'draft-report.md',
           'review.md',
+          ...(context.initialization ? ['scenario-changes.patch' as const] : []),
         ]),
       ),
       createArtifactWriterTool(
@@ -742,6 +1004,16 @@ class DefaultRunOrchestrator implements RunOrchestrator {
         '写入本次 Run 唯一的 report.md。必须使用指定最小 frontmatter，不得写其他文件。',
         (content) => workspace.writer('main-b').writeReport(content),
       ),
+      ...(context.initialization
+        ? [
+            createArtifactWriterTool(
+              'write_scenario_patch',
+              '修订候选场景 patch',
+              '初始化最终修订只能继续写入 docs/scenario-testing/scenarios/** 范围内的标准 git unified patch；不能修改其他目录。',
+              (content) => workspace.writer('main-b').writeScenarioPatch(content),
+            ),
+          ]
+        : []),
     ];
     await this.invoke(
       'main-b',
@@ -791,6 +1063,9 @@ class DefaultRunOrchestrator implements RunOrchestrator {
           baseCommit: context.baseCommit,
           targetCommit: context.targetCommit,
           includedCommits: context.includedCommits,
+          scenarioMode: context.scenarioMode,
+          initialization: context.initialization,
+          scenarioChanges: context.scenarioChanges ?? null,
           repositoryDirectory: context.repositoryDirectory,
           runDirectory: context.runDirectory,
           historyIssuesAvailable: context.historyIssuesAvailable,
@@ -904,7 +1179,15 @@ class DefaultRunOrchestrator implements RunOrchestrator {
     return parsed;
   }
 
-  private async persistCompletedRun(state: RunState, report: ParsedReport): Promise<void> {
+  private async persistCompletedRun(
+    state: RunState,
+    report: ParsedReport,
+    options: {
+      specialRun: boolean;
+      scenarioMode: RunContext['scenarioMode'];
+      initialization: boolean;
+    },
+  ): Promise<void> {
     if (!this.options.runStore || !state.completedDirectory) return;
     try {
       const artifacts = await this.workspaceStore.open(state.runId, 'completed').list();
@@ -922,6 +1205,9 @@ class DefaultRunOrchestrator implements RunOrchestrator {
         artifacts,
         scenarioResults: report.scenarioResults,
         confirmedBugs: report.confirmedBugs,
+        specialRun: options.specialRun,
+        scenarioMode: options.scenarioMode,
+        initialization: options.initialization,
       });
     } catch (error) {
       this.options.logger?.warn(
@@ -1052,6 +1338,48 @@ class DefaultRunOrchestrator implements RunOrchestrator {
   }
 }
 
+type ScenarioPatchDecision = 'none' | 'applied' | 'review';
+
+async function readOptionalScenarioPatch(workspace: RunWorkspace): Promise<string | undefined> {
+  if (!(await workspace.exists('scenario-changes.patch'))) return undefined;
+  return workspace.read('scenario-changes.patch');
+}
+
+function buildScenarioReviewReport(
+  state: RunState,
+  context: RunContext,
+  finishedAt: string,
+): string {
+  const changes = context.scenarioChanges
+    ? `变更文件：${context.scenarioChanges.changedPaths.join(', ')}`
+    : '变更文件无法安全解析';
+  const reasons = context.blockingReasons.map((reason) => `- ${reason}`).join('\n');
+  return `---
+run_id: ${state.runId}
+trigger: ${state.trigger}
+base_commit: ${context.baseCommit ?? 'null'}
+target_commit: ${context.targetCommit}
+included_commits:
+${context.includedCommits.length > 0 ? context.includedCommits.map((commit) => `  - ${commit}`).join('\n') : ' []'}
+result: blocked
+started_at: ${state.startedAt}
+finished_at: ${finishedAt}
+scenario_results: []
+confirmed_bugs: []
+---
+
+# 场景变更待审核
+
+本次 Run 只产生了待人工审核的场景资产变更，没有等待 PR 合并，也没有把说明写入正式报告目录。
+
+${changes}
+
+## 阻塞原因
+
+${reasons || '- 场景变更需要人工审核'}
+`;
+}
+
 function assertRunInput(input: RunInput): void {
   if (!input || typeof input.request !== 'string' || input.request.trim() === '') {
     throw new RunOrchestratorError('RUN_REQUEST_INVALID', 'Run 请求内容不能为空');
@@ -1061,6 +1389,9 @@ function assertRunInput(input: RunInput): void {
   }
   if (input.targetCommit !== undefined && input.targetCommit.trim() === '') {
     throw new RunOrchestratorError('RUN_REQUEST_INVALID', 'targetCommit 不能为空');
+  }
+  if (input.initialization !== undefined && typeof input.initialization !== 'boolean') {
+    throw new RunOrchestratorError('RUN_REQUEST_INVALID', 'initialization 必须是布尔值');
   }
 }
 
@@ -1215,50 +1546,93 @@ function toSummary(state: RunSnapshot): RunSummary {
   if (state.evidence && state.evidence.length > 0) {
     summary.evidence = state.evidence.map((reference) => ({ ...reference }));
   }
+  if (state.scenarioMode !== undefined) summary.scenarioMode = state.scenarioMode;
+  if (state.initialization !== undefined) summary.initialization = state.initialization;
+  if (state.scenarioPrUrl !== undefined) summary.scenarioPrUrl = state.scenarioPrUrl;
   return summary;
 }
 
 function safeMessage(error: unknown): string {
-  if (error instanceof RunOrchestratorError || error instanceof RunWorkspaceError)
+  if (
+    error instanceof RunOrchestratorError ||
+    error instanceof RunWorkspaceError ||
+    error instanceof ScenarioPatchError
+  )
     return error.message;
   return 'Run 执行失败，未生成可信最终结论';
 }
 
 function mainAPrompt(context: RunContext): string {
-  return `你是 LuoWang Phase 4 的 Main A。你负责理解本次变化、选择已有场景并形成计划，不能执行测试，也不能修改目标仓库。
+  const initialization = context.initialization
+    ? '这是陌生项目初始化：先完成 Preflight 和静态勘察，列出主要用户/入口/核心能力、证据依据、运行时侦察计划和覆盖缺口；不要创建 suite、catalog、journey 或长期能力图。'
+    : '这是日常场景测试：理解累计变化、需求、代码和历史结果，选择已有场景或维护必要的长期场景。';
+  const patchInstruction = context.initialization
+    ? '本阶段只写 plan.md，不写 scenario-changes.patch；运行时侦察完成后会由另一个短 Main session 生成候选 patch。'
+    : '如确实需要维护长期场景，只能通过 write_scenario_patch 写标准 git unified patch，路径必须全部位于 docs/scenario-testing/scenarios/**；不能直接写目标仓库。';
+  return `你是 LuoWang Phase 7 的 Main A。你负责理解变化、维护/选择长期场景并形成计划，不能执行测试，也不能修改目标仓库。
+
+${initialization}
 
 固定 Run 上下文：
 ${JSON.stringify(context, null, 2)}
 
-必须先调用 get_run_context、list_target_files，并按需调用 read_target_file/search_target_files 读取固定 target。上下文中的 historyIssuesAvailable 为 false 时，不能把 Issue 历史当作空列表，需在覆盖缺口中说明。只能通过 write_plan 写入完整 plan.md，并且必须在结束前调用它。plan.md 要说明请求、base/target/included commits、影响判断、选择的场景及顺序、预期证据和覆盖缺口。
-如果本批产品行为不需要场景测试，必须明确写出“无需场景测试”的理由；如果场景缺失、影响不明或证据不足，必须把覆盖缺口写清楚，不能把零场景当作 passed。Phase 7 之前不允许生成 scenario-changes.patch。`;
+必须先调用 get_run_context、list_target_files，并按需调用 read_target_file/search_target_files 读取固定 target。上下文中的 historyIssuesAvailable 为 false 时，不能把 Issue 历史当作空列表，需在覆盖缺口中说明。只能通过 write_plan 写入完整 plan.md，并且必须在结束前调用它。plan.md 要说明请求、base/target/included commits、影响判断、证据优先级、选择/候选场景及顺序、预期证据和覆盖缺口。
+${patchInstruction}
+如果本批产品行为不需要场景测试，必须明确写出“无需场景测试”的理由；如果场景缺失、影响不明或证据不足，必须把覆盖缺口写清楚，不能把零场景当作 passed。场景状态只能使用 draft、approved、deprecated；不要物理删除场景。`;
 }
 
-function runnerPrompt(context: RunContext): string {
-  return `你是 LuoWang Phase 4 的 Runner。你只能在固定 target 工作树中顺序执行计划要求的 fixture/API/CLI/UI 测试。
+function initializationCandidatePrompt(context: RunContext): string {
+  return `你是 LuoWang Phase 7 初始化流程中的候选综合 Main。你正在一个新的短 session 中工作，不能执行测试，也不能写目标仓库。
 
 固定 Run 上下文：
 ${JSON.stringify(context, null, 2)}
 
-先读取 plan.md，再按计划使用 read_target_file、search_target_files 和 run_fixture_command。UI 场景只能使用受控的 headless、isolated Playwright MCP，优先使用 accessibility snapshot/ref；需要截图时必须使用相对文件名（例如 auth-login-001-after-login.png），截图会自动写入当前 Run 的 evidence 目录；截图后必须调用 list_evidence_files 确认 PNG/JPEG/WebP 确实存在，并在 execution.md 中记录文件名。可以通过 get_test_environment 请求当前非生产测试环境和账号，密码只能用于当前操作，绝不能写入日志、命令输出、任何 Markdown 或证据。使用 get_test_data_prefix 标记临时数据，登记后在场景结束调用 cleanup_test_data。run_fixture_command 只允许受控本地命令，不能读取或猜测其他 Harness Secret，不能写产品源码，不能使用 shell 管道/重定向。每个场景记录实际观察、命令退出码、证据和清理结果；通过 upload_evidence 可提前上传证据，Harness 也会在 Runner 结束后兜底上传。最后必须分别通过 write_execution 写完整 execution.md、通过 write_draft_report 写完整 draft-report.md。环境/命令/凭据不可用时记录为 blocked，不伪造通过。`;
+先读取 plan.md、execution.md 和 draft-report.md，结合静态证据与低风险运行时侦察，形成临时能力图（只写在本次 plan/report 正文，不创建长期能力图文件）。把业务结果相近的步骤合并为少量高价值场景，覆盖主要用户、入口、核心成功路径、权限/校验/持久化风险和明确的外部依赖；不要按页面、按钮或 API operation 机械铺量。每个 approved 场景都必须有可追溯依据，不确定的期望保持 draft，并在计划中记录冲突和缺口。
+
+候选长期资产只能通过 write_scenario_patch 写标准 git unified patch，且 patch 只能新增/修改/目录内 rename docs/scenario-testing/scenarios/** 的 Markdown 文件；不得创建 suite、catalog、journey、能力图，不得修改产品源码、需求、PROJECT 或报告，不得物理删除场景。没有可信候选时不要伪造 patch。`;
+}
+
+function runnerPrompt(
+  context: RunContext,
+  purpose: 'standard' | 'initialization-reconnaissance' | 'initialization-validation',
+): string {
+  const phaseInstruction =
+    purpose === 'initialization-reconnaissance'
+      ? '这是陌生项目初始化的运行时侦察阶段：从已知入口低风险检查主要导航、登录和关键状态，不创建不可逆数据，不把每个页面机械写成场景。'
+      : purpose === 'initialization-validation'
+        ? '这是初始化候选验证阶段：按候选场景顺序执行可验证的成功路径和必要拒绝路径，使用 run-id 标记并清理临时数据。'
+        : '这是日常场景测试阶段：只执行 plan.md 选择的场景。';
+  return `你是 LuoWang Phase 7 的 Runner。你只能在固定 target 工作树中顺序执行计划要求的 fixture/API/CLI/UI 测试。
+
+${phaseInstruction}
+
+固定 Run 上下文：
+${JSON.stringify(context, null, 2)}
+
+先读取 plan.md，再按计划使用 read_target_file、search_target_files、list_working_scenarios、read_working_scenario 和 run_fixture_command。UI 场景只能使用受控的 headless、isolated Playwright MCP，优先使用 accessibility snapshot/ref；需要截图时必须使用相对文件名（例如 auth-login-001-after-login.png），截图会自动写入当前 Run 的 evidence 目录；截图后必须调用 list_evidence_files 确认 PNG/JPEG/WebP 确实存在，并在 execution.md 中记录文件名。可以通过 get_test_environment 请求当前非生产测试环境和账号，密码只能用于当前操作，绝不能写入日志、命令输出、任何 Markdown 或证据。使用 get_test_data_prefix 标记临时数据，登记后在场景结束调用 cleanup_test_data。run_fixture_command 只允许受控本地命令，不能读取或猜测其他 Harness Secret，不能写产品源码，不能使用 shell 管道/重定向。每个场景记录实际观察、命令退出码、证据和清理结果；通过 upload_evidence 可提前上传证据，Harness 也会在 Runner 结束后兜底上传。最后必须分别通过 write_execution 写完整 execution.md、通过 write_draft_report 写完整 draft-report.md。环境/命令/凭据不可用时记录为 blocked，不伪造通过。`;
 }
 
 function reviewerPrompt(context: RunContext): string {
-  return `你是独立的 LuoWang Phase 4 Reviewer。你没有 Runner 对话，只能读取本次 Run 的 plan.md、execution.md、draft-report.md 和受控 evidence。
+  return `你是独立的 LuoWang Phase 7 Reviewer。你没有 Runner 对话，只能读取本次 Run 的 plan.md、execution.md、draft-report.md、scenario-changes.patch（若存在）和受控 evidence。
 
 固定 Run 上下文：
 ${JSON.stringify(context, null, 2)}
 
-请独立核对计划、执行证据、场景结果、confirmed bugs、截图事实、清理和阻塞原因。需要查看截图时只能使用 list_evidence_files 和 read_evidence_image，不能使用命令，不能读取测试账号或其他 Secret，也不能读取任意文件路径。若截图不可访问、上传失败、UI 能力缺失或视觉判断无法完成，必须维持 blocked。若零场景，只有在 Main A 的计划确实证明本批无需场景测试时才确认；场景缺失或影响不明必须维持 blocked。结束前必须通过 write_review 写完整 review.md，并明确是否同意最终结果。`;
+请独立核对计划、执行证据、场景变更 patch、场景结果、confirmed bugs、截图事实、清理和阻塞原因。需要查看截图时只能使用 list_evidence_files 和 read_evidence_image，不能使用命令，不能读取测试账号或其他 Secret，也不能读取任意文件路径。若截图不可访问、上传失败、UI 能力缺失或视觉判断无法完成，必须维持 blocked。场景 patch 必须仍只涉及场景目录且符合固定 frontmatter；不要把场景 PR 当作产品 Bug Issue。若零场景，只有在 Main A 的计划确实证明本批无需场景测试时才确认；场景缺失或影响不明必须维持 blocked。结束前必须通过 write_review 写完整 review.md，并明确是否同意最终结果。`;
 }
 
 function mainBPrompt(context: RunContext): string {
-  return `你是 LuoWang Phase 4 的 Main B。你只能读取本次 Run 的四个前置 Markdown 工件，并根据 Reviewer 审核形成最终 report.md。
+  const initialization = context.initialization
+    ? '这是初始化 Run；可以在 Reviewer 意见支持下，通过同一个受限 write_scenario_patch 修订尚未发布的候选场景 patch，但修订后如果没有再次执行必须明确形成 blocked。'
+    : '这是日常测试 Run；不要修改场景 patch。';
+  return `你是 LuoWang Phase 7 的 Main B。你只能读取本次 Run 的前置 Markdown 工件，并根据 Reviewer 审核形成最终 report.md。
+
+${initialization}
 
 固定 Run 上下文：
 ${JSON.stringify(context, null, 2)}
 
-必须先读取 plan.md、execution.md、draft-report.md、review.md。最终 report.md 只能包含以下 frontmatter 字段：run_id、trigger、base_commit、target_commit、included_commits、result、started_at、finished_at、scenario_results、confirmed_bugs；不得增加任何其他 frontmatter 字段。字段值必须与固定 Run 一致；result 聚合优先级为 blocked > failed > passed。只要固定上下文中的 blockingReasons 非空，最终结果必须是 blocked，并在正文说明这些阻塞原因；不要把 Harness 自动追加的证据地址或清理状态写入 frontmatter。“scenario_results”必须始终是 YAML 数组；每个元素只能有 “id” 和 “result” 两个字段，严格使用以下形状：
+必须先读取 plan.md、execution.md、draft-report.md、review.md。若当前是初始化且存在 scenario-changes.patch，也读取它。最终 report.md 只能包含以下 frontmatter 字段：run_id、trigger、base_commit、target_commit、included_commits、result、started_at、finished_at、scenario_results、confirmed_bugs；不得增加任何其他 frontmatter 字段。字段值必须与固定 Run 一致；result 聚合优先级为 blocked > failed > passed。只要固定上下文中的 blockingReasons 非空，最终结果必须是 blocked，并在正文说明这些阻塞原因；不要把 Harness 自动追加的证据地址或清理状态写入 frontmatter。“scenario_results”必须始终是 YAML 数组；每个元素只能有 “id” 和 “result” 两个字段，严格使用以下形状：
 
 ~~~yaml
 scenario_results:

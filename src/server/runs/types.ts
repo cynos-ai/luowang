@@ -5,8 +5,10 @@ import type {
   RunPhase,
   RunSummary,
   RunTrigger,
+  ScenarioMode,
 } from '../../shared/types.js';
 import type { InlineExtension, ToolDefinition } from '@earendil-works/pi-coding-agent';
+import type { ScenarioPatchValidation } from '../repository/scenario-patch.js';
 
 export type AgentRole = 'main-a' | 'runner' | 'reviewer' | 'main-b';
 
@@ -18,12 +20,16 @@ export const RUN_ARTIFACT_NAMES = [
   'report.md',
 ] as const;
 
-export type RunArtifactName = (typeof RUN_ARTIFACT_NAMES)[number];
+export const SCENARIO_PATCH_ARTIFACT_NAME = 'scenario-changes.patch' as const;
+
+export type RunArtifactName =
+  (typeof RUN_ARTIFACT_NAMES)[number] | typeof SCENARIO_PATCH_ARTIFACT_NAME;
 
 export interface RunInput {
   request: string;
   trigger: RunTrigger;
   targetCommit?: string;
+  initialization?: boolean;
 }
 
 export interface RunContext {
@@ -40,6 +46,9 @@ export interface RunContext {
   evidence: EvidenceReference[];
   blockingReasons: string[];
   browserRequired: boolean;
+  scenarioMode: ScenarioMode;
+  initialization: boolean;
+  scenarioChanges?: ScenarioPatchValidation;
 }
 
 export interface AgentSessionInput {
