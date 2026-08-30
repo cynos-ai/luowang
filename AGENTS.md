@@ -24,6 +24,7 @@
 - 官网测试只使用非生产环境、合成数据和通过 Harness Secret Store 提供的预置测试账号；允许覆盖登录/注册等官网功能，但禁止触碰生产数据、把测试账号密码写入文档/日志/报告，且临时数据必须按 Run 标记并清理。
 - 本计划当前模型约定为：Main/Runner 使用文本模型 `deepseek-v4-flash`；Reviewer 使用视觉模型 `deepseek-v4-flash-vision-exp`。模型 API Key、GitHub Token、OSS 凭据和测试账号信息只进入受控 Secret Store，不写入本文件或 Git。
 - 当前 LuoWang 工程基线已实现 Phase 0–8；Phase 8 运维控制台通过普通 HTTP 轮询展示 Git、场景、Run、当前执行、归档、队列和依赖健康事实，并在外部依赖不可用时保留并标记陈旧缓存。
+- 浏览器与构建环境由 `Dockerfile` 的 `quality`/`runtime` targets 固定：Node 基础镜像使用 digest，npm 与 Playwright 浏览器下载使用可覆盖的镜像源，CI 的全部质量检查在 `quality` 容器内运行；不要恢复为依赖 GitHub runner 宿主机预装 Chromium 的做法。
 
 ## 固定安全边界
 

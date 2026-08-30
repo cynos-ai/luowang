@@ -17,43 +17,57 @@ jobs:
   quality:
     name: quality
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 30
     env:
-      NODE_IMAGE: docker.m.daocloud.io/library/node:24.14.1-bookworm-slim
+      NODE_IMAGE: docker.m.daocloud.io/library/node:24.14.1-bookworm-slim@sha256:b506e7321f176aae77317f99d67a24b272c1f09f1d10f1761f2773447d8da26c
       NPM_REGISTRY: https://registry.npmmirror.com
+      PLAYWRIGHT_DOWNLOAD_HOST: https://registry.npmmirror.com/-/binary/playwright
+      DEBIAN_MIRROR: http://mirrors.aliyun.com/debian
+      DEBIAN_SECURITY_MIRROR: http://mirrors.aliyun.com/debian-security
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
 
-      - name: Set up Node.js 24
-        uses: actions/setup-node@v4
-        with:
-          node-version: 24
-          cache: npm
-
-      - name: Install dependencies
-        run: npm ci --registry="${NPM_REGISTRY}"
+      - name: Build deterministic Playwright quality image
+        run: >-
+          docker build --target quality
+          --build-arg "NODE_IMAGE=${NODE_IMAGE}"
+          --build-arg "NPM_REGISTRY=${NPM_REGISTRY}"
+          --build-arg "PLAYWRIGHT_DOWNLOAD_HOST=${PLAYWRIGHT_DOWNLOAD_HOST}"
+          --build-arg "DEBIAN_MIRROR=${DEBIAN_MIRROR}"
+          --build-arg "DEBIAN_SECURITY_MIRROR=${DEBIAN_SECURITY_MIRROR}"
+          --tag luowang:quality .
 
       - name: Format check
-        run: npm run format:check
+        run: docker run --rm --init --ipc=host luowang:quality npm run format:check
 
       - name: Lint
-        run: npm run lint
+        run: docker run --rm --init --ipc=host luowang:quality npm run lint
 
       - name: Typecheck
-        run: npm run typecheck
+        run: docker run --rm --init --ipc=host luowang:quality npm run typecheck
 
       - name: Unit and integration tests
-        run: npm test
+        run: docker run --rm --init --ipc=host luowang:quality npm test
 
       - name: Production build
-        run: npm run build
-
-      - name: Install Playwright Chromium
-        run: npx --no-install playwright install --with-deps chromium
+        run: docker run --rm --init --ipc=host luowang:quality npm run build
 
       - name: End-to-end smoke
-        run: npm run test:e2e
+        run: docker run --rm --init --ipc=host luowang:quality npm run test:e2e
 
-      - name: Docker build
-        run: docker build --build-arg "NODE_IMAGE=${NODE_IMAGE}" --build-arg "NPM_REGISTRY=${NPM_REGISTRY}" --tag luowang:ci .
+      - name: Build production image
+        run: >-
+          docker build --target runtime
+          --build-arg "NODE_IMAGE=${NODE_IMAGE}"
+          --build-arg "NPM_REGISTRY=${NPM_REGISTRY}"
+          --build-arg "PLAYWRIGHT_DOWNLOAD_HOST=${PLAYWRIGHT_DOWNLOAD_HOST}"
+          --build-arg "DEBIAN_MIRROR=${DEBIAN_MIRROR}"
+          --build-arg "DEBIAN_SECURITY_MIRROR=${DEBIAN_SECURITY_MIRROR}"
+          --tag luowang:ci .
+
+      - name: Verify production browser runtime
+        run: >-
+          docker run --rm --init --ipc=host --entrypoint node luowang:ci
+          --input-type=module -e
+          "import { chromium } from 'playwright'; const browser = await chromium.launch({ headless: true }); console.log('production Chromium ' + browser.version() + ' passed'); await browser.close();"

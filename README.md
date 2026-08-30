@@ -41,16 +41,33 @@ npm run test:e2e:github
 
 Docker Secret 文件也可以通过 `LUOWANG_ADMIN_PASSWORD_FILE` 和 `LUOWANG_MASTER_KEY_FILE` 提供；直接环境变量优先。生产环境应使用 HTTPS 或可信反向代理，并设置 `LUOWANG_ALLOWED_ORIGIN`。
 
-Docker 构建默认使用 DaoCloud 的 Node 基础镜像和 npmmirror 的 npm 源；如需替换为公司内网、阿里云或其他可达镜像，可通过构建参数覆盖：
+Docker 构建默认使用固定 digest 的 DaoCloud Node 基础镜像、npmmirror 的 npm 源和 Playwright 浏览器源。浏览器会在镜像构建时按照 lockfile 中的 Playwright 版本安装，生产镜像和 CI 使用同一份浏览器文件，不依赖宿主机预装 Chromium；如需替换为公司内网、阿里云或其他可达镜像，可通过构建参数覆盖：
 
 ```bash
 docker build \
-  --build-arg NODE_IMAGE=docker.m.daocloud.io/library/node:24.14.1-bookworm-slim \
+  --target runtime \
+  --build-arg NODE_IMAGE=docker.m.daocloud.io/library/node:24.14.1-bookworm-slim@sha256:b506e7321f176aae77317f99d67a24b272c1f09f1d10f1761f2773447d8da26c \
   --build-arg NPM_REGISTRY=https://registry.npmmirror.com \
+  --build-arg PLAYWRIGHT_DOWNLOAD_HOST=https://registry.npmmirror.com/-/binary/playwright \
+  --build-arg DEBIAN_MIRROR=http://mirrors.aliyun.com/debian \
+  --build-arg DEBIAN_SECURITY_MIRROR=http://mirrors.aliyun.com/debian-security \
   --tag luowang:local .
 ```
 
-阿里云镜像地址需要替换为你在容器镜像服务控制台获得的加速地址。Compose 的 `NPM_REGISTRY` 和 `NODE_IMAGE` 默认使用上述镜像，也支持通过本地 `.env` 或命令行覆盖；本地 `.env` 必须保持未提交。
+要完整复现 CI 的质量环境，可以构建并运行带开发依赖和浏览器的 `quality` target：
+
+```bash
+docker build --target quality \
+  --build-arg NODE_IMAGE=docker.m.daocloud.io/library/node:24.14.1-bookworm-slim@sha256:b506e7321f176aae77317f99d67a24b272c1f09f1d10f1761f2773447d8da26c \
+  --build-arg NPM_REGISTRY=https://registry.npmmirror.com \
+  --build-arg PLAYWRIGHT_DOWNLOAD_HOST=https://registry.npmmirror.com/-/binary/playwright \
+  --build-arg DEBIAN_MIRROR=http://mirrors.aliyun.com/debian \
+  --build-arg DEBIAN_SECURITY_MIRROR=http://mirrors.aliyun.com/debian-security \
+  --tag luowang:quality .
+docker run --rm --init --ipc=host luowang:quality npm run test:e2e
+```
+
+阿里云镜像地址需要替换为你在容器镜像服务控制台获得的加速地址。Compose 的 `NPM_REGISTRY`、`NODE_IMAGE` 和 `PLAYWRIGHT_DOWNLOAD_HOST` 默认使用上述镜像，也支持通过本地 `.env` 或命令行覆盖；本地 `.env` 必须保持未提交。不要在宿主机单独执行 Playwright 浏览器安装来代替镜像构建，避免再次出现 Node 包与 Chromium 不匹配。
 
 ## 安全边界
 
