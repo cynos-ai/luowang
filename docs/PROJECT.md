@@ -46,6 +46,7 @@
 - 管理员初始密码只从 `LUOWANG_ADMIN_PASSWORD` 建立 Argon2id 哈希，不提供匿名初始化或默认密码，已有哈希不被环境变量覆盖。
 - 不引入完整 Gitflow 的 release/hotfix 分支；正式版本紧急修复仍使用 `fix/*`，合入 `main` 后同步回 `develop`。
 - MVP 验收使用独立样例仓库和独立本地或非生产样例应用，不把罗网项目仓库纳入目标仓库配置，也不建立实例互测架构。
+- Playwright 浏览器不是宿主机依赖：`Dockerfile` 在构建时依据 lockfile 安装精确 Chromium，`quality` 与 `runtime` 镜像复用同一份浏览器；Node 基础镜像、npm 包和 Playwright 浏览器默认走可覆盖的国内镜像源，以降低 CI 和服务器环境差异。
 
 ## 重要约束和风险
 
