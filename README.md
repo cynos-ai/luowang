@@ -1,6 +1,6 @@
 # LuoWang
 
-罗网（LuoWang）是一个独立部署的 AI 场景测试 Harness。当前仓库已完成 Phase 8，并提供 Phase 9 本地验收入口：除了安全配置控制台、唯一 GitHub 目标仓库索引、Main → Runner → Reviewer → Main 的本地 Run、受控 Playwright MCP UI 执行、S3-compatible OSS 证据 Gateway、幂等归档和持久 FIFO 自动化队列，还支持长期场景生命周期、三种场景维护模式、陌生项目初始化，以及展示 Git 树标记、场景历史、Run 工件/证据/归档、当前执行、队列、后台任务、依赖健康和陈旧缓存恢复的完整运维控制台。Phase 9 的本地验收会创建隔离的样例仓库和样例 Web 应用，并在结束后清理临时资源。
+罗网（LuoWang）是一个独立部署的 AI 场景测试 Harness。当前仓库已完成 Phase 0–9，并已发布 v0.1.0：除了安全配置控制台、唯一 GitHub 目标仓库索引、Main → Runner → Reviewer → Main 的本地 Run、受控 Playwright MCP UI 执行、S3-compatible OSS 证据 Gateway、幂等归档和持久 FIFO 自动化队列，还支持长期场景生命周期、三种场景维护模式、陌生项目初始化，以及展示 Git 树标记、场景历史、Run 工件/证据/归档、当前执行、队列、后台任务、依赖健康和陈旧缓存恢复的完整运维控制台。Phase 9 已完成 34 个 AC 的全量验收；验收会创建隔离的样例仓库和样例 Web 应用，并在结束后清理临时资源。
 
 ## 本地启动
 
@@ -25,7 +25,7 @@ curl --fail http://127.0.0.1:3000/health
 docker compose down
 ```
 
-执行 Phase 9 本地验收：
+执行 Phase 9 验收：
 
 ```bash
 npm run test:acceptance
@@ -35,7 +35,7 @@ npm run test:acceptance
 
 Compose 将数据保存到 `luowang-data` 卷，并把宿主机端口绑定到 `127.0.0.1`。管理员密码只在空数据库首次启动时读取；主密钥只用于进程内派生 Secret Store 密钥，二者都不会写入 SQLite。
 
-打开 <http://127.0.0.1:3000/> 后使用管理员密码登录。登录后可以维护 Harness、仓库/测试环境、MCP 和 S3-compatible OSS 的普通配置；Provider Key、Git Token、测试账号和 OSS Access Key 等 Secret 只能覆盖或显式删除，页面只显示“已配置”和固定掩码。当前版本提供 GitHub 仓库读取、场景测试分支写入、PR/Issue 权限检查、场景/报告同步、场景 patch 校验、三种场景维护模式、直接/PR 发布、陌生项目初始化、归档和自动化队列接口，并注册 Provider、Playwright MCP 与 OSS 的独立连通性检查。启用 MCP 后，Runner 使用 headless、isolated 浏览器上下文和 accessibility snapshot/ref；截图等证据上传到 OSS，私有 bucket 使用登录后的 `/api/evidence/<id>` 稳定地址。后台默认每 60 秒轮询 Git、每 10 秒扫描归档、每 5 分钟兜底索引和保留清理；队列、调度游标和恢复状态保存在 SQLite。
+打开 <http://127.0.0.1:3000/> 后使用管理员密码登录。登录后可以维护 Harness、仓库/测试环境、MCP 和 S3-compatible OSS 的普通配置；Provider Key、Git Token、测试账号和 OSS Access Key 等 Secret 只能覆盖或显式删除，页面只显示“已配置”和固定掩码。v0.1.0 提供 GitHub 仓库读取、场景测试分支写入、PR/Issue 权限检查、场景/报告同步、场景 patch 校验、三种场景维护模式、直接/PR 发布、陌生项目初始化、归档和自动化队列接口，并注册 Provider、Playwright MCP 与 OSS 的独立连通性检查。启用 MCP 后，Runner 使用 headless、isolated 浏览器上下文和 accessibility snapshot/ref；截图等证据上传到 OSS，私有 bucket 使用登录后的 `/api/evidence/<id>` 稳定地址。后台默认每 60 秒轮询 Git、每 10 秒扫描归档、每 5 分钟兜底索引和保留清理；队列、调度游标和恢复状态保存在 SQLite。
 
 配置 GitHub 仓库后，先在“仓库事实与场景”区域准备 `scenario-testing` 分支，再点击“同步索引”。Git Token 只由 Repository Service 使用，不会写入 Git URL、命令参数、子进程环境、日志或测试 Agent。
 
