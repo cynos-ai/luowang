@@ -3,8 +3,8 @@ services:
     build:
       context: .
       args:
-        NODE_IMAGE: ${NODE_IMAGE:-node:24.14.1-bookworm-slim}
-        NPM_REGISTRY: ${NPM_REGISTRY:-https://registry.npmjs.org}
+        NODE_IMAGE: ${NODE_IMAGE:-docker.m.daocloud.io/library/node:24.14.1-bookworm-slim}
+        NPM_REGISTRY: ${NPM_REGISTRY:-https://registry.npmmirror.com}
     image: luowang:local
     environment:
       NODE_ENV: production

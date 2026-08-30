@@ -1,5 +1,5 @@
-ARG NODE_IMAGE=node:24.14.1-bookworm-slim
-ARG NPM_REGISTRY=https://registry.npmjs.org
+ARG NODE_IMAGE=docker.m.daocloud.io/library/node:24.14.1-bookworm-slim
+ARG NPM_REGISTRY=https://registry.npmmirror.com
 
 FROM ${NODE_IMAGE} AS dependencies
 

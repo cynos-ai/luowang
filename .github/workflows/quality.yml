@@ -18,6 +18,9 @@ jobs:
     name: quality
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    env:
+      NODE_IMAGE: docker.m.daocloud.io/library/node:24.14.1-bookworm-slim
+      NPM_REGISTRY: https://registry.npmmirror.com
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -29,7 +32,7 @@ jobs:
           cache: npm
 
       - name: Install dependencies
-        run: npm ci
+        run: npm ci --registry="${NPM_REGISTRY}"
 
       - name: Format check
         run: npm run format:check
@@ -50,4 +53,4 @@ jobs:
         run: npm run test:e2e
 
       - name: Docker build
-        run: docker build --tag luowang:ci .
+        run: docker build --build-arg "NODE_IMAGE=${NODE_IMAGE}" --build-arg "NPM_REGISTRY=${NPM_REGISTRY}" --tag luowang:ci .
