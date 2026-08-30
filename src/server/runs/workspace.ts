@@ -1,11 +1,12 @@
 import { randomBytes } from 'node:crypto';
-import { lstat, mkdir, readFile, readdir, rename, writeFile } from 'node:fs/promises';
+import { lstat, mkdir, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises';
 import { dirname, isAbsolute, relative, resolve } from 'node:path';
 
 import { RUN_ARTIFACT_NAMES, type AgentRole, type RunArtifactName } from './types.js';
 
 const RUN_ID_PATTERN = /^[0-9A-HJKMNP-TV-Z]{26}$/;
 const MAX_ARTIFACT_BYTES = 4 * 1024 * 1024;
+const MAX_EVIDENCE_BYTES = 32 * 1024 * 1024;
 
 export class RunWorkspaceError extends Error {
   readonly code:
@@ -38,6 +39,12 @@ export interface RunArtifactReader {
   list(): Promise<Record<string, string>>;
 }
 
+export interface RunEvidenceFile {
+  name: string;
+  path: string;
+  sizeBytes: number;
+}
+
 export class RunWorkspace implements RunArtifactReader {
   readonly runningDirectory: string;
   readonly completedDirectory: string;
@@ -55,6 +62,10 @@ export class RunWorkspace implements RunArtifactReader {
   }
 
   private readonly directory: string;
+
+  get evidenceDirectory(): string {
+    return resolve(this.directory, 'evidence');
+  }
 
   async create(): Promise<void> {
     await mkdir(dirname(this.runningDirectory), { recursive: true });
@@ -74,6 +85,7 @@ export class RunWorkspace implements RunArtifactReader {
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
     }
     await mkdir(this.runningDirectory, { recursive: false });
+    await mkdir(this.evidenceDirectory, { recursive: false });
   }
 
   writer(role: AgentRole): RunArtifactWriter {
@@ -131,6 +143,36 @@ export class RunWorkspace implements RunArtifactReader {
     }
   }
 
+  async listEvidence(): Promise<RunEvidenceFile[]> {
+    const files: RunEvidenceFile[] = [];
+    await this.walkEvidence(this.evidenceDirectory, '', files);
+    return files.sort((left, right) => left.name.localeCompare(right.name));
+  }
+
+  async readEvidence(name: string): Promise<Buffer> {
+    const path = this.evidencePath(name);
+    try {
+      const info = await lstat(path);
+      if (!info.isFile() || info.isSymbolicLink()) {
+        throw new RunWorkspaceError('ARTIFACT_INVALID', `证据不是普通文件：${name}`);
+      }
+      if (info.size > MAX_EVIDENCE_BYTES) {
+        throw new RunWorkspaceError('ARTIFACT_INVALID', `证据超出大小限制：${name}`);
+      }
+      return await readFile(path);
+    } catch (error) {
+      if (error instanceof RunWorkspaceError) throw error;
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+        throw new RunWorkspaceError('ARTIFACT_MISSING', `证据不存在：${name}`);
+      }
+      throw error;
+    }
+  }
+
+  async removeEvidence(): Promise<void> {
+    await rm(this.evidenceDirectory, { recursive: true, force: true });
+  }
+
   async finalize(): Promise<void> {
     await this.assertComplete();
     try {
@@ -182,6 +224,47 @@ export class RunWorkspace implements RunArtifactReader {
     }
     return path;
   }
+
+  private evidencePath(name: string): string {
+    assertEvidenceName(name);
+    const path = resolve(this.evidenceDirectory, name);
+    const relativePath = relative(this.evidenceDirectory, path);
+    if (isAbsolute(relativePath) || relativePath !== name) {
+      throw new RunWorkspaceError('ARTIFACT_NOT_ALLOWED', `证据路径越界：${name}`);
+    }
+    return path;
+  }
+
+  private async walkEvidence(
+    directory: string,
+    prefix: string,
+    files: RunEvidenceFile[],
+  ): Promise<void> {
+    let entries;
+    try {
+      entries = await readdir(directory, { withFileTypes: true });
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return;
+      throw error;
+    }
+    for (const entry of entries) {
+      const name = prefix ? `${prefix}/${entry.name}` : entry.name;
+      assertEvidenceName(name);
+      const path = resolve(directory, entry.name);
+      const info = await lstat(path);
+      if (info.isSymbolicLink()) {
+        throw new RunWorkspaceError('ARTIFACT_INVALID', `拒绝读取符号链接证据：${name}`);
+      }
+      if (info.isDirectory()) {
+        await this.walkEvidence(path, name, files);
+      } else if (info.isFile()) {
+        if (info.size > MAX_EVIDENCE_BYTES) {
+          throw new RunWorkspaceError('ARTIFACT_INVALID', `证据超出大小限制：${name}`);
+        }
+        files.push({ name, path, sizeBytes: info.size });
+      }
+    }
+  }
 }
 
 export class RunWorkspaceStore {
@@ -223,6 +306,19 @@ export class RunWorkspaceStore {
 export function assertRunId(runId: string): void {
   if (!RUN_ID_PATTERN.test(runId)) {
     throw new RunWorkspaceError('RUN_ID_INVALID', 'Run ID 必须是 26 位 Crockford Base32 ULID');
+  }
+}
+
+export function assertEvidenceName(name: string): void {
+  if (
+    typeof name !== 'string' ||
+    name.trim() === '' ||
+    name.includes('\\') ||
+    name.startsWith('/') ||
+    name.split('/').some((part) => part === '' || part === '.' || part === '..') ||
+    name.split('/').some((part) => part.startsWith('.'))
+  ) {
+    throw new RunWorkspaceError('ARTIFACT_NOT_ALLOWED', '证据文件名无效');
   }
 }
 

@@ -13,6 +13,7 @@ import type {
 } from '../shared/types.js';
 import { createConfigurationStore, type ConfigurationStore } from './configuration.js';
 import { createConnectivityRegistry, type ConnectivityRegistry } from './connectivity.js';
+import { createPlaywrightMcpAdapter, type BrowserMcpAdapter } from './browser/playwright-mcp.js';
 import type { AppConfig } from './config.js';
 import type { DatabaseContext } from './db/client.js';
 import { AppError, toErrorResponse } from './errors.js';
@@ -35,6 +36,7 @@ import {
 } from './security/secret-store.js';
 import { createRepositoryIndexer, type RepositoryIndexer } from './repository/indexer.js';
 import { RepositoryError } from './repository/errors.js';
+import { createOssAdapter, OssError, type OssAdapter } from './storage/oss.js';
 import {
   createRepositoryService,
   type RepositoryService,
@@ -59,6 +61,8 @@ export interface AppOptions {
   indexer?: RepositoryIndexer;
   provider?: ProviderAdapter;
   runs?: RunOrchestrator;
+  browser?: BrowserMcpAdapter;
+  oss?: OssAdapter;
 }
 
 interface JsonRecord {
@@ -84,9 +88,18 @@ export async function createApp(options: AppOptions) {
     });
   const indexer = options.indexer ?? createRepositoryIndexer(options.database.sqlite, repository);
   const provider = options.provider ?? createProviderAdapter(configuration, secretStore);
+  const browser = options.browser ?? createPlaywrightMcpAdapter(configuration);
+  const oss = options.oss ?? createOssAdapter(configuration, secretStore);
   const connectivity =
     options.connectivity ??
-    createConnectivityRegistry(options.database.sqlite, configuration, repository, provider);
+    createConnectivityRegistry(
+      options.database.sqlite,
+      configuration,
+      repository,
+      provider,
+      browser,
+      oss,
+    );
   const runs =
     options.runs ??
     createRunOrchestrator({
@@ -96,6 +109,8 @@ export async function createApp(options: AppOptions) {
       reportDir: configuration.getHarness().local.reportDir,
       secretStore,
       provider,
+      browser,
+      oss,
     });
   await runs.recover();
 
@@ -353,6 +368,15 @@ export async function createApp(options: AppOptions) {
     return reply.send({ run: await runs.current() });
   });
 
+  app.get('/api/evidence/:objectId', async (request, reply) => {
+    requireAuth(request, auth);
+    const evidence = await oss.getEvidenceByStableId(readParam(request, 'objectId'));
+    const contentType = safeContentType(evidence.contentType);
+    reply.header('cache-control', 'private, no-store');
+    reply.type(contentType);
+    return reply.send(evidence.body);
+  });
+
   app.get('/api/runs/:runId', async (request, reply) => {
     requireAuth(request, auth);
     const run = await runs.get(readParam(request, 'runId'));
@@ -461,35 +485,39 @@ export async function createApp(options: AppOptions) {
         ? error.statusCode
         : error instanceof SecretStoreError
           ? 503
-          : error instanceof RepositoryError
-            ? error.statusCode
-            : error instanceof RunOrchestratorError
-              ? error.code === 'RUN_ALREADY_ACTIVE'
-                ? 409
-                : error.code === 'RUN_NOT_FOUND'
-                  ? 404
-                  : 400
-              : error instanceof AuthError || possibleError.name === 'ConfigurationError'
-                ? 400
-                : typeof possibleError.statusCode === 'number'
-                  ? possibleError.statusCode
-                  : 500;
+          : error instanceof OssError
+            ? ossStatusCode(error)
+            : error instanceof RepositoryError
+              ? error.statusCode
+              : error instanceof RunOrchestratorError
+                ? error.code === 'RUN_ALREADY_ACTIVE'
+                  ? 409
+                  : error.code === 'RUN_NOT_FOUND'
+                    ? 404
+                    : 400
+                : error instanceof AuthError || possibleError.name === 'ConfigurationError'
+                  ? 400
+                  : typeof possibleError.statusCode === 'number'
+                    ? possibleError.statusCode
+                    : 500;
     const code =
       error instanceof AppError
         ? error.code
         : error instanceof SecretStoreError
           ? 'SECRET_STORE_UNAVAILABLE'
-          : error instanceof RepositoryError
+          : error instanceof OssError
             ? error.code
-            : error instanceof RunOrchestratorError
+            : error instanceof RepositoryError
               ? error.code
-              : error instanceof AuthError
+              : error instanceof RunOrchestratorError
                 ? error.code
-                : possibleError.name === 'ConfigurationError'
-                  ? 'CONFIGURATION_INVALID'
-                  : statusCode === 400
-                    ? 'BAD_REQUEST'
-                    : 'INTERNAL_ERROR';
+                : error instanceof AuthError
+                  ? error.code
+                  : possibleError.name === 'ConfigurationError'
+                    ? 'CONFIGURATION_INVALID'
+                    : statusCode === 400
+                      ? 'BAD_REQUEST'
+                      : 'INTERNAL_ERROR';
     const message =
       error instanceof AppError ||
       error instanceof RepositoryError ||
@@ -500,9 +528,11 @@ export async function createApp(options: AppOptions) {
           : 'Request failed'
         : error instanceof SecretStoreError
           ? 'Secret Store 当前不可用'
-          : statusCode < 500 && typeof possibleError.message === 'string'
-            ? possibleError.message
-            : 'Internal server error';
+          : error instanceof OssError
+            ? ossMessage(error)
+            : statusCode < 500 && typeof possibleError.message === 'string'
+              ? possibleError.message
+              : 'Internal server error';
 
     request.log.error(
       {
@@ -672,4 +702,29 @@ function readOptionalQuery(request: FastifyRequest, name: string): string | unde
     throw new AppError('INVALID_REQUEST', '查询参数无效', 400);
   }
   return value;
+}
+
+function safeContentType(value: string): string {
+  const normalized = value.split(';', 1)[0]?.trim().toLowerCase() ?? '';
+  return /^[a-z0-9][a-z0-9!#$&^_.+-]*\/[a-z0-9][a-z0-9!#$&^_.+-]*$/.test(normalized)
+    ? normalized
+    : 'application/octet-stream';
+}
+
+function ossStatusCode(error: OssError): number {
+  switch (error.code) {
+    case 'OSS_OBJECT_INVALID':
+    case 'OSS_CONFIGURATION_INVALID':
+      return 400;
+    case 'OSS_OBJECT_NOT_FOUND':
+      return 404;
+    case 'OSS_NOT_CONFIGURED':
+      return 503;
+    case 'OSS_REQUEST_FAILED':
+      return 502;
+  }
+}
+
+function ossMessage(error: OssError): string {
+  return error.code === 'OSS_REQUEST_FAILED' ? '对象存储请求失败' : error.message;
 }

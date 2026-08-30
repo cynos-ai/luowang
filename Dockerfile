@@ -22,7 +22,8 @@ FROM ${NODE_IMAGE} AS runtime
 ENV NODE_ENV=production \
   LUOWANG_HOST=0.0.0.0 \
   LUOWANG_PORT=3000 \
-  LUOWANG_DATA_DIR=/data
+  LUOWANG_DATA_DIR=/data \
+  PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 
 WORKDIR /app
 
@@ -35,6 +36,10 @@ RUN apt-get update \
 COPY --from=build --chown=node:node /app/package.json /app/package-lock.json ./
 COPY --from=build --chown=node:node /app/node_modules ./node_modules
 COPY --from=build --chown=node:node /app/dist ./dist
+
+RUN mkdir -p /ms-playwright \
+  && npx --no-install playwright install --with-deps chromium \
+  && chmod -R a+rX /ms-playwright
 
 USER node
 

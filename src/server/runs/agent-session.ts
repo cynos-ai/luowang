@@ -4,6 +4,8 @@ import {
   SessionManager,
   SettingsManager,
   type AgentToolResult,
+  type InlineExtension,
+  type SessionShutdownEvent,
   type ToolDefinition,
 } from '@earendil-works/pi-coding-agent';
 import { Type, type Static } from 'typebox';
@@ -49,6 +51,7 @@ class PiAgentSessionFactory implements AgentSessionFactory {
       noPromptTemplates: true,
       noThemes: true,
       noContextFiles: true,
+      extensionFactories: input.extensionFactories ?? [],
       systemPrompt: input.systemPrompt,
       appendSystemPrompt: [],
     });
@@ -62,9 +65,12 @@ class PiAgentSessionFactory implements AgentSessionFactory {
       settingsManager: settings,
       resourceLoader,
       noTools: 'builtin',
-      tools: [],
       customTools: input.customTools,
     });
+    // The SDK creates the extension registry but does not bind it automatically.
+    // Binding emits session_start, which initializes session-scoped extensions
+    // such as the Playwright MCP adapter before the first prompt is handled.
+    await session.bindExtensions({ mode: 'print' });
     return new ManagedAgentSession(session);
   }
 }
@@ -73,7 +79,13 @@ class ManagedAgentSession implements AgentSession {
   private disposed = false;
 
   constructor(
-    private readonly session: { prompt(message: string): Promise<void>; dispose(): void },
+    private readonly session: {
+      prompt(message: string): Promise<void>;
+      dispose(): void;
+      extensionRunner: {
+        emit(event: SessionShutdownEvent): Promise<unknown>;
+      };
+    },
   ) {}
 
   prompt(message: string): Promise<void> {
@@ -81,10 +93,17 @@ class ManagedAgentSession implements AgentSession {
     return this.session.prompt(message);
   }
 
-  dispose(): void {
+  async dispose(): Promise<void> {
     if (this.disposed) return;
     this.disposed = true;
-    this.session.dispose();
+    try {
+      // AgentSession.dispose() is synchronous and does not await async
+      // extension shutdown handlers. MCP owns a child process whose cwd is the
+      // Run evidence directory, so wait for session_shutdown before cleanup.
+      await this.session.extensionRunner.emit({ type: 'session_shutdown', reason: 'quit' });
+    } finally {
+      this.session.dispose();
+    }
   }
 }
 
@@ -249,8 +268,17 @@ export function buildSessionInput(
   cwd: string,
   customTools: ToolDefinition[],
   systemPrompt: string,
+  extensionFactories: InlineExtension[] = [],
 ): AgentSessionInput {
-  return { role, config, cwd, toolNames: [], customTools, systemPrompt };
+  return {
+    role,
+    config,
+    cwd,
+    toolNames: [],
+    customTools,
+    systemPrompt,
+    extensionFactories,
+  };
 }
 
 function errorMessage(error: unknown): string {
