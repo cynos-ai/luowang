@@ -72,7 +72,9 @@ describe('Phase 4 browser and evidence boundaries', () => {
   });
 
   it('keeps Playwright MCP headless, isolated, snapshot-based, and without unsafe tools', async () => {
-    const config = loadConfig({ NODE_ENV: 'test' });
+    const dataDirectory = await mkdtemp(join(tmpdir(), 'luowang-phase4-browser-'));
+    cleanup.push(async () => rm(dataDirectory, { recursive: true, force: true }));
+    const config = loadConfig({ NODE_ENV: 'test', LUOWANG_DATA_DIR: dataDirectory });
     const database = initializeDatabase(config);
     cleanup.push(async () => database.close());
     const configuration = createConfigurationStore(database.sqlite, {
