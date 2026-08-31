@@ -1,6 +1,6 @@
 # 罗网 v0.7 生产闭环补齐 Intent
 
-- 状态：Approved v0.2
+- 状态：Approved v0.3
 - 关联规格：[spec.md](./spec.md)
 - 实现计划：[plan.md](./plan.md)
 - 上游基线：[罗网 Harness MVP](../luowang-harness-mvp/intent.md)
@@ -28,10 +28,10 @@
 
 1. Main · 规划、Runner、Reviewer、Main · 最终汇总和初始化方法成为罗网自身版本化的 Built-in Role Instructions（内置角色指令），由应用按 Session 确定性加载并完整注入；它们是发布物中的固定 Markdown 资源，不是 Pi Skills；目标仓库、宿主机和用户目录中的 Skills 仍不会被发现或执行；
 2. 固定方法、安全边界、动态 Run 上下文和本次请求分层传递，不再重复注入同一长提示词；不同角色只看到自己需要的动态事实；
-3. 人工 merge 请求进入现有 SQLite FIFO，在轮到它时完成 `merge --no-ff → non-force push → 固定新的 scenario-testing HEAD → Run`；普通人工测试不能直接绕开场景测试分支；
-4. Runner 可以登记测试数据并通过 UI/API 删除，但 Runner 的清理声明不能直接变成完成事实；只有受控 adapter 独立核验，或 Reviewer 读取 Harness 管理的清理证据后确认，数据才视为已清理，任何未确认残留仍可靠地使结果 blocked；
+3. 人工 merge 请求进入现有 SQLite FIFO，在轮到它时生成可跨重启恢复的 prepared merge，完成 `non-force push → 固定 resolved target → Run`；prepared commit 在本地持久 Git 仓库中保持可达，普通人工测试不能直接绕开场景测试分支；
+4. Runner 可以登记测试数据并通过 UI/API 删除，但 Runner 的清理声明或自填文本不能直接变成完成事实；只有受控 adapter 独立核验，或 Reviewer 读取由 Harness 直接捕获的工具/adapter 输出或 Playwright 截图后确认，数据才视为已清理，任何未确认残留仍可靠地使结果 blocked；
 5. 网站在真实执行中显示总场景数、已完成数、当前场景和脱敏活动，而不是只依赖 UI fixture；
-6. Main · 规划可以按需查询有限、只读、相关的历史 Run 摘要；Main · 最终汇总只获得本次 confirmed Bugs 的 Issue create/link 所需摘要；Runner 和 Reviewer 均不获得历史查询工具；
+6. Main · 规划可以按需查询有限、只读、相关的历史 Run 摘要；Main · 最终汇总先从本次 `draft-report.md` 和 `review.md` 形成 Bug 候选，再通过受限只读工具查询可能相同的历史 Issue/Run 并决定 create/link；Runner 和 Reviewer 均不获得历史查询工具；
 7. 本地自动化验收与真实外部联合验收明确分层：本地通过不能冒充 live 通过，发布验收在任何必需外部证明 blocked 时必须失败；
 8. 使用独立、可信、非生产测试项目完成真实 Provider、Pi Agent、Playwright MCP、OSS、GitHub、数据清理、归档、Issue 和进度闭环；
 9. README 准确说明已实现、已本地验证、尚未 live 验证和本地构建前置条件；
@@ -105,7 +105,7 @@
 本变更成功不以“新增了多少文件或测试”为标准，而以以下事实同时成立为准：
 
 - 已知生产路径缺口均有用户可观察的修复和自动回归；
-- 实际 Pi SDK Session 而非 FixtureSessionFactory 分别证明正常四 Session Run 和陌生项目初始化流程，覆盖模型消息、受控工具循环、Session 隔离与 dispose；
+- 实际 Pi SDK Session 而非 FixtureSessionFactory 分别证明正常四 Session Run、初始化直接新增场景的六 Session 流程，以及需要场景 PR 时立即结束的三 Session 特殊 blocked 流程，覆盖模型消息、受控工具循环、Session 隔离与 dispose；
 - 真实联合 Run 在独立非生产项目上完成并可由 Run、commit、报告、截图、OSS object、PR/Issues 和清理结果复核；
 - 本地与 live 结果被准确区分，缺少任何 live 前置条件时明确 blocked 且不能发布；
 - 没有通过补复杂状态机、放宽安全边界或增加未来架构来“解决”问题。

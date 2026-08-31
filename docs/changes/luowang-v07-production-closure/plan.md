@@ -1,6 +1,6 @@
 # 罗网 v0.7 生产闭环补齐实施计划
 
-- 状态：Implementation Plan v0.2
+- 状态：Implementation Plan v0.3
 - 关联 Intent：[intent.md](./intent.md)
 - 关联 Spec：[spec.md](./spec.md)
 - 上游计划：[罗网 Harness MVP Plan](../luowang-harness-mvp/plan.md)
@@ -142,7 +142,7 @@ LUOWANG_LIVE_OSS_ACCESS_KEY_SECRET
 | Closure 2 | `fix/closure-merge-test-queue` | branch/tag/SHA 经同一 FIFO 合并并测试固定分支 HEAD | MERGE-01/02、TARGET-01 |
 | Closure 3 | `fix/closure-test-data` | Runner 能确认实际清理，残留可靠 blocked | DATA-01/02 |
 | Closure 4 | `fix/closure-live-progress` | 真实 Run 上报当前场景、总数和完成数 | ACTIVE-01 |
-| Closure 5 | `feat/closure-run-history` | Main · 规划可查询相关历史，Main · 最终汇总只获本次 bug 摘要 | HISTORY-01 |
+| Closure 5 | `feat/closure-run-history` | Main · 规划查询 Run 历史；Main · 最终汇总按本次 Bug 候选受限查询 Issue/Run | HISTORY-01 |
 | Closure 6 | `feat/closure-production-acceptance` | local 验收真实经过 Pi SDK，local/live/release 分层 | PI-01、ACCEPT-01/02 |
 | Closure 7 | `feat/closure-live-acceptance-release` | 使用人类提供资源完成 live 联合验收并发布 | LIVE-01/02、SECRET-01、RELEASE-01 |
 
@@ -237,23 +237,27 @@ LUOWANG_LIVE_OSS_ACCESS_KEY_SECRET
    - queued/running-without-run manual/api 且旧 target 非空时明确 failed，不把旧 target 猜成 sourceRef 或 merge 授权；
    - 旧 `target_ref` 只作历史兼容读取，新调度不使用；
 2. 在 Queue/Automation owner 中实现 Spec §4 三类请求；自动请求仍只合并 queued automatic，人工请求永不合并；
-3. 调度 `manual-merge-source` 时严格执行：
+3. 在 Repository/Queue owner 中以持久目标仓库 object store 管理确定性本地 ref `refs/luowang/merge-requests/<queue-id>`；该 ref 不进入 push refspec、不推送到目标仓库，也不作为业务分支展示；
+4. 调度 `manual-merge-source` 时严格执行：
    - fetch 并解析 source ref；
    - 基于当时远端 `scenario-testing` HEAD 生成本地 `merge --no-ff` commit；
-   - push 前持久化 `prepared_merge_commit`；
+   - 先创建 internal ref 指向该 commit，确保 object 可达；
+   - 再持久化同值的 `prepared_merge_commit`；
    - non-force push 同一 prepared commit；
    - push 成功后持久化同值的 `resolved_target_commit`；
    - 只使用 `resolved_target_commit` 创建或关联唯一 Run；
-4. 恢复逻辑按已持久化事实分支：
-   - 只有 prepared：远端已包含则补写 resolved；未包含则只尝试 push 同一 commit，远端竞争时失败，不重做 merge；
+5. 恢复逻辑按 Git ref 和 SQLite 事实共同判断：
+   - 只有 prepared：internal ref 必须指向同一 SHA；远端已包含则补写 resolved，否则只 push 该 ref 的 commit；ref 缺失/不匹配且远端未包含时失败，不重做 merge；
    - 已有 resolved：校验它位于远端场景分支历史，忽略后来新增 HEAD，创建或关联唯一 Run；
+   - internal ref 已有但 prepared 为空：视为 ref/DB 间崩溃，明确失败并清理，不猜测 prepared；
    - 已有关联 Run：不再创建第二个；
-5. 来源已是祖先时不生成 merge commit，把当时远端 HEAD 持久化为 prepared/resolved 后创建 Run；
-6. 改造 `/api/repository/merge` 和网站合并入口为异步入队，返回 queue/request ID；
-7. 普通 `/api/runs` 和网站 Run 表单移除任意 target 输入；非空旧字段明确 `400`；
-8. 重测入口复用原请求说明但在调度时读取当前场景测试分支 HEAD；
-9. Orchestrator 只接收调度层持久化且已证明发布到场景测试分支的 `resolved_target_commit`；保留 checkout 后 SHA 一致性检查；
-10. 更新 API/UI 文案，明确“已排队”而不是“已经合并”。
+6. 来源已是祖先时不生成 merge commit；internal ref 指向当时远端 HEAD，再持久化 prepared/resolved 后创建 Run；
+7. 请求在 queued/running/waiting_archive 期间保留 internal ref，不受普通 workspace cleanup、fetch/prune 或 Git GC 影响；completed/failed/interrupted 后幂等清理，启动时清理无队列行的孤儿 ref；
+8. 改造 `/api/repository/merge` 和网站合并入口为异步入队，返回 queue/request ID；
+9. 普通 `/api/runs` 和网站 Run 表单移除任意 target 输入；非空旧字段明确 `400`；
+10. 重测入口复用原请求说明但在调度时读取当前场景测试分支 HEAD；
+11. Orchestrator 只接收调度层持久化且已证明发布到场景测试分支的 `resolved_target_commit`；保留 checkout 后 SHA 一致性检查；
+12. 更新 API/UI 文案，明确“已排队”而不是“已经合并”。
 
 ### 专项验证
 
@@ -264,14 +268,15 @@ LUOWANG_LIVE_OSS_ACCESS_KEY_SECRET
 - 旧 manual/api 非空 target 不会写入 `source_ref`、不会 merge、不会创建 Run，错误提示要求通过 merge-source 重新提交；
 - 旧 automatic 的 `target_ref` 不作为新 target，轮到时固定当时场景分支 HEAD；有关联旧 Run 的 resolved 只从已存 Run/Recovery target 回填；
 - 排队两个普通人工请求和一个 merge-source，按 FIFO 执行且不丢失；
-- merge-source 产生 `--no-ff` merge commit，且在 push 前数据库已有 `prepared_merge_commit`；
-- push 成功后 `resolved_target_commit == prepared_merge_commit`，Run target 严格等于 resolved；
-- 在 prepared 持久化后、push 前退出：恢复只 push 同一 prepared commit，不重新生成 merge；
-- 在 push 后、resolved 持久化前退出：恢复从远端包含关系补写同一 resolved，不重复 merge；
+- merge-source 产生 `--no-ff` merge commit，先创建 `refs/luowang/merge-requests/<queue-id>`，再写 `prepared_merge_commit`；ref、prepared 和 commit SHA 完全一致；
+- 检查远端 refs，internal ref 从未被 push；push 成功后 `resolved_target_commit == prepared_merge_commit`，Run target 严格等于 resolved；
+- 在 prepared 持久化后、push 前退出：删除临时工作树/clone、重启进程并执行 `git gc`，commit 仍可由 persistent internal ref 读取，恢复只 push 同一 SHA，不重新生成 merge；
+- 在 internal ref 创建后、prepared 写入前退出：请求明确 failed、ref 被清理且不创建 Run；prepared 存在但 ref 缺失/不匹配且远端不含该 commit 时同样 failed；
+- 在 push 后、resolved 持久化前退出：即使 internal ref 异常缺失，也能从远端包含关系补写同一 resolved，不重复 merge；
 - resolved 后、Run 创建前让场景分支再前进：恢复仍创建一个以旧 resolved 为 target 的 Run；
-- Run 关联后重启：不创建第二个 Run；
-- 来源已是祖先时不重复 merge，但持久化当时 HEAD 并创建新的人工 Run；
-- merge 冲突、来源不存在、prepared 后远端竞争时无 Run、无推进、工作树清理；
+- Run 关联后重启：不创建第二个 Run；请求 terminal 后 internal ref 被幂等清理，重复清理安全；无队列行的孤儿 ref 在启动对账后删除；
+- 来源已是祖先时不重复 merge，internal ref/ prepared/resolved 指向当时 HEAD 并创建新的人工 Run；
+- merge 冲突、来源不存在、prepared 后远端竞争时无 Run、无推进、工作树和 internal ref 清理；
 - `/api/runs` 任意 SHA/ref 返回 `400`；普通人工和重测 target 为调度时远端场景分支 HEAD；
 - 自动合批行为和 last completed target 计算不回归。
 
@@ -289,13 +294,18 @@ LUOWANG_LIVE_OSS_ACCESS_KEY_SECRET
 
 1. 扩展现有 TestDataManager，维护当前 Run 的 registered、cleanup claim、verified-cleaned 和 pending 查询；
 2. 增加 Runner 的 `submit_test_data_cleanup_claim`、`list_pending_test_data` custom tools：claim 必须引用当前 Run Evidence Store 中真实存在的证据 ID，只能进入待核验状态；
-3. 为脱敏删除后 API 查询结果增加受控文本 evidence 保存/读取；沿用当前 Run 路径、大小、类型和 Secret 校验；
+3. 为删除后核验增加 Harness-side evidence capture，而不是接受 Agent 任意文本：
+   - 清理 adapter 查询、受控 API 查询和与已登记 data ID 绑定的只读命令返回时，由工具 wrapper 直接捕获真实响应/输出；
+   - Runner 只能选择登记 ID 和 allowlist 内查询操作/参数，不能提交 evidence 正文、状态码、退出码、摘要或 hash；
+   - 禁止把 `echo`/`printf`、自由文本命令或复述结论当作清理证据；
+   - 每条记录来源工具/adapter ID、Run ID、data ID、查询时间、状态码/退出码、脱敏后内容摘要和 SHA-256；沿用当前 Run 路径、大小、类型、Secret 脱敏和 allowlist；
+   - Playwright MCP 直接产生的删除后截图继续作为受控图像 evidence；
 4. 增加 Reviewer 的 `verify_test_data_cleanup`：只有 Reviewer 已实际读取 claim 对应 evidence 后才能确认或拒绝，不能执行目标环境命令或访问账号；
 5. 更新 Runner/Reviewer 内置角色指令：
    - 创建前取得 run-id prefix；
    - 创建后立即登记；
    - 场景结束通过 UI/API 删除；
-   - 保存“删除后不存在”的脱敏截图/查询证据并提交 claim；
+   - 触发删除后受控查询，让 Harness 捕获真实输出，或保存 Playwright MCP 直接生成的删除后截图，再引用其 evidence ID 提交 claim；
    - Reviewer 先读证据，再结构化确认或拒绝；
 6. 调整 Run 收尾顺序：Runner 后 adapter 可先核验 pending，Reviewer 后做最终检查，再把未确认项作为 blocking reason 交给 Main · 最终汇总；
 7. 无数据或全部 verified-cleaned → 正常；纯声明、未受控/未读取证据、Reviewer 拒绝、pending 或 adapter 失败 → blocking reason + execution/report 残留清单；
@@ -304,8 +314,9 @@ LUOWANG_LIVE_OSS_ACCESS_KEY_SECRET
 
 ### 专项验证
 
-- 默认生产 manager：登记 → UI/API fixture 删除 → 保存删除后证据 → claim → Reviewer 读取并确认 → Run 不因缺 adapter blocked；
-- Runner 只 claim、不提供证据、引用任意路径/URL、Reviewer 未读取证据或拒绝 → 不能 verified，Run blocked；
+- 默认生产 manager：登记 → UI/API fixture 删除 → 受控 API/查询命令实际返回“不存在” → Harness 捕获并生成 evidence → claim → Reviewer 读取并确认 → Run 不因缺 adapter blocked；
+- adapter、API、只读命令三种文本来源分别生成完整 provenance；Playwright MCP 删除后截图保持可读取；
+- Agent 尝试提交自填 evidence 正文/状态码/摘要、`echo`/`printf` 输出、任意路径/URL，或 Runner 只 claim、Reviewer 未读取/拒绝 → 不能生成合格 evidence 或 verified，Run blocked；
 - claim 未登记 ID、其他 Run ID、重复确认被拒绝或明确幂等；
 - 受控 adapter 删除并独立查询不存在，可直接产生 verified receipt；adapter 部分失败仍 blocked；
 - 多场景数据分别核验，pending 数量正确；
@@ -345,30 +356,39 @@ LUOWANG_LIVE_OSS_ACCESS_KEY_SECRET
 
 `AC-CLOSURE-ACTIVE-01` 和上游 `AC-ACTIVE-VIEW-01` 通过。
 
-## 11. Closure Phase 5：Main Planning 相关历史 Run
+## 11. Closure Phase 5：Main 的受限历史查询
 
 ### 目标
 
-Main · 规划能使用 SQLite/Recovery 中未写入正式 Git 报告的历史事实；Main · 最终汇总只得到本次 confirmed Bugs 的 Issue create/link 所需摘要，同时保持查询有限、脱敏和角色隔离。
+Main · 规划能查询 SQLite/Recovery 中相关历史；Main · 最终汇总不等待尚未生成的 `confirmed_bugs`，而是在读取本次草稿和审核后，用受限只读工具查询可能相同的历史 Issue/Run，再决定 create/link。两类查询保持有限、脱敏和角色隔离。
 
 ### 修改范围
 
-1. 扩展 RunStore/Recovery owner，提供 Spec §7 的摘要查询；复用已有表，不复制历史；
-2. 支持 recent、commit、scenario、bug/Issue 过滤和 20/100 限制；
-3. 增加 Main Planning 专用 `query_run_history` custom tool；Main · 最终汇总不获得该工具，只由 Harness 注入本次 confirmed Bugs 的 Issue create/link 所需有限摘要；
-4. Runner、Reviewer 工具集中不存在该工具；
-5. 返回正常 completed、特殊 blocked、interrupted、场景 PR、归档失败和多个 Issue 摘要；
-6. 查询失败显式 unavailable，成功空结果显式 empty；
-7. 更新 Main · 规划和 Main · 最终汇总的内置角色指令，前者按相关性查询，后者只使用 Harness 提供的本次 bug 摘要，不把全部历史塞进 prompt。
+1. 扩展现有 RunStore/Recovery/Issue 查询 owner，复用已有表和 GitHub Issue 读取边界，不复制历史、不增加中间状态文件；
+2. 为 Main Planning 提供 `query_run_history`：支持 recent、commit、scenario、bug/Issue 过滤，默认 20、硬上限 100；
+3. 为 Main Finalization 提供独立 `query_issue_candidates({ title?, keywords?, bug_key?, limit? })`：
+   - title/keywords/bug key 至少一个；实现 Spec §7 的长度、类型、NFKC/大小写/空白归一化；
+   - 按 exact bug key、exact/包含 title、关键词命中数匹配，按 Spec 固定顺序排序和去重；
+   - 返回固定 `ok | empty | unavailable` 结构，只包含候选 Issue、匹配原因及相关 Run 摘要；
+   - 默认 20、硬上限 100；一个 Finalization Session 最多 10 次调用，同一 unavailable 查询最多重试一次，禁止重复 ok/empty 查询；
+   - 只读，不能创建、修改、关闭或评论 Issue；
+   - 不返回完整工件、测试账号、Secret 或未脱敏工具参数；
+4. 更新 Main · 最终汇总内置角色指令和工具顺序：先读 `draft-report.md`、`review.md` 形成 Bug 候选，再调用 `query_issue_candidates`，最后在 `report.md` 决定 confirmed Bug 的 create/link；不预先注入依赖 `confirmed_bugs` 的摘要；
+5. Main · 规划只有 `query_run_history`，Main · 最终汇总只有 `query_issue_candidates`；Runner、Reviewer 两者都没有；
+6. Run 查询返回正常 completed、特殊 blocked、interrupted、场景 PR、归档失败摘要；Issue 候选查询返回 number/title/url/state、匹配原因/bug key 和关联 Run 的有限字段；
+7. 两类查询失败都显式 unavailable，成功空结果显式 empty；第二次 unavailable 或调用预算耗尽后记录覆盖缺口并继续，不循环；不增加 Reviewer 结构化 Bug 结果或新的事实源。
 
 ### 专项验证
 
 - 构造正常 passed、failed、多 Issue、特殊 blocked + PR、interrupted、archive failed；
-- Main · 规划按场景/commit/Issue 查到正确摘要和稳定顺序；Main · 最终汇总只能看到本次 confirmed Bugs 的有限摘要，不能主动扩大查询；
-- limit 边界、无结果和数据库失败区分；
-- 摘要不含完整工件、测试账号、Secret 和未经脱敏错误；
-- Runner/Reviewer 调不到历史工具；
-- Main · 规划产出的计划真实引用相关历史，不回写旧 Run。
+- Main · 规划按场景/commit/Issue 查到正确摘要和稳定顺序；
+- Main · 最终汇总在读取 draft/review 前调用候选工具被流程测试判为错误；读取后可分别按 title/keywords/bug key 查询相似 Issue 和相关 Run，最终正确选择 create 或 link；
+- `query_issue_candidates` 无需预先存在 `confirmed_bugs`，不修改任何 Issue；缺少全部检索条件、错误 keywords 类型/数量/长度、控制字符和越界 limit 均被拒绝；
+- 构造大小写、Unicode/空白、exact bug key、exact/包含 title、多关键词命中和相同时间数据，断言去重和稳定排序与 Spec 一致；
+- `ok` 非空、`empty` 成功空、`unavailable` 依赖失败严格区分；同一 unavailable 只重试一次，ok/empty 不重复，总调用超过 10 被拒绝并形成覆盖缺口；
+- 两类摘要都不含完整工件、测试账号、Secret 和未经脱敏错误；
+- Main · 规划调不到 Issue 候选工具，Main · 最终汇总调不到通用 Run 历史工具，Runner/Reviewer 两者都调不到；
+- Main · 规划产出的计划真实引用相关历史；Main · 最终汇总只把最终 confirmed Bugs 写入 `report.md`，不产生新中间状态文件、不回写旧 Run。
 
 ### 退出条件
 
@@ -393,10 +413,10 @@ Main · 规划能使用 SQLite/Recovery 中未写入正式 Git 报告的历史�
    - Main Finalization Session：最终汇总；
 4. 初始化验收必须形成三个独立用例：
    - 直接新增场景：执行完整六 Session 序列，由候选验证 Runner 真实执行后再进入 Reviewer 和 Main Finalization；
-   - 需要场景 PR：执行 Main Planning 静态勘察 → Runner 运行时侦察 → 新 Main Planning 候选综合 → Reviewer → Main Finalization 五个 Session；跳过候选验证 Runner，不执行未审核场景，仍写齐五个 Markdown 工件和受限 patch，以 blocked 归档并创建场景 PR；
-   - 最终修订未重跑：在已经完成候选验证的初始化用例中，Main · 最终汇总按 Reviewer 意见修订尚未发布 patch 后，不创建新的 Runner Session，因此结果保持 blocked；
+   - 需要场景 PR：只执行 Main Planning 静态勘察 → Runner 运行时侦察 → 新 Main Planning 候选综合三个 Session；策略判断需要人工审核后立即 blocked，不创建候选验证 Runner、Reviewer、Main Finalization，不等待人类；Harness 生成特殊 blocked report；special finalize 按 patch/report allowlist 选择性完成，不能原样 rename 含临时 Markdown 的 running 目录；Archiver 再创建场景 PR；
+   - 最终修订未重跑：只在已经完成候选验证并进入 Reviewer/Main Finalization 的直接新增用例中验证；Main · 最终汇总修订尚未发布 patch 后，不创建新的 Runner Session，因此结果保持 blocked；
 5. 记录并断言每次 Session 的唯一 ID、Agent 配置来源、内置角色指令 ID/hash、工具集合、输入工件、输出工件和 dispose；多个 Main Planning Session、多个 Runner Session 均不得共享完整对话；
-6. 把确定性故障证明纳入 local：使用真实生产代码和本地 Git、HTTP、S3-compatible 服务验证 merge 冲突、归档失败重试、Indexer 暂时不可用、进程重启、队列恢复及 prepared/resolved merge 恢复；
+6. 把确定性故障证明纳入 local：使用真实生产代码和本地 Git、HTTP、S3-compatible 服务验证 merge 冲突、归档失败重试、Indexer 暂时不可用、进程重启、队列恢复，以及 internal ref + prepared/resolved merge 恢复；
 7. 保留 FixtureSessionFactory 用于细粒度确定性单测，但普通/初始化 Pi 路径和上述生产恢复不得以 FixtureSessionFactory 作为 AC 证据；
 8. 重构 acceptance AC 映射，每个 AC 运行或引用能证明自身行为的检查，不按粗粒度 proof 批量赋值；
 9. 增加 `test:acceptance:local`、`test:acceptance:live`、`test:acceptance:release`；兼容 `test:acceptance` 只能别名 local；
@@ -410,11 +430,12 @@ Main · 规划能使用 SQLite/Recovery 中未写入正式 Git 报告的历史�
 - 普通 Run 创建四个不同 Session ID，显示 Main · 规划 → Runner → Reviewer → Main · 最终汇总；两个 Main Session 使用同一 Main 模型/thinking 配置但 Prompt、工具和对话隔离；
 - 普通 Run 真实经过 Pi 模型消息和 custom tool 循环，写出 `plan.md`、`execution.md`、`draft-report.md`、`review.md`、`report.md` 并 dispose 全部 Session；
 - 初始化直接新增场景用例真实经过六个新 Session；两个 Main Planning Session 互不共享对话，两个 Runner Session 互不共享对话，每次只获得本阶段内置角色指令和工具；
-- 初始化场景 PR 用例严格创建 Main Planning/Runner/Main Planning/Reviewer/Main Finalization 五个 Session，明确没有候选验证 Runner；`plan.md`、`execution.md`、`draft-report.md`、`review.md`、`report.md` 和受限 patch 齐全，结果 blocked 后才由归档创建场景 PR；不把未审核场景写成已验证；
+- 初始化场景 PR 用例严格只创建 Main Planning/Runner/新 Main Planning 三个 Session 并全部 dispose；策略判断后立即 blocked，断言没有候选验证 Runner、Reviewer、Main Finalization；
+- 在 running workspace 先制造三个 Session 的临时 plan/execution/draft，再执行 special finalize；completed artifact list 必须严格等于 `scenario-changes.patch`、Harness 生成的 `report.md`，四个普通工件均不存在；`isSpecialScenarioReviewRun()` 按两文件契约识别，Archiver 创建场景 PR 且不把它当普通 Run；
 - 初始化最终汇总修订 patch 用例没有重新 Runner 执行，因此最终仍 blocked；
 - 配置和 connectivity checks 仍只有 Main、Runner、Reviewer 三组，不出现 Planner/Finalizer 字段或第四个 Provider 检查；
 - 模型协议返回非法工具、漏写文件、越权工具时生产校验拒绝；
-- 本地真实 Queue/Repository/Archiver/Indexer 生产代码通过 merge conflict、prepared/push/resolved 各退出点、归档失败重试、Indexer 故障恢复、进程重启和队列恢复；
+- 本地真实 Queue/Repository/Archiver/Indexer 生产代码通过 merge conflict、internal-ref/prepared/push/resolved 各退出点、临时工作区删除与 Git GC、terminal ref 清理、归档失败重试、Indexer 故障恢复、进程重启和队列恢复；
 - `test:acceptance:local` 在无外部变量环境通过且不称 release passed；
 - `test:acceptance:live` 缺任一字段列出完整 missing 集合并非零；构造 live failed/blocked 时 release 非零；全部 test double 只能使 local passed；
 - 每个受影响 AC 报告自己的 evidence；报告与 CI 日志中注入 canary Secret，扫描阴性。
@@ -457,10 +478,10 @@ Main · 规划能使用 SQLite/Recovery 中未写入正式 Git 报告的历史�
 2. 通过网站/API 配置真实测试仓库、环境、Provider、Main/Runner/Reviewer 三个模型、Playwright MCP、私有 OSS 和账号；不得出现 Planner/Finalizer 独立配置或第四个模型检查；
 3. 运行所有 connectivity checks，保存脱敏结果；
 4. 使用 merge-source 请求把可控产品/需求变化纳入 `scenario-testing`，验证 FIFO、prepared/resolved 持久化事实和固定 `resolved_target_commit`；
-5. 完成一个真实 passed UI Run：真实 Pi 创建 Main · 规划、Runner、Reviewer、Main · 最终汇总四个隔离 Session，执行 Playwright MCP 操作、截图、OSS 上传和 Reviewer 看图；创建并删除测试数据，提交清理 claim 后由 adapter 独立核验或 Reviewer 实际读取 Harness 证据确认；写五个工件、Git 正式报告，完成 Indexer 回读和实时 0/N→N/N；
+5. 完成一个真实 passed UI Run：真实 Pi 创建 Main · 规划、Runner、Reviewer、Main · 最终汇总四个隔离 Session，执行 Playwright MCP 操作、截图、OSS 上传和 Reviewer 看图；创建并删除测试数据，提交清理 claim 后由 adapter 独立核验，或由 Reviewer 实际读取 Harness 直接捕获的受控查询输出/Playwright 截图并确认；写五个工件、Git 正式报告，完成 Indexer 回读和实时 0/N→N/N；
 6. 使用人类预先给出的两个独立、可逆失败条件完成一个真实 failed Run，确认至少两个不同 Bugs，幂等创建/关联多个 Issues，报告及 Issues 完成后才推进；
 7. 完成一个真实 blocked Run：保留已确认 Bug（如有）但不推进；阻塞来源使用可控非生产依赖，不破坏环境；
-8. 验证场景 PR、PR 合并后旧 Run 不变、当前 HEAD 人工重测；
+8. 验证真实场景 PR 特殊 Run 只创建三个 Agent Session 并仅持久化 patch + Harness report；PR 合并后旧 Run 不变，当前 HEAD 人工重测创建新 Run；
 9. 验证场景/报告 allowlist、历史报告 blob SHA 不变、罗网仓库无测试资产；
 10. 验证所有测试数据和 OSS 临时探测对象按策略清理；被正式 Git 报告引用的证据对象保留到项目负责人明确执行后续保留/删除决定，不得在验收收尾时误删；
 11. 运行 `npm run test:acceptance:release`；它必须复用 Phase 6 的 local 确定性故障证据并执行本 Phase live 联合证明，保存分层 JSON/Markdown 结果；不在真实 GitHub/官网环境重复制造 merge 冲突、归档、Indexer、重启或队列故障；

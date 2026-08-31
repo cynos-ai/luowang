@@ -1,6 +1,6 @@
 # 罗网 v0.7 生产闭环补齐 Spec
 
-- 状态：Implementation Baseline v0.2
+- 状态：Implementation Baseline v0.3
 - 关联 Intent：[intent.md](./intent.md)
 - 实现计划：[plan.md](./plan.md)
 - 上游规格：[罗网 Harness MVP Spec](../luowang-harness-mvp/spec.md)
@@ -102,7 +102,7 @@ Main Planning Session 和 Main Finalization Session 共同使用 `agents.main` �
 | Main · 规划 | `common.md` + `main-planning.md` | `scenario-initialization.md` | 理解请求、需求和累计 diff；阅读项目理解、场景和相关历史；维护或选择场景；形成 `plan.md`；必要时生成受限场景 patch；不执行测试 |
 | Runner | `common.md` + `runner-execution.md` | 无 | 顺序执行计划；使用受控命令、Playwright MCP 和测试账号；创建、登记、清理测试数据；保存证据；写 `execution.md` 和 `draft-report.md` |
 | Reviewer | `common.md` + `reviewer-audit.md` | 无 | 独立读取本次工件和受控证据；审核截图和清理证据；判断 Bug、blocked 和零场景结论；写 `review.md`；不执行命令、不获取测试账号 |
-| Main · 最终汇总 | `common.md` + `main-finalization.md` | `scenario-initialization.md` | 读取前置工件和 Reviewer 结论；按 `blocked > failed > passed` 聚合；处理 confirmed Bugs 的 Issue create/link；写 `report.md`；初始化 Run 可按 Reviewer 意见修订尚未发布的场景 patch，但修订后未重新执行必须保持 blocked |
+| Main · 最终汇总 | `common.md` + `main-finalization.md` | `scenario-initialization.md` | 读取前置工件和 Reviewer 结论；从本次草稿形成 Bug 候选并受限查询相似历史 Issue/Run；按 `blocked > failed > passed` 聚合；决定 confirmed Bugs 的 Issue create/link；写 `report.md`；初始化 Run 可按 Reviewer 意见修订尚未发布的场景 patch，但修订后未重新执行必须保持 blocked |
 
 初始化中的“静态勘察”和“候选综合”都是 Main Planning Session；“运行时侦察”和“候选验证”都是 Runner Session。职责相同的多次 Session 仍不能共享完整对话，只能读取当时允许的落盘工件和角色裁剪上下文。
 
@@ -134,7 +134,7 @@ User Message
 - **Main · 规划**：请求、trigger、base/target/included commits、场景模式、初始化标记、已索引场景摘要，以及有限的历史报告/Run/Issue 查询能力；
 - **Runner**：run-id、固定 target、计划、工作场景、非生产环境工具和 Harness 已确认阻塞原因；不直接注入历史 Issues 或 Git Token；
 - **Reviewer**：run-id、固定 target、本次工件、证据引用和 Harness 阻塞原因；可以对已经读取的当前 Run 清理证据作结构化确认，但不获得目标环境命令、历史 Issue 列表、测试账号或任意仓库写入能力；
-- **Main · 最终汇总**：固定 Run 范围、本次四个前置工件、Reviewer 结论，以及只与本次 confirmed Bugs 的 Issue create/link 相关的历史 Issue/Run 摘要；不获得通用历史查询、目标仓库通用读取或命令能力。
+- **Main · 最终汇总**：固定 Run 范围、本次四个前置工件、Reviewer 结论和受限的 `query_issue_candidates`；它先从 `draft-report.md`、`review.md` 形成 Bug 候选，再按标题/关键词/bug key 查询可能相同的 Issue/Run；不预先依赖尚未生成的 `confirmed_bugs`，也不获得通用历史查询、目标仓库通用读取或命令能力。
 
 ### 3.6 内置角色指令内容规则
 
@@ -184,27 +184,40 @@ User Message
 - 初始化请求同样只能针对当前场景测试分支 HEAD，或先通过 merge-source/首次建分支把来源纳入固定分支；
 - API 响应和网站显示 queued、merge/running、waiting archive、completed/failed/interrupted 等现有事实，不增加跨 Run checkpoint。
 
-### 4.3 固定 merge 结果与恢复幂等
+### 4.3 固定 merge 结果、Git 可达性与恢复幂等
 
-`manual-merge-source` 必须按以下顺序执行：
+`manual-merge-source` 在罗网的**本地持久 Git 仓库**中为每个队列请求使用确定性 internal ref：
+
+```text
+refs/luowang/merge-requests/<queue-id>
+```
+
+该 ref 不是业务分支，只用于让 prepared commit object 在进程重启、临时工作区清理和本地 Git GC 后仍可达；它不得被 push 到目标仓库，也不得加入任何默认 push refspec。
+
+执行顺序固定为：
 
 ```text
 解析 source ref
 → 基于当时远端 scenario-testing HEAD 生成本地 merge commit
+→ 创建本地 internal ref 指向该 commit
 → 持久化 prepared_merge_commit
-→ non-force push
+→ non-force push prepared commit 到远端 scenario-testing
 → 持久化 resolved_target_commit
 → 使用 resolved_target_commit 创建且只创建一个 Run
+→ 请求 completed 或明确 failed/interrupted 后清理 internal ref
 ```
 
 具体规则：
 
-- `prepared_merge_commit` 必须在 push 前提交到 SQLite；成功 push 后，`resolved_target_commit` 固定为已经发布到场景测试分支的同一 commit；Orchestrator 只能接收该字段，不能重新读取移动中的 HEAD 替换 target；
-- 来源已经是场景测试分支祖先时不创建重复 merge commit；把当时远端 HEAD 作为本请求的 prepared/resolved commit，仍可创建本次人工 Run；
+- `prepared_merge_commit` 必须在 push 前提交到 SQLite，且此时 internal ref 必须存在并指向同一 SHA；成功 push 后，`resolved_target_commit` 固定为已经发布到场景测试分支的同一 commit；Orchestrator 只能接收该字段，不能重新读取移动中的 HEAD 替换 target；
+- 来源已经是场景测试分支祖先时不创建重复 merge commit；internal ref 指向当时远端 HEAD，再把该 SHA 持久化为 prepared/resolved，仍可创建本次人工 Run；
+- 进程在 prepared 后、push 前退出时，恢复逻辑必须从 internal ref 读取并校验同一 object，再 non-force push 同一 commit；临时 clone、merge 工作树或进程内对象都不能成为唯一来源；
+- prepared 存在但 internal ref 缺失/指向其他 SHA，且远端也不包含 prepared commit 时，请求明确失败，不重新生成 merge；如果远端已包含 prepared，则按已成功 push 恢复并持久化同一 resolved；
 - 进程在 push 后、写入 resolved 前退出时，恢复逻辑 fetch 远端并检查是否已包含 `prepared_merge_commit`；已包含则持久化同一 `resolved_target_commit`，不得重复 merge 或改用更新后的 HEAD；
-- 进程在 prepared 后、push 前退出时，只能尝试把同一 prepared commit non-force push；若远端已经竞争性前进且不包含 prepared commit，则请求明确失败，不重新生成指向新 HEAD 的 merge；
 - `resolved_target_commit` 已存在时，恢复逻辑只校验该 commit 已发布在远端场景测试分支历史中，然后创建或关联唯一 Run；即使场景分支后来又有新 commit，本请求 target 也不改变；
-- `sourceRef` 无法解析、merge 冲突、远端竞争或 push 失败时，请求以明确失败结束，不创建 Agent Run、不修改产品代码、不推进 target；
+- internal ref 已创建但 SQLite 尚无 prepared（进程恰在两步之间退出）时，不猜测或重做 merge：当前请求明确失败并清理该 ref；没有对应队列行的孤儿 ref 也在启动对账后清理；
+- internal ref 在 `queued`、`running`、`waiting_archive` 期间不得被普通 workspace cleanup、fetch/prune 或 GC 删除；只在请求进入 terminal 状态后幂等清理；清理失败记录脱敏运维错误但不得改变已经固定的 Run target；
+- `sourceRef` 无法解析、merge 冲突、远端竞争或 push 失败时，请求以明确失败结束，不创建 Agent Run、不修改产品代码、不推进 target，并清理 internal ref；
 - 人工 merge 请求不参与自动请求合批；远端写入继续禁止 force-push。
 
 ### 4.4 `v0.1.0` 旧队列行迁移
@@ -240,9 +253,9 @@ registered → cleanup-claimed → verified-cleaned
 `cleanup-claimed` 只是 Runner 声明，不能让 Run 通过；只有以下任一方式能产生 `verified-cleaned`：
 
 1. 受控清理 adapter 对该 ID 执行删除并独立查询确认不存在，返回 Harness 生成的核验 receipt；
-2. Runner 使用受控 UI/API/命令工具删除并把“删除后不存在”的脱敏截图或查询结果保存到当前 Run evidence，Reviewer 实际读取该证据后，通过专用确认工具判定足以证明清理。
+2. Runner 使用受控 UI/API/命令工具删除后，由 Harness 直接捕获删除后查询的真实响应/输出，或接收 Playwright MCP 直接生成的删除后截图；Reviewer 实际读取该证据后，通过专用确认工具判定足以证明清理。
 
-Markdown、自填字符串、任意 URL、没有被 Harness Evidence Store 管理的路径，或 Runner 单独调用“已清理”工具，都不能成为 `verified-cleaned`。
+Markdown、自填字符串、任意 URL、没有被 Harness Evidence Store 管理的路径，或 Runner 单独调用“已清理”工具，都不能成为 `verified-cleaned`。Agent 不能提交 evidence 正文、状态码、退出码或内容摘要来伪装工具结果。
 
 ### 5.2 Runner 和 Reviewer 工具
 
@@ -255,7 +268,15 @@ Runner 获得：
 
 Reviewer 获得 `verify_test_data_cleanup`：只能处理当前 Run 的 cleanup claim；对应 evidence 必须存在，并且 Reviewer 已通过受控 evidence reader 实际读取。Reviewer 可以确认或拒绝，不能执行删除、访问测试账号或提供任意证据路径。
 
-需要支持脱敏文本查询结果时，Evidence Store 增加受限的文本 evidence 保存/读取能力；文件名、类型、大小和路径继续受当前 Run 目录 allowlist 约束。`cleanup_test_data` 不再在没有真实 adapter 时假称统一删除。
+需要文本清理证据时，不提供接受 Agent 任意 `content` 的保存工具。Evidence Store 只能从以下受控执行结果直接生成记录：
+
+- 清理 adapter 的删除后查询响应；
+- 受控 API 查询工具的真实响应；
+- 受控、只读、与已登记测试数据 ID 绑定的查询命令实际输出。
+
+任意 `echo`/`printf`、自由文本命令或仅复述结论的输出不能成为合格清理证据。Runner 可以选择已登记数据 ID 和 allowlist 内的查询操作/参数，但不能提供响应正文。Harness 在工具/adapter 返回时捕获真实 payload，完成 Secret 脱敏后把可审核内容及其 metadata 写入 evidence；每条至少记录：来源工具/adapter ID、当前 Run ID、测试数据 ID、查询时间、HTTP 状态码或进程退出码、脱敏后内容摘要和 SHA-256。文件名、类型、大小、路径和响应脱敏继续受当前 Run Evidence Store allowlist 约束。Playwright MCP 直接产生的删除后截图仍可作为图像证据。
+
+`submit_test_data_cleanup_claim` 只能引用上述 Harness 生成的 evidence ID 或受控 Playwright 截图 ID；`cleanup_test_data` 不再在没有真实 adapter 时假称统一删除。
 
 ### 5.3 场景结束和 Run 结束
 
@@ -302,12 +323,46 @@ finish_scenario(scenario_id)
 - report/scenario/archive 状态和脱敏错误；
 - initialization、special blocked、interrupted 标记。
 
-支持按当前 commit 范围、场景 ID、Issue/bug key 和最近数量筛选；默认上限 20，硬上限 100。默认不返回完整工件、模型对话、Secret、测试账号或未脱敏工具参数。
+Main Planning 的 `query_run_history` 支持按当前 commit 范围、场景 ID、Issue/bug key 和最近数量筛选；默认上限 20，硬上限 100。
 
-- Main · 规划可以按需调用 `query_run_history`，用于影响判断和场景选择；
-- Main · 最终汇总不获得通用历史查询工具，只由 Harness 提供与本次 confirmed Bugs 的 Issue create/link 相关的有限历史 Issue/Run 摘要；
-- Runner 和 Reviewer 不获得历史查询工具；
-- SQLite 查询失败与“成功但无历史”必须区分，失败时 Main · 规划记录覆盖缺口，不能当作空历史。
+Main Finalization 不依赖尚未生成的 `confirmed_bugs` 预注入摘要，而获得独立的受限只读工具：
+
+```text
+query_issue_candidates({
+  title?: string,
+  keywords?: string[],
+  bug_key?: string,
+  limit?: number
+})
+```
+
+输入契约：
+
+- `title`、非空 `keywords`、`bug_key` 至少提供一个；全部 trim 后校验，不接受控制字符；
+- `title` 最长 200 字符；`bug_key` 最长 128 字符；`keywords` 为 1–8 个去重字符串，每项 2–64 字符；
+- `limit` 是 1–100 的整数，默认 20；
+- 匹配前统一 Unicode NFKC、转小写并折叠空白；bug key 精确匹配优先，其次是规范化标题精确/互相包含，再按关键词在 Issue title、StoredRunIssue title/bug key 中的命中数匹配；
+- 去重后稳定排序：exact bug key、exact title、关键词命中数降序、Issue `updatedAt` 降序、Issue number 降序；相关 Run 按 finishedAt 降序、run-id 降序。
+
+结构化返回固定为：
+
+```text
+{ status: "ok", candidates: [...] }
+{ status: "empty", candidates: [] }
+{ status: "unavailable", candidates: [], message: "脱敏原因" }
+```
+
+`ok` 只能用于非空结果；`empty` 只表示查询成功但无匹配；依赖失败必须是 `unavailable`。candidate 可以包含 Issue number/title/url/state、匹配原因/bug key，以及关联 Run 的 run-id/result/scenario IDs/target commit；不返回完整工件、模型对话、测试账号、Secret 或未脱敏工具参数。
+
+使用顺序和反循环边界：
+
+1. Main · 最终汇总先读取本次 `draft-report.md`、`review.md` 和其他允许工件，自行形成一个或多个 Bug 候选；
+2. 再按每个候选调用工具；一个 Main Finalization Session 最多调用 10 次；同一规范化查询只有首次结果为 `unavailable` 时可以重试一次，`ok`/`empty` 不得原样重复查询；
+3. 第二次 unavailable 或总预算耗尽后记录覆盖缺口并继续最终汇总，不能循环调用，也不能把 unavailable 当 empty；
+4. 工具只读，不能创建、修改、关闭或评论 Issue；最终 create/link 决定仍由 Main · 最终汇总写入 `report.md`，后续受控 Issue owner 执行；
+5. 不增加 Reviewer 结构化 Bug 输出、中间状态文件或新的长期事实源。
+
+Main · 规划只获得 `query_run_history`；Main · 最终汇总只获得 `query_issue_candidates`；Runner 和 Reviewer 两者都没有。SQLite/GitHub 查询失败与“成功但无候选”必须区分，失败时对应 Main 记录覆盖缺口，不能当作空结果。
 
 ## 8. 验收分层和命令语义
 
@@ -329,10 +384,11 @@ local 至少证明两类生产流程：
 初始化还必须分别覆盖：
 
 - **直接新增并验证**：执行上述完整六 Session 序列，候选综合产生可直接应用的新场景，新的 Runner Session 执行候选验证，之后 Reviewer 和 Main Finalization 均运行；
-- **需要场景 PR 时提前 blocked**：固定执行 Main Planning 静态勘察 → Runner 运行时侦察 → 新 Main Planning 候选综合 → Reviewer → Main Finalization，共五个 Session；由于候选 patch 必须人工审核，**不创建候选验证 Runner Session、不执行未审核场景**，但 Reviewer 仍审核已有侦察/patch 并写 `review.md`，Main Finalization 写 blocked `report.md`；与普通 Run 相同的五个 Markdown 工件必须齐全，另保留受限场景 patch 供归档创建 PR；
-- **最终修订未重跑**：在已完成候选验证的初始化用例中，Main · 最终汇总按 Reviewer 意见修订尚未发布 patch 后，因修订内容没有新的 Runner Session 重新执行，结果必须保持 blocked。
+- **需要场景 PR 时立即 blocked**：固定执行 Main Planning 静态勘察 → Runner 运行时侦察 → **新的** Main Planning 候选综合，共三个真实 Agent Session；策略判断候选 patch 需要人工审核后立即结束，不创建候选验证 Runner、Reviewer 或 Main Finalization Session，不执行未审核场景，也不等待人类；Harness 确定性生成特殊 blocked `report.md`，Archiver 随后创建场景 PR；
+- **特殊 Run 工件**：最终持久化工件严格只有 `scenario-changes.patch` 和 `report.md`；`plan.md`、`execution.md`、`draft-report.md`、`review.md` 对该特殊 Run 标记为不适用。三个 Session 在 running workspace 产生的临时交接文件可以用于当次流程，但 `RunWorkspace.finalize({ specialScenarioReview: true })` 必须按两文件 allowlist 选择性完成，不能把整个 running 目录原样 rename 后让额外 Markdown 残留；completed artifact list 必须精确等于 patch + report，`isSpecialScenarioReviewRun()` 的两文件识别契约保持；
+- **最终修订未重跑**：只适用于已经进入 Reviewer/Main Finalization 的直接新增验证路径；Main · 最终汇总按 Reviewer 意见修订尚未发布 patch 后，因修订内容没有新的 Runner Session 重新执行，结果必须保持 blocked。
 
-多个 Main Planning Session 和多个 Runner Session 不共享完整对话，每个 Session 只获得自己的内置角色指令和受控工具；上述每条路径创建的全部 Session 都必须 dispose。
+直接新增路径中的多个 Main Planning Session 和多个 Runner Session 不共享完整对话，每个 Session 只获得自己的内置角色指令和受控工具；所有实际创建的 Session 都必须 dispose。
 
 merge 冲突、归档失败重试、Indexer 暂时不可用、进程重启和队列恢复属于确定性本地验收：使用真实生产代码和本地 Git、HTTP、S3-compatible 服务完成，不要求在 live GitHub 或官网环境制造故障。
 
@@ -460,10 +516,11 @@ thinking level、环境说明、额外账号和外部 allowlist 可以使用非 
 |---|---|
 | 内置角色指令缺失/错误 | Session 不启动，Run 明确失败或 blocked；不退回 Pi Skills 或 ambient 资源 |
 | 普通 Run 指定任意 target | `400` 拒绝并提示固定分支入口 |
-| merge conflict/远端竞争 | 队列请求失败，不创建 Run、不推进、不自动改代码 |
-| 数据只有 Runner 清理声明、证据未受控/未读取、Reviewer 拒绝或 adapter 未确认 | Run blocked，列脱敏残留和核验状态 |
+| merge conflict/远端竞争 | 队列请求失败，不创建 Run、不推进、不自动改代码，清理本地 internal ref |
+| prepared 未发布且 internal ref 缺失/不匹配 | 请求失败，不重做 merge、不改变 target；若远端已包含 prepared 则按成功 push 恢复 |
+| 数据只有 Runner 清理声明、Agent 自填文本、证据未受控/未读取、Reviewer 拒绝或 adapter 未确认 | Run blocked，列脱敏残留和核验状态 |
 | Runner 没有场景 | 显示 `0/0`；是否 passed 仍执行既有零场景审核规则 |
-| 历史 Run 查询失败 | 标记 unavailable，不伪装空历史 |
+| Run 历史或 Issue 候选查询失败 | 标记 unavailable，不伪装空历史/空候选 |
 | local 通过、live 未配置 | local=passed、live=blocked、release=blocked，release 命令非零 |
 | Provider/MCP/OSS/GitHub 任一 live 检查失败 | live failed/blocked，不发布 |
 | 清理失败 | 保留证据和残留清单，不把 Run 或 release 写成 passed |
@@ -472,7 +529,8 @@ thinking level、环境说明、额外账号和外部 allowlist 可以使用非 
 
 - SQLite schema 变更使用版本化、可重复执行 migration；现有队列、Run 和归档数据必须前向升级；
 - API 删除或拒绝 `targetCommit` 时更新网站和测试；如保留过渡字段，只能明确报错，不能继续执行旧的不安全语义；
-- 已有 completed/、报告、Issues、场景 PR、last completed target 和 `v0.1.0` tag 不修改；
+- 已有 completed/、报告、Issues、场景 PR、last completed target 和 `v0.1.0` tag 不修改；特殊场景审核 Run 继续只以 patch + report 识别；
+- `refs/luowang/merge-requests/*` 只存在于罗网本地持久 Git 仓库，不迁移为目标仓库分支、不写入远端；升级启动时只对账和清理没有对应请求的孤儿 ref；
 - 内置角色指令资源属于罗网发布物，不是 Pi Skills，不写目标仓库；
 - 本地 acceptance 结果命名变化要提供 README 迁移说明；
 - 原生 `better-sqlite3` 在没有匹配预编译包时需要 `python3`、`make`、`g++`，README 优先推荐 Docker 并说明本地依赖。
@@ -491,14 +549,14 @@ thinking level、环境说明、额外账号和外部 allowlist 可以使用非 
 1. **AC-CLOSURE-INSTR-01**：Main Planning、Runner、Reviewer、Main Finalization 四类 Session 只装载对应的罗网 Built-in Role Instructions；ambient Skills、Prompt、Context 和用户/宿主机/目标仓库资源不会进入 Session；配置仍只有 Main、Runner、Reviewer 三组；
 2. **AC-CLOSURE-INSTR-02**：固定角色指令只进入 system prompt 一次，user message 只包含当前任务和角色裁剪的动态上下文；角色工具权限与上游安全边界不变；
 3. **AC-CLOSURE-INSTR-03**：Role Instructions 内容包含证据优先级、代码不得反推期望、独立审核、清理、偏差和反模式，但没有引入 suite/catalog/checkpoint/新结果状态/发布 gate；
-4. **AC-CLOSURE-MERGE-01**：人工 branch/tag/SHA 请求进入 FIFO，按顺序生成 `merge --no-ff` commit、持久化 `prepared_merge_commit`、non-force push、持久化 `resolved_target_commit`，并只测试该已发布的不可变 commit；已包含来源不会重复 merge；
+4. **AC-CLOSURE-MERGE-01**：人工 branch/tag/SHA 请求进入 FIFO，按顺序生成 `merge --no-ff` commit、创建本地 `refs/luowang/merge-requests/<queue-id>`、持久化 `prepared_merge_commit`、non-force push、持久化 `resolved_target_commit`，并只测试该已发布的不可变 commit；internal ref 从不推送，已包含来源不会重复 merge；
 5. **AC-CLOSURE-TARGET-01**：普通人工/API Run 不能直接指定任意 target；自动、人工和初始化 Run 的 target 都是远端场景测试分支历史上的不可变 commit；
-6. **AC-CLOSURE-MERGE-02**：`prepared_merge_commit`、`resolved_target_commit` 和唯一 Run 关联使 merge 冲突、远端竞争、push 前后重启恢复不修改产品代码、不重复 merge、不改变本次 target、不创建错误 Run、不推进；
-7. **AC-CLOSURE-DATA-01**：Runner 可以登记并实际删除测试数据，但只有受控 adapter 独立核验，或 Reviewer 读取 Harness 管理的删除后证据并确认，才能成为 `verified-cleaned`；无 adapter 时全部经 Reviewer 确认的生产 Run 可以完成；
-8. **AC-CLOSURE-DATA-02**：纯 Runner 声明、未受控/未读取证据、Reviewer 拒绝、pending 或兜底核验失败都使 Run blocked，报告显示脱敏残留和核验状态且 Secret 不泄漏；
+6. **AC-CLOSURE-MERGE-02**：internal ref 保证 prepared object 经重启、临时工作区清理和 Git GC 后仍可达；结合 `prepared_merge_commit`、`resolved_target_commit` 和唯一 Run 关联，使 merge 冲突、远端竞争、push 前后重启恢复不重复 merge、不改变本次 target、不创建错误 Run；请求 terminal 后幂等清理 internal ref；
+7. **AC-CLOSURE-DATA-01**：Runner 可以登记并实际删除测试数据，但只有受控 adapter 独立核验，或 Reviewer 读取 Harness 直接捕获的 adapter/API/只读查询输出或 Playwright 截图并确认，才能成为 `verified-cleaned`；无 adapter 时全部经 Reviewer 确认的生产 Run 可以完成；
+8. **AC-CLOSURE-DATA-02**：Agent 自填 evidence 正文/状态/摘要、纯 Runner 声明、未受控/未读取证据、Reviewer 拒绝、pending 或兜底核验失败都使 Run blocked；合格文本证据记录来源、Run/data ID、时间、状态码/退出码和脱敏摘要/hash，且 Secret 不泄漏；
 9. **AC-CLOSURE-ACTIVE-01**：真实 Runner Run 在网站依次显示总数、当前场景、已完成数和脱敏活动；零场景、Agent 异常和初始化侦察显示正确；
-10. **AC-CLOSURE-HISTORY-01**：Main Planning 可以按需查询有限的正常、特殊 blocked、interrupted、场景 PR 和归档失败历史 Run，并区分空历史与查询失败；Main Finalization 只获得本次 confirmed Bugs 所需的有限历史 Issue/Run 摘要；Runner 和 Reviewer 不获得历史查询工具；
-11. **AC-CLOSURE-PI-01**：本地生产路径集成用真实 `createAgentSession()` 分别完成普通 Main Planning → Runner → Reviewer → Main Finalization 四 Session Run，以及完整陌生项目初始化流程；覆盖 Pi 模型消息、内置角色指令、custom tool 循环、多个同角色 Session 的对话隔离、每个已创建 Session 的 dispose 和五个 Markdown 工件；初始化同时证明：直接新增并验证走完整六 Session；场景 PR 路径跳过候选验证 Runner、仍走 Reviewer/Main Finalization 并写齐五工件后提前 blocked；最终汇总修订未发布 patch 但未重跑时仍 blocked；FixtureSessionFactory 不能作为本 AC 证据；
+10. **AC-CLOSURE-HISTORY-01**：Main Planning 可通过 `query_run_history` 查询有限历史 Run；Main Finalization 先读本次草稿形成 Bug 候选，再通过只读 `query_issue_candidates` 的受限 schema、稳定匹配/排序和 20/100 结果限制查询 Issue/相关 Run 并决定 create/link；返回严格区分 ok/empty/unavailable，同一 unavailable 最多重试一次且 Session 总调用不超过 10；Runner 和 Reviewer 无历史查询工具；
+11. **AC-CLOSURE-PI-01**：本地生产路径集成用真实 `createAgentSession()` 分别完成普通四 Session Run 和陌生项目初始化；覆盖 Pi 模型消息、内置角色指令、custom tool 循环、同角色 Session 对话隔离及每个 Session dispose；直接新增并验证走完整六 Session 和五个 Markdown 工件；场景 PR 路径只创建 Main Planning → Runner → 新 Main Planning 三个 Session，策略判断后立即 blocked，不创建候选验证 Runner/Reviewer/Main Finalization，special finalize 排除临时普通工件，最终只持久化 `scenario-changes.patch`、Harness 生成的 `report.md`，并被 `isSpecialScenarioReviewRun()` 识别；最终汇总修订未发布 patch 但未重跑时仍 blocked；FixtureSessionFactory 不能作为本 AC 证据；
 12. **AC-CLOSURE-ACCEPT-01**：local、live、release 三种验收状态和命令分离；live blocked 时 release 非零，README 不再称其为全量完成；
 13. **AC-CLOSURE-ACCEPT-02**：每个受影响 AC 有独立、可追溯证据，不能依靠一个粗粒度 proof 批量标记通过；
 14. **AC-CLOSURE-LIVE-01**：真实 GitHub + Provider + Pi + Playwright MCP + 私有 OSS + 非生产应用完成至少一个含 UI 截图和数据创建/清理的 passed Run；
