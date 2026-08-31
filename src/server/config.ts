@@ -4,7 +4,7 @@ import { join, resolve } from 'node:path';
 import type { LevelWithSilent } from 'pino';
 
 const DEFAULT_DATA_DIR = '/data';
-const DEFAULT_VERSION = '0.1.0';
+export const DEFAULT_VERSION = '0.1.0';
 const LOG_LEVELS = new Set<LevelWithSilent>([
   'fatal',
   'error',

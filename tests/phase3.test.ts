@@ -56,6 +56,109 @@ describe('Phase 3 agent run', () => {
     assert.deepEqual(context.sessions.created, ['main-a', 'runner', 'reviewer', 'main-b']);
     assert.deepEqual(context.sessions.disposed, ['main-a', 'runner', 'reviewer', 'main-b']);
     assert.equal(new Set(context.sessions.sessionObjects).size, 4);
+    assert.deepEqual(
+      context.sessions.inputs.map((input) => input.sessionKind),
+      ['main-planning', 'runner-execution', 'reviewer-audit', 'main-finalization'],
+    );
+    assert.deepEqual(
+      context.sessions.inputs.map((input) => input.roleInstructionVersions.map((item) => item.id)),
+      [
+        ['common', 'main-planning'],
+        ['common', 'runner-execution'],
+        ['common', 'reviewer-audit'],
+        ['common', 'main-finalization'],
+      ],
+    );
+    assert.deepEqual(
+      context.sessions.messages,
+      context.sessions.inputs.map((input) => input.userMessage),
+    );
+    assert.deepEqual(context.sessions.inputs[0]?.config, context.sessions.inputs[3]?.config);
+    for (const input of context.sessions.inputs) {
+      assert.match(input.systemPrompt, /luowang-role-id: common/);
+      assert.doesNotMatch(input.userMessage, /luowang-role-id:/);
+      assert.doesNotMatch(input.systemPrompt, new RegExp(fixture.initialHead));
+      assert.match(input.userMessage, new RegExp(fixture.initialHead));
+      assert.equal(
+        input.customTools.some((tool) => tool.name === 'read'),
+        false,
+      );
+      for (const version of input.roleInstructionVersions) {
+        assert.match(version.sha256, /^[a-f0-9]{64}$/);
+        assert.equal(version.applicationVersion, '0.1.0');
+        assert.equal(version.formatVersion, '1');
+      }
+    }
+    assert.match(context.sessions.inputs[0]?.systemPrompt ?? '', /luowang-role-id: main-planning/);
+    assert.doesNotMatch(context.sessions.inputs[0]?.systemPrompt ?? '', /runner-execution/);
+    assert.match(
+      context.sessions.inputs[1]?.systemPrompt ?? '',
+      /luowang-role-id: runner-execution/,
+    );
+    assert.match(context.sessions.inputs[2]?.systemPrompt ?? '', /luowang-role-id: reviewer-audit/);
+    assert.match(
+      context.sessions.inputs[3]?.systemPrompt ?? '',
+      /luowang-role-id: main-finalization/,
+    );
+    const mainToolContext = commandText(
+      await invokeTool(context.sessions.inputs[0] as AgentSessionInput, 'get_run_context', {}),
+    );
+    const runnerToolContext = commandText(
+      await invokeTool(context.sessions.inputs[1] as AgentSessionInput, 'get_run_context', {}),
+    );
+    assert.match(mainToolContext, /historyIssuesAvailable/);
+    assert.match(mainToolContext, /indexedReports/);
+    assert.doesNotMatch(runnerToolContext, /historyIssues|indexedReports|indexedScenarios/);
+  });
+
+  it('isolates repeated Main and Runner Sessions during initialization', async () => {
+    const fixture = await createGitFixture();
+    const context = await createRunContext(fixture, ['passed', 'passed']);
+
+    const result = await context.orchestrator.run({
+      request: '初始化陌生项目的长期场景',
+      trigger: 'manual',
+      initialization: true,
+    });
+
+    assert.equal(result.status, 'completed', JSON.stringify(result));
+    assert.deepEqual(
+      context.sessions.created,
+      ['main-a', 'runner', 'main-a', 'runner', 'reviewer', 'main-b'],
+      JSON.stringify(result),
+    );
+    assert.equal(new Set(context.sessions.sessionObjects).size, 6);
+    assert.deepEqual(
+      context.sessions.inputs.map((input) => input.sessionKind),
+      [
+        'main-planning',
+        'runner-execution',
+        'main-planning',
+        'runner-execution',
+        'reviewer-audit',
+        'main-finalization',
+      ],
+    );
+    for (const index of [0, 2, 5]) {
+      assert.equal(
+        context.sessions.inputs[index]?.roleInstructionVersions.some(
+          (item) => item.id === 'scenario-initialization',
+        ),
+        true,
+      );
+      assert.deepEqual(context.sessions.inputs[index]?.config, context.sessions.inputs[0]?.config);
+    }
+    for (const index of [1, 3, 4]) {
+      assert.equal(
+        context.sessions.inputs[index]?.roleInstructionVersions.some(
+          (item) => item.id === 'scenario-initialization',
+        ),
+        false,
+      );
+    }
+    assert.deepEqual(context.sessions.inputs[1]?.config, context.sessions.inputs[3]?.config);
+    assert.notEqual(context.sessions.messages[0], context.sessions.messages[2]);
+    assert.notEqual(context.sessions.messages[1], context.sessions.messages[3]);
   });
 
   it('rejects a second start while the first Run is still being prepared', async () => {
@@ -79,7 +182,7 @@ describe('Phase 3 agent run', () => {
     assert.equal(completed?.status, 'completed', JSON.stringify(completed));
   });
 
-  it('passes read-only historical Issue context to Main A', async () => {
+  it('passes read-only historical Issue context to Main planning', async () => {
     const fixture = await createGitFixture();
     const context = await createRunContext(fixture, ['passed']);
     context.repository.listIssues = async () => [
@@ -99,8 +202,17 @@ describe('Phase 3 agent run', () => {
     });
 
     assert.equal(context.sessions.inputs[0]?.role, 'main-a');
-    assert.match(context.sessions.inputs[0]?.systemPrompt ?? '', /历史登录问题/);
-    assert.match(context.sessions.inputs[0]?.systemPrompt ?? '', /historyIssuesAvailable/);
+    assert.doesNotMatch(context.sessions.inputs[0]?.systemPrompt ?? '', /历史登录问题/);
+    assert.match(context.sessions.inputs[0]?.userMessage ?? '', /历史登录问题/);
+    assert.match(context.sessions.inputs[0]?.userMessage ?? '', /historyIssuesAvailable/);
+    for (const input of context.sessions.inputs.slice(1)) {
+      assert.doesNotMatch(input.userMessage, /历史登录问题/);
+      assert.doesNotMatch(input.userMessage, /historyIssues/);
+    }
+    const runnerToolContext = commandText(
+      await invokeTool(context.sessions.inputs[1] as AgentSessionInput, 'get_run_context', {}),
+    );
+    assert.doesNotMatch(runnerToolContext, /历史登录问题|historyIssues|indexedReports/);
   });
 
   it('preserves failed and blocked result precedence from the independent report', async () => {
@@ -245,6 +357,7 @@ async function createRunContext(
   configuration.updateRepository({
     repository: fixture.remoteDir,
     scenarioBranch: 'scenario-testing',
+    scenarioMode: 'autonomous',
   });
   configuration.updateHarness({
     agents: {
@@ -274,6 +387,7 @@ class RecordingSessionFactory implements AgentSessionFactory {
   readonly created: string[] = [];
   readonly disposed: string[] = [];
   readonly inputs: AgentSessionInput[] = [];
+  readonly messages: string[] = [];
   readonly sessionObjects: object[] = [];
   private outcomeIndex = 0;
 
@@ -286,11 +400,19 @@ class RecordingSessionFactory implements AgentSessionFactory {
     this.created.push(input.role);
     this.inputs.push(input);
     const session = {
-      prompt: async () => {
-        if (input.role === 'main-a') {
+      prompt: async (message: string) => {
+        this.messages.push(message);
+        if (input.role === 'main-a' && hasTool(input, 'write_plan')) {
           await invokeTool(input, 'get_run_context', {});
           await invokeTool(input, 'write_plan', {
             content: '# Plan\n\n无需场景测试：本次请求只验证文档事实，不影响产品行为。\n',
+          });
+        } else if (input.role === 'main-a') {
+          await invokeTool(input, 'read_run_artifact', { name: 'plan.md' });
+          await invokeTool(input, 'read_run_artifact', { name: 'execution.md' });
+          await invokeTool(input, 'read_run_artifact', { name: 'draft-report.md' });
+          await invokeTool(input, 'write_scenario_patch', {
+            content: initializationScenarioPatch(),
           });
         } else if (input.role === 'runner') {
           await invokeTool(input, 'read_run_artifact', { name: 'plan.md' });
@@ -314,7 +436,7 @@ class RecordingSessionFactory implements AgentSessionFactory {
             content: '# Review\n\n独立确认无需场景测试：计划中的影响判断有依据。\n',
           });
         } else {
-          const context = parsePromptContext(input.systemPrompt);
+          const context = parsePromptContext(input.userMessage);
           for (const name of ['plan.md', 'execution.md', 'draft-report.md', 'review.md']) {
             await invokeTool(input, 'read_run_artifact', { name });
           }
@@ -344,6 +466,10 @@ class RecordingSessionFactory implements AgentSessionFactory {
   }
 }
 
+function hasTool(input: AgentSessionInput, name: string): boolean {
+  return input.customTools.some((tool) => tool.name === name);
+}
+
 async function invokeTool(
   input: AgentSessionInput,
   name: string,
@@ -360,6 +486,52 @@ async function invokeTool(
   ) as Promise<AgentToolResult<Record<string, unknown>>>;
 }
 
+function initializationScenarioPatch(): string {
+  const content = `---
+id: INIT-HOME-001
+name: 首页可访问
+description: 验证项目首页可访问
+status: approved
+tags:
+  - core
+---
+
+## 目的
+
+验证首页基础可用性。
+
+## 前置条件
+
+非生产环境可访问。
+
+## 步骤
+
+1. 打开首页。
+
+## 期望
+
+首页成功显示。
+
+## 需要记录
+
+状态码和页面标题。
+`;
+  const additions = content
+    .split('\n')
+    .slice(0, -1)
+    .map((line) => `+${line}`)
+    .join('\n');
+  const lines = content.trimEnd().split('\n').length;
+  return `diff --git a/docs/scenario-testing/scenarios/INIT-HOME-001.md b/docs/scenario-testing/scenarios/INIT-HOME-001.md
+new file mode 100644
+index 0000000..1111111
+--- /dev/null
++++ b/docs/scenario-testing/scenarios/INIT-HOME-001.md
+@@ -0,0 +1,${lines} @@
+${additions}
+`;
+}
+
 function commandText(result: AgentToolResult<Record<string, unknown>>): string {
   return result.content.map((item) => ('text' in item ? item.text : '')).join('');
 }
@@ -371,16 +543,14 @@ function parsePromptContext(prompt: string): {
   targetCommit: string;
   includedCommits: string[];
 } {
-  const match = prompt.match(
-    /固定 Run 上下文：\s*([\s\S]*?)\s*\n\s*必须|固定 Run 上下文：\s*([\s\S]*?)\s*\n\s*请|固定 Run 上下文：\s*([\s\S]*?)\s*\n\s*先/,
-  );
-  const json = match?.[1] ?? match?.[2] ?? match?.[3];
+  const match = prompt.match(/动态 Run 上下文：\s*([\s\S]+)$/);
+  const json = match?.[1];
   assert.ok(json, 'missing prompt context');
   return JSON.parse(json) as ReturnType<typeof parsePromptContext>;
 }
 
 function extractTarget(input: AgentSessionInput): string {
-  return parsePromptContext(input.systemPrompt).targetCommit;
+  return parsePromptContext(input.userMessage).targetCommit;
 }
 
 function reportFor(

@@ -45,6 +45,11 @@ import {
 } from './evidence.js';
 import { createProviderAdapter, type ProviderAdapter } from './provider.js';
 import { createTestDataManager, createTestDataTools, type TestDataManager } from './test-data.js';
+import {
+  createRoleInstructionLoader,
+  RoleInstructionError,
+  type RoleInstructionLoader,
+} from './role-instructions.js';
 import type { RunStore } from './store.js';
 import type { RunRecoveryStore } from '../automation/recovery.js';
 import { createRunId, RunWorkspace, RunWorkspaceError, RunWorkspaceStore } from './workspace.js';
@@ -57,6 +62,7 @@ import type {
   AgentRole,
   AgentSession,
   AgentSessionFactory,
+  AgentSessionKind,
   RunArtifactName,
   RunContext,
   RunInput,
@@ -89,6 +95,7 @@ export interface RunOrchestratorOptions {
   now?: () => Date;
   id?: () => string;
   logger?: Logger;
+  roleInstructions?: RoleInstructionLoader;
 }
 
 export interface RunOrchestrator {
@@ -131,6 +138,7 @@ export function createRunOrchestrator(options: RunOrchestratorOptions): RunOrche
     { ...options, provider, browser, oss, testData },
     sessions,
     commandRunner,
+    options.roleInstructions ?? createRoleInstructionLoader(),
   );
 }
 
@@ -152,6 +160,7 @@ class DefaultRunOrchestrator implements RunOrchestrator {
     private readonly options: RunOrchestratorOptions,
     private readonly sessions: AgentSessionFactory,
     private readonly commandRunner: ControlledCommandRunner,
+    private readonly roleInstructions: RoleInstructionLoader,
   ) {
     this.workspaceStore = new RunWorkspaceStore(options.reportDir);
     this.now = options.now ?? (() => new Date());
@@ -503,9 +512,9 @@ class DefaultRunOrchestrator implements RunOrchestrator {
     repository: GitRepository,
     context: RunContext,
   ): Promise<void> {
-    this.setPhase(state, 'main-a', 'Main A 正在分析变更并选择场景');
+    this.setPhase(state, 'main-a', 'Main · 规划正在分析变更并选择场景');
     const tools = [
-      ...createTargetContextTools(this.targetToolOptions(repository, context)),
+      ...createTargetContextTools(this.targetToolOptions(repository, context, 'main-planning')),
       createArtifactWriterTool(
         'write_plan',
         '写入测试计划',
@@ -524,11 +533,14 @@ class DefaultRunOrchestrator implements RunOrchestrator {
           ]),
     ];
     await this.invoke(
+      'main-planning',
       'main-a',
       this.options.configuration.getHarness().agents.main,
       context.repositoryDirectory,
       tools,
-      mainAPrompt(context),
+      mainAUserMessage(context),
+      mainAOutputContract(context),
+      context.initialization,
     );
     await assertArtifact(workspace, 'plan.md');
   }
@@ -564,9 +576,9 @@ class DefaultRunOrchestrator implements RunOrchestrator {
     repository: GitRepository,
     context: RunContext,
   ): Promise<void> {
-    this.setPhase(state, 'main-a', 'Main A 正在整理初始化候选场景');
+    this.setPhase(state, 'main-a', 'Main · 规划正在整理初始化候选场景');
     const tools = [
-      ...createTargetContextTools(this.targetToolOptions(repository, context)),
+      ...createTargetContextTools(this.targetToolOptions(repository, context, 'main-planning')),
       createReadArtifactTool((name) =>
         readAllowedArtifact(workspace, name, ['plan.md', 'execution.md', 'draft-report.md']),
       ),
@@ -578,11 +590,14 @@ class DefaultRunOrchestrator implements RunOrchestrator {
       ),
     ];
     await this.invoke(
+      'main-planning',
       'main-a',
       this.options.configuration.getHarness().agents.main,
       context.repositoryDirectory,
       tools,
-      initializationCandidatePrompt(context),
+      initializationCandidateUserMessage(context),
+      initializationCandidateOutputContract(),
+      true,
     );
   }
 
@@ -710,7 +725,7 @@ class DefaultRunOrchestrator implements RunOrchestrator {
   ): Promise<void> {
     this.setPhase(state, 'runner', 'Runner 正在执行场景并收集证据');
     const tools = [
-      ...createTargetContextTools(this.targetToolOptions(repository, context)),
+      ...createTargetContextTools(this.targetToolOptions(repository, context, 'runner')),
       ...createWorkingScenarioTools({
         list: () => repository.listWorkingScenarioFiles(),
         read: (path) => repository.readWorkingScenarioFile(path),
@@ -744,11 +759,14 @@ class DefaultRunOrchestrator implements RunOrchestrator {
       ),
     ];
     await this.invoke(
+      'runner-execution',
       'runner',
       this.options.configuration.getHarness().agents.runner,
       context.repositoryDirectory,
       tools,
-      runnerPrompt(context, purpose),
+      runnerUserMessage(context, purpose),
+      runnerOutputContract(),
+      false,
       context.browserRequired && this.options.browser?.isEnabled()
         ? [this.options.browser.extension(workspace.evidenceDirectory)]
         : [],
@@ -966,11 +984,14 @@ class DefaultRunOrchestrator implements RunOrchestrator {
       ),
     ];
     await this.invoke(
+      'reviewer-audit',
       'reviewer',
       this.options.configuration.getHarness().agents.reviewer,
       context.runDirectory,
       tools,
-      reviewerPrompt(context),
+      reviewerUserMessage(context),
+      reviewerOutputContract(),
+      false,
     );
     await assertArtifact(workspace, 'review.md');
   }
@@ -997,7 +1018,7 @@ class DefaultRunOrchestrator implements RunOrchestrator {
     workspace: RunWorkspace,
     context: RunContext,
   ): Promise<void> {
-    this.setPhase(state, 'main-b', 'Main B 正在汇总最终报告');
+    this.setPhase(state, 'main-b', 'Main · 最终汇总正在汇总最终报告');
     const tools = [
       createReadArtifactTool((name) =>
         readAllowedArtifact(workspace, name, [
@@ -1026,35 +1047,56 @@ class DefaultRunOrchestrator implements RunOrchestrator {
         : []),
     ];
     await this.invoke(
+      'main-finalization',
       'main-b',
       this.options.configuration.getHarness().agents.main,
       context.runDirectory,
       tools,
-      mainBPrompt(context),
+      mainBUserMessage(context),
+      mainBOutputContract(),
+      context.initialization,
     );
     await assertArtifact(workspace, 'report.md');
   }
 
   private async invoke(
+    sessionKind: AgentSessionKind,
     role: AgentRole,
     config: AgentConfig,
     cwd: string,
     tools: ReturnType<typeof createTargetContextTools>,
-    prompt: string,
+    userMessage: string,
+    outputContract: string,
+    initialization: boolean,
     extensionFactories: InlineExtension[] = [],
   ): Promise<void> {
     let session: AgentSession | undefined;
     try {
-      session = await this.sessions.create(
-        buildSessionInput(role, config, cwd, tools, prompt, extensionFactories),
+      const instructions = await this.roleInstructions.load(sessionKind, initialization);
+      const systemPrompt = buildSystemPrompt(sessionKind, instructions.content, outputContract);
+      const input = buildSessionInput(
+        role,
+        sessionKind,
+        config,
+        cwd,
+        tools,
+        systemPrompt,
+        userMessage,
+        instructions.versions,
+        extensionFactories,
       );
-      await session.prompt(prompt);
+      session = await this.sessions.create(input);
+      await session.prompt(input.userMessage);
     } finally {
       if (session) await session.dispose();
     }
   }
 
-  private targetToolOptions(repository: GitRepository, context: RunContext) {
+  private targetToolOptions(
+    repository: GitRepository,
+    context: RunContext,
+    audience: 'main-planning' | 'runner',
+  ) {
     return {
       readFile: async (path: string) => {
         assertReadableTargetPath(path);
@@ -1066,35 +1108,27 @@ class DefaultRunOrchestrator implements RunOrchestrator {
           .map((entry) => entry.path),
       search: async (query: string) => this.searchTarget(repository, context.targetCommit, query),
       context: () =>
-        JSON.stringify({
-          runId: context.runId,
-          request: context.request,
-          trigger: context.trigger,
-          baseCommit: context.baseCommit,
-          targetCommit: context.targetCommit,
-          includedCommits: context.includedCommits,
-          scenarioMode: context.scenarioMode,
-          initialization: context.initialization,
-          scenarioChanges: context.scenarioChanges ?? null,
-          repositoryDirectory: context.repositoryDirectory,
-          runDirectory: context.runDirectory,
-          historyIssuesAvailable: context.historyIssuesAvailable,
-          historyIssues: context.historyIssues,
-          indexedScenarios:
-            this.options.indexer?.listScenarios().map((scenario) => ({
-              id: scenario.id,
-              name: scenario.name,
-              status: scenario.status,
-              tags: scenario.tags,
-            })) ?? [],
-          indexedReports:
-            this.options.indexer?.listReports().map((report) => ({
-              runId: report.runId,
-              result: report.result,
-              targetCommit: report.targetCommit,
-              scenarioResults: report.scenarioResults,
-            })) ?? [],
-        }),
+        JSON.stringify(
+          audience === 'runner'
+            ? runnerContext(context)
+            : {
+                ...mainPlanningContext(context),
+                indexedScenarios:
+                  this.options.indexer?.listScenarios().map((scenario) => ({
+                    id: scenario.id,
+                    name: scenario.name,
+                    status: scenario.status,
+                    tags: scenario.tags,
+                  })) ?? [],
+                indexedReports:
+                  this.options.indexer?.listReports().map((report) => ({
+                    runId: report.runId,
+                    result: report.result,
+                    targetCommit: report.targetCommit,
+                    scenarioResults: report.scenarioResults,
+                  })) ?? [],
+              },
+        ),
     };
   }
 
@@ -1587,89 +1621,172 @@ function safeMessage(error: unknown): string {
   if (
     error instanceof RunOrchestratorError ||
     error instanceof RunWorkspaceError ||
-    error instanceof ScenarioPatchError
+    error instanceof ScenarioPatchError ||
+    error instanceof RoleInstructionError
   )
     return error.message;
   return 'Run 执行失败，未生成可信最终结论';
 }
 
-function mainAPrompt(context: RunContext): string {
-  const initialization = context.initialization
-    ? '这是陌生项目初始化：先完成 Preflight 和静态勘察，列出主要用户/入口/核心能力、证据依据、运行时侦察计划和覆盖缺口；不要创建 suite、catalog、journey 或长期能力图。'
-    : '这是日常场景测试：理解累计变化、需求、代码和历史结果，选择已有场景或维护必要的长期场景。';
+const SESSION_IDENTITIES: Record<AgentSessionKind, string> = {
+  'main-planning': '你是 LuoWang 的 Main · 规划。你负责理解变化、维护或选择长期场景并形成计划。',
+  'runner-execution': '你是 LuoWang 的 Runner。你负责在固定 target 上执行计划并收集证据。',
+  'reviewer-audit': '你是 LuoWang 的 Reviewer。你负责在独立上下文中审核本次执行和证据。',
+  'main-finalization': '你是 LuoWang 的 Main · 最终汇总。你负责根据落盘工件和审核形成最终报告。',
+};
+
+function buildSystemPrompt(
+  kind: AgentSessionKind,
+  roleInstructions: string,
+  outputContract: string,
+): string {
+  return `${SESSION_IDENTITIES[kind]}
+
+## Built-in Role Instructions
+
+${roleInstructions}
+
+## 本 Session 输出契约
+
+${outputContract}`;
+}
+
+function mainAUserMessage(context: RunContext): string {
+  const task = context.initialization
+    ? '完成陌生项目初始化的 Preflight 与静态勘察，列出主要用户、入口、核心能力、证据依据、低风险运行时侦察计划和覆盖缺口。'
+    : '理解累计变化、需求、代码和历史结果，选择已有场景或维护必要的长期场景。';
+  return `当前任务：${task}
+
+动态 Run 上下文：
+${JSON.stringify(mainPlanningContext(context), null, 2)}`;
+}
+
+function mainAOutputContract(context: RunContext): string {
   const patchInstruction = context.initialization
-    ? '本阶段只写 plan.md，不写 scenario-changes.patch；运行时侦察完成后会由另一个短 Main session 生成候选 patch。'
-    : '如确实需要维护长期场景，只能通过 write_scenario_patch 写标准 git unified patch，路径必须全部位于 docs/scenario-testing/scenarios/**；不能直接写目标仓库。';
-  return `你是 LuoWang Phase 7 的 Main A。你负责理解变化、维护/选择长期场景并形成计划，不能执行测试，也不能修改目标仓库。
-
-${initialization}
-
-固定 Run 上下文：
-${JSON.stringify(context, null, 2)}
-
-必须先调用 get_run_context、list_target_files，并按需调用 read_target_file/search_target_files 读取固定 target。上下文中的 historyIssuesAvailable 为 false 时，不能把 Issue 历史当作空列表，需在覆盖缺口中说明。只能通过 write_plan 写入完整 plan.md，并且必须在结束前调用它。plan.md 要说明请求、base/target/included commits、影响判断、证据优先级、选择/候选场景及顺序、预期证据和覆盖缺口。
+    ? '本阶段只写 plan.md，不写 scenario-changes.patch；运行时侦察后由新的 Main · 规划 Session 生成候选 patch。'
+    : '如需维护长期场景，只能通过 write_scenario_patch 写场景目录内的标准 git unified patch。';
+  return `必须先调用 get_run_context、list_target_files，并按需调用 read_target_file/search_target_files。必须在结束前通过 write_plan 写入完整 plan.md；historyIssuesAvailable=false 时在覆盖缺口中说明。
 ${patchInstruction}
-如果本批产品行为不需要场景测试，必须明确写出“无需场景测试”的理由；如果场景缺失、影响不明或证据不足，必须把覆盖缺口写清楚，不能把零场景当作 passed。场景状态只能使用 draft、approved、deprecated；不要物理删除场景。`;
+如果确有依据判断无需测试，明确写出“无需场景测试”的理由；否则保留场景缺失、影响不明或证据不足的覆盖缺口。`;
 }
 
-function initializationCandidatePrompt(context: RunContext): string {
-  return `你是 LuoWang Phase 7 初始化流程中的候选综合 Main。你正在一个新的短 session 中工作，不能执行测试，也不能写目标仓库。
+function initializationCandidateUserMessage(context: RunContext): string {
+  return `当前任务：在新的 Main · 规划 Session 中，综合静态证据和低风险运行时侦察，形成少量高价值候选场景。
 
-固定 Run 上下文：
-${JSON.stringify(context, null, 2)}
-
-先读取 plan.md、execution.md 和 draft-report.md，结合静态证据与低风险运行时侦察，形成临时能力图（只写在本次 plan/report 正文，不创建长期能力图文件）。把业务结果相近的步骤合并为少量高价值场景，覆盖主要用户、入口、核心成功路径、权限/校验/持久化风险和明确的外部依赖；不要按页面、按钮或 API operation 机械铺量。每个 approved 场景都必须有可追溯依据，不确定的期望保持 draft，并在计划中记录冲突和缺口。
-
-候选长期资产只能通过 write_scenario_patch 写标准 git unified patch，且 patch 只能新增/修改/目录内 rename docs/scenario-testing/scenarios/** 的 Markdown 文件；不得创建 suite、catalog、journey、能力图，不得修改产品源码、需求、PROJECT 或报告，不得物理删除场景。没有可信候选时不要伪造 patch。`;
+动态 Run 上下文：
+${JSON.stringify(mainPlanningContext(context), null, 2)}`;
 }
 
-function runnerPrompt(
+function initializationCandidateOutputContract(): string {
+  return `先读取 plan.md、execution.md 和 draft-report.md。临时能力图只写在本次正文中；把业务结果相近的步骤合并，覆盖主要用户、入口、核心成功路径、权限/校验/持久化风险和明确外部依赖。每个 approved 场景必须有可追溯依据，不确定期望保持 draft。
+候选资产只能通过 write_scenario_patch 写标准 git unified patch，且只能新增、修改或目录内 rename docs/scenario-testing/scenarios/** 的 Markdown。没有可信候选时不伪造 patch。`;
+}
+
+function runnerUserMessage(
   context: RunContext,
   purpose: 'standard' | 'initialization-reconnaissance' | 'initialization-validation',
 ): string {
-  const phaseInstruction =
+  const task =
     purpose === 'initialization-reconnaissance'
-      ? '这是陌生项目初始化的运行时侦察阶段：从已知入口低风险检查主要导航、登录和关键状态，不创建不可逆数据，不把每个页面机械写成场景。'
+      ? '执行陌生项目初始化的低风险运行时侦察；检查已知入口、主要导航、登录和关键状态，不创建不可逆数据。'
       : purpose === 'initialization-validation'
-        ? '这是初始化候选验证阶段：按候选场景顺序执行可验证的成功路径和必要拒绝路径，使用 run-id 标记并清理临时数据。'
-        : '这是日常场景测试阶段：只执行 plan.md 选择的场景。';
-  return `你是 LuoWang Phase 7 的 Runner。你只能在固定 target 工作树中顺序执行计划要求的 fixture/API/CLI/UI 测试。
+        ? '按候选场景顺序验证成功路径和必要拒绝路径，使用 run-id 标记并清理临时数据。'
+        : '只执行 plan.md 选择的日常场景。';
+  return `当前任务：${task}
 
-${phaseInstruction}
-
-固定 Run 上下文：
-${JSON.stringify(context, null, 2)}
-
-先读取 plan.md，再按计划使用 read_target_file、search_target_files、list_working_scenarios、read_working_scenario 和 run_fixture_command。UI 场景只能使用受控的 headless、isolated Playwright MCP，优先使用 accessibility snapshot/ref；需要截图时必须使用相对文件名（例如 auth-login-001-after-login.png），截图会自动写入当前 Run 的 evidence 目录；截图后必须调用 list_evidence_files 确认 PNG/JPEG/WebP 确实存在，并在 execution.md 中记录文件名。可以通过 get_test_environment 请求当前非生产测试环境和账号，密码只能用于当前操作，绝不能写入日志、命令输出、任何 Markdown 或证据。使用 get_test_data_prefix 标记临时数据，登记后在场景结束调用 cleanup_test_data。run_fixture_command 只允许受控本地命令，不能读取或猜测其他 Harness Secret，不能写产品源码，不能使用 shell 管道/重定向。每个场景记录实际观察、命令退出码、证据和清理结果；通过 upload_evidence 可提前上传证据，Harness 也会在 Runner 结束后兜底上传。最后必须分别通过 write_execution 写完整 execution.md、通过 write_draft_report 写完整 draft-report.md。环境/命令/凭据不可用时记录为 blocked，不伪造通过。`;
+动态 Run 上下文：
+${JSON.stringify(runnerContext(context), null, 2)}`;
 }
 
-function reviewerPrompt(context: RunContext): string {
-  return `你是独立的 LuoWang Phase 7 Reviewer。你没有 Runner 对话，只能读取本次 Run 的 plan.md、execution.md、draft-report.md、scenario-changes.patch（若存在）和受控 evidence。
-
-固定 Run 上下文：
-${JSON.stringify(context, null, 2)}
-
-请独立核对计划、执行证据、场景变更 patch、场景结果、confirmed bugs、截图事实、清理和阻塞原因。需要查看截图时只能使用 list_evidence_files 和 read_evidence_image，不能使用命令，不能读取测试账号或其他 Secret，也不能读取任意文件路径。若截图不可访问、上传失败、UI 能力缺失或视觉判断无法完成，必须维持 blocked。场景 patch 必须仍只涉及场景目录且符合固定 frontmatter；不要把场景 PR 当作产品 Bug Issue。若零场景，只有在 Main A 的计划确实证明本批无需场景测试时才确认；场景缺失或影响不明必须维持 blocked。结束前必须通过 write_review 写完整 review.md，并明确是否同意最终结果。`;
+function runnerOutputContract(): string {
+  return `先读取 plan.md，再按计划使用受控 target、工作场景、命令、环境、测试数据和 evidence 工具。UI 场景只能使用受控的 headless、isolated Playwright MCP，优先使用 accessibility snapshot/ref；截图使用相对文件名并通过 list_evidence_files 确认存在。
+测试账号只用于当前操作，绝不能写入日志、命令输出、Markdown 或证据。使用 get_test_data_prefix 标记临时数据，登记后执行 cleanup_test_data。每个场景记录实际观察、命令退出码、决定性/辅助证据、偏差和清理结果。结束前分别通过 write_execution 和 write_draft_report 写完整工件；不可用条件记录为 blocked。`;
 }
 
-function mainBPrompt(context: RunContext): string {
-  const initialization = context.initialization
-    ? '这是初始化 Run；可以在 Reviewer 意见支持下，通过同一个受限 write_scenario_patch 修订尚未发布的候选场景 patch，但修订后如果没有再次执行必须明确形成 blocked。'
-    : '这是日常测试 Run；不要修改场景 patch。';
-  return `你是 LuoWang Phase 7 的 Main B。你只能读取本次 Run 的前置 Markdown 工件，并根据 Reviewer 审核形成最终 report.md。
+function reviewerUserMessage(context: RunContext): string {
+  return `当前任务：独立核对计划、原始执行证据、场景变更、场景结果、confirmed Bugs、截图事实、清理和 Harness 阻塞原因。
 
-${initialization}
+动态 Run 上下文：
+${JSON.stringify(reviewerContext(context), null, 2)}`;
+}
 
-固定 Run 上下文：
-${JSON.stringify(context, null, 2)}
+function reviewerOutputContract(): string {
+  return `依次读取 plan.md、execution.md、draft-report.md 和存在的 scenario-changes.patch；原始证据先于 Runner 草稿。查看截图只能使用 list_evidence_files 和 read_evidence_image，不能执行命令、读取测试账号或任意路径。
+截图不可访问、上传失败、视觉能力不足、清理未确认、场景缺失或影响不明时维持 blocked。零场景只有在 Main · 规划的计划确有依据时才能确认。结束前通过 write_review 写完整 review.md，并明确是否同意最终结果。`;
+}
 
-必须先读取 plan.md、execution.md、draft-report.md、review.md。若当前是初始化且存在 scenario-changes.patch，也读取它。最终 report.md 只能包含以下 frontmatter 字段：run_id、trigger、base_commit、target_commit、included_commits、result、started_at、finished_at、scenario_results、confirmed_bugs；不得增加任何其他 frontmatter 字段。字段值必须与固定 Run 一致；result 聚合优先级为 blocked > failed > passed。只要固定上下文中的 blockingReasons 非空，最终结果必须是 blocked，并在正文说明这些阻塞原因；不要把 Harness 自动追加的证据地址或清理状态写入 frontmatter。“scenario_results”必须始终是 YAML 数组；每个元素只能有 “id” 和 “result” 两个字段，严格使用以下形状：
+function mainBUserMessage(context: RunContext): string {
+  const task = context.initialization
+    ? '汇总初始化 Run；可在 Reviewer 意见支持下用受限 writer 修订尚未发布的候选场景 patch，但修订后未重新执行必须保持 blocked。'
+    : '汇总日常测试 Run，不修改场景 patch。';
+  return `当前任务：${task}
 
-~~~yaml
-scenario_results:
-  - id: AUTH-LOGIN-001
-    result: passed
-~~~
+动态 Run 上下文：
+${JSON.stringify(finalizationContext(context), null, 2)}`;
+}
 
-将示例中的场景 ID 和结果替换为实际值。禁止使用 “scenario_id”、“scenario”、“title”、“status” 或 “evidence” 作为 “scenario_results” 元素字段；证据只能写在 Markdown 正文中。“confirmed_bugs”的元素只能使用 parser 支持的字段：“key”、“title”、“scenario_ids”、“issue_action”，以及在 “issue_action: link” 时必需的 “issue_url”。failed 必须至少有一个 confirmed_bugs；confirmed bug 的 issue_action 只能是 create 或 link，link 必须有 issue_url。零场景 passed 必须在 plan、review 和本报告中都保留“无需场景测试”的依据。测试环境账号是 Runner 专用 Secret：即使前置工件中出现，也绝不能在最终报告中写出或复述 username、password、email、userId、displayName、账号标识或任何 get_test_environment 返回值；只写脱敏的状态码、通用 UI 文案和行为事实。不要写隐藏推理、Secret、密码、短期签名 URL、绝对证据路径或额外状态文件；证据只能引用固定上下文中的稳定 URL。结束前必须通过 write_report 写完整 report.md。`;
+function mainBOutputContract(): string {
+  return `必须先读取 plan.md、execution.md、draft-report.md、review.md；初始化且存在 scenario-changes.patch 时也读取它。最终 report.md frontmatter 只能包含 run_id、trigger、base_commit、target_commit、included_commits、result、started_at、finished_at、scenario_results、confirmed_bugs，字段值必须与固定 Run 一致。result 优先级为 blocked > failed > passed；blockingReasons 非空时必须 blocked。
+scenario_results 必须是 YAML 数组，每项只能有 id 和 result。confirmed_bugs 每项只能有 key、title、scenario_ids、issue_action，以及 link 时必需的 issue_url；failed 至少有一个 confirmed bug，issue_action 只能 create 或 link。零场景 passed 必须在计划、审核和最终报告中都有“无需场景测试”依据。
+证据只写在正文并引用稳定 URL。不得复述任何测试账号字段、Secret、隐藏推理、短期签名 URL 或绝对路径。结束前通过 write_report 写完整 report.md。`;
+}
+
+function mainPlanningContext(context: RunContext) {
+  return {
+    runId: context.runId,
+    request: context.request,
+    trigger: context.trigger,
+    baseCommit: context.baseCommit,
+    targetCommit: context.targetCommit,
+    includedCommits: context.includedCommits,
+    scenarioMode: context.scenarioMode,
+    initialization: context.initialization,
+    historyIssuesAvailable: context.historyIssuesAvailable,
+    historyIssues: context.historyIssues,
+    blockingReasons: context.blockingReasons,
+    scenarioChanges: context.scenarioChanges ?? null,
+  };
+}
+
+function runnerContext(context: RunContext) {
+  return {
+    runId: context.runId,
+    request: context.request,
+    trigger: context.trigger,
+    baseCommit: context.baseCommit,
+    targetCommit: context.targetCommit,
+    includedCommits: context.includedCommits,
+    runDirectory: context.runDirectory,
+    scenarioMode: context.scenarioMode,
+    initialization: context.initialization,
+    blockingReasons: context.blockingReasons,
+  };
+}
+
+function reviewerContext(context: RunContext) {
+  return {
+    runId: context.runId,
+    trigger: context.trigger,
+    targetCommit: context.targetCommit,
+    scenarioMode: context.scenarioMode,
+    initialization: context.initialization,
+    scenarioChanges: context.scenarioChanges ?? null,
+    evidence: context.evidence,
+    blockingReasons: context.blockingReasons,
+  };
+}
+
+function finalizationContext(context: RunContext) {
+  return {
+    runId: context.runId,
+    request: context.request,
+    trigger: context.trigger,
+    baseCommit: context.baseCommit,
+    targetCommit: context.targetCommit,
+    includedCommits: context.includedCommits,
+    scenarioMode: context.scenarioMode,
+    initialization: context.initialization,
+    evidence: context.evidence,
+    blockingReasons: context.blockingReasons,
+  };
 }

@@ -70,7 +70,7 @@ describe('Phase 4 Run blocking boundaries', () => {
     assert.equal(result.result, 'passed', JSON.stringify(result));
   });
 
-  it('does not complete a Run when Main B writes a non-schema scenario result', async () => {
+  it('does not complete a Run when Main finalization writes a non-schema scenario result', async () => {
     const fixture = await createGitFixture();
     const context = await createRunContext(fixture, 'malformed-report');
 
@@ -134,7 +134,7 @@ class FailureBoundarySessionFactory implements AgentSessionFactory {
 
         if (input.role === 'runner') {
           await invokeTool(input, 'read_run_artifact', { name: 'plan.md' });
-          const context = parsePromptContext(input.systemPrompt);
+          const context = parsePromptContext(input.userMessage);
           if (this.mode === 'cleanup-failure') {
             await invokeTool(input, 'register_test_data', {
               id: 'luowang-test-user-1',
@@ -174,7 +174,7 @@ class FailureBoundarySessionFactory implements AgentSessionFactory {
         for (const name of ['plan.md', 'execution.md', 'draft-report.md', 'review.md']) {
           await invokeTool(input, 'read_run_artifact', { name });
         }
-        const context = parsePromptContext(input.systemPrompt);
+        const context = parsePromptContext(input.userMessage);
         await invokeTool(input, 'write_report', {
           content:
             this.mode === 'malformed-report'
@@ -373,7 +373,7 @@ function parsePromptContext(prompt: string): {
   includedCommits: string[];
   runDirectory: string;
 } {
-  const match = prompt.match(/固定 Run 上下文：\s*([\s\S]*?)\s*\n\s*(?:必须|请|先)/);
+  const match = prompt.match(/动态 Run 上下文：\s*([\s\S]+)$/);
   assert.ok(match?.[1], 'missing prompt context');
   return JSON.parse(match[1]) as ReturnType<typeof parsePromptContext>;
 }

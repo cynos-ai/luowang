@@ -12,7 +12,14 @@ import { Type, type Static } from 'typebox';
 
 import type { AgentConfig } from '../../shared/types.js';
 import type { ProviderAdapter } from './provider.js';
-import type { AgentRole, AgentSession, AgentSessionFactory, AgentSessionInput } from './types.js';
+import type {
+  AgentRole,
+  AgentSession,
+  AgentSessionFactory,
+  AgentSessionInput,
+  AgentSessionKind,
+  RoleInstructionVersion,
+} from './types.js';
 
 export interface PiAgentSessionFactoryOptions {
   provider: ProviderAdapter;
@@ -301,19 +308,25 @@ export function createRunnerCommandTool(
 
 export function buildSessionInput(
   role: AgentRole,
+  sessionKind: AgentSessionKind,
   config: AgentConfig,
   cwd: string,
   customTools: ToolDefinition[],
   systemPrompt: string,
+  userMessage: string,
+  roleInstructionVersions: RoleInstructionVersion[],
   extensionFactories: InlineExtension[] = [],
 ): AgentSessionInput {
   return {
     role,
+    sessionKind,
     config,
     cwd,
     toolNames: [],
     customTools,
     systemPrompt,
+    userMessage,
+    roleInstructionVersions,
     extensionFactories,
   };
 }
