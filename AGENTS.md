@@ -4,8 +4,9 @@
 
 - 开始任何实质性修改前，先阅读 `docs/cynos-default-project-layout.md`。
 - 理解项目时读取 `docs/PROJECT.md`（存在时）；处理需求时读取对应的 `docs/changes/<change-id>/intent.md`、`spec.md` 和 `plan.md`（存在时）。
-- 罗网 MVP 的当前需求工件位于 `docs/changes/luowang-harness-mvp/`。
-- 技术栈、产品边界和验收要求以需求 `spec.md` 为准，不在本文件重复维护。
+- 已发布 MVP 基线工件位于 `docs/changes/luowang-harness-mvp/`。
+- 当前增量变更是 `docs/changes/luowang-v07-production-closure/`，用于补齐 v0.7 Role Skills、固定分支请求、数据清理、实时进度、历史 Run 和真实联合验收；处理这些主题时先读该目录，冲突处以其 Spec 为准。
+- 技术栈、产品边界和验收要求以对应需求 `spec.md` 为准，不在本文件重复维护。
 
 ## 仓库与分支
 
