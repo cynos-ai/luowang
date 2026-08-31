@@ -633,13 +633,13 @@ function phaseLabel(phase: RunPhase): string {
     case 'preparing':
       return '准备中';
     case 'main-a':
-      return 'Main A：分析与选场景';
+      return 'Main · 规划：分析与选场景';
     case 'runner':
       return 'Runner：执行场景';
     case 'reviewer':
       return 'Reviewer：独立审核';
     case 'main-b':
-      return 'Main B：汇总报告';
+      return 'Main · 最终汇总：汇总报告';
     case 'finalizing':
       return '最终整理';
     case 'completed':

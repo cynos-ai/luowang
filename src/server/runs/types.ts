@@ -12,6 +12,16 @@ import type { ScenarioPatchValidation } from '../repository/scenario-patch.js';
 
 export type AgentRole = 'main-a' | 'runner' | 'reviewer' | 'main-b';
 
+export type AgentSessionKind =
+  'main-planning' | 'runner-execution' | 'reviewer-audit' | 'main-finalization';
+
+export interface RoleInstructionVersion {
+  id: string;
+  formatVersion: string;
+  applicationVersion: string;
+  sha256: string;
+}
+
 export const RUN_ARTIFACT_NAMES = [
   'plan.md',
   'execution.md',
@@ -53,11 +63,14 @@ export interface RunContext {
 
 export interface AgentSessionInput {
   role: AgentRole;
+  sessionKind: AgentSessionKind;
   config: AgentConfig;
   cwd: string;
   toolNames: string[];
   customTools: ToolDefinition[];
   systemPrompt: string;
+  userMessage: string;
+  roleInstructionVersions: RoleInstructionVersion[];
   extensionFactories?: InlineExtension[];
 }
 

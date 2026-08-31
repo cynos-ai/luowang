@@ -2087,13 +2087,13 @@ function dependencyStatusLabel(
 function roleLabel(role: NonNullable<OperationsDashboardResponse['activeRun']>['role']): string {
   switch (role) {
     case 'main-a':
-      return 'Main A';
+      return 'Main · 规划';
     case 'runner':
       return 'Runner';
     case 'reviewer':
       return 'Reviewer';
     case 'main-b':
-      return 'Main B';
+      return 'Main · 最终汇总';
     default:
       return '—';
   }
