@@ -1,6 +1,6 @@
 # 罗网 v0.7 生产闭环补齐 Spec
 
-- 状态：Implementation Baseline v0.3
+- 状态：Implementation Baseline v0.4
 - 关联 Intent：[intent.md](./intent.md)
 - 实现计划：[plan.md](./plan.md)
 - 上游规格：[罗网 Harness MVP Spec](../luowang-harness-mvp/spec.md)
@@ -8,7 +8,7 @@
 
 ## 1. 规格范围与优先级
 
-本 Spec 只覆盖以下增量：角色工作方法装载、人工 merge 与固定 target、测试数据清理确认、实时场景进度、Main Planning 历史 Run、验收分层、外部资源交付和后续发布。
+本 Spec 只覆盖以下增量：角色工作方法装载、首次创建/人工 merge 与固定 target、测试数据清理确认、实时场景进度、Main Planning 历史 Run、验收分层、外部资源交付和后续发布。
 
 发生冲突时：
 
@@ -24,7 +24,7 @@
 - `agents.main`、`agents.runner`、`agents.reviewer` 三组 Agent 配置已存在；正常 Run 创建 Main · 规划、Runner、Reviewer、Main · 最终汇总四个独立 Session，生产 Session 使用 Pi SDK；
 - ambient extensions、Skills、Prompt Templates、Themes 和 Context Files 已关闭；
 - 当前角色方法硬编码在 Orchestrator，完整提示词同时进入 system prompt 和首条用户消息；
-- `/api/repository/merge` 直接执行 merge，`/api/runs` 接受任意 `targetCommit`；
+- `/api/repository/scenario-branch` 在队列外同步创建首次场景分支，`/api/repository/merge` 直接执行 merge，`/api/runs` 接受任意 `targetCommit`；
 - 默认 TestDataManager 没有清理实现，登记数据后无法确认已清理；
 - `currentScenario` 和 `scenarioProgress` 只初始化、不随真实 Runner 更新；
 - Run Store 已保存详细 Run，但 Main · 规划上下文只包含正式报告摘要和 GitHub Issues；
@@ -171,20 +171,24 @@ User Message
 | 请求 | 输入 | 调度时行为 |
 |---|---|---|
 | `automatic-head` | Git/Cron 请求文本 | 使用调度时已计算的场景测试分支最新可测试 HEAD；仍允许自动请求合批 |
-| `manual-current-head` | 人工/API 请求文本、可选 initialization | fetch 后固定当前远端场景测试分支 HEAD；人工请求不合并、不丢失 |
-| `manual-merge-source` | 人工请求文本、`sourceRef`、明确确认 | 轮到时 fetch，`merge --no-ff` 到场景测试分支，non-force push，固定发布后的新 HEAD，再创建 Run |
+| `manual-current-head` | 人工/API 请求文本、可选 `initialization` | fetch 后固定当前远端场景测试分支 HEAD；人工请求不合并、不丢失 |
+| `manual-merge-source` | 人工请求文本、`sourceRef`、明确确认、可选 `initialization` | 分支存在时执行 `merge --no-ff`；分支不存在且 `initialization=true` 时从解析后的 source commit 首次创建；两种路径都先固定 prepared/resolved，再创建 Run |
 
-队列 migration 必须增加并持久化 `request_kind`、`source_ref`、`prepared_merge_commit`、`resolved_target_commit`；字段使用数据库命名，API 可继续使用对应 camelCase。`prepared_merge_commit` 和 `resolved_target_commit` 是请求幂等事实，不是通用 checkpoint 或工作流状态。不得把 branch/tag/任意 SHA 继续伪装成可直接 checkout 的 `targetCommit`。
+首次创建不是第四种请求，继续复用队列已有的 `initialization` 事实。队列 migration 必须增加并持久化 `request_kind`、`source_ref`、`prepared_merge_commit`、`resolved_target_commit`；字段使用数据库命名，API 可继续使用对应 camelCase。`prepared_merge_commit` 和 `resolved_target_commit` 是请求幂等事实，不是通用 checkpoint 或工作流状态。不得把 branch/tag/任意 SHA 继续伪装成可直接 checkout 的 `targetCommit`。
+
+远端场景测试分支不存在时，`automatic-head` 不产生可测试批次；已排队的 `automatic-head` 或 `manual-current-head` 必须明确失败且不创建 Agent Run。`manual-merge-source` 只有携带 `initialization=true` 才能进入首次创建特例；否则明确失败并提示以初始化请求重提。
 
 ### 4.2 API 和网站行为
 
-- 网站“合并 branch/tag/SHA”提交 `manual-merge-source`，返回 queue ID，不再同步返回已经完成的 merge；
+- 网站“合并 branch/tag/SHA”提交 `manual-merge-source`，返回 queue ID，不再同步返回已经完成的 merge；请求可以明确携带 `initialization=true`；
+- 首次创建场景分支使用同一 merge-source 入口，提交用户确认的 `sourceRef`、`confirmed=true`、`initialization=true`，不能先创建分支再另行触发初始化 Run；
+- `POST /api/repository/scenario-branch` 不再允许在队列外同步调用 `ensureScenarioBranch()` 产生 Git 副作用；兼容期若保留该端点，只返回明确的迁移错误并指向 merge-source initialization 入口，不能自行创建分支或 Run；
 - 普通 `POST /api/runs` 只提交 `manual-current-head`，不接受调用者指定 target commit；旧字段若保留兼容期，任何非空值必须被拒绝并提示改用 merge-source 或 Run 重测入口，不能静默绕过；
 - 已有 Run 的“重测”复用原请求说明/场景意图，但在真正调度时固定**当前**场景测试分支 HEAD；本变更不提供分支已经前进后任意回放历史 SHA 的通用入口；
-- 初始化请求同样只能针对当前场景测试分支 HEAD，或先通过 merge-source/首次建分支把来源纳入固定分支；
+- 场景分支已存在时，初始化请求可以使用 `manual-current-head + initialization=true`，或使用 `manual-merge-source + initialization=true` 先纳入 source 再直接创建一个初始化 Run；
 - API 响应和网站显示 queued、merge/running、waiting archive、completed/failed/interrupted 等现有事实，不增加跨 Run checkpoint。
 
-### 4.3 固定 merge 结果、Git 可达性与恢复幂等
+### 4.3 固定 merge/首次创建结果、Git 可达性与恢复幂等
 
 `manual-merge-source` 在罗网的**本地持久 Git 仓库**中为每个队列请求使用确定性 internal ref：
 
@@ -194,7 +198,7 @@ refs/luowang/merge-requests/<queue-id>
 
 该 ref 不是业务分支，只用于让 prepared commit object 在进程重启、临时工作区清理和本地 Git GC 后仍可达；它不得被 push 到目标仓库，也不得加入任何默认 push refspec。
 
-执行顺序固定为：
+远端 `scenario-testing` 已存在时，执行顺序固定为：
 
 ```text
 解析 source ref
@@ -207,15 +211,32 @@ refs/luowang/merge-requests/<queue-id>
 → 请求 completed 或明确 failed/interrupted 后清理 internal ref
 ```
 
-具体规则：
+远端 `scenario-testing` 在该请求被调度并 fetch 后仍不存在，且请求携带 `initialization=true` 时，首次创建特例固定为：
 
+```text
+解析 sourceRef 并固定 source commit
+→ 创建本地 internal ref 指向 source commit
+→ 持久化 prepared_merge_commit = source commit
+→ 以“远端 ref 必须仍不存在”为前置条件创建 scenario-testing
+→ 持久化 resolved_target_commit = 已发布的同一 source commit
+→ 使用 resolved_target_commit 创建且只创建一个 initialization Run
+→ 请求 completed 或明确 failed/interrupted 后清理 internal ref
+```
+
+首次创建没有已有 HEAD，因此不生成伪造的 merge commit；字段名仍为 `prepared_merge_commit`，但在该特例中它表示已准备发布且由 internal ref 保持可达的 source commit。远端创建必须是 compare-and-create/expected-absent 的 non-force 写入：只能从不存在创建，不能覆盖或推进刚被其他操作者创建的同名 ref。
+
+两条路径共同遵守：
+
+- `sourceRef` 只在首次准备时解析一次；internal ref 创建后不再重新解析可能移动的 branch/tag，也不根据后续 HEAD 重建 commit；
 - `prepared_merge_commit` 必须在 push 前提交到 SQLite，且此时 internal ref 必须存在并指向同一 SHA；成功 push 后，`resolved_target_commit` 固定为已经发布到场景测试分支的同一 commit；Orchestrator 只能接收该字段，不能重新读取移动中的 HEAD 替换 target；
-- 来源已经是场景测试分支祖先时不创建重复 merge commit；internal ref 指向当时远端 HEAD，再把该 SHA 持久化为 prepared/resolved，仍可创建本次人工 Run；
-- 进程在 prepared 后、push 前退出时，恢复逻辑必须从 internal ref 读取并校验同一 object，再 non-force push 同一 commit；临时 clone、merge 工作树或进程内对象都不能成为唯一来源；
+- 已有分支路径中，来源已经是场景测试分支祖先时不创建重复 merge commit；internal ref 指向当时远端 HEAD，再把该 SHA 持久化为 prepared/resolved，仍可创建本次人工 Run；
+- 首次创建路径中，prepared 后无论 push 返回成功、拒绝、连接中断还是进程退出，都使用同一可恢复判定：先校验 internal ref 并 fetch；远端 ref 仍不存在则只重试 compare-and-create 同一 prepared SHA；远端历史已包含 prepared 则说明该不可变 target 已发布，补写 `resolved_target_commit = prepared_merge_commit`，但绝不采用较新的远端 HEAD；远端 ref 已存在且历史不包含 prepared 才是竞争失败，不转成普通 merge、不重建 commit，也不创建 Run；
+- 首次创建的 expected-absent 条件绝不允许本请求推进或覆盖已存在的 ref；“远端已包含 prepared”是幂等发布成功，不是改用竞争 HEAD。协议不持久化或依赖进程内 push outcome，避免在收到结果后、写 terminal/resolved 前再次崩溃产生不可恢复歧义；
+- 进程在 prepared 后、push 前退出时，恢复逻辑必须从 internal ref 读取并校验同一 object；临时 clone、merge 工作树或进程内对象都不能成为唯一来源；
 - prepared 存在但 internal ref 缺失/指向其他 SHA，且远端也不包含 prepared commit 时，请求明确失败，不重新生成 merge；如果远端已包含 prepared，则按已成功 push 恢复并持久化同一 resolved；
-- 进程在 push 后、写入 resolved 前退出时，恢复逻辑 fetch 远端并检查是否已包含 `prepared_merge_commit`；已包含则持久化同一 `resolved_target_commit`，不得重复 merge 或改用更新后的 HEAD；
-- `resolved_target_commit` 已存在时，恢复逻辑只校验该 commit 已发布在远端场景测试分支历史中，然后创建或关联唯一 Run；即使场景分支后来又有新 commit，本请求 target 也不改变；
-- internal ref 已创建但 SQLite 尚无 prepared（进程恰在两步之间退出）时，不猜测或重做 merge：当前请求明确失败并清理该 ref；没有对应队列行的孤儿 ref 也在启动对账后清理；
+- 进程在 push 后、写入 resolved 前退出时，恢复逻辑 fetch 远端并检查是否已包含 `prepared_merge_commit`；已包含则持久化同一 `resolved_target_commit`，不得重复 merge、重复建分支或改用更新后的 HEAD；
+- `resolved_target_commit` 已存在时，恢复逻辑只校验该 commit 已发布在远端场景测试分支历史中，然后创建或关联唯一 Run；首次创建请求的 Run 必须保留 `initialization=true`；即使场景分支后来又有新 commit，本请求 target 也不改变；
+- internal ref 已创建但 SQLite 尚无 prepared（进程恰在两步之间退出）时，不猜测或重做 merge/首次创建：当前请求明确失败并清理该 ref；没有对应队列行的孤儿 ref 也在启动对账后清理；
 - internal ref 在 `queued`、`running`、`waiting_archive` 期间不得被普通 workspace cleanup、fetch/prune 或 GC 删除；只在请求进入 terminal 状态后幂等清理；清理失败记录脱敏运维错误但不得改变已经固定的 Run target；
 - `sourceRef` 无法解析、merge 冲突、远端竞争或 push 失败时，请求以明确失败结束，不创建 Agent Run、不修改产品代码、不推进 target，并清理 internal ref；
 - 人工 merge 请求不参与自动请求合批；远端写入继续禁止 force-push。
@@ -432,7 +453,7 @@ commands[]
 https://github.com/cynos-ai/cynos-website
 ```
 
-项目负责人在 live 前确认或明确替换。目标必须可信、非罗网仓库、允许测试写入并有可清理的 `scenario-testing`。Token 使用 fine-grained repository access，仅限该仓库：
+项目负责人在 live 前确认或明确替换。目标必须可信、非罗网仓库并允许测试写入；live 的首次建分支用例开始时，已配置的 `scenario-testing` 必须不存在，且操作者确认可从指定初始 commit 创建。不能安全提供“分支不存在”前置条件时必须换用新的独立测试仓库，不能删除含有人类资产的既有分支来凑验收。Token 使用 fine-grained repository access，仅限该仓库：
 
 | 权限 | 最小值 | 用途 |
 |---|---|---|
@@ -441,7 +462,7 @@ https://github.com/cynos-ai/cynos-website
 | Pull requests | Read and write | 场景审核 PR |
 | Issues | Read and write | 创建/关联 confirmed bugs |
 
-不要求 Administration、Actions、Packages、Deployments 或组织级权限。人类还需确认场景测试分支保护允许该测试身份 non-force push 或创建 PR，并允许验收结束后关闭明显测试 PR/Issue；长期验收证据是否保留由项目负责人决定。
+不要求 Administration、Actions、Packages、Deployments 或组织级权限。人类还需确认该测试身份可以在 ref 不存在时创建场景测试分支、之后执行 non-force push 或创建 PR，并允许验收结束后关闭明显测试 PR/Issue；长期验收证据是否保留由项目负责人决定。
 
 ### 9.2 非生产应用
 
@@ -491,6 +512,7 @@ https://github.com/cynos-ai/cynos-website
 
 ```text
 LUOWANG_LIVE_REPOSITORY
+LUOWANG_LIVE_INITIAL_REF
 LUOWANG_LIVE_GITHUB_TOKEN
 LUOWANG_LIVE_BASE_URL
 LUOWANG_LIVE_TEST_USERNAME
@@ -516,8 +538,10 @@ thinking level、环境说明、额外账号和外部 allowlist 可以使用非 
 |---|---|
 | 内置角色指令缺失/错误 | Session 不启动，Run 明确失败或 blocked；不退回 Pi Skills 或 ambient 资源 |
 | 普通 Run 指定任意 target | `400` 拒绝并提示固定分支入口 |
-| merge conflict/远端竞争 | 队列请求失败，不创建 Run、不推进、不自动改代码，清理本地 internal ref |
-| prepared 未发布且 internal ref 缺失/不匹配 | 请求失败，不重做 merge、不改变 target；若远端已包含 prepared 则按成功 push 恢复 |
+| 场景分支不存在但请求不是 `manual-merge-source + initialization=true` | 不创建分支和 Agent Run；automatic 不产生批次，current-head/非初始化 merge-source 明确失败 |
+| 直接调用旧 `POST /api/repository/scenario-branch` | 不产生 Git 副作用，明确提示改用排队的 merge-source initialization 入口 |
+| merge conflict/首次创建时远端历史不含 prepared/其他远端竞争 | 队列请求失败，不创建 Run、不推进、不自动改代码、不改用其他 HEAD，清理本地 internal ref |
+| prepared 未发布且 internal ref 缺失/不匹配 | 请求失败，不重做 merge/建分支、不改变 target；若远端已包含 prepared 则按成功 push 恢复 |
 | 数据只有 Runner 清理声明、Agent 自填文本、证据未受控/未读取、Reviewer 拒绝或 adapter 未确认 | Run blocked，列脱敏残留和核验状态 |
 | Runner 没有场景 | 显示 `0/0`；是否 passed 仍执行既有零场景审核规则 |
 | Run 历史或 Issue 候选查询失败 | 标记 unavailable，不伪装空历史/空候选 |
@@ -528,7 +552,7 @@ thinking level、环境说明、额外账号和外部 allowlist 可以使用非 
 ## 11. 兼容与迁移
 
 - SQLite schema 变更使用版本化、可重复执行 migration；现有队列、Run 和归档数据必须前向升级；
-- API 删除或拒绝 `targetCommit` 时更新网站和测试；如保留过渡字段，只能明确报错，不能继续执行旧的不安全语义；
+- API 删除或拒绝 `targetCommit` 时更新网站和测试；如保留过渡字段，只能明确报错，不能继续执行旧的不安全语义；旧 `/api/repository/scenario-branch` 同样不得保留同步写分支语义；
 - 已有 completed/、报告、Issues、场景 PR、last completed target 和 `v0.1.0` tag 不修改；特殊场景审核 Run 继续只以 patch + report 识别；
 - `refs/luowang/merge-requests/*` 只存在于罗网本地持久 Git 仓库，不迁移为目标仓库分支、不写入远端；升级启动时只对账和清理没有对应请求的孤儿 ref；
 - 内置角色指令资源属于罗网发布物，不是 Pi Skills，不写目标仓库；
@@ -549,18 +573,18 @@ thinking level、环境说明、额外账号和外部 allowlist 可以使用非 
 1. **AC-CLOSURE-INSTR-01**：Main Planning、Runner、Reviewer、Main Finalization 四类 Session 只装载对应的罗网 Built-in Role Instructions；ambient Skills、Prompt、Context 和用户/宿主机/目标仓库资源不会进入 Session；配置仍只有 Main、Runner、Reviewer 三组；
 2. **AC-CLOSURE-INSTR-02**：固定角色指令只进入 system prompt 一次，user message 只包含当前任务和角色裁剪的动态上下文；角色工具权限与上游安全边界不变；
 3. **AC-CLOSURE-INSTR-03**：Role Instructions 内容包含证据优先级、代码不得反推期望、独立审核、清理、偏差和反模式，但没有引入 suite/catalog/checkpoint/新结果状态/发布 gate；
-4. **AC-CLOSURE-MERGE-01**：人工 branch/tag/SHA 请求进入 FIFO，按顺序生成 `merge --no-ff` commit、创建本地 `refs/luowang/merge-requests/<queue-id>`、持久化 `prepared_merge_commit`、non-force push、持久化 `resolved_target_commit`，并只测试该已发布的不可变 commit；internal ref 从不推送，已包含来源不会重复 merge；
-5. **AC-CLOSURE-TARGET-01**：普通人工/API Run 不能直接指定任意 target；自动、人工和初始化 Run 的 target 都是远端场景测试分支历史上的不可变 commit；
-6. **AC-CLOSURE-MERGE-02**：internal ref 保证 prepared object 经重启、临时工作区清理和 Git GC 后仍可达；结合 `prepared_merge_commit`、`resolved_target_commit` 和唯一 Run 关联，使 merge 冲突、远端竞争、push 前后重启恢复不重复 merge、不改变本次 target、不创建错误 Run；请求 terminal 后幂等清理 internal ref；
+4. **AC-CLOSURE-MERGE-01**：人工 branch/tag/SHA 请求进入 FIFO；远端场景分支已存在时按顺序生成 `merge --no-ff` commit，尚不存在且 `initialization=true` 时把解析后的 source commit 作为 prepared；两者都先创建本地 `refs/luowang/merge-requests/<queue-id>`、持久化 `prepared_merge_commit`、non-force 发布、持久化同值 `resolved_target_commit`，并且只创建一个以该不可变 commit 为 target 的 Run；首次路径的 Run 保留 initialization，internal ref 从不推送；
+5. **AC-CLOSURE-TARGET-01**：普通人工/API Run 不能直接指定任意 target；自动、人工和初始化 Run 的 target 都是远端场景测试分支历史上的不可变 commit；场景分支不存在时 automatic/current-head 不创建 Run，首次建分支不能在队列外发生；
+6. **AC-CLOSURE-MERGE-02**：internal ref 保证普通 merge 和首次建分支的 prepared object 经重启、临时工作区清理和 Git GC 后仍可达；结合 `prepared_merge_commit`、`resolved_target_commit` 和唯一 Run 关联，使 merge 冲突、首次创建时远端不含 prepared 的竞争、push 前后重启恢复不重复 merge/建分支、不改用其他 HEAD、不改变本次 target、不创建错误 Run；请求 terminal 后幂等清理 internal ref；
 7. **AC-CLOSURE-DATA-01**：Runner 可以登记并实际删除测试数据，但只有受控 adapter 独立核验，或 Reviewer 读取 Harness 直接捕获的 adapter/API/只读查询输出或 Playwright 截图并确认，才能成为 `verified-cleaned`；无 adapter 时全部经 Reviewer 确认的生产 Run 可以完成；
 8. **AC-CLOSURE-DATA-02**：Agent 自填 evidence 正文/状态/摘要、纯 Runner 声明、未受控/未读取证据、Reviewer 拒绝、pending 或兜底核验失败都使 Run blocked；合格文本证据记录来源、Run/data ID、时间、状态码/退出码和脱敏摘要/hash，且 Secret 不泄漏；
 9. **AC-CLOSURE-ACTIVE-01**：真实 Runner Run 在网站依次显示总数、当前场景、已完成数和脱敏活动；零场景、Agent 异常和初始化侦察显示正确；
 10. **AC-CLOSURE-HISTORY-01**：Main Planning 可通过 `query_run_history` 查询有限历史 Run；Main Finalization 先读本次草稿形成 Bug 候选，再通过只读 `query_issue_candidates` 的受限 schema、稳定匹配/排序和 20/100 结果限制查询 Issue/相关 Run 并决定 create/link；返回严格区分 ok/empty/unavailable，同一 unavailable 最多重试一次且 Session 总调用不超过 10；Runner 和 Reviewer 无历史查询工具；
-11. **AC-CLOSURE-PI-01**：本地生产路径集成用真实 `createAgentSession()` 分别完成普通四 Session Run 和陌生项目初始化；覆盖 Pi 模型消息、内置角色指令、custom tool 循环、同角色 Session 对话隔离及每个 Session dispose；直接新增并验证走完整六 Session 和五个 Markdown 工件；场景 PR 路径只创建 Main Planning → Runner → 新 Main Planning 三个 Session，策略判断后立即 blocked，不创建候选验证 Runner/Reviewer/Main Finalization，special finalize 排除临时普通工件，最终只持久化 `scenario-changes.patch`、Harness 生成的 `report.md`，并被 `isSpecialScenarioReviewRun()` 识别；最终汇总修订未发布 patch 但未重跑时仍 blocked；FixtureSessionFactory 不能作为本 AC 证据；
+11. **AC-CLOSURE-PI-01**：本地生产路径集成从远端尚无 `scenario-testing` 开始，经 `manual-merge-source + initialization=true` 首次创建并只创建一个陌生项目初始化 Run；该 Run 用真实 `createAgentSession()` 覆盖 Pi 模型消息、内置角色指令、custom tool 循环、同角色 Session 对话隔离及每个 Session dispose；直接新增并验证走完整六 Session 和五个 Markdown 工件；场景 PR 路径只创建 Main Planning → Runner → 新 Main Planning 三个 Session，策略判断后立即 blocked，不创建候选验证 Runner/Reviewer/Main Finalization，special finalize 排除临时普通工件，最终只持久化 `scenario-changes.patch`、Harness 生成的 `report.md`，并被 `isSpecialScenarioReviewRun()` 识别；最终汇总修订未发布 patch 但未重跑时仍 blocked；普通四 Session Run 另行通过；FixtureSessionFactory 不能作为本 AC 证据；
 12. **AC-CLOSURE-ACCEPT-01**：local、live、release 三种验收状态和命令分离；live blocked 时 release 非零，README 不再称其为全量完成；
 13. **AC-CLOSURE-ACCEPT-02**：每个受影响 AC 有独立、可追溯证据，不能依靠一个粗粒度 proof 批量标记通过；
 14. **AC-CLOSURE-LIVE-01**：真实 GitHub + Provider + Pi + Playwright MCP + 私有 OSS + 非生产应用完成至少一个含 UI 截图和数据创建/清理的 passed Run；
-15. **AC-CLOSURE-LIVE-02**：live 另外验证含两个 confirmed Bugs/Issues 的 failed Run、blocked 不推进、merge-source、场景 PR、当前 HEAD 人工重测、正式报告、Indexer 回读和实时进度；
+15. **AC-CLOSURE-LIVE-02**：live 从真实目标仓库尚无 `scenario-testing` 开始，以 `manual-merge-source + initialization=true` 完成首次 non-force 创建、prepared/resolved 恢复事实和唯一初始化 Run；另外验证含两个 confirmed Bugs/Issues 的 failed Run、blocked 不推进、已有分支 merge-source、场景 PR、当前 HEAD 人工重测、正式报告、Indexer 回读和实时进度；
 16. **AC-CLOSURE-SECRET-01**：所有 live Secret 只从受控输入进入候选实例/Secret Store，不出现在命令输出、环境回显、API 响应、日志、工件、Git、PR/Issue 或验收报告；
 17. **AC-CLOSURE-DOC-01**：README 准确说明 Docker 优先、本地原生编译依赖、local/live 验收边界和实际发布状态；
 18. **AC-CLOSURE-RELEASE-01**：全部验收通过后发布新的 SemVer，tag 与 main 发布 commit 一致，`v0.1.0` 保持原指向。
