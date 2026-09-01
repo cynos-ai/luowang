@@ -545,8 +545,13 @@ class RecordingSessionFactory implements AgentSessionFactory {
           });
         } else if (input.role === 'runner') {
           await invokeTool(input, 'read_run_artifact', { name: 'plan.md' });
-          const scenarioIds = this.progress?.scenarioIds ?? [];
-          await invokeTool(input, 'begin_scenario_execution', { scenarioIds });
+          const progressAvailable = hasTool(input, 'begin_scenario_execution');
+          const scenarioIds =
+            this.progress?.scenarioIds ??
+            (progressAvailable && /候选场景顺序/.test(input.userMessage) ? ['INIT-HOME-001'] : []);
+          if (progressAvailable) {
+            await invokeTool(input, 'begin_scenario_execution', { scenarioIds });
+          }
           await this.progress?.checkpoint('declared');
           for (const [index, scenarioId] of scenarioIds.entries()) {
             await invokeTool(input, 'start_scenario', { scenarioId });

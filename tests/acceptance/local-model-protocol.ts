@@ -224,10 +224,13 @@ async function handleRequest(
     .map((tool) => tool.function?.name)
     .filter((name): name is string => Boolean(name));
   const systemPrompt = messageText(body.messages?.find((message) => message.role === 'system'));
+  const userPrompt = messageText(
+    [...(body.messages ?? [])].reverse().find((message) => message.role === 'user'),
+  );
   const called = (body.messages ?? []).flatMap(
     (message) => message.tool_calls?.map((tool) => tool.function?.name ?? '') ?? [],
   );
-  const next = nextTool(toolNames, called, systemPrompt, behavior);
+  const next = nextTool(toolNames, called, `${systemPrompt}\n${userPrompt}`, behavior);
   response.writeHead(200, {
     'content-type': 'text/event-stream; charset=utf-8',
     'cache-control': 'no-cache',
@@ -343,6 +346,17 @@ function nextTool(
     if (unreadArtifact) return unreadArtifact;
     if (count('get_run_context') === 0) return tool('get_run_context');
     if (count('list_working_scenarios') === 0) return tool('list_working_scenarios');
+    if (has('begin_scenario_execution') && count('begin_scenario_execution') === 0) {
+      return tool('begin_scenario_execution', {
+        scenarioIds: initialization ? ['ONBOARD-SMOKE-001'] : [],
+      });
+    }
+    if (initialization && has('start_scenario') && count('start_scenario') === 0) {
+      return tool('start_scenario', { scenarioId: 'ONBOARD-SMOKE-001' });
+    }
+    if (initialization && has('finish_scenario') && count('finish_scenario') === 0) {
+      return tool('finish_scenario', { scenarioId: 'ONBOARD-SMOKE-001' });
+    }
     if (count('run_fixture_command') === 0) {
       return tool('run_fixture_command', { command: 'node --version' });
     }
@@ -443,9 +457,11 @@ function parseRunContext(prompt: string): {
   targetCommit: string;
   includedCommits: string[];
 } {
-  const match = prompt.match(/固定 Run 上下文：\s*([\s\S]*?)\s*\n\s*(?:必须|请|先)/);
-  if (!match?.[1]) throw new Error('本地模型无法读取固定 Run 上下文');
-  return JSON.parse(match[1]) as ReturnType<typeof parseRunContext>;
+  const dynamic = prompt.match(/动态 Run 上下文：\s*(\{[\s\S]*\})\s*$/);
+  const fixed = prompt.match(/固定 Run 上下文：\s*([\s\S]*?)\s*\n\s*(?:必须|请|先)/);
+  const serialized = dynamic?.[1] ?? fixed?.[1];
+  if (!serialized) throw new Error('本地模型无法读取固定 Run 上下文');
+  return JSON.parse(serialized) as ReturnType<typeof parseRunContext>;
 }
 
 function scenarioAddPatch(id: string): string {

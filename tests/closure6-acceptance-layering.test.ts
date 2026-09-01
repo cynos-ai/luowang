@@ -8,6 +8,7 @@ import {
   createLayeredReport,
   localOnlyEnvironment,
   missingLiveInputs,
+  PUBLIC_QUALITY_SCRIPTS,
   redactAcceptanceText,
   type ClosureProofStatuses,
 } from './acceptance/closure.js';
@@ -158,6 +159,29 @@ describe('Closure 6 acceptance status layering', () => {
     assert.match(all, /blocked > failed > passed/);
   });
 
+  it('requires every public quality command before local or release acceptance can pass', () => {
+    assert.deepEqual(PUBLIC_QUALITY_SCRIPTS, [
+      'format:check',
+      'lint',
+      'typecheck',
+      'test',
+      'build',
+      'test:e2e',
+    ]);
+    const report = createLayeredReport({
+      mode: 'release',
+      startedAt: '2026-09-01T00:00:00.000Z',
+      local: { status: 'failed', message: 'quality failed' },
+      live: { status: 'passed', message: 'live passed' },
+      proofs: proofStatuses({ publicQuality: 'failed' }),
+    });
+    assert.equal(
+      report.acEvidence.find((item) => item.ac === 'AC-CLOSURE-ACCEPT-01')?.status,
+      'failed',
+    );
+    assert.equal(report.release.status, 'failed');
+  });
+
   it('exposes separate package commands and keeps CI on local only', async () => {
     const packageJson = JSON.parse(await readFile('package.json', 'utf8')) as {
       scripts: Record<string, string>;
@@ -195,6 +219,7 @@ function proofStatuses(overrides: Partial<ClosureProofStatuses> = {}): ClosurePr
     archiveRetry: 'passed',
     processRestart: 'passed',
     queueRecovery: 'passed',
+    publicQuality: 'passed',
     acceptanceLayering: 'passed',
     acMapping: 'passed',
     ...overrides,

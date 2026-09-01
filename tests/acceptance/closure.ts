@@ -6,6 +6,15 @@ import { promisify } from 'node:util';
 
 const execFileAsync = promisify(execFile);
 
+export const PUBLIC_QUALITY_SCRIPTS = [
+  'format:check',
+  'lint',
+  'typecheck',
+  'test',
+  'build',
+  'test:e2e',
+] as const;
+
 export const LIVE_INPUT_NAMES = [
   'LUOWANG_LIVE_REPOSITORY',
   'LUOWANG_LIVE_GITHUB_TOKEN',
@@ -63,6 +72,7 @@ export interface ClosureProofStatuses {
   archiveRetry: LayerStatus;
   processRestart: LayerStatus;
   queueRecovery: LayerStatus;
+  publicQuality: LayerStatus;
   acceptanceLayering: LayerStatus;
   acMapping: LayerStatus;
 }
@@ -267,10 +277,11 @@ export function createLayeredReport(input: {
       },
       {
         ac: 'AC-CLOSURE-ACCEPT-01',
-        status: input.proofs.acceptanceLayering,
+        status: aggregateStatuses([input.proofs.publicQuality, input.proofs.acceptanceLayering]),
         evidence: [
           'package.json:test:acceptance:local/live/release',
           'tests/closure6-acceptance-layering.test.ts',
+          ...PUBLIC_QUALITY_SCRIPTS.map((script) => `npm run ${script}`),
         ],
       },
       {
@@ -317,6 +328,7 @@ function emptyProofStatuses(status: LayerStatus): ClosureProofStatuses {
     archiveRetry: status,
     processRestart: status,
     queueRecovery: status,
+    publicQuality: status,
     acceptanceLayering: status,
     acMapping: status,
   };
@@ -329,6 +341,28 @@ async function runLocal(artifactDirectory: string): Promise<AcceptanceReport> {
   await mkdir(join(phase9Directory, 'isolated-home'), { recursive: true });
   const environment = localOnlyEnvironment(phase9Directory);
   const commands: CommandResult[] = [];
+  const proofs = emptyProofStatuses('not_run');
+  const npmCli = process.env.npm_execpath;
+  if (npmCli) {
+    for (const script of PUBLIC_QUALITY_SCRIPTS) {
+      const quality = await runAcceptanceCommand(
+        `npm run ${script}`,
+        [npmCli, 'run', script],
+        environment,
+      );
+      commands.push(quality.command);
+    }
+  } else {
+    commands.push({
+      command: 'public quality commands',
+      status: 'failed',
+      durationMs: 0,
+      summary: 'npm_execpath is unavailable; public quality commands were not run.',
+    });
+  }
+  proofs.publicQuality = commands.every((command) => command.status === 'passed')
+    ? 'passed'
+    : 'failed';
   const phase9 = await runAcceptanceCommand(
     'tsx tests/acceptance/phase9.ts',
     ['--import', 'tsx', 'tests/acceptance/phase9.ts'],
@@ -341,7 +375,6 @@ async function runLocal(artifactDirectory: string): Promise<AcceptanceReport> {
     },
   );
   commands.push(phase9.command);
-  const proofs = emptyProofStatuses('not_run');
   const definitions: Array<{
     key: keyof ClosureProofStatuses;
     label: string;
