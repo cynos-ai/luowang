@@ -152,6 +152,7 @@ class FailureBoundarySessionFactory implements AgentSessionFactory {
 
         if (input.role === 'runner') {
           await invokeTool(input, 'read_run_artifact', { name: 'plan.md' });
+          await invokeTool(input, 'begin_scenario_execution', { scenarioIds: [] });
           const context = parsePromptContext(input.userMessage);
           if (this.mode === 'cleanup-failure' || this.mode === 'cleanup-review') {
             this.cleanupDataId = `luowang-${context.runId}-test-user-1`;
