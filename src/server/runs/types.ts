@@ -38,6 +38,8 @@ export type RunArtifactName =
 export interface RunInput {
   request: string;
   trigger: RunTrigger;
+  /** Internal deterministic ID reserved by the FIFO coordinator. Never accepted from the API. */
+  runId?: string;
   targetCommit?: string;
   initialization?: boolean;
 }

@@ -43,22 +43,27 @@ describe('Phase 6 persistent automation', () => {
     const first = queue.enqueue({
       request: 'Git product change A',
       trigger: 'git',
-      targetRef: 'a'.repeat(40),
+      requestKind: 'automatic-head',
     });
     const merged = queue.enqueue({
       request: 'Cron product change B',
       trigger: 'schedule',
-      targetRef: 'b'.repeat(40),
+      requestKind: 'automatic-head',
     });
     const manual = queue.enqueue({
       request: '人工重测',
       trigger: 'manual',
-      targetRef: 'b'.repeat(40),
+      requestKind: 'manual-current-head',
     });
-    const api = queue.enqueue({ request: 'API 重测', trigger: 'api', targetRef: 'b'.repeat(40) });
+    const api = queue.enqueue({
+      request: 'API 重测',
+      trigger: 'api',
+      requestKind: 'manual-current-head',
+    });
 
     assert.equal(merged.queueId, first.queueId);
-    assert.equal(merged.targetRef, 'b'.repeat(40));
+    assert.equal(merged.targetRef, null);
+    assert.equal(merged.requestKind, 'automatic-head');
     assert.deepEqual(merged.triggerSources, ['git', 'schedule']);
     assert.equal(queue.listPending().length, 3);
     assert.deepEqual(
@@ -134,7 +139,8 @@ describe('Phase 6 persistent automation', () => {
     const productChange = await poller.poll('git');
     assert.equal(productChange.status, 'queued');
     assert.deepEqual(productChange.includedCommits, ['d'.repeat(40)]);
-    assert.equal(submitted[0]?.targetRef, head);
+    assert.equal(submitted[0]?.targetRef, null);
+    assert.equal(submitted[0]?.requestKind, 'automatic-head');
 
     head = 'e'.repeat(40);
     changes = [{ sha: 'f'.repeat(40), paths: ['docs/scenario-testing/reports/run/report.md'] }];
@@ -252,7 +258,7 @@ describe('Phase 6 persistent automation', () => {
     const automation = createAutomationService({
       database: context.database.sqlite,
       configuration,
-      repository: {} as RepositoryService,
+      repository: createQueueRepository('a'.repeat(40)),
       runs: fakeRuns.runs,
       archiver,
       reportDir: context.config.reportDir,
@@ -261,12 +267,12 @@ describe('Phase 6 persistent automation', () => {
     const first = await automation.submitTestRequest({
       request: '第一项',
       trigger: 'manual',
-      targetRef: 'a'.repeat(40),
+      requestKind: 'manual-current-head',
     });
     const second = await automation.submitTestRequest({
       request: '第二项',
       trigger: 'manual',
-      targetRef: 'b'.repeat(40),
+      requestKind: 'manual-current-head',
     });
     assert.equal(first.run?.runId, runId(1));
     assert.equal(second.run, null);
@@ -300,13 +306,13 @@ describe('Phase 6 persistent automation', () => {
     const queuedItem = queued.enqueue({
       request: '重启后继续执行的排队请求',
       trigger: 'api',
-      targetRef: 'a'.repeat(40),
+      requestKind: 'manual-current-head',
     });
     const queuedRuns = createRestartFakeRuns();
     const queuedAutomation = createAutomationService({
       database: queuedContext.database.sqlite,
       configuration: queuedConfiguration,
-      repository: {} as RepositoryService,
+      repository: createQueueRepository('a'.repeat(40)),
       runs: queuedRuns.runs,
       archiver: createNoopArchiver(),
       reportDir: queuedContext.config.reportDir,
@@ -328,7 +334,7 @@ describe('Phase 6 persistent automation', () => {
     const runningItem = running.enqueue({
       request: '进程中断的运行请求',
       trigger: 'git',
-      targetRef: 'b'.repeat(40),
+      requestKind: 'automatic-head',
     });
     running.claimNext();
     running.markStarted(runningItem.queueId, runId(3));
@@ -355,7 +361,7 @@ describe('Phase 6 persistent automation', () => {
     const runningAutomation = createAutomationService({
       database: runningContext.database.sqlite,
       configuration: runningConfiguration,
-      repository: {} as RepositoryService,
+      repository: createQueueRepository('b'.repeat(40)),
       runs: interruptedRuns.runs,
       archiver: createNoopArchiver(),
       recoveryStore: interruptedRecovery,
@@ -376,7 +382,7 @@ describe('Phase 6 persistent automation', () => {
     const waitingItem = archiveQueue.enqueue({
       request: '重启时等待归档的请求',
       trigger: 'schedule',
-      targetRef: 'c'.repeat(40),
+      requestKind: 'automatic-head',
     });
     archiveQueue.claimNext();
     archiveQueue.markStarted(waitingItem.queueId, runId(4));
@@ -384,14 +390,14 @@ describe('Phase 6 persistent automation', () => {
     const nextItem = archiveQueue.enqueue({
       request: '等待归档后的下一请求',
       trigger: 'manual',
-      targetRef: 'd'.repeat(40),
+      requestKind: 'manual-current-head',
     });
     const archiveCalls: string[] = [];
     const archiveRuns = createRestartFakeRuns();
     const archiveAutomation = createAutomationService({
       database: archiveContext.database.sqlite,
       configuration: archiveConfiguration,
-      repository: {} as RepositoryService,
+      repository: createQueueRepository('d'.repeat(40)),
       runs: archiveRuns.runs,
       archiver: {
         archive: async (runId) => {
@@ -632,6 +638,20 @@ function createRestartFakeRuns(details = new Map<string, RunDetail>()): {
       recover: async () => undefined,
     },
   };
+}
+
+function createQueueRepository(head: string): RepositoryService {
+  return {
+    getRepositoryUrl: () => 'https://github.com/cynos-ai/fixture',
+    getScenarioBranch: () => 'scenario-testing',
+    getRepository: async () => ({
+      fetch: async () => undefined,
+      remoteBranchHead: async () => head,
+    }),
+    listMergeRequestRefs: async () => [],
+    isPublishedTarget: async (commit: string) => commit === head,
+    cleanupMergeRequestRef: async () => undefined,
+  } as unknown as RepositoryService;
 }
 
 function createNoopArchiver(): RunArchiver {
