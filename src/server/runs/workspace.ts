@@ -170,7 +170,17 @@ export class RunWorkspace implements RunArtifactReader {
       if (error instanceof RunWorkspaceError) throw error;
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
     }
+    if (options.specialScenarioReview) await this.retainSpecialScenarioReviewArtifacts();
     await rename(this.runningDirectory, this.completedDirectory);
+  }
+
+  private async retainSpecialScenarioReviewArtifacts(): Promise<void> {
+    const retained = new Set<string>([SCENARIO_PATCH_ARTIFACT_NAME, 'report.md']);
+    for (const entry of await readdir(this.runningDirectory)) {
+      if (!retained.has(entry)) {
+        await rm(resolve(this.runningDirectory, entry), { recursive: true, force: false });
+      }
+    }
   }
 
   async listEvidence(): Promise<RunEvidenceFile[]> {

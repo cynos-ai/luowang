@@ -84,16 +84,20 @@ class PiAgentSessionFactory implements AgentSessionFactory {
 
 class ManagedAgentSession implements AgentSession {
   private disposed = false;
+  readonly sessionId: string;
 
   constructor(
     private readonly session: {
+      sessionId: string;
       prompt(message: string): Promise<void>;
       dispose(): void;
       extensionRunner: {
         emit(event: SessionShutdownEvent): Promise<unknown>;
       };
     },
-  ) {}
+  ) {
+    this.sessionId = session.sessionId;
+  }
 
   prompt(message: string): Promise<void> {
     if (this.disposed) return Promise.reject(new Error('Agent session 已释放'));

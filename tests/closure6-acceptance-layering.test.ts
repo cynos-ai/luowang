@@ -1,0 +1,207 @@
+import { strict as assert } from 'node:assert';
+import { readFile } from 'node:fs/promises';
+
+import { describe, it } from 'vitest';
+
+import {
+  LIVE_INPUT_NAMES,
+  createLayeredReport,
+  localOnlyEnvironment,
+  missingLiveInputs,
+  redactAcceptanceText,
+  type ClosureProofStatuses,
+} from './acceptance/closure.js';
+
+describe('Closure 6 acceptance status layering', () => {
+  it('lists every missing live input by name without exposing configured values', () => {
+    const environment: NodeJS.ProcessEnv = {
+      LUOWANG_LIVE_REPOSITORY: 'https://github.com/example/private-target',
+      LUOWANG_LIVE_GITHUB_TOKEN: 'canary-live-secret-value',
+    };
+    const missing = missingLiveInputs(environment);
+    assert.equal(missing.includes('LUOWANG_LIVE_REPOSITORY'), false);
+    assert.equal(missing.includes('LUOWANG_LIVE_GITHUB_TOKEN'), false);
+    assert.deepEqual(
+      missing,
+      LIVE_INPUT_NAMES.filter(
+        (name) => name !== 'LUOWANG_LIVE_REPOSITORY' && name !== 'LUOWANG_LIVE_GITHUB_TOKEN',
+      ),
+    );
+    assert.doesNotMatch(JSON.stringify(missing), /canary-live-secret-value/);
+  });
+
+  it('builds local subprocess environment from a non-secret allowlist', () => {
+    const original = {
+      github: process.env.GITHUB_TOKEN,
+      aws: process.env.AWS_SECRET_ACCESS_KEY,
+      master: process.env.LUOWANG_MASTER_KEY,
+    };
+    process.env.GITHUB_TOKEN = 'canary-github-value';
+    process.env.AWS_SECRET_ACCESS_KEY = 'canary-aws-value';
+    process.env.LUOWANG_MASTER_KEY = 'canary-master-value';
+    try {
+      const environment = localOnlyEnvironment('/tmp/luowang-closure6-environment');
+      assert.equal(environment.GITHUB_TOKEN, undefined);
+      assert.equal(environment.AWS_SECRET_ACCESS_KEY, undefined);
+      assert.equal(environment.LUOWANG_MASTER_KEY, undefined);
+      assert.equal(environment.NODE_ENV, 'test');
+      assert.equal(environment.HOME, '/tmp/luowang-closure6-environment/isolated-home');
+      assert.doesNotMatch(JSON.stringify(environment), /canary-(?:github|aws|master)-value/);
+    } finally {
+      restoreEnvironment('GITHUB_TOKEN', original.github);
+      restoreEnvironment('AWS_SECRET_ACCESS_KEY', original.aws);
+      restoreEnvironment('LUOWANG_MASTER_KEY', original.master);
+    }
+  });
+
+  it('redacts credential-shaped command output before it can enter reports', () => {
+    const output = redactAcceptanceText(
+      `Authorization: Bearer canary-bearer token=canary-token {"token":"canary-json-token","apiKey":"canary-json-key","password":"canary-json-password"} github_pat_1234567890abcdef AKIA1234567890ABCDEF https://user:pass@example.test/path`,
+    );
+    assert.doesNotMatch(output, /canary-|github_pat_|AKIA123|user:pass/);
+    assert.match(output, /REDACTED/);
+  });
+
+  it('keeps release blocked when local passes but live is blocked', () => {
+    const report = createLayeredReport({
+      mode: 'local',
+      startedAt: '2026-09-01T00:00:00.000Z',
+      local: { status: 'passed', message: 'local passed' },
+      live: {
+        status: 'blocked',
+        message: 'live inputs missing',
+        missing: ['LUOWANG_LIVE_PROVIDER_API_KEY'],
+      },
+      proofs: proofStatuses(),
+    });
+    assert.equal(report.local.status, 'passed');
+    assert.equal(report.live.status, 'blocked');
+    assert.equal(report.release.status, 'blocked');
+    assert.equal(report.acEvidence.length, 14);
+    assert.equal(new Set(report.acEvidence.map((item) => item.ac)).size, 14);
+    assert.equal(
+      report.resourceChecks.every((item) => item.evidence.length > 0),
+      true,
+    );
+  });
+
+  it('derives each AC status from its corresponding proof instead of the local aggregate', () => {
+    const report = createLayeredReport({
+      mode: 'local',
+      startedAt: '2026-09-01T00:00:00.000Z',
+      local: { status: 'passed', message: 'aggregate local status' },
+      live: { status: 'blocked', message: 'live blocked' },
+      proofs: proofStatuses({
+        merge01: 'blocked',
+        data02: 'failed',
+        history01: 'not_run',
+        ordinaryPi: 'failed',
+        acceptanceLayering: 'passed',
+        acMapping: 'blocked',
+      }),
+    });
+    const statuses = Object.fromEntries(report.acEvidence.map((item) => [item.ac, item.status]));
+    assert.equal(statuses['AC-CLOSURE-MERGE-01'], 'blocked');
+    assert.equal(statuses['AC-CLOSURE-DATA-02'], 'failed');
+    assert.equal(statuses['AC-CLOSURE-HISTORY-01'], 'not_run');
+    assert.equal(statuses['AC-CLOSURE-PI-01'], 'failed');
+    assert.equal(statuses['AC-CLOSURE-ACCEPT-01'], 'passed');
+    assert.equal(statuses['AC-CLOSURE-ACCEPT-02'], 'blocked');
+    assert.equal(statuses['AC-CLOSURE-TARGET-01'], 'passed');
+    assert.equal(
+      report.resourceChecks.find((item) => item.id === 'pi-sdk-ordinary-four-session')?.status,
+      'failed',
+    );
+    assert.equal(report.resourceChecks.at(-1)?.status, 'blocked');
+  });
+
+  it('documents Docker priority, native build dependencies, and honest acceptance boundaries', async () => {
+    const readme = await readFile('README.md', 'utf8');
+    assert.match(readme, /优先使用.*Docker/s);
+    assert.match(readme, /python3.*make.*g\+\+/s);
+    assert.match(readme, /test:acceptance:local/);
+    assert.match(readme, /test:acceptance:live/);
+    assert.match(readme, /test:acceptance:release/);
+    assert.match(readme, /local.*只能证明.*local\.status=passed/s);
+    assert.match(readme, /release\.status.*blocked/);
+  });
+
+  it('validates integrated role instruction method content when Closure 1 is present', async () => {
+    const files = [
+      'common.md',
+      'main-planning.md',
+      'runner-execution.md',
+      'reviewer-audit.md',
+      'main-finalization.md',
+      'scenario-initialization.md',
+    ];
+    let contents: string[];
+    try {
+      contents = await Promise.all(
+        files.map((file) => readFile(`resources/agent-roles/${file}`, 'utf8')),
+      );
+    } catch {
+      return;
+    }
+    for (const [index, content] of contents.entries()) {
+      assert.match(content, new RegExp(`luowang-role-id: ${files[index]?.replace(/\.md$/, '')}`));
+      for (const heading of ['目标', '硬边界', '顺序', '输出契约', '失败规则', '反模式']) {
+        assert.match(content, new RegExp(`## ${heading}`));
+      }
+    }
+    const all = contents.join('\n');
+    assert.match(all, /不得用当前实现反推正确期望/);
+    assert.match(all, /证据优先级/);
+    assert.match(all, /Runner 报告是待审核假设/);
+    assert.match(all, /清理声明不是独立核验事实/);
+    assert.match(all, /不影响验证目标的偏差可以记录后继续/);
+    assert.match(all, /blocked > failed > passed/);
+  });
+
+  it('exposes separate package commands and keeps CI on local only', async () => {
+    const packageJson = JSON.parse(await readFile('package.json', 'utf8')) as {
+      scripts: Record<string, string>;
+    };
+    assert.equal(packageJson.scripts['test:acceptance'], 'npm run test:acceptance:local');
+    assert.match(packageJson.scripts['test:acceptance:local'] ?? '', /closure\.ts local/);
+    assert.match(packageJson.scripts['test:acceptance:live'] ?? '', /closure\.ts live/);
+    assert.match(packageJson.scripts['test:acceptance:release'] ?? '', /closure\.ts release/);
+    const workflow = await readFile('.github/workflows/quality.yml', 'utf8');
+    assert.match(workflow, /npm run test:acceptance:local/);
+    assert.doesNotMatch(workflow, /npm run test:acceptance:(?:live|release)/);
+  });
+});
+
+function proofStatuses(overrides: Partial<ClosureProofStatuses> = {}): ClosureProofStatuses {
+  return {
+    doc: 'passed',
+    instr01: 'passed',
+    instr02: 'passed',
+    instr03: 'passed',
+    merge01: 'passed',
+    target01: 'passed',
+    merge02: 'passed',
+    data01: 'passed',
+    data02: 'passed',
+    active01: 'passed',
+    history01: 'passed',
+    ordinaryPi: 'passed',
+    directInitialization: 'passed',
+    scenarioReview: 'passed',
+    finalRevision: 'passed',
+    invalidTool: 'passed',
+    mergeConflict: 'passed',
+    indexerRecovery: 'passed',
+    archiveRetry: 'passed',
+    processRestart: 'passed',
+    queueRecovery: 'passed',
+    acceptanceLayering: 'passed',
+    acMapping: 'passed',
+    ...overrides,
+  };
+}
+
+function restoreEnvironment(name: string, value: string | undefined): void {
+  if (value === undefined) delete process.env[name];
+  else process.env[name] = value;
+}

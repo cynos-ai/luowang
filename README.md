@@ -1,12 +1,20 @@
 # LuoWang
 
-罗网（LuoWang）是一个独立部署的 AI 场景测试 Harness。当前仓库已发布 v0.1.0，并已实现 Phase 0–9 的主要模块：安全配置控制台、唯一 GitHub 目标仓库索引、Main → Runner → Reviewer → Main Run、受控 Playwright MCP UI 执行、S3-compatible OSS 证据 Gateway、幂等归档和持久 FIFO 自动化队列，以及长期场景生命周期、三种场景维护模式、陌生项目初始化和运维控制台。
-
-v0.1.0 的 Phase 9 验收已使用隔离的本地样例仓库、样例 Web 应用和 test doubles 完成 34 个 AC 的自动化回归；这证明的是 local 基线，不是生产闭环的 live 联合验收。当前尚未完成真实 Provider + Pi Agent + Playwright MCP + 私有 OSS + GitHub + 非生产应用的联合证明，因此不能把 v0.1.0 或当前 `develop` 视为下一版本的发布验收已经通过。
+罗网（LuoWang）是一个独立部署的 AI 场景测试 Harness。当前仓库已完成 Phase 0–9 的主要模块，并已发布 v0.1.0：除了安全配置控制台、唯一 GitHub 目标仓库索引、Main → Runner → Reviewer → Main 的本地 Run、受控 Playwright MCP UI 执行、S3-compatible OSS 证据 Gateway、幂等归档和持久 FIFO 自动化队列，还支持长期场景生命周期、三种场景维护模式、陌生项目初始化，以及完整运维控制台。34 个原 MVP AC 已有本地 fixture/自动化回归；真实 GitHub、Provider、Pi、Playwright MCP、私有 OSS 和非生产应用的联合验收尚未完成，不能据此声明可发布。
 
 ## 本地启动
 
-优先使用 Docker Compose 复现固定的 Node、原生依赖和 Chromium 环境：
+优先使用下文的 Docker Compose 或固定 quality/runtime 镜像复现。原生运行需要 Node.js 24 和 npm；当 `better-sqlite3` 没有匹配的预编译包时，还需要 `python3`、`make` 和 `g++`。生产模式：
+
+```bash
+npm ci
+npm run build
+npm start
+```
+
+默认只监听 `127.0.0.1:3000`。打开 <http://127.0.0.1:3000/> 可查看控制台壳，健康检查地址为 <http://127.0.0.1:3000/health>。数据默认保存在 `/data`；本地开发可以设置 `LUOWANG_DATA_DIR` 到可写目录。执行 `npm run dev` 可以同时启动 Vite 和开发服务器。
+
+也可以使用 Docker Compose：
 
 ```bash
 # 首次启动空数据卷前必须设置这两个值；不要把真实值提交到 Git。
@@ -19,25 +27,24 @@ docker compose down
 
 Compose 将数据保存到 `luowang-data` 卷，并把宿主机端口绑定到 `127.0.0.1`。管理员密码只在空数据库首次启动时读取；主密钥只用于进程内派生 Secret Store 密钥，二者都不会写入 SQLite。
 
-如需直接在宿主机运行，需要 Node.js 24 和 npm 10 或更高版本。`better-sqlite3` 等依赖没有适用的预编译包时，`npm ci` 还需要系统已安装 `python3`、`make` 和 `g++`；缺少这些工具时请优先使用 Docker，不要跳过依赖安装或质量检查。
-
-```bash
-npm ci
-npm run build
-npm start
-```
-
-默认只监听 `127.0.0.1:3000`。打开 <http://127.0.0.1:3000/> 可查看控制台壳，健康检查地址为 <http://127.0.0.1:3000/health>。数据默认保存在 `/data`；本地开发可以设置 `LUOWANG_DATA_DIR` 到可写目录。执行 `npm run dev` 可以同时启动 Vite 和开发服务器。
-
 ## 验收状态
 
-当前命令：
+验收命令按证明范围严格分层：
 
 ```bash
-npm run test:acceptance
+# 无外部凭据；真实经过 Pi SDK Session 和本地模型协议服务。兼容别名 npm run test:acceptance 也只指向 local。
+npm run test:acceptance:local
+
+# 真实外部联合验收；缺少任一必需输入时列出 missing 名称并非零退出。
+npm run test:acceptance:live
+
+# 先执行公共质量与 local，再执行 live；live blocked/failed 时非零退出。
+npm run test:acceptance:release
 ```
 
-该命令当前只代表 **local acceptance**。它会运行公共质量命令，并使用临时 Git bare 仓库、Cynos 官网登录/注册样例应用、SQLite、队列、归档和 headless Chromium 回归 34 个 AC；报告保存在 `.cynos/acceptance/<timestamp>/`。其中 Agent Run 证明注入 `FixtureSessionFactory`，浏览器证明直接使用 Playwright；它们不能代替真实 `createAgentSession()`、模型 custom tool 循环和 Playwright MCP 联合路径。正式的 local/live/release 分层命令将在生产闭环 Closure Phase 6 提供。
+`local` 使用临时 Git bare 仓库、样例应用、SQLite、队列、归档、headless Chromium 和本地可控模型协议服务；Agent 流程真实调用生产 `createAgentSession()`，但本地 test double 只能证明 `local.status=passed`。报告保存在 `.cynos/acceptance/<timestamp>-<mode>/`，分别记录 `local.status`、`live.status`、`release.status`、资源检查、逐 AC 证据和命令。CI 只运行 local，并明确不读取 live Secret。
+
+Closure 6 只提供 live 输入预检和诚实的 blocked 结果；真实 GitHub、Provider、Playwright MCP、私有 OSS、非生产应用和测试账号的联合流程在 Closure 7 执行。在它通过前，`release.status` 必须保持 blocked，不能用现有 GitHub 只读 smoke 或本地服务冒充 live passed。
 
 当前可选的 live 路径只包含有限的 GitHub smoke，不覆盖真实 Provider、Pi Agent、Playwright MCP、私有 OSS 和非生产应用联合验收。它不会默认执行；如需运行，必须显式提供 `LUOWANG_ACCEPTANCE_LIVE=1`、`LUOWANG_SMOKE_REPOSITORY=https://github.com/cynos-ai/cynos-website` 和临时 `LUOWANG_SMOKE_GITHUB_TOKEN`。即使该有限 smoke 通过，也不能视为 live 或 release 证明完成。
 

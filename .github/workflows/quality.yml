@@ -38,8 +38,8 @@ jobs:
           --build-arg "DEBIAN_SECURITY_MIRROR=${DEBIAN_SECURITY_MIRROR}"
           --tag luowang:quality .
 
-      - name: Phase 9 acceptance and quality matrix
-        run: docker run --rm --init --ipc=host luowang:quality npm run test:acceptance
+      - name: Local acceptance and quality matrix (live is not run in CI)
+        run: docker run --rm --init --ipc=host luowang:quality npm run test:acceptance:local
 
       - name: Build production image
         run: >-
