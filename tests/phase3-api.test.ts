@@ -85,8 +85,10 @@ describe('Phase 3 Run API', () => {
       payload: { request: '验证测试项目', trigger: 'api' },
     });
     assert.equal(start.statusCode, 202);
-    assert.equal(start.json().runId, '01K00000000000000000000001');
-    assert.equal(started.length, 1);
+    assert.equal(start.json().status, 'queued');
+    assert.equal(start.json().run, null);
+    assert.equal(typeof start.json().queueId, 'number');
+    await waitFor(() => started.length === 1);
     assert.equal(started[0]?.request, '验证测试项目');
     assert.equal(started[0]?.trigger, 'api');
     assert.equal(started[0]?.targetCommit, 'a'.repeat(40));
@@ -219,6 +221,14 @@ function emptySummary(): RunSummary {
 
 function emptyDetail(): RunDetail {
   return { ...emptySummary(), artifacts: {} };
+}
+
+async function waitFor(predicate: () => boolean): Promise<void> {
+  for (let attempt = 0; attempt < 200; attempt += 1) {
+    if (predicate()) return;
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+  throw new Error('condition was not reached');
 }
 
 function firstCookie(value: string | string[] | undefined): string {

@@ -20,6 +20,11 @@ export interface EvidenceUploadFailure {
   message: string;
 }
 
+export interface EvidenceCleanupResult {
+  deleted: string[];
+  failures: EvidenceUploadFailure[];
+}
+
 export interface RunEvidenceStore {
   list(): Promise<RunEvidenceFile[]>;
   upload(filename: string): Promise<EvidenceReference>;
@@ -27,6 +32,7 @@ export interface RunEvidenceStore {
   read(filename: string): Promise<EvidenceReadResult>;
   readUploaded?(filename: string): Promise<EvidenceReadResult>;
   cleanupLocal(): Promise<void>;
+  cleanupUploaded(): Promise<EvidenceCleanupResult>;
   readFailureCount?: () => number;
   recordReadFailure?: () => void;
   reviewReadCount?: () => number;
@@ -154,6 +160,21 @@ class DefaultRunEvidenceStore implements RunEvidenceStore {
 
   cleanupLocal(): Promise<void> {
     return this.workspace.removeEvidence();
+  }
+
+  async cleanupUploaded(): Promise<EvidenceCleanupResult> {
+    const deleted: string[] = [];
+    const failures: EvidenceUploadFailure[] = [];
+    for (const [filename, reference] of this.references) {
+      try {
+        await this.oss.deleteObject(reference.objectKey);
+        this.references.delete(filename);
+        deleted.push(filename);
+      } catch (error) {
+        failures.push({ filename, message: safeMessage(error) });
+      }
+    }
+    return { deleted, failures };
   }
 
   readFailureCount(): number {

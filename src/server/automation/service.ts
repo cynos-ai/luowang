@@ -95,6 +95,7 @@ class DefaultAutomationService implements AutomationService {
   private activeQueueId: number | null = null;
   private activeRunId: string | null = null;
   private dispatching = false;
+  private dispatchScheduled = false;
   private recovering = false;
 
   constructor(
@@ -110,12 +111,8 @@ class DefaultAutomationService implements AutomationService {
 
   async submitTestRequest(input: TestRequestInput): Promise<AutomationSubmission> {
     const queued = this.options.queue.enqueue(input);
-    const dispatched = await this.dispatchNext();
-    const current = this.options.queue.get(queued.queueId) ?? queued;
-    return {
-      queue: current,
-      run: dispatched?.queueId === queued.queueId ? dispatched.run : null,
-    };
+    this.kickDispatch();
+    return { queue: queued, run: null };
   }
 
   listQueue(): TestRequestRecord[] {
@@ -164,10 +161,15 @@ class DefaultAutomationService implements AutomationService {
     if (!this.options.runStore) return result;
 
     const cutoff = this.now().getTime() - retentionDays * 24 * 60 * 60 * 1_000;
+    const current = await this.options.runs.current();
     for (const run of this.options.runStore.list()) {
       if (run.archiveStatus !== 'completed') continue;
       const finishedAt = Date.parse(run.finishedAt);
       if (Number.isNaN(finishedAt) || finishedAt > cutoff) continue;
+      if (current?.runId === run.runId || this.hasPendingRunOperations(run.runId)) {
+        result.skippedRunIds.push(run.runId);
+        continue;
+      }
       try {
         await this.workspaceStore.remove(run.runId, 'completed');
         result.removedRunIds.push(run.runId);
@@ -201,6 +203,19 @@ class DefaultAutomationService implements AutomationService {
       throw new AutomationServiceError('AUTOMATION_RUN_ACTIVE', '当前 Run 正在执行，不能清理');
     }
     const knownRun = await this.options.runs.get(runId);
+    const storedRun = this.options.runStore?.get(runId);
+    if (!storedRun || storedRun.archiveStatus !== 'completed') {
+      throw new AutomationServiceError(
+        'AUTOMATION_CLEANUP_FAILED',
+        'Run 归档尚未完成，必须保留 report、场景 patch 和 Issue 重试工件',
+      );
+    }
+    if (this.hasPendingRunOperations(runId)) {
+      throw new AutomationServiceError(
+        'AUTOMATION_CLEANUP_FAILED',
+        'Run 仍有关联的队列、归档或发布重试操作，不能清理',
+      );
+    }
     let removed = false;
     for (const placement of ['running', 'completed'] as const) {
       if ((await this.workspaceStore.list(placement)).includes(runId)) {
@@ -216,6 +231,13 @@ class DefaultAutomationService implements AutomationService {
 
   state(): AutomationStateStore {
     return this.options.state;
+  }
+
+  private hasPendingRunOperations(runId: string): boolean {
+    return this.options.queue
+      .list()
+      .filter((item) => item.runId === runId || queueRunId(item) === runId)
+      .some((item) => item.status !== 'completed' || item.archiveStatus !== 'completed');
   }
 
   private async dispatchNext(): Promise<{ queueId: number; run: RunSummary } | null> {
@@ -246,9 +268,7 @@ class DefaultAutomationService implements AutomationService {
         await this.failQueueItem(item.queueId, safeMessage(error));
         this.activeQueueId = null;
         this.activeRunId = null;
-        Promise.resolve()
-          .then(() => this.dispatchNext())
-          .catch(() => undefined);
+        this.kickDispatch();
         return null;
       }
     } finally {
@@ -290,8 +310,22 @@ class DefaultAutomationService implements AutomationService {
         this.activeQueueId = null;
         this.activeRunId = null;
       }
-      await this.dispatchNext();
+      this.kickDispatch();
     }
+  }
+
+  private kickDispatch(): void {
+    if (this.dispatchScheduled) return;
+    this.dispatchScheduled = true;
+    setImmediate(() => {
+      this.dispatchScheduled = false;
+      this.dispatchNext().catch((error: unknown) => {
+        this.options.logger?.error(
+          { errorName: error instanceof Error ? error.name : 'UnknownError' },
+          'background automation dispatch failed',
+        );
+      });
+    });
   }
 
   private async recoverQueueItem(item: TestRequestRecord): Promise<void> {

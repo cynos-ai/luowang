@@ -77,6 +77,7 @@ export interface AgentSessionInput {
 }
 
 export interface AgentSession {
+  readonly sessionId?: string;
   prompt(message: string): Promise<void>;
   dispose(): void | Promise<void>;
 }
