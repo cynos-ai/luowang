@@ -914,15 +914,19 @@ function RepositoryWorkspace() {
 
   const createBranch = async () => {
     const initialRef = window.prompt('输入用于创建场景测试分支的 branch、tag 或 SHA', 'main');
-    if (!initialRef) return;
+    if (
+      !initialRef ||
+      !window.confirm(`确认从 ${initialRef} 首次创建场景测试分支并启动初始化 Run？`)
+    )
+      return;
     setBusy('branch');
     setError('');
     try {
-      const result = await requestJson<{ head: string }>('/api/repository/scenario-branch', {
+      const result = await requestJson<{ queueId: number }>('/api/repository/merge', {
         method: 'POST',
-        body: JSON.stringify({ initialRef }),
+        body: JSON.stringify({ sourceRef: initialRef, confirmed: true, initialization: true }),
       });
-      setMessage(`场景测试分支已准备：${result.head.slice(0, 12)}`);
+      setMessage(`首次创建与初始化请求已进入队列：#${result.queueId}`);
       await load();
     } catch (cause: unknown) {
       setError(toUserMessage(cause, '场景测试分支创建失败'));
@@ -937,15 +941,11 @@ function RepositoryWorkspace() {
     setBusy('merge');
     setError('');
     try {
-      const result = await requestJson<{ scenarioBranchHead: string; alreadyIncluded: boolean }>(
-        '/api/repository/merge',
-        { method: 'POST', body: JSON.stringify({ sourceRef, confirmed: true }) },
-      );
-      setMessage(
-        result.alreadyIncluded
-          ? '来源 ref 已经在场景测试分支历史中，不重复合并'
-          : `合并已发布：${result.scenarioBranchHead.slice(0, 12)}`,
-      );
+      const result = await requestJson<{ queueId: number }>('/api/repository/merge', {
+        method: 'POST',
+        body: JSON.stringify({ sourceRef, confirmed: true }),
+      });
+      setMessage(`merge 与固定 target 测试请求已进入队列：#${result.queueId}`);
       await load();
     } catch (cause: unknown) {
       setError(toUserMessage(cause, '来源 ref 合并失败'));
@@ -1026,7 +1026,7 @@ function RepositoryWorkspace() {
           disabled={busy !== null || !status?.configured}
           onClick={() => void createBranch()}
         >
-          准备场景测试分支
+          排队首次创建并初始化
         </button>
         <button
           className="button button-ghost"
@@ -1034,7 +1034,7 @@ function RepositoryWorkspace() {
           disabled={busy !== null || !status?.configured}
           onClick={() => void merge()}
         >
-          合并指定来源 ref
+          排队 merge-source 并测试
         </button>
       </div>
       {status?.indexErrors.length ? (
@@ -1252,7 +1252,9 @@ function DashboardPanel({ onNavigate }: { onNavigate: (view: ConsoleView) => voi
                       <strong>#{item.queueId}</strong> {item.trigger}
                     </span>
                     <span className={`state-${item.status}`}>{queueStatusLabel(item.status)}</span>
-                    <small>{shortSha(item.runId ?? item.targetRef)}</small>
+                    <small>
+                      {shortSha(item.runId ?? item.resolvedTargetCommit ?? item.sourceRef)}
+                    </small>
                   </div>
                 ))}
             </div>
@@ -1353,7 +1355,6 @@ function DashboardPanel({ onNavigate }: { onNavigate: (view: ConsoleView) => voi
 
 function RunRequestForm({ onSubmitted }: { onSubmitted: (message: string) => void }) {
   const [request, setRequest] = useState('验证当前场景测试分支的核心业务流程');
-  const [targetCommit, setTargetCommit] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
 
@@ -1366,10 +1367,7 @@ function RunRequestForm({ onSubmitted }: { onSubmitted: (message: string) => voi
         '/api/runs',
         {
           method: 'POST',
-          body: JSON.stringify({
-            request,
-            ...(targetCommit.trim() ? { targetCommit: targetCommit.trim() } : {}),
-          }),
+          body: JSON.stringify({ request }),
         },
       );
       onSubmitted(
@@ -1394,14 +1392,10 @@ function RunRequestForm({ onSubmitted }: { onSubmitted: (message: string) => voi
           onChange={(event) => setRequest(event.target.value)}
         />
       </Field>
-      <Field label="目标 commit / branch / tag（可选）">
-        <input
-          aria-label="目标 commit"
-          value={targetCommit}
-          onChange={(event) => setTargetCommit(event.target.value)}
-          placeholder="留空使用场景测试分支 HEAD"
-        />
-      </Field>
+      <p className="muted">
+        target 将在该请求轮到执行时固定为远端场景测试分支 HEAD；指定 branch、tag 或 SHA
+        请使用仓库页的 merge-source 入口。
+      </p>
       {error && <p className="notice notice-error">{error}</p>}
       <button className="button" type="submit" disabled={busy || request.trim() === ''}>
         {busy ? '提交中…' : '提交测试请求'}

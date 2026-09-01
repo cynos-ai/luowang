@@ -9,6 +9,7 @@ import { afterEach, describe, it } from 'vitest';
 import { createApp } from '../src/server/app.js';
 import { loadConfig } from '../src/server/config.js';
 import { initializeDatabase } from '../src/server/db/migrate.js';
+import type { RepositoryService } from '../src/server/repository/service.js';
 import type { ProviderAdapter } from '../src/server/runs/provider.js';
 import type { RunOrchestrator } from '../src/server/runs/orchestrator.js';
 import type { RunInput } from '../src/server/runs/types.js';
@@ -53,17 +54,69 @@ describe('Phase 3 Run API', () => {
     assert.equal(list.statusCode, 200);
     assert.deepEqual(list.json(), { runs: [] });
 
+    const rejectedTarget = await app.inject({
+      method: 'POST',
+      url: '/api/runs',
+      headers: { cookie },
+      payload: { request: '绕过固定分支', trigger: 'api', targetCommit: 'b'.repeat(40) },
+    });
+    assert.equal(rejectedTarget.statusCode, 400);
+    const rejectedLegacyRef = await app.inject({
+      method: 'POST',
+      url: '/api/runs',
+      headers: { cookie },
+      payload: { request: '绕过固定分支', trigger: 'api', targetRef: 'feature' },
+    });
+    assert.equal(rejectedLegacyRef.statusCode, 400);
+
+    const legacyBranchCreate = await app.inject({
+      method: 'POST',
+      url: '/api/repository/scenario-branch',
+      headers: { cookie },
+      payload: { initialRef: 'main' },
+    });
+    assert.equal(legacyBranchCreate.statusCode, 409);
+    assert.match(legacyBranchCreate.json().error.message, /不能在队列外创建/);
+
     const start = await app.inject({
       method: 'POST',
       url: '/api/runs',
       headers: { cookie },
-      payload: { request: '验证测试项目', trigger: 'api', targetCommit: 'a'.repeat(40) },
+      payload: { request: '验证测试项目', trigger: 'api' },
     });
     assert.equal(start.statusCode, 202);
     assert.equal(start.json().runId, '01K00000000000000000000001');
-    assert.deepEqual(started, [
-      { request: '验证测试项目', trigger: 'api', targetCommit: 'a'.repeat(40) },
-    ]);
+    assert.equal(started.length, 1);
+    assert.equal(started[0]?.request, '验证测试项目');
+    assert.equal(started[0]?.trigger, 'api');
+    assert.equal(started[0]?.targetCommit, 'a'.repeat(40));
+    assert.match(started[0]?.runId ?? '', /^[0-9A-HJKMNP-TV-Z]{26}$/);
+
+    const merge = await app.inject({
+      method: 'POST',
+      url: '/api/repository/merge',
+      headers: { cookie },
+      payload: { sourceRef: 'feature/login', confirmed: true, initialization: true },
+    });
+    assert.equal(merge.statusCode, 202);
+    const queue = await app.inject({ method: 'GET', url: '/api/queue', headers: { cookie } });
+    const mergeQueue = queue
+      .json()
+      .queue.find((item: { requestKind: string }) => item.requestKind === 'manual-merge-source');
+    assert.equal(mergeQueue.sourceRef, 'feature/login');
+    assert.equal(mergeQueue.initialization, true);
+
+    const blockedRepositoryChange = await app.inject({
+      method: 'PUT',
+      url: '/api/config/repository',
+      headers: { cookie },
+      payload: {
+        repository: 'https://github.com/cynos-ai/other-target',
+        scenarioBranch: 'other-scenario-testing',
+      },
+    });
+    assert.equal(blockedRepositoryChange.statusCode, 409);
+    assert.match(blockedRepositoryChange.json().error.message, /未结束的测试请求/);
 
     const models = await app.inject({
       method: 'GET',
@@ -91,6 +144,7 @@ async function makeApp(options: { runs: RunOrchestrator; provider: ProviderAdapt
     logger: pino({ level: 'silent' }),
     runs: options.runs,
     provider: options.provider,
+    repository: fakeRepository(),
   });
   cleanup.push(async () => app.close());
   return { app };
@@ -104,12 +158,27 @@ function fakeRuns(started: RunInput[]): RunOrchestrator {
       return summary;
     },
     run: async () => emptyDetail(),
-    wait: async () => null,
+    wait: async () => new Promise<RunDetail | null>(() => undefined),
     current: async () => null,
     list: async () => [],
     get: async () => null,
     recover: async () => undefined,
   };
+}
+
+function fakeRepository(): RepositoryService {
+  const head = 'a'.repeat(40);
+  return {
+    getRepositoryUrl: () => 'https://github.com/cynos-ai/fixture',
+    getScenarioBranch: () => 'scenario-testing',
+    getRepository: async () => ({
+      fetch: async () => undefined,
+      remoteBranchHead: async () => head,
+    }),
+    listMergeRequestRefs: async () => [],
+    isPublishedTarget: async (commit: string) => commit === head,
+    cleanupMergeRequestRef: async () => undefined,
+  } as unknown as RepositoryService;
 }
 
 function fakeProvider(): ProviderAdapter {

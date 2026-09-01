@@ -7,12 +7,17 @@ import type { RunTrigger } from '../../shared/types.js';
 export type TestRequestStatus =
   'queued' | 'running' | 'waiting_archive' | 'completed' | 'failed' | 'interrupted';
 
+export type TestRequestKind = 'automatic-head' | 'manual-current-head' | 'manual-merge-source';
+export type PreparedMergeMode = 'existing-branch' | 'initial-create';
+
 export interface TestRequestInput {
   request: string;
   trigger: RunTrigger;
-  /** A SHA, branch, tag, or another ref resolved by the Run Orchestrator. */
+  requestKind?: TestRequestKind;
+  sourceRef?: string | null;
+  confirmed?: boolean;
+  /** Rejected legacy fields retained only to produce an explicit migration error. */
   targetRef?: string | null;
-  /** Backwards-compatible spelling used by the Run API. */
   targetCommit?: string | null;
   initialization?: boolean;
 }
@@ -24,7 +29,13 @@ export interface TestRequestRecord {
   triggerSources: RunTrigger[];
   requestIds: string[];
   request: string;
+  /** Historical v0.1.0 input. New scheduling never reads this field. */
   targetRef: string | null;
+  requestKind: TestRequestKind;
+  sourceRef: string | null;
+  preparedMergeCommit: string | null;
+  preparedMergeMode: PreparedMergeMode | null;
+  resolvedTargetCommit: string | null;
   status: TestRequestStatus;
   runId: string | null;
   claimedAt: string | null;
@@ -48,6 +59,8 @@ export interface QueueCompletion {
 export interface TestRequestQueue {
   enqueue(input: TestRequestInput): TestRequestRecord;
   claimNext(): TestRequestRecord | null;
+  markPrepared(queueId: number, commit: string, mode: PreparedMergeMode): TestRequestRecord;
+  markResolved(queueId: number, commit: string): TestRequestRecord;
   markStarted(queueId: number, runId: string): TestRequestRecord;
   requeue(queueId: number): TestRequestRecord;
   markWaitingArchive(queueId: number, runId: string): TestRequestRecord;
@@ -70,7 +83,13 @@ export class TestRequestQueueError extends Error {
 }
 
 const MAX_REQUEST_LENGTH = 16_384;
-const MAX_TARGET_REF_LENGTH = 255;
+const MAX_SOURCE_REF_LENGTH = 255;
+const SOURCE_REF_PATTERN = /^[^\s~^:?*\\[\]]{1,255}$/;
+const SHA_PATTERN = /^[0-9a-f]{40}$/;
+const CREDENTIAL_LIKE_SOURCE =
+  /(?:github_pat_|gh[opsur]_|sk-[A-Za-z0-9]{12,}|AKIA[0-9A-Z]{16}|x-access-token@)/i;
+const URL_LIKE_SOURCE =
+  /(?:^|@)(?:www\.)?(?:github\.com|gitlab\.com|bitbucket\.org)(?:\/|$)|^[^/@\s]+@[^/\s]+\.[A-Za-z]{2,}(?:\/|$)/i;
 const AUTOMATIC_TRIGGERS: readonly RunTrigger[] = ['git', 'schedule'];
 
 export function createTestRequestQueue(
@@ -110,6 +129,8 @@ class SqliteTestRequestQueue implements TestRequestQueue {
 
       if (
         tail &&
+        tail.request_kind === 'automatic-head' &&
+        normalized.requestKind === 'automatic-head' &&
         isAutomatic(tail.trigger) &&
         isAutomatic(normalized.trigger) &&
         tail.initialization === (normalized.initialization ? 1 : 0)
@@ -126,14 +147,13 @@ class SqliteTestRequestQueue implements TestRequestQueue {
         this.database
           .prepare(
             `UPDATE test_request_queue
-             SET trigger = ?, request = ?, target_ref = ?,
+             SET trigger = ?, request = ?,
                  trigger_sources_json = ?, request_ids_json = ?, updated_at = ?
              WHERE queue_id = ?`,
           )
           .run(
             mergeTrigger(tail.trigger as RunTrigger, normalized.trigger),
             mergedRequest,
-            normalized.targetRef,
             JSON.stringify(sources),
             JSON.stringify(requestIds),
             timestamp,
@@ -145,16 +165,20 @@ class SqliteTestRequestQueue implements TestRequestQueue {
       const result = this.database
         .prepare(
           `INSERT INTO test_request_queue
-           (request_id, trigger, request, target_ref, trigger_sources_json, request_ids_json,
-            status, run_id, claimed_at, waiting_archive_at, completed_at, error_message,
-            archive_status, progressed, created_at, updated_at, initialization)
-           VALUES (?, ?, ?, ?, ?, ?, 'queued', NULL, NULL, NULL, NULL, NULL, NULL, NULL, ?, ?, ?)`,
+           (request_id, trigger, request, target_ref, request_kind, source_ref,
+            prepared_merge_commit, prepared_merge_mode, resolved_target_commit,
+            trigger_sources_json, request_ids_json, status, run_id, claimed_at,
+            waiting_archive_at, completed_at, error_message, archive_status, progressed,
+            created_at, updated_at, initialization)
+           VALUES (?, ?, ?, NULL, ?, ?, NULL, NULL, NULL, ?, ?, 'queued', NULL, NULL, NULL, NULL,
+                   NULL, NULL, NULL, ?, ?, ?)`,
         )
         .run(
           requestId,
           normalized.trigger,
           normalized.request,
-          normalized.targetRef,
+          normalized.requestKind,
+          normalized.sourceRef,
           JSON.stringify([normalized.trigger]),
           JSON.stringify([requestId]),
           timestamp,
@@ -194,14 +218,75 @@ class SqliteTestRequestQueue implements TestRequestQueue {
     return queueId === null ? null : this.require(queueId);
   }
 
+  markPrepared(queueId: number, commit: string, mode: PreparedMergeMode): TestRequestRecord {
+    const normalized = normalizeCommit(commit, 'prepared commit');
+    if (!['existing-branch', 'initial-create'].includes(mode)) {
+      throw new TestRequestQueueError('QUEUE_REQUEST_INVALID', 'prepared merge mode 无效');
+    }
+    const timestamp = this.now();
+    const result = this.database
+      .prepare(
+        `UPDATE test_request_queue
+         SET prepared_merge_commit = ?, prepared_merge_mode = ?, updated_at = ?
+         WHERE queue_id = ? AND status = 'running'
+           AND request_kind = 'manual-merge-source'
+           AND prepared_merge_commit IS NULL AND prepared_merge_mode IS NULL`,
+      )
+      .run(normalized, mode, timestamp, queueId);
+    if (result.changes !== 1) {
+      throw new TestRequestQueueError(
+        'QUEUE_STATE_INVALID',
+        '队列请求无法记录 prepared merge commit',
+      );
+    }
+    return this.require(queueId);
+  }
+
+  markResolved(queueId: number, commit: string): TestRequestRecord {
+    const normalized = normalizeCommit(commit, 'resolved target commit');
+    const current = this.require(queueId);
+    if (
+      current.requestKind === 'manual-merge-source' &&
+      current.preparedMergeCommit !== normalized
+    ) {
+      throw new TestRequestQueueError(
+        'QUEUE_STATE_INVALID',
+        'resolved target 必须等于 prepared merge commit',
+      );
+    }
+    if (current.resolvedTargetCommit !== null) {
+      if (current.resolvedTargetCommit === normalized) return current;
+      throw new TestRequestQueueError('QUEUE_STATE_INVALID', '队列请求的 target 已固定，不能改变');
+    }
+    const timestamp = this.now();
+    const result = this.database
+      .prepare(
+        `UPDATE test_request_queue
+         SET resolved_target_commit = ?, updated_at = ?
+         WHERE queue_id = ?
+           AND (status = 'running' OR run_id IS NOT NULL)
+           AND resolved_target_commit IS NULL`,
+      )
+      .run(normalized, timestamp, queueId);
+    if (result.changes !== 1) {
+      throw new TestRequestQueueError('QUEUE_STATE_INVALID', '队列请求无法固定 resolved target');
+    }
+    return this.require(queueId);
+  }
+
   markStarted(queueId: number, runId: string): TestRequestRecord {
     this.assertRunId(runId);
+    const current = this.require(queueId);
+    if (current.runId !== null) {
+      if (current.runId === runId && current.status === 'running') return current;
+      throw new TestRequestQueueError('QUEUE_STATE_INVALID', '队列请求已经关联其他 Run');
+    }
     const timestamp = this.now();
     const result = this.database
       .prepare(
         `UPDATE test_request_queue
          SET run_id = ?, updated_at = ?
-         WHERE queue_id = ? AND status = 'running'`,
+         WHERE queue_id = ? AND status = 'running' AND run_id IS NULL`,
       )
       .run(runId, timestamp, queueId);
     if (result.changes !== 1) {
@@ -234,10 +319,11 @@ class SqliteTestRequestQueue implements TestRequestQueue {
     const result = this.database
       .prepare(
         `UPDATE test_request_queue
-         SET status = 'waiting_archive', run_id = ?, waiting_archive_at = ?, updated_at = ?
-         WHERE queue_id = ? AND status = 'running'`,
+         SET status = 'waiting_archive', run_id = COALESCE(run_id, ?),
+             waiting_archive_at = ?, updated_at = ?
+         WHERE queue_id = ? AND status = 'running' AND (run_id IS NULL OR run_id = ?)`,
       )
-      .run(runId, timestamp, timestamp, queueId);
+      .run(runId, timestamp, timestamp, queueId, runId);
     if (result.changes !== 1) {
       throw new TestRequestQueueError('QUEUE_STATE_INVALID', '队列请求不在 running 状态');
     }
@@ -249,9 +335,10 @@ class SqliteTestRequestQueue implements TestRequestQueue {
     const result = this.database
       .prepare(
         `UPDATE test_request_queue
-         SET status = 'completed', run_id = COALESCE(?, run_id), completed_at = ?,
+         SET status = 'completed', run_id = COALESCE(run_id, ?), completed_at = ?,
              error_message = ?, archive_status = ?, progressed = ?, updated_at = ?
-         WHERE queue_id = ? AND status IN ('running', 'waiting_archive')`,
+         WHERE queue_id = ? AND status IN ('running', 'waiting_archive')
+           AND (? IS NULL OR run_id IS NULL OR run_id = ?)`,
       )
       .run(
         completion.runId ?? null,
@@ -265,6 +352,8 @@ class SqliteTestRequestQueue implements TestRequestQueue {
             : 0,
         timestamp,
         queueId,
+        completion.runId ?? null,
+        completion.runId ?? null,
       );
     if (result.changes !== 1) {
       throw new TestRequestQueueError(
@@ -353,6 +442,11 @@ interface QueueRow {
   trigger: string;
   request: string;
   target_ref: string | null;
+  request_kind: TestRequestKind;
+  source_ref: string | null;
+  prepared_merge_commit: string | null;
+  prepared_merge_mode: PreparedMergeMode | null;
+  resolved_target_commit: string | null;
   trigger_sources_json: string;
   request_ids_json: string;
   status: TestRequestStatus;
@@ -371,7 +465,8 @@ interface QueueRow {
 function normalizeInput(input: TestRequestInput): {
   request: string;
   trigger: RunTrigger;
-  targetRef: string | null;
+  requestKind: TestRequestKind;
+  sourceRef: string | null;
   initialization: boolean;
 } {
   if (!input || typeof input.request !== 'string' || input.request.trim() === '') {
@@ -386,36 +481,74 @@ function normalizeInput(input: TestRequestInput): {
   if (input.initialization !== undefined && typeof input.initialization !== 'boolean') {
     throw new TestRequestQueueError('QUEUE_REQUEST_INVALID', 'initialization 必须是布尔值');
   }
-  if (input.targetRef !== undefined && input.targetCommit !== undefined) {
-    if (
-      input.targetRef !== null &&
-      input.targetCommit !== null &&
-      input.targetRef.trim() !== input.targetCommit.trim()
-    ) {
-      throw new TestRequestQueueError('QUEUE_REQUEST_INVALID', 'targetRef 与 targetCommit 不一致');
+  for (const legacyTarget of [input.targetRef, input.targetCommit]) {
+    if (legacyTarget !== undefined && legacyTarget !== null && legacyTarget.trim() !== '') {
+      throw new TestRequestQueueError(
+        'QUEUE_REQUEST_INVALID',
+        '普通测试请求不能指定任意 target；请使用 merge-source 入口',
+      );
     }
   }
-  const candidate = input.targetRef ?? input.targetCommit;
-  let targetRef: string | null = null;
-  if (candidate !== undefined && candidate !== null) {
-    targetRef = candidate.trim();
-    if (
-      targetRef === '' ||
-      targetRef.length > MAX_TARGET_REF_LENGTH ||
-      [...targetRef].some((character) => {
-        const code = character.charCodeAt(0);
-        return code < 32 || code === 127;
-      })
-    ) {
-      throw new TestRequestQueueError('QUEUE_REQUEST_INVALID', 'target ref 格式无效');
+  const requestKind =
+    input.requestKind ?? (isAutomatic(input.trigger) ? 'automatic-head' : 'manual-current-head');
+  if (!['automatic-head', 'manual-current-head', 'manual-merge-source'].includes(requestKind)) {
+    throw new TestRequestQueueError('QUEUE_REQUEST_INVALID', '测试请求种类无效');
+  }
+  if (requestKind === 'automatic-head' && !isAutomatic(input.trigger)) {
+    throw new TestRequestQueueError('QUEUE_REQUEST_INVALID', '人工请求不能伪装为自动 HEAD 请求');
+  }
+  if (requestKind !== 'automatic-head' && isAutomatic(input.trigger)) {
+    throw new TestRequestQueueError('QUEUE_REQUEST_INVALID', '自动触发只能提交 automatic-head');
+  }
+  let sourceRef: string | null = null;
+  if (requestKind === 'manual-merge-source') {
+    if (input.confirmed !== true) {
+      throw new TestRequestQueueError('QUEUE_REQUEST_INVALID', 'merge-source 请求需要明确确认');
     }
+    sourceRef = normalizeSourceRef(input.sourceRef);
+  } else if (input.sourceRef !== undefined && input.sourceRef !== null) {
+    throw new TestRequestQueueError(
+      'QUEUE_REQUEST_INVALID',
+      '只有 merge-source 请求可以指定 sourceRef',
+    );
   }
   return {
     request: input.request.trim(),
     trigger: input.trigger,
-    targetRef,
+    requestKind,
+    sourceRef,
     initialization: input.initialization === true,
   };
+}
+
+function normalizeSourceRef(value: string | null | undefined): string {
+  if (typeof value !== 'string') {
+    throw new TestRequestQueueError('QUEUE_REQUEST_INVALID', 'sourceRef 必须是非空字符串');
+  }
+  const normalized = value.trim();
+  if (
+    normalized === '' ||
+    normalized.length > MAX_SOURCE_REF_LENGTH ||
+    !SOURCE_REF_PATTERN.test(normalized) ||
+    normalized.includes('..') ||
+    normalized.includes('@{') ||
+    normalized.startsWith('refs/luowang/') ||
+    normalized.startsWith('refs/remotes/') ||
+    CREDENTIAL_LIKE_SOURCE.test(normalized) ||
+    URL_LIKE_SOURCE.test(normalized) ||
+    hasControlCharacters(normalized)
+  ) {
+    throw new TestRequestQueueError('QUEUE_REQUEST_INVALID', 'sourceRef 格式无效');
+  }
+  return normalized;
+}
+
+function normalizeCommit(value: string, label: string): string {
+  const normalized = value.trim().toLowerCase();
+  if (!SHA_PATTERN.test(normalized)) {
+    throw new TestRequestQueueError('QUEUE_REQUEST_INVALID', `${label} 格式无效`);
+  }
+  return normalized;
 }
 
 function normalizeRequestId(value: string): string {
@@ -465,6 +598,11 @@ function toRecord(row: QueueRow): TestRequestRecord {
     requestIds: parseJson<string[]>(row.request_ids_json, [row.request_id]),
     request: row.request,
     targetRef: row.target_ref,
+    requestKind: row.request_kind,
+    sourceRef: row.source_ref,
+    preparedMergeCommit: row.prepared_merge_commit,
+    preparedMergeMode: row.prepared_merge_mode,
+    resolvedTargetCommit: row.resolved_target_commit,
     status: row.status,
     runId: row.run_id,
     claimedAt: row.claimed_at,

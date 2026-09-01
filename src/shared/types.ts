@@ -419,6 +419,11 @@ export interface OperationsQueueItem {
   requestIds: string[];
   request: string;
   targetRef: string | null;
+  requestKind: 'automatic-head' | 'manual-current-head' | 'manual-merge-source';
+  sourceRef: string | null;
+  preparedMergeCommit: string | null;
+  preparedMergeMode: 'existing-branch' | 'initial-create' | null;
+  resolvedTargetCommit: string | null;
   status: 'queued' | 'running' | 'waiting_archive' | 'completed' | 'failed' | 'interrupted';
   runId: string | null;
   claimedAt: string | null;

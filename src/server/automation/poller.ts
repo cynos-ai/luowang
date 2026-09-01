@@ -172,7 +172,7 @@ class DefaultGitPoller implements GitPoller {
       const submission = await this.options.submitter.submitTestRequest({
         trigger,
         request: `${trigger === 'git' ? 'Git Poll' : 'Cron'} 检测到场景测试分支有待测试提交：${includedCommits.join(', ')}`,
-        targetRef: currentHead,
+        requestKind: 'automatic-head',
       });
       this.options.state.set(LAST_REPOSITORY_KEY, config.repository);
       this.options.state.set(LAST_BRANCH_KEY, scenarioBranch);

@@ -626,8 +626,17 @@ async function createRepositoryProofContext(
       repoDir: config.repoDir,
       allowLocalRepository: true,
     });
-    const created = await repository.ensureScenarioBranch('main');
-    assert.equal(created.created, true);
+    const initialPrepared = await repository.prepareMergeRequest('main', 9001, true);
+    assert.equal(initialPrepared.mode, 'initial-create');
+    assert.equal(
+      await repository.publishPreparedMerge(
+        9001,
+        initialPrepared.preparedCommit,
+        initialPrepared.mode,
+      ),
+      initialPrepared.preparedCommit,
+    );
+    await repository.cleanupMergeRequestRef(9001);
 
     await git(['fetch', 'origin'], fixture.sourceDir);
     await git(['checkout', '-B', 'scenario-testing', 'origin/scenario-testing'], fixture.sourceDir);
@@ -659,9 +668,11 @@ async function createRepositoryProofContext(
     await git(['commit', '-m', 'feat: improve Cynos login flow'], fixture.sourceDir);
     await git(['push', 'origin', 'main'], fixture.sourceDir);
     const productCommit = (await git(['rev-parse', 'HEAD'], fixture.sourceDir)).stdout.trim();
-    const merged = await repository.mergeSourceRef('main', true);
+    const merged = await repository.prepareMergeRequest('main', 9002, false);
     assert.equal(merged.alreadyIncluded, false);
-    assert.ok(merged.mergeCommit);
+    assert.notEqual(merged.preparedCommit, merged.originalHead);
+    await repository.publishPreparedMerge(9002, merged.preparedCommit, merged.mode);
+    await repository.cleanupMergeRequestRef(9002);
     await git(['fetch', 'origin'], fixture.sourceDir);
     await git(['checkout', '-B', 'scenario-testing', 'origin/scenario-testing'], fixture.sourceDir);
 
@@ -976,19 +987,19 @@ async function runAutomationProof(
   const automatic = queue.enqueue({
     request: 'Git product change',
     trigger: 'git',
-    targetRef: SAMPLE_TARGET,
+    requestKind: 'automatic-head',
   });
   const merged = queue.enqueue({
     request: 'Cron product change',
     trigger: 'schedule',
-    targetRef: 'b'.repeat(40),
+    requestKind: 'automatic-head',
   });
   assert.equal(merged.queueId, automatic.queueId);
   assert.deepEqual(merged.triggerSources, ['git', 'schedule']);
   const manual = queue.enqueue({
-    request: '人工重测同一 target',
+    request: '人工重测当前 HEAD',
     trigger: 'manual',
-    targetRef: 'b'.repeat(40),
+    requestKind: 'manual-current-head',
   });
   assert.notEqual(manual.queueId, automatic.queueId);
   const claimed = queue.claimNext();
@@ -1053,7 +1064,9 @@ async function runAutomationProof(
   await git(['add', '--all'], context.fixture.sourceDir);
   await git(['commit', '-m', 'feat: add logout flow'], context.fixture.sourceDir);
   await git(['push', 'origin', 'main'], context.fixture.sourceDir);
-  await context.repository.mergeSourceRef('main', true);
+  const pollMerge = await context.repository.prepareMergeRequest('main', 9003, false);
+  await context.repository.publishPreparedMerge(9003, pollMerge.preparedCommit, pollMerge.mode);
+  await context.repository.cleanupMergeRequestRef(9003);
   const queued = await poller.poll('git');
   assert.equal(queued.status, 'queued');
   assert.ok(queued.includedCommits.length > 0);
