@@ -213,6 +213,27 @@ describe('Phase 3 agent run', () => {
       await invokeTool(context.sessions.inputs[1] as AgentSessionInput, 'get_run_context', {}),
     );
     assert.doesNotMatch(runnerToolContext, /历史登录问题|historyIssues|indexedReports/);
+    const [planning, runner, reviewer, finalization] = context.sessions.inputs;
+    assert.ok(planning?.customTools.some((tool) => tool.name === 'query_run_history'));
+    assert.equal(
+      planning?.customTools.some((tool) => tool.name === 'query_issue_candidates'),
+      false,
+    );
+    for (const input of [runner, reviewer]) {
+      assert.equal(
+        input?.customTools.some((tool) => tool.name === 'query_run_history'),
+        false,
+      );
+      assert.equal(
+        input?.customTools.some((tool) => tool.name === 'query_issue_candidates'),
+        false,
+      );
+    }
+    assert.ok(finalization?.customTools.some((tool) => tool.name === 'query_issue_candidates'));
+    assert.equal(
+      finalization?.customTools.some((tool) => tool.name === 'query_run_history'),
+      false,
+    );
   });
 
   it('publishes a real two-scenario Runner progression from 0/2 to 2/2', async () => {
@@ -569,6 +590,9 @@ class RecordingSessionFactory implements AgentSessionFactory {
           }
           const outcome =
             this.outcomes[Math.min(this.outcomeIndex - 1, this.outcomes.length - 1)] ?? 'passed';
+          if (outcome === 'failed') {
+            await invokeTool(input, 'query_issue_candidates', { bug_key: 'BUG-LOGIN-001' });
+          }
           if (outcome === 'passed') {
             await invokeTool(input, 'write_report', {
               content: this.progress
@@ -710,7 +734,11 @@ confirmed_bugs: ${bugs}
 
 # Report
 
-${result === 'passed' ? '无需场景测试：Reviewer 已独立确认本批不影响产品行为。' : '证据记录见 execution.md 和 review.md。'}
+${
+  result === 'passed'
+    ? '无需场景测试：Reviewer 已独立确认本批不影响产品行为。'
+    : `证据记录见 execution.md 和 review.md。${failedBug ? '\n\n## Issue 查询覆盖缺口\n\n- BUG-LOGIN-001：unavailable' : ''}`
+}
 `;
 }
 

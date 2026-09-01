@@ -48,6 +48,7 @@ import {
   type RunEvidenceStore,
 } from './evidence.js';
 import { createProviderAdapter, type ProviderAdapter } from './provider.js';
+import { createIssueCandidateController, createRunHistoryTool } from './run-history.js';
 import { createScenarioProgressController, type ProgressScenario } from './scenario-progress.js';
 import {
   createReviewerTestDataTools,
@@ -526,6 +527,10 @@ class DefaultRunOrchestrator implements RunOrchestrator {
     this.setPhase(state, 'main-a', 'Main · 规划正在分析变更并选择场景');
     const tools = [
       ...createTargetContextTools(this.targetToolOptions(repository, context, 'main-planning')),
+      createRunHistoryTool({
+        runStore: this.options.runStore,
+        recoveryStore: this.options.recoveryStore,
+      }),
       createArtifactWriterTool(
         'write_plan',
         '写入测试计划',
@@ -590,6 +595,10 @@ class DefaultRunOrchestrator implements RunOrchestrator {
     this.setPhase(state, 'main-a', 'Main · 规划正在整理初始化候选场景');
     const tools = [
       ...createTargetContextTools(this.targetToolOptions(repository, context, 'main-planning')),
+      createRunHistoryTool({
+        runStore: this.options.runStore,
+        recoveryStore: this.options.recoveryStore,
+      }),
       createReadArtifactTool((name) =>
         readAllowedArtifact(workspace, name, ['plan.md', 'execution.md', 'draft-report.md']),
       ),
@@ -1091,16 +1100,24 @@ class DefaultRunOrchestrator implements RunOrchestrator {
     context: RunContext,
   ): Promise<void> {
     this.setPhase(state, 'main-b', 'Main · 最终汇总正在汇总最终报告');
+    const artifactsRead = new Set<string>();
+    const issueCandidates = createIssueCandidateController(
+      { runStore: this.options.runStore, repository: this.options.repository },
+      () => artifactsRead.has('draft-report.md') && artifactsRead.has('review.md'),
+    );
     const tools = [
-      createReadArtifactTool((name) =>
-        readAllowedArtifact(workspace, name, [
+      createReadArtifactTool(async (name) => {
+        const content = await readAllowedArtifact(workspace, name, [
           'plan.md',
           'execution.md',
           'draft-report.md',
           'review.md',
           ...(context.initialization ? ['scenario-changes.patch' as const] : []),
-        ]),
-      ),
+        ]);
+        artifactsRead.add(name);
+        return content;
+      }),
+      issueCandidates.tool,
       createArtifactWriterTool(
         'write_report',
         '写入最终报告',
@@ -1129,6 +1146,27 @@ class DefaultRunOrchestrator implements RunOrchestrator {
       context.initialization,
     );
     await assertArtifact(workspace, 'report.md');
+    const reportContent = await workspace.read('report.md');
+    const report = parseReportMarkdown(
+      reportContent,
+      `${workspace.runningDirectory}/report.md`,
+      state.runId,
+    );
+    for (const bug of report.confirmedBugs) {
+      const coverage = issueCandidates.coverageForBug(bug.key, bug.title);
+      if (coverage === 'none') {
+        throw new RunOrchestratorError(
+          'RUN_ARTIFACT_INVALID',
+          'Main · 最终汇总必须为每个 confirmed Bug 先查询对应的相似 Issue 候选',
+        );
+      }
+      if (coverage === 'gap' && !hasIssueCoverageGap(reportContent, bug.key)) {
+        throw new RunOrchestratorError(
+          'RUN_ARTIFACT_INVALID',
+          'Issue 候选查询 unavailable 或预算耗尽时必须在报告记录覆盖缺口',
+        );
+      }
+    }
   }
 
   private async invoke(
@@ -1654,6 +1692,14 @@ function aggregateResult(results: RunResult[], hasConfirmedBug: boolean): RunRes
   return 'passed';
 }
 
+function hasIssueCoverageGap(content: string, bugKey: string): boolean {
+  const body = content
+    .split(/^---\s*$/m)
+    .slice(2)
+    .join('\n---\n');
+  return body.includes('## Issue 查询覆盖缺口') && body.includes(bugKey);
+}
+
 function hasZeroScenarioEvidence(content: string): boolean {
   return /无需\s*场景|零场景|no\s+scenarios?|no\s+scenario\s+testing|does\s+not\s+require\s+(?:a\s+)?scenario/i.test(
     content,
@@ -1745,13 +1791,13 @@ function mainAOutputContract(context: RunContext): string {
   const patchInstruction = context.initialization
     ? '本阶段只写 plan.md，不写 scenario-changes.patch；运行时侦察后由新的 Main · 规划 Session 生成候选 patch。'
     : '如需维护长期场景，只能通过 write_scenario_patch 写场景目录内的标准 git unified patch。';
-  return `必须先调用 get_run_context、list_target_files，并按需调用 read_target_file/search_target_files。必须在结束前通过 write_plan 写入完整 plan.md；historyIssuesAvailable=false 时在覆盖缺口中说明。plan.md 中每个实际执行场景必须写出当前工作场景的稳定 ID。
+  return `必须先调用 get_run_context、list_target_files，并按需调用 read_target_file/search_target_files；需要历史判断时只通过 query_run_history 查询有限、脱敏的 Run 摘要。必须在结束前通过 write_plan 写入完整 plan.md；historyIssuesAvailable=false 时在覆盖缺口中说明。plan.md 中每个实际执行场景必须写出当前工作场景的稳定 ID。
 ${patchInstruction}
 如果确有依据判断无需测试，明确写出“无需场景测试”的理由；否则保留场景缺失、影响不明或证据不足的覆盖缺口。`;
 }
 
 function initializationCandidateUserMessage(context: RunContext): string {
-  return `当前任务：在新的 Main · 规划 Session 中，综合静态证据和低风险运行时侦察，形成少量高价值候选场景。
+  return `当前任务：在新的 Main · 规划 Session 中，综合静态证据和低风险运行时侦察，形成少量高价值候选场景；需要历史判断时只通过 query_run_history 查询有限、脱敏的 Run 摘要。
 
 动态 Run 上下文：
 ${JSON.stringify(mainPlanningContext(context), null, 2)}`;
@@ -1801,6 +1847,28 @@ function reviewerOutputContract(): string {
 截图不可访问、上传失败、视觉能力不足、清理未确认、场景缺失或影响不明时维持 blocked。零场景只有在 Main · 规划的计划确有依据时才能确认。结束前通过 write_review 写完整 review.md，并明确是否同意最终结果。`;
 }
 
+function finalizationPromptContext(context: RunContext): Record<string, unknown> {
+  return {
+    runId: context.runId,
+    request: context.request,
+    trigger: context.trigger,
+    baseCommit: context.baseCommit,
+    targetCommit: context.targetCommit,
+    includedCommits: context.includedCommits,
+    scenarioMode: context.scenarioMode,
+    initialization: context.initialization,
+    scenarioChanges: context.scenarioChanges ?? null,
+    evidence: context.evidence.map(({ filename, url, contentType, sizeBytes, sha256 }) => ({
+      filename,
+      url,
+      contentType,
+      sizeBytes,
+      sha256,
+    })),
+    blockingReasons: context.blockingReasons,
+  };
+}
+
 function mainBUserMessage(context: RunContext): string {
   const task = context.initialization
     ? '汇总初始化 Run；可在 Reviewer 意见支持下用受限 writer 修订尚未发布的候选场景 patch，但修订后未重新执行必须保持 blocked。'
@@ -1808,11 +1876,11 @@ function mainBUserMessage(context: RunContext): string {
   return `当前任务：${task}
 
 动态 Run 上下文：
-${JSON.stringify(finalizationContext(context), null, 2)}`;
+${JSON.stringify(finalizationPromptContext(context), null, 2)}`;
 }
 
 function mainBOutputContract(): string {
-  return `必须先读取 plan.md、execution.md、draft-report.md、review.md；初始化且存在 scenario-changes.patch 时也读取它。最终 report.md frontmatter 只能包含 run_id、trigger、base_commit、target_commit、included_commits、result、started_at、finished_at、scenario_results、confirmed_bugs，字段值必须与固定 Run 一致。result 优先级为 blocked > failed > passed；blockingReasons 非空时必须 blocked。
+  return `必须先读取 plan.md、execution.md、draft-report.md、review.md；初始化且存在 scenario-changes.patch 时也读取它。读取草稿和审核后，必须为每个本次 confirmed Bug 按 title、keywords 或 bug_key 调用 query_issue_candidates；严格区分 ok、empty、unavailable，unavailable 最多原样重试一次。查询 unavailable、重试或预算耗尽时必须在正文写“## Issue 查询覆盖缺口”并列出对应 Bug key，不得伪装成 empty。最终 report.md frontmatter 只能包含 run_id、trigger、base_commit、target_commit、included_commits、result、started_at、finished_at、scenario_results、confirmed_bugs，字段值必须与固定 Run 一致。result 优先级为 blocked > failed > passed；blockingReasons 非空时必须 blocked。
 scenario_results 必须是 YAML 数组，每项只能有 id 和 result。confirmed_bugs 每项只能有 key、title、scenario_ids、issue_action，以及 link 时必需的 issue_url；failed 至少有一个 confirmed bug，issue_action 只能 create 或 link。零场景 passed 必须在计划、审核和最终报告中都有“无需场景测试”依据。
 证据只写在正文并引用稳定 URL。不得复述任何测试账号字段、Secret、隐藏推理、短期签名 URL 或绝对路径。结束前通过 write_report 写完整 report.md。`;
 }
@@ -1857,21 +1925,6 @@ function reviewerContext(context: RunContext) {
     scenarioMode: context.scenarioMode,
     initialization: context.initialization,
     scenarioChanges: context.scenarioChanges ?? null,
-    evidence: context.evidence,
-    blockingReasons: context.blockingReasons,
-  };
-}
-
-function finalizationContext(context: RunContext) {
-  return {
-    runId: context.runId,
-    request: context.request,
-    trigger: context.trigger,
-    baseCommit: context.baseCommit,
-    targetCommit: context.targetCommit,
-    includedCommits: context.includedCommits,
-    scenarioMode: context.scenarioMode,
-    initialization: context.initialization,
     evidence: context.evidence,
     blockingReasons: context.blockingReasons,
   };
