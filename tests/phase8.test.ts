@@ -122,6 +122,12 @@ describe('Phase 8 operations console read model', () => {
     assert.equal(current.statusCode, 200);
     assert.equal(current.json().current.role, 'runner');
     assert.equal(current.json().current.stage, 'Runner：执行场景');
+    assert.equal(current.json().current.currentScenario, 'AUTH-LOGIN-001 · 登录状态恢复');
+    assert.deepEqual(current.json().current.progress, { completed: 1, total: 2 });
+    assert.equal(
+      current.json().current.activities.at(-1).message,
+      '开始场景 AUTH-LOGIN-001 · 登录状态恢复',
+    );
     assert.equal(current.json().current.run.request.includes('secret'), false);
   });
 
@@ -283,7 +289,16 @@ async function makeFixture(options: { repositoryStatus?: Partial<RepositoryStatu
     finishedAt: null,
     errorMessage: null,
     artifactNames: ['plan.md'],
-    activities: [{ at: '2026-08-30T02:01:00.000Z', message: 'Runner 正在执行场景', kind: 'phase' }],
+    currentScenario: 'AUTH-LOGIN-001 · 登录状态恢复',
+    scenarioProgress: { completed: 1, total: 2 },
+    activities: [
+      { at: '2026-08-30T02:00:30.000Z', message: 'Runner 正在执行场景', kind: 'phase' },
+      {
+        at: '2026-08-30T02:01:00.000Z',
+        message: '开始场景 AUTH-LOGIN-001 · 登录状态恢复',
+        kind: 'info',
+      },
+    ],
   };
   const runs = fakeRuns(active);
   const connectivity = fakeConnectivity();

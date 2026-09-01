@@ -12,7 +12,11 @@ import type {
   RunResult,
   RunSummary,
 } from '../../shared/types.js';
-import { parseReportMarkdown, type ParsedReport } from '../repository/markdown.js';
+import {
+  parseReportMarkdown,
+  parseScenarioMarkdown,
+  type ParsedReport,
+} from '../repository/markdown.js';
 import type { GitRepository } from '../repository/git-repository.js';
 import type { RepositoryIndexer } from '../repository/indexer.js';
 import type { RepositoryService } from '../repository/service.js';
@@ -44,6 +48,7 @@ import {
   type RunEvidenceStore,
 } from './evidence.js';
 import { createProviderAdapter, type ProviderAdapter } from './provider.js';
+import { createScenarioProgressController, type ProgressScenario } from './scenario-progress.js';
 import {
   createReviewerTestDataTools,
   createTestDataManager,
@@ -729,7 +734,21 @@ class DefaultRunOrchestrator implements RunOrchestrator {
     evidenceStore: RunEvidenceStore | undefined,
     purpose: 'standard' | 'initialization-reconnaissance' | 'initialization-validation',
   ): Promise<void> {
-    this.setPhase(state, 'runner', 'Runner 正在执行场景并收集证据');
+    this.setPhase(
+      state,
+      'runner',
+      purpose === 'initialization-reconnaissance'
+        ? 'Runner 正在执行初始化运行时侦察'
+        : 'Runner 正在执行场景并收集证据',
+    );
+    const progress =
+      purpose === 'initialization-reconnaissance'
+        ? undefined
+        : createScenarioProgressController({
+            state,
+            allowedScenarios: await this.progressScenarios(workspace, repository, purpose),
+            now: this.now,
+          });
     const tools = [
       ...createTargetContextTools(this.targetToolOptions(repository, context, 'runner')),
       ...createWorkingScenarioTools({
@@ -754,6 +773,7 @@ class DefaultRunOrchestrator implements RunOrchestrator {
         context.runId,
         evidenceStore,
       ),
+      ...(progress?.tools ?? []),
       ...(evidenceStore ? createRunnerEvidenceTools(evidenceStore) : []),
       createArtifactWriterTool(
         'write_execution',
@@ -781,8 +801,28 @@ class DefaultRunOrchestrator implements RunOrchestrator {
         ? [this.options.browser.extension(workspace.evidenceDirectory)]
         : [],
     );
+    const progressError = progress?.completionError();
+    if (progressError) {
+      throw new RunOrchestratorError('RUN_ARTIFACT_INVALID', progressError);
+    }
     await assertArtifact(workspace, 'execution.md');
     await assertArtifact(workspace, 'draft-report.md');
+  }
+
+  private async progressScenarios(
+    workspace: RunWorkspace,
+    repository: GitRepository,
+    purpose: 'standard' | 'initialization-validation',
+  ): Promise<ProgressScenario[]> {
+    const plan = await workspace.read('plan.md');
+    const scenarios: ProgressScenario[] = [];
+    for (const path of await repository.listWorkingScenarioFiles()) {
+      const parsed = parseScenarioMarkdown(await repository.readWorkingScenarioFile(path), path);
+      if (parsed.status === 'deprecated') continue;
+      if (purpose === 'standard' && !containsScenarioId(plan, parsed.id)) continue;
+      scenarios.push({ id: parsed.id, name: parsed.name });
+    }
+    return scenarios.sort((left, right) => left.id.localeCompare(right.id));
   }
 
   private async assessBrowserRequirements(
@@ -1571,6 +1611,11 @@ function isTestAssetPath(path: string): boolean {
   return TEST_ASSET_PREFIXES.some((prefix) => path.startsWith(prefix));
 }
 
+function containsScenarioId(content: string, scenarioId: string): boolean {
+  const escaped = scenarioId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp(`(^|[^A-Z0-9-])${escaped}(?=$|[^A-Z0-9-])`, 'm').test(content);
+}
+
 function assertReadableTargetPath(path: string): void {
   if (
     path.trim() === '' ||
@@ -1700,7 +1745,7 @@ function mainAOutputContract(context: RunContext): string {
   const patchInstruction = context.initialization
     ? '本阶段只写 plan.md，不写 scenario-changes.patch；运行时侦察后由新的 Main · 规划 Session 生成候选 patch。'
     : '如需维护长期场景，只能通过 write_scenario_patch 写场景目录内的标准 git unified patch。';
-  return `必须先调用 get_run_context、list_target_files，并按需调用 read_target_file/search_target_files。必须在结束前通过 write_plan 写入完整 plan.md；historyIssuesAvailable=false 时在覆盖缺口中说明。
+  return `必须先调用 get_run_context、list_target_files，并按需调用 read_target_file/search_target_files。必须在结束前通过 write_plan 写入完整 plan.md；historyIssuesAvailable=false 时在覆盖缺口中说明。plan.md 中每个实际执行场景必须写出当前工作场景的稳定 ID。
 ${patchInstruction}
 如果确有依据判断无需测试，明确写出“无需场景测试”的理由；否则保留场景缺失、影响不明或证据不足的覆盖缺口。`;
 }
@@ -1727,14 +1772,20 @@ function runnerUserMessage(
       : purpose === 'initialization-validation'
         ? '按候选场景顺序验证成功路径和必要拒绝路径，使用 run-id 标记并清理临时数据。'
         : '只执行 plan.md 选择的日常场景。';
+  const progressInstruction =
+    purpose === 'initialization-reconnaissance'
+      ? '本阶段是初始化侦察，没有正式候选场景；只通过阶段活动展示进度，不调用场景进度工具伪造场景。'
+      : '正式场景执行前必须调用 begin_scenario_execution 按实际顺序声明稳定场景 ID；每个场景依次调用 start_scenario 和 finish_scenario，零场景也必须显式声明空列表。';
   return `当前任务：${task}
+
+场景进度要求：${progressInstruction}
 
 动态 Run 上下文：
 ${JSON.stringify(runnerContext(context), null, 2)}`;
 }
 
 function runnerOutputContract(): string {
-  return `先读取 plan.md，再按计划使用受控 target、工作场景、命令、环境、测试数据和 evidence 工具。UI 场景只能使用受控的 headless、isolated Playwright MCP，优先使用 accessibility snapshot/ref；截图使用相对文件名并通过 list_evidence_files 确认存在。
+  return `先读取 plan.md，再按计划使用受控 target、工作场景、命令、环境、测试数据和 evidence 工具。正式场景必须通过场景进度工具按计划顺序声明、开始和完成；初始化侦察不得伪造正式场景进度。UI 场景只能使用受控的 headless、isolated Playwright MCP，优先使用 accessibility snapshot/ref；截图使用相对文件名并通过 list_evidence_files 确认存在。
 测试账号只用于当前操作，绝不能写入日志、命令输出、Markdown 或证据。使用 get_test_data_prefix 标记临时数据；创建后立即登记，删除后只能提交 Harness 捕获的受控查询证据或 Playwright 截图声明，并检查待核验列表。不能自填 evidence 正文、状态码、摘要或 hash。每个场景记录实际观察、命令退出码、决定性/辅助证据、偏差和清理结果。结束前分别通过 write_execution 和 write_draft_report 写完整工件；不可用条件记录为 blocked。`;
 }
 

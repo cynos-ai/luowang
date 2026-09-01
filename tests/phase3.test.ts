@@ -215,6 +215,66 @@ describe('Phase 3 agent run', () => {
     assert.doesNotMatch(runnerToolContext, /历史登录问题|historyIssues|indexedReports/);
   });
 
+  it('publishes a real two-scenario Runner progression from 0/2 to 2/2', async () => {
+    const fixture = await createGitFixture(true);
+    const gate = new ProgressGate();
+    const scenarioIds = ['AUTH-LOGIN-001', 'AUTH-LOGOUT-001'];
+    const context = await createRunContext(fixture, ['passed'], undefined, {
+      scenarioIds,
+      checkpoint: (name) => gate.checkpoint(name),
+    });
+
+    const started = await context.orchestrator.start({
+      request: '顺序执行登录与退出场景',
+      trigger: 'manual',
+    });
+
+    await assertProgress(gate, context.orchestrator, 'declared', null, 0, 2);
+    await assertProgress(
+      gate,
+      context.orchestrator,
+      'started:AUTH-LOGIN-001',
+      'AUTH-LOGIN-001 · 登录状态恢复',
+      0,
+      2,
+    );
+    await assertProgress(gate, context.orchestrator, 'finished:AUTH-LOGIN-001', null, 1, 2);
+    await assertProgress(
+      gate,
+      context.orchestrator,
+      'started:AUTH-LOGOUT-001',
+      'AUTH-LOGOUT-001 · 安全退出',
+      1,
+      2,
+    );
+    await assertProgress(gate, context.orchestrator, 'finished:AUTH-LOGOUT-001', null, 2, 2);
+
+    const result = await context.orchestrator.wait(started.runId);
+    assert.equal(result?.result, 'passed', JSON.stringify(result));
+    assert.deepEqual(result?.scenarioProgress, { completed: 2, total: 2 });
+    assert.equal(result?.currentScenario, null);
+    assert.ok(result?.activities?.some((activity) => activity.message.includes('完成场景')));
+  });
+
+  it('preserves the active scenario when the Runner session fails', async () => {
+    const fixture = await createGitFixture(true);
+    const context = await createRunContext(fixture, ['passed'], undefined, {
+      scenarioIds: ['AUTH-LOGIN-001'],
+      checkpoint: async () => undefined,
+      failAfterFirstStart: true,
+    });
+
+    const result = await context.orchestrator.run({
+      request: '验证 Runner 异常时保留现场',
+      trigger: 'manual',
+    });
+
+    assert.equal(result.status, 'failed', JSON.stringify(result));
+    assert.equal(result.currentScenario, 'AUTH-LOGIN-001 · 登录状态恢复');
+    assert.deepEqual(result.scenarioProgress, { completed: 0, total: 1 });
+    assert.ok(result.activities?.at(-1)?.message.includes('执行失败'));
+  });
+
   it('preserves failed and blocked result precedence from the independent report', async () => {
     const fixture = await createGitFixture();
     const failedContext = await createRunContext(fixture, ['failed']);
@@ -332,10 +392,55 @@ interface TestContext {
   sessions: RecordingSessionFactory;
 }
 
+interface ProgressFixture {
+  scenarioIds: string[];
+  checkpoint(name: string): Promise<void>;
+  failAfterFirstStart?: boolean;
+}
+
+class ProgressGate {
+  private readonly reached = new Set<string>();
+  private readonly reachedWaiters = new Map<string, () => void>();
+  private readonly releases = new Map<string, () => void>();
+
+  async checkpoint(name: string): Promise<void> {
+    this.reached.add(name);
+    this.reachedWaiters.get(name)?.();
+    await new Promise<void>((resolve) => this.releases.set(name, resolve));
+  }
+
+  async wait(name: string): Promise<void> {
+    if (this.reached.has(name)) return;
+    await new Promise<void>((resolve) => this.reachedWaiters.set(name, resolve));
+  }
+
+  release(name: string): void {
+    const release = this.releases.get(name);
+    assert.ok(release, `checkpoint not waiting: ${name}`);
+    release();
+  }
+}
+
+async function assertProgress(
+  gate: ProgressGate,
+  orchestrator: RunOrchestrator,
+  checkpoint: string,
+  currentScenario: string | null,
+  completed: number,
+  total: number,
+): Promise<void> {
+  await gate.wait(checkpoint);
+  const current = await orchestrator.current();
+  assert.equal(current?.currentScenario, currentScenario);
+  assert.deepEqual(current?.scenarioProgress, { completed, total });
+  gate.release(checkpoint);
+}
+
 async function createRunContext(
   fixture: Fixture,
   outcomes: Array<'passed' | 'failed' | 'blocked'>,
   beforeReport?: () => Promise<void>,
+  progress?: ProgressFixture,
 ): Promise<TestContext> {
   const dataDir = await mkdtemp(join(tmpdir(), 'luowang-phase3-data-'));
   const reportDir = join(dataDir, 'report');
@@ -371,7 +476,7 @@ async function createRunContext(
     repoDir: config.repoDir,
     allowLocalRepository: true,
   });
-  const sessions = new RecordingSessionFactory(outcomes, beforeReport);
+  const sessions = new RecordingSessionFactory(outcomes, beforeReport, progress);
   const orchestrator = createRunOrchestrator({
     configuration,
     repository,
@@ -394,6 +499,7 @@ class RecordingSessionFactory implements AgentSessionFactory {
   constructor(
     private readonly outcomes: Array<'passed' | 'failed' | 'blocked'>,
     private readonly beforeReport?: () => Promise<void>,
+    private readonly progress?: ProgressFixture,
   ) {}
 
   async create(input: AgentSessionInput) {
@@ -405,7 +511,9 @@ class RecordingSessionFactory implements AgentSessionFactory {
         if (input.role === 'main-a' && hasTool(input, 'write_plan')) {
           await invokeTool(input, 'get_run_context', {});
           await invokeTool(input, 'write_plan', {
-            content: '# Plan\n\n无需场景测试：本次请求只验证文档事实，不影响产品行为。\n',
+            content: this.progress
+              ? `# Plan\n\n按顺序执行场景：\n${this.progress.scenarioIds.map((id) => `- ${id}`).join('\n')}\n`
+              : '# Plan\n\n无需场景测试：本次请求只验证文档事实，不影响产品行为。\n',
           });
         } else if (input.role === 'main-a') {
           await invokeTool(input, 'read_run_artifact', { name: 'plan.md' });
@@ -416,6 +524,23 @@ class RecordingSessionFactory implements AgentSessionFactory {
           });
         } else if (input.role === 'runner') {
           await invokeTool(input, 'read_run_artifact', { name: 'plan.md' });
+          const progressAvailable = hasTool(input, 'begin_scenario_execution');
+          const scenarioIds =
+            this.progress?.scenarioIds ??
+            (progressAvailable && /候选场景顺序/.test(input.userMessage) ? ['INIT-HOME-001'] : []);
+          if (progressAvailable) {
+            await invokeTool(input, 'begin_scenario_execution', { scenarioIds });
+          }
+          await this.progress?.checkpoint('declared');
+          for (const [index, scenarioId] of scenarioIds.entries()) {
+            await invokeTool(input, 'start_scenario', { scenarioId });
+            await this.progress?.checkpoint(`started:${scenarioId}`);
+            if (index === 0 && this.progress?.failAfterFirstStart) {
+              throw new Error('fixture Runner session failed');
+            }
+            await invokeTool(input, 'finish_scenario', { scenarioId });
+            await this.progress?.checkpoint(`finished:${scenarioId}`);
+          }
           if (this.beforeReport) await this.beforeReport();
           const outcome =
             this.outcomes[Math.min(this.outcomeIndex++, this.outcomes.length - 1)] ?? 'passed';
@@ -433,7 +558,9 @@ class RecordingSessionFactory implements AgentSessionFactory {
           await invokeTool(input, 'read_run_artifact', { name: 'execution.md' });
           await invokeTool(input, 'read_run_artifact', { name: 'draft-report.md' });
           await invokeTool(input, 'write_review', {
-            content: '# Review\n\n独立确认无需场景测试：计划中的影响判断有依据。\n',
+            content: this.progress
+              ? '# Review\n\n独立确认两个场景均按顺序执行并完成。\n'
+              : '# Review\n\n独立确认无需场景测试：计划中的影响判断有依据。\n',
           });
         } else {
           const context = parsePromptContext(input.userMessage);
@@ -444,7 +571,9 @@ class RecordingSessionFactory implements AgentSessionFactory {
             this.outcomes[Math.min(this.outcomeIndex - 1, this.outcomes.length - 1)] ?? 'passed';
           if (outcome === 'passed') {
             await invokeTool(input, 'write_report', {
-              content: reportFor(context, 'passed', false),
+              content: this.progress
+                ? progressReportFor(context, this.progress.scenarioIds)
+                : reportFor(context, 'passed', false),
             });
           } else if (outcome === 'failed') {
             await invokeTool(input, 'write_report', {
@@ -585,7 +714,47 @@ ${result === 'passed' ? '无需场景测试：Reviewer 已独立确认本批不�
 `;
 }
 
-async function createGitFixture(): Promise<Fixture> {
+function progressReportFor(
+  context: ReturnType<typeof parsePromptContext>,
+  scenarioIds: readonly string[],
+): string {
+  return `---
+run_id: ${context.runId}
+trigger: ${context.trigger}
+base_commit: ${context.baseCommit ?? 'null'}
+target_commit: ${context.targetCommit}
+included_commits: []
+result: passed
+started_at: 2026-08-30T00:00:00Z
+finished_at: 2026-08-30T00:01:00Z
+scenario_results:
+${scenarioIds.map((id) => `  - id: ${id}\n    result: passed`).join('\n')}
+confirmed_bugs: []
+---
+
+# Report
+
+两个场景均已执行完成。
+`;
+}
+
+function scenarioMarkdown(id: string, name: string): string {
+  return `---
+id: ${id}
+name: ${name}
+description: 验证 ${name} 的业务结果
+status: approved
+tags:
+  - core
+---
+
+## 目的
+
+验证 ${name}。
+`;
+}
+
+async function createGitFixture(withScenarios = false): Promise<Fixture> {
   const rootDir = await mkdtemp(join(tmpdir(), 'luowang-phase3-git-'));
   cleanup.push(async () => rm(rootDir, { recursive: true, force: true }));
   const remoteDir = join(rootDir, 'remote.git');
@@ -597,7 +766,19 @@ async function createGitFixture(): Promise<Fixture> {
   await git(['config', 'user.name', 'LuoWang Phase 3 Test'], sourceDir);
   await git(['config', 'user.email', 'luowang-phase3@example.test'], sourceDir);
   await writeFile(join(sourceDir, 'README.md'), 'fixture product\n');
-  await git(['add', 'README.md'], sourceDir);
+  if (withScenarios) {
+    const scenarioDirectory = join(sourceDir, 'docs', 'scenario-testing', 'scenarios');
+    await mkdir(scenarioDirectory, { recursive: true });
+    await writeFile(
+      join(scenarioDirectory, 'AUTH-LOGIN-001.md'),
+      scenarioMarkdown('AUTH-LOGIN-001', '登录状态恢复'),
+    );
+    await writeFile(
+      join(scenarioDirectory, 'AUTH-LOGOUT-001.md'),
+      scenarioMarkdown('AUTH-LOGOUT-001', '安全退出'),
+    );
+  }
+  await git(['add', '-A'], sourceDir);
   await git(['commit', '-m', 'initial product'], sourceDir);
   await git(['remote', 'add', 'origin', remoteDir], sourceDir);
   await git(['push', '-u', 'origin', 'main'], sourceDir);
