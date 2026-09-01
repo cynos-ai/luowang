@@ -8,7 +8,7 @@ import { promisify } from 'node:util';
 import pino from 'pino';
 import { afterEach, describe, it } from 'vitest';
 
-import type { InlineExtension } from '@earendil-works/pi-coding-agent';
+import type { AgentToolResult, InlineExtension } from '@earendil-works/pi-coding-agent';
 import { createConfigurationStore } from '../src/server/configuration.js';
 import { loadConfig } from '../src/server/config.js';
 import { initializeDatabase } from '../src/server/db/migrate.js';
@@ -57,6 +57,20 @@ describe('Phase 4 Run blocking boundaries', () => {
     }
   });
 
+  it('lets a production Run finish without a cleanup adapter after Reviewer reads controlled query evidence', async () => {
+    const fixture = await createGitFixture();
+    const context = await createRunContext(fixture, 'cleanup-review');
+
+    const result = await context.orchestrator.run({
+      request: '验证 Reviewer 独立确认测试数据清理',
+      trigger: 'manual',
+    });
+
+    assert.equal(result.status, 'completed', JSON.stringify(result));
+    assert.equal(result.result, 'passed', JSON.stringify(result));
+    assert.match(result.artifacts['execution.md'] ?? '', /全部登记测试数据均已独立核验清理/);
+  });
+
   it('checks visual capability on the Reviewer instead of the text-only Runner', async () => {
     const fixture = await createGitFixture();
     const context = await createRunContext(fixture, 'vision-reviewer');
@@ -97,6 +111,7 @@ describe('Phase 4 Run blocking boundaries', () => {
 type FailureMode =
   | 'upload-failure'
   | 'cleanup-failure'
+  | 'cleanup-review'
   | 'browser-missing'
   | 'review-read-failure'
   | 'vision-reviewer'
@@ -114,6 +129,9 @@ interface RunContextFixture {
 }
 
 class FailureBoundarySessionFactory implements AgentSessionFactory {
+  private cleanupEvidenceId: string | undefined;
+  private cleanupDataId: string | undefined;
+
   constructor(private readonly mode: FailureMode) {}
 
   async create(input: AgentSessionInput) {
@@ -123,7 +141,7 @@ class FailureBoundarySessionFactory implements AgentSessionFactory {
           await invokeTool(input, 'get_run_context', {});
           await invokeTool(input, 'write_plan', {
             content:
-              this.mode === 'cleanup-failure'
+              this.mode === 'cleanup-failure' || this.mode === 'cleanup-review'
                 ? '# Plan\n\n无需场景测试：本次只验证非 UI 的清理边界。\n'
                 : this.mode === 'vision-reviewer'
                   ? '# Plan\n\nUI 登录场景：打开登录页面并核对截图差异。\n'
@@ -135,11 +153,27 @@ class FailureBoundarySessionFactory implements AgentSessionFactory {
         if (input.role === 'runner') {
           await invokeTool(input, 'read_run_artifact', { name: 'plan.md' });
           const context = parsePromptContext(input.userMessage);
-          if (this.mode === 'cleanup-failure') {
+          if (this.mode === 'cleanup-failure' || this.mode === 'cleanup-review') {
+            this.cleanupDataId = `luowang-${context.runId}-test-user-1`;
             await invokeTool(input, 'register_test_data', {
-              id: 'luowang-test-user-1',
+              id: this.cleanupDataId,
               description: 'fixture user',
             });
+            if (this.mode === 'cleanup-review') {
+              const capture = await invokeTool(input, 'capture_test_data_cleanup_query', {
+                dataId: this.cleanupDataId,
+                adapterId: 'fixture-api',
+                operation: 'lookup-by-id',
+                parameters: {},
+                content: 'Agent 不得覆盖 adapter 响应',
+                statusCode: 200,
+              });
+              this.cleanupEvidenceId = toolJson(capture).evidenceId as string;
+              await invokeTool(input, 'submit_test_data_cleanup_claim', {
+                dataId: this.cleanupDataId,
+                evidenceIds: [this.cleanupEvidenceId],
+              });
+            }
           } else if (this.mode !== 'browser-missing') {
             await mkdir(join(context.runDirectory, 'evidence'), { recursive: true });
             await writeFile(join(context.runDirectory, 'evidence', 'login.png'), 'fixture image');
@@ -157,6 +191,18 @@ class FailureBoundarySessionFactory implements AgentSessionFactory {
           for (const name of ['plan.md', 'execution.md', 'draft-report.md']) {
             await invokeTool(input, 'read_run_artifact', { name });
           }
+          if (this.mode === 'cleanup-review') {
+            assert.ok(this.cleanupEvidenceId);
+            assert.ok(this.cleanupDataId);
+            await invokeTool(input, 'read_test_data_cleanup_evidence', {
+              dataId: this.cleanupDataId,
+              evidenceId: this.cleanupEvidenceId,
+            });
+            await invokeTool(input, 'verify_test_data_cleanup', {
+              dataId: this.cleanupDataId,
+              decision: 'confirm',
+            });
+          }
           if (
             this.mode === 'review-read-failure' ||
             this.mode === 'vision-reviewer' ||
@@ -166,7 +212,10 @@ class FailureBoundarySessionFactory implements AgentSessionFactory {
             await invokeTool(input, 'read_evidence_image', { filename: 'login.png' });
           }
           await invokeTool(input, 'write_review', {
-            content: '# Review\n\n独立审核完成。\n',
+            content:
+              this.mode === 'cleanup-review'
+                ? '# Review\n\n已读取受控查询证据并确认清理。无需场景测试。\n'
+                : '# Review\n\n独立审核完成。\n',
           });
           return;
         }
@@ -229,7 +278,33 @@ async function createRunContext(fixture: Fixture, mode: FailureMode): Promise<Ru
     browser: fakeBrowser(mode !== 'browser-missing'),
     oss: mode === 'cleanup-failure' || mode === 'browser-missing' ? undefined : fakeOss(mode),
     testData: createTestDataManager(
-      mode === 'cleanup-failure' ? { cleanup: async () => ['luowang-test-user-1'] } : undefined,
+      mode === 'cleanup-failure'
+        ? {
+            cleanupAdapter: {
+              id: 'fixture-cleanup',
+              cleanupAndVerify: async () => ({
+                absent: false,
+                content: 'fixture data still exists',
+                statusCode: 200,
+              }),
+            },
+          }
+        : mode === 'cleanup-review'
+          ? {
+              queryAdapters: [
+                {
+                  id: 'fixture-api',
+                  kind: 'api-query',
+                  operations: { 'lookup-by-id': [] },
+                  query: async () => ({
+                    absent: true,
+                    content: 'not found; token=must-not-appear',
+                    statusCode: 404,
+                  }),
+                },
+              ],
+            }
+          : undefined,
     ),
     sessions: new FailureBoundarySessionFactory(mode),
     logger: pino({ level: 'silent' }),
@@ -364,6 +439,13 @@ async function invokeTool(
   const tool = input.customTools.find((candidate) => candidate.name === name);
   assert.ok(tool, `missing tool ${name}`);
   return tool.execute('phase4-fixture', params as never, undefined, undefined, {} as never);
+}
+
+function toolJson(result: unknown): Record<string, unknown> {
+  const toolResult = result as AgentToolResult<Record<string, unknown>>;
+  const text = toolResult.content.find((item) => item.type === 'text');
+  assert.ok(text && text.type === 'text');
+  return JSON.parse(text.text) as Record<string, unknown>;
 }
 
 function parsePromptContext(prompt: string): {

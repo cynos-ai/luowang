@@ -753,7 +753,16 @@ async function runRunProof(context: RepositoryProofContext): Promise<void> {
     provider: {} as ProviderAdapter,
     sessions,
     commandRunner: createControlledCommandRunner({ ...process.env, PHASE9_SECRET: SAMPLE_SECRET }),
-    testData: createTestDataManager({ cleanup: async () => [] }),
+    testData: createTestDataManager({
+      cleanupAdapter: {
+        id: 'acceptance-cleanup',
+        cleanupAndVerify: async () => ({
+          absent: true,
+          content: 'fixture data not found',
+          statusCode: 404,
+        }),
+      },
+    }),
     runStore: context.runStore,
     recoveryStore,
     logger: pino({ level: 'silent' }),
@@ -1365,9 +1374,9 @@ class FixtureSessionFactory implements AgentSessionFactory {
         }
         if (input.role === 'runner') {
           await invokeTool(input, 'read_run_artifact', { name: 'plan.md' });
-          await invokeTool(input, 'get_test_data_prefix', {});
+          const dataPrefix = toolText(await invokeTool(input, 'get_test_data_prefix', {}));
           await invokeTool(input, 'register_test_data', {
-            id: 'phase9-login-fixture',
+            id: `${dataPrefix}phase9-login-fixture`,
             description: '本地样例登录数据',
           });
           const command = await invokeTool(input, 'run_fixture_command', {
