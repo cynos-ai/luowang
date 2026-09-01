@@ -274,8 +274,11 @@ describe('Phase 6 persistent automation', () => {
       trigger: 'manual',
       requestKind: 'manual-current-head',
     });
-    assert.equal(first.run?.runId, runId(1));
+    assert.equal(first.queue.status, 'queued');
+    assert.equal(first.run, null);
+    assert.equal(second.queue.status, 'queued');
     assert.equal(second.run, null);
+    await waitFor(() => fakeRuns.started.length === 1);
     assert.deepEqual(
       fakeRuns.started.map((item) => item.request),
       ['第一项'],
@@ -442,8 +445,9 @@ describe('Phase 6 persistent automation', () => {
     const oldRunId = runId(5);
     const recentRunId = runId(6);
     const failedRunId = runId(7);
+    const pendingQueueRunId = runId(24);
     await Promise.all(
-      [oldRunId, recentRunId, failedRunId].map((id) =>
+      [oldRunId, recentRunId, failedRunId, pendingQueueRunId].map((id) =>
         mkdir(join(context.config.reportDir, 'completed', id), { recursive: true }),
       ),
     );
@@ -464,8 +468,22 @@ describe('Phase 6 persistent automation', () => {
           archiveStatus: 'failed',
           finishedAt: '2026-08-28T00:00:00.000Z',
         },
+        {
+          runId: pendingQueueRunId,
+          archiveStatus: 'completed',
+          finishedAt: '2026-08-28T00:00:00.000Z',
+        },
       ],
     } as unknown as RunStore;
+    const queue = createTestRequestQueue(context.database.sqlite);
+    const pending = queue.enqueue({
+      request: 'retention must preserve queue recovery artifacts',
+      trigger: 'manual',
+      requestKind: 'manual-current-head',
+    });
+    queue.claimNext();
+    queue.markResolved(pending.queueId, 'c'.repeat(40));
+    queue.markStarted(pending.queueId, pendingQueueRunId);
     const automation = createAutomationService({
       database: context.database.sqlite,
       configuration,
@@ -473,15 +491,99 @@ describe('Phase 6 persistent automation', () => {
       runs: createRestartFakeRuns().runs,
       archiver: createNoopArchiver(),
       runStore,
+      queue,
       reportDir: context.config.reportDir,
       now: () => new Date('2026-08-30T00:00:00.000Z'),
     });
 
     const cleanupResult = await automation.cleanupRetention();
-    assert.deepEqual(cleanupResult, { removedRunIds: [oldRunId], skippedRunIds: [] });
+    assert.deepEqual(cleanupResult, {
+      removedRunIds: [oldRunId],
+      skippedRunIds: [pendingQueueRunId],
+    });
     const remaining = await new RunWorkspaceStore(context.config.reportDir).list('completed');
-    assert.deepEqual(remaining, [failedRunId, recentRunId].sort());
+    assert.deepEqual(remaining, [failedRunId, pendingQueueRunId, recentRunId].sort());
     await assert.rejects(access(join(context.config.reportDir, 'completed', oldRunId)));
+  });
+
+  it('refuses manual cleanup until archive and every associated queue operation are complete', async () => {
+    const context = await createDatabaseContext();
+    const configuration = createConfigurationStore(context.database.sqlite, {
+      repoDir: context.config.repoDir,
+      reportDir: context.config.reportDir,
+    });
+    const pendingArchiveRunId = runId(20);
+    const pendingQueueRunId = runId(21);
+    const terminalFailedRunId = runId(22);
+    const cleanableRunId = runId(23);
+    await Promise.all(
+      [pendingArchiveRunId, pendingQueueRunId, terminalFailedRunId, cleanableRunId].map((id) =>
+        mkdir(join(context.config.reportDir, 'completed', id), { recursive: true }),
+      ),
+    );
+    const records = new Map([
+      [pendingArchiveRunId, { runId: pendingArchiveRunId, archiveStatus: 'failed' }],
+      [pendingQueueRunId, { runId: pendingQueueRunId, archiveStatus: 'completed' }],
+      [terminalFailedRunId, { runId: terminalFailedRunId, archiveStatus: 'completed' }],
+      [cleanableRunId, { runId: cleanableRunId, archiveStatus: 'completed' }],
+    ]);
+    const runStore = {
+      get: (id: string) => records.get(id) ?? null,
+      list: () => [...records.values()],
+    } as unknown as RunStore;
+    const queue = createTestRequestQueue(context.database.sqlite);
+    const queued = queue.enqueue({
+      request: 'still waiting for archive',
+      trigger: 'manual',
+      requestKind: 'manual-current-head',
+    });
+    queue.claimNext();
+    queue.markResolved(queued.queueId, 'a'.repeat(40));
+    queue.markStarted(queued.queueId, pendingQueueRunId);
+    const terminal = queue.enqueue({
+      request: 'terminal queue status must still be completed',
+      trigger: 'manual',
+      requestKind: 'manual-current-head',
+    });
+    queue.claimNext();
+    queue.markResolved(terminal.queueId, 'b'.repeat(40));
+    queue.markStarted(terminal.queueId, terminalFailedRunId);
+    queue.complete(terminal.queueId, {
+      runId: terminalFailedRunId,
+      archiveStatus: 'completed',
+      progressed: false,
+    });
+    context.database.sqlite
+      .prepare("UPDATE test_request_queue SET status = 'failed' WHERE queue_id = ?")
+      .run(terminal.queueId);
+    const automation = createAutomationService({
+      database: context.database.sqlite,
+      configuration,
+      repository: {} as RepositoryService,
+      runs: createRestartFakeRuns().runs,
+      archiver: createNoopArchiver(),
+      runStore,
+      queue,
+      reportDir: context.config.reportDir,
+    });
+
+    await assert.rejects(
+      () => automation.cleanupRun(pendingArchiveRunId),
+      /归档尚未完成.*保留 report、场景 patch 和 Issue 重试工件/,
+    );
+    await assert.rejects(
+      () => automation.cleanupRun(pendingQueueRunId),
+      /仍有关联的队列.*重试操作/,
+    );
+    await assert.rejects(
+      () => automation.cleanupRun(terminalFailedRunId),
+      /仍有关联的队列.*重试操作/,
+    );
+    await automation.cleanupRun(cleanableRunId);
+    await assert.rejects(access(join(context.config.reportDir, 'completed', cleanableRunId)));
+    await access(join(context.config.reportDir, 'completed', pendingArchiveRunId));
+    await access(join(context.config.reportDir, 'completed', pendingQueueRunId));
+    await access(join(context.config.reportDir, 'completed', terminalFailedRunId));
   });
 
   it('marks an orphaned running directory interrupted without restoring an Agent session', async () => {

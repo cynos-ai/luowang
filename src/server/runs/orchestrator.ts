@@ -359,7 +359,13 @@ class DefaultRunOrchestrator implements RunOrchestrator {
       }
       scenarioDecision = await this.prepareScenarioPatch(workspace, prepared.repository, context);
       if (scenarioDecision === 'review') {
-        await this.finishScenarioReviewRun(state, workspace, context);
+        const closure = await this.finishScenarioReviewRunner(
+          state,
+          workspace,
+          context,
+          evidenceStore,
+        );
+        await this.finishScenarioReviewRun(state, workspace, context, closure);
         return;
       }
       let runnerCleanup: { uploaded: boolean; uploadFailed: boolean } = {
@@ -680,14 +686,60 @@ class DefaultRunOrchestrator implements RunOrchestrator {
     return 'applied';
   }
 
+  private async finishScenarioReviewRunner(
+    state: RunState,
+    workspace: RunWorkspace,
+    context: RunContext,
+    evidenceStore: RunEvidenceStore | undefined,
+  ): Promise<ScenarioReviewClosure> {
+    try {
+      await this.finishRunner(state, workspace, context, evidenceStore);
+    } catch (error) {
+      this.addBlockingReason(context, `Runner 收尾失败：${safeMessage(error)}`);
+      await this.appendExecutionNotes(workspace, [
+        `Runner 收尾失败，特殊场景审核 Run 已阻塞：${safeMessage(error)}`,
+      ]).catch(() => undefined);
+    }
+    const testData = await this.finalizeTestData(workspace, context);
+    if (!evidenceStore) {
+      return { testDataMessage: testData.message, evidenceDeleted: 0, evidenceDeleteFailures: 0 };
+    }
+
+    const cleanup = await evidenceStore.cleanupUploaded();
+    if (cleanup.deleted.length > 0) {
+      await this.appendExecutionNotes(workspace, [
+        `特殊场景审核不保留执行 evidence；已删除 ${cleanup.deleted.length} 个已上传 OSS 对象。`,
+      ]);
+    }
+    for (const failure of cleanup.failures) {
+      this.addBlockingReason(context, `特殊场景审核 evidence 删除失败：${failure.filename}`);
+    }
+    if (cleanup.failures.length > 0) {
+      await this.appendExecutionNotes(
+        workspace,
+        cleanup.failures.map(
+          (failure) => `特殊场景审核 evidence 删除失败：${failure.filename}（${failure.message}）`,
+        ),
+      );
+    }
+    context.evidence = [];
+    state.evidence = [];
+    return {
+      testDataMessage: testData.message,
+      evidenceDeleted: cleanup.deleted.length,
+      evidenceDeleteFailures: cleanup.failures.length,
+    };
+  }
+
   private async finishScenarioReviewRun(
     state: RunState,
     workspace: RunWorkspace,
     context: RunContext,
+    closure: ScenarioReviewClosure,
   ): Promise<void> {
     this.addBlockingReason(context, 'Run 等待场景变更人工审核，不等待 PR 合并');
     const finishedAt = this.now().toISOString();
-    const reportContent = buildScenarioReviewReport(state, context, finishedAt);
+    const reportContent = buildScenarioReviewReport(state, context, finishedAt, closure);
     await workspace.writer('main-b').writeReport(reportContent);
     const report = parseReportMarkdown(
       reportContent,
@@ -976,7 +1028,10 @@ class DefaultRunOrchestrator implements RunOrchestrator {
     return { uploaded, uploadFailed };
   }
 
-  private async finalizeTestData(workspace: RunWorkspace, context: RunContext): Promise<void> {
+  private async finalizeTestData(
+    workspace: RunWorkspace,
+    context: RunContext,
+  ): Promise<ReturnType<TestDataManager['finalize']>> {
     const result = (this.options.testData ?? createTestDataManager()).finalize(context.runId);
     const notes = [`测试数据最终核验：${result.message}`];
     if (!result.ok) {
@@ -992,6 +1047,7 @@ class DefaultRunOrchestrator implements RunOrchestrator {
       notes.push(...context.blockingReasons.map((reason) => `Harness 阻塞：${reason}`));
     }
     await this.appendExecutionNotes(workspace, notes);
+    return result;
   }
 
   private async cleanupRetainedEvidence(
@@ -1512,10 +1568,17 @@ async function readOptionalScenarioPatch(workspace: RunWorkspace): Promise<strin
   return workspace.read('scenario-changes.patch');
 }
 
+interface ScenarioReviewClosure {
+  testDataMessage: string;
+  evidenceDeleted: number;
+  evidenceDeleteFailures: number;
+}
+
 function buildScenarioReviewReport(
   state: RunState,
   context: RunContext,
   finishedAt: string,
+  closure: ScenarioReviewClosure,
 ): string {
   const changes = context.scenarioChanges
     ? `变更文件：${context.scenarioChanges.changedPaths.join(', ')}`
@@ -1540,6 +1603,12 @@ confirmed_bugs: []
 本次 Run 只产生了待人工审核的场景资产变更，没有等待 PR 合并，也没有把说明写入正式报告目录。
 
 ${changes}
+
+## Harness 收尾
+
+- 测试数据：${closure.testDataMessage}
+- 执行 evidence：已删除 ${closure.evidenceDeleted} 个已上传 OSS 对象；删除失败 ${closure.evidenceDeleteFailures} 个。
+- 特殊归档仅保留 scenario-changes.patch 和 report.md。
 
 ## 阻塞原因
 
