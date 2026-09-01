@@ -175,7 +175,7 @@ class DefaultRunOrchestrator implements RunOrchestrator {
 
     this.startInProgress = true;
     try {
-      const runId = this.id();
+      const runId = input.runId ?? this.id();
       const startedAt = this.now().toISOString();
       const workspace = await this.workspaceStore.create(runId);
       const state: RunState = {
@@ -1443,6 +1443,9 @@ function assertRunInput(input: RunInput): void {
   }
   if (!['git', 'schedule', 'manual', 'api'].includes(input.trigger)) {
     throw new RunOrchestratorError('RUN_REQUEST_INVALID', '测试请求来源无效');
+  }
+  if (input.runId !== undefined && !/^[0-9A-HJKMNP-TV-Z]{26}$/.test(input.runId)) {
+    throw new RunOrchestratorError('RUN_REQUEST_INVALID', '内部 Run ID 格式无效');
   }
   if (input.targetCommit !== undefined && input.targetCommit.trim() === '') {
     throw new RunOrchestratorError('RUN_REQUEST_INVALID', 'targetCommit 不能为空');
