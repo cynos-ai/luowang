@@ -17,22 +17,61 @@ export const PUBLIC_QUALITY_SCRIPTS = [
 
 export const LIVE_INPUT_NAMES = [
   'LUOWANG_LIVE_REPOSITORY',
+  'LUOWANG_LIVE_INITIAL_REF',
+  'LUOWANG_LIVE_TARGET_ALLOWLIST',
   'LUOWANG_LIVE_GITHUB_TOKEN',
+  'LUOWANG_ADMIN_PASSWORD',
+  'LUOWANG_MASTER_KEY',
   'LUOWANG_LIVE_BASE_URL',
+  'LUOWANG_LIVE_NON_PRODUCTION_CONFIRMED',
+  'LUOWANG_LIVE_TEST_ACCOUNT_DEDICATED_CONFIRMED',
   'LUOWANG_LIVE_TEST_USERNAME',
   'LUOWANG_LIVE_TEST_PASSWORD',
   'LUOWANG_LIVE_PROVIDER',
   'LUOWANG_LIVE_PROVIDER_API_KEY',
   'LUOWANG_LIVE_MAIN_MODEL',
+  'LUOWANG_LIVE_MAIN_THINKING',
   'LUOWANG_LIVE_RUNNER_MODEL',
+  'LUOWANG_LIVE_RUNNER_THINKING',
   'LUOWANG_LIVE_REVIEWER_MODEL',
+  'LUOWANG_LIVE_REVIEWER_THINKING',
+  'LUOWANG_LIVE_REVIEWER_VISION_CONFIRMED',
   'LUOWANG_LIVE_OSS_ENDPOINT',
   'LUOWANG_LIVE_OSS_REGION',
   'LUOWANG_LIVE_OSS_BUCKET',
   'LUOWANG_LIVE_OSS_PREFIX',
   'LUOWANG_LIVE_OSS_ACCESS_KEY_ID',
   'LUOWANG_LIVE_OSS_ACCESS_KEY_SECRET',
+  'LUOWANG_LIVE_OSS_PRIVATE_CONFIRMED',
+  'LUOWANG_LIVE_PASSED_CASE',
+  'LUOWANG_LIVE_FAILED_CASE_1',
+  'LUOWANG_LIVE_FAILED_CASE_2',
+  'LUOWANG_LIVE_BLOCKED_CASE',
+  'LUOWANG_LIVE_RESET_PROCEDURE',
+  'LUOWANG_LIVE_DELETION_PROCEDURE',
+  'LUOWANG_LIVE_ABSENCE_VERIFICATION',
+  'LUOWANG_LIVE_NETWORK_APPROVED',
+  'LUOWANG_LIVE_COST_APPROVED',
+  'LUOWANG_LIVE_RELEASE_AUTHORIZED',
+  'LUOWANG_LIVE_CREDENTIAL_DISPOSITION',
 ] as const;
+
+const LIVE_THINKING_INPUTS = new Set<string>([
+  'LUOWANG_LIVE_MAIN_THINKING',
+  'LUOWANG_LIVE_RUNNER_THINKING',
+  'LUOWANG_LIVE_REVIEWER_THINKING',
+]);
+const VALID_THINKING_LEVELS = new Set(['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']);
+
+const LIVE_TRUE_CONFIRMATIONS = new Set<string>([
+  'LUOWANG_LIVE_NON_PRODUCTION_CONFIRMED',
+  'LUOWANG_LIVE_TEST_ACCOUNT_DEDICATED_CONFIRMED',
+  'LUOWANG_LIVE_REVIEWER_VISION_CONFIRMED',
+  'LUOWANG_LIVE_OSS_PRIVATE_CONFIRMED',
+  'LUOWANG_LIVE_NETWORK_APPROVED',
+  'LUOWANG_LIVE_COST_APPROVED',
+  'LUOWANG_LIVE_RELEASE_AUTHORIZED',
+]);
 
 type LayerStatus = 'passed' | 'failed' | 'blocked' | 'not_run';
 type AcceptanceMode = 'local' | 'live' | 'release';
@@ -100,7 +139,13 @@ interface AcceptanceReport {
 }
 
 export function missingLiveInputs(environment: NodeJS.ProcessEnv): string[] {
-  return LIVE_INPUT_NAMES.filter((name) => !environment[name]?.trim());
+  return LIVE_INPUT_NAMES.filter((name) => {
+    const value = environment[name]?.trim();
+    if (!value) return true;
+    const normalized = value.toLocaleLowerCase();
+    if (LIVE_TRUE_CONFIRMATIONS.has(name)) return normalized !== 'true';
+    return LIVE_THINKING_INPUTS.has(name) && !VALID_THINKING_LEVELS.has(normalized);
+  });
 }
 
 export function createLayeredReport(input: {
@@ -158,9 +203,11 @@ export function createLayeredReport(input: {
         evidence: ['tests/closure6-production-pi.test.ts: ordinary production Pi Run'],
       },
       {
-        id: 'pi-sdk-initialization-six-session',
+        id: 'fifo-first-branch-six-session-pi-initialization',
         status: input.proofs.directInitialization,
-        evidence: ['tests/closure6-production-pi.test.ts: direct initialization'],
+        evidence: [
+          'tests/closure6-production-pi.test.ts: manual-merge-source → FIFO → initial-create → resolved target → one six-Session Pi Run',
+        ],
       },
       {
         id: 'scenario-review-three-session-special-finalize',
@@ -459,9 +506,9 @@ async function runLocal(artifactDirectory: string): Promise<AcceptanceReport> {
     },
     {
       key: 'directInitialization',
-      label: 'Pi direct six-session initialization',
+      label: 'FIFO first-branch six-session Pi initialization',
       file: 'tests/closure6-production-pi.test.ts',
-      pattern: 'unfamiliar-project direct initialization',
+      pattern: 'creates the first scenario branch through FIFO',
     },
     {
       key: 'scenarioReview',

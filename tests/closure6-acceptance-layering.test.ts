@@ -31,6 +31,20 @@ describe('Closure 6 acceptance status layering', () => {
     assert.doesNotMatch(JSON.stringify(missing), /canary-live-secret-value/);
   });
 
+  it('treats explicit safety confirmations as missing unless they equal true', () => {
+    const environment = Object.fromEntries(LIVE_INPUT_NAMES.map((name) => [name, 'provided']));
+    environment.LUOWANG_LIVE_NON_PRODUCTION_CONFIRMED = 'false';
+    environment.LUOWANG_LIVE_REVIEWER_VISION_CONFIRMED = 'TRUE';
+    environment.LUOWANG_LIVE_MAIN_THINKING = 'unsupported';
+    environment.LUOWANG_LIVE_RUNNER_THINKING = 'high';
+    const missing = missingLiveInputs(environment);
+    assert.equal(missing.includes('LUOWANG_LIVE_NON_PRODUCTION_CONFIRMED'), true);
+    assert.equal(missing.includes('LUOWANG_LIVE_REVIEWER_VISION_CONFIRMED'), false);
+    assert.equal(missing.includes('LUOWANG_LIVE_MAIN_THINKING'), true);
+    assert.equal(missing.includes('LUOWANG_LIVE_RUNNER_THINKING'), false);
+    assert.equal(missing.includes('LUOWANG_LIVE_OSS_PRIVATE_CONFIRMED'), true);
+  });
+
   it('builds local subprocess environment from a non-secret allowlist', () => {
     const original = {
       github: process.env.GITHUB_TOKEN,
@@ -191,8 +205,11 @@ describe('Closure 6 acceptance status layering', () => {
     assert.match(packageJson.scripts['test:acceptance:live'] ?? '', /closure\.ts live/);
     assert.match(packageJson.scripts['test:acceptance:release'] ?? '', /closure\.ts release/);
     const workflow = await readFile('.github/workflows/quality.yml', 'utf8');
+    assert.match(workflow, /timeout-minutes:\s*60/);
     assert.match(workflow, /npm run test:acceptance:local/);
     assert.doesNotMatch(workflow, /npm run test:acceptance:(?:live|release)/);
+    const dockerignore = await readFile('.dockerignore', 'utf8');
+    assert.match(dockerignore, /!\.github\/workflows\/quality\.yml/);
   });
 });
 

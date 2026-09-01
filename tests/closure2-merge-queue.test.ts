@@ -564,7 +564,12 @@ describe('Closure 2 automation integration', () => {
       sourceRef: 'main',
       confirmed: true,
     });
-    await waitFor(() => automation.getQueue(merge.queue.queueId)?.status === 'failed');
+    await waitFor(
+      () =>
+        automation.getQueue(automatic.queue.queueId)?.status === 'failed' &&
+        automation.getQueue(current.queue.queueId)?.status === 'failed' &&
+        automation.getQueue(merge.queue.queueId)?.status === 'failed',
+    );
 
     assert.equal(automation.getQueue(automatic.queue.queueId)?.status, 'failed');
     assert.equal(automation.getQueue(current.queue.queueId)?.status, 'failed');
@@ -598,7 +603,9 @@ describe('Closure 2 automation integration', () => {
       confirmed: true,
       initialization: true,
     });
-    assert.equal(fake.started.length, 1);
+    assert.equal(submission.queue.status, 'queued');
+    assert.equal(submission.run, null);
+    await waitFor(() => fake.started.length === 1);
     assert.equal(fake.started[0]?.targetCommit, fixture.mainHead);
     assert.equal(fake.started[0]?.initialization, true);
     assert.match(fake.started[0]?.runId ?? '', /^[0-9A-HJKMNP-TV-Z]{26}$/);

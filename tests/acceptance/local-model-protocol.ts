@@ -14,7 +14,8 @@ import type {
   AgentSessionInput,
 } from '../../src/server/runs/types.js';
 
-export type LocalModelBehavior = 'normal' | 'revise-final-patch' | 'invalid-tool';
+export type LocalModelBehavior =
+  'normal' | 'revise-final-patch' | 'invalid-tool' | 'special-cleanup';
 
 export interface LocalPiSessionRecord {
   id: string;
@@ -344,6 +345,17 @@ function nextTool(
   if (has('write_execution') && has('write_draft_report')) {
     const unreadArtifact = nextUnreadArtifact(['plan.md']);
     if (unreadArtifact) return unreadArtifact;
+    if (
+      behavior === 'special-cleanup' &&
+      has('register_test_data') &&
+      count('register_test_data') === 0
+    ) {
+      const context = parseRunContext(prompt);
+      return tool('register_test_data', {
+        id: `luowang-${context.runId}-special-review-data`,
+        description: 'special review cleanup fixture',
+      });
+    }
     if (count('get_run_context') === 0) return tool('get_run_context');
     if (count('list_working_scenarios') === 0) return tool('list_working_scenarios');
     if (has('begin_scenario_execution') && count('begin_scenario_execution') === 0) {

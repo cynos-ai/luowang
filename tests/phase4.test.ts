@@ -226,6 +226,9 @@ describe('Phase 4 browser and evidence boundaries', () => {
       ),
       false,
     );
+    const uploadedCleanup = await store.cleanupUploaded();
+    assert.deepEqual(uploadedCleanup, { deleted: ['login.png'], failures: [] });
+    assert.deepEqual(await store.list(), []);
   });
 });
 

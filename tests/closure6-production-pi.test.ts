@@ -8,16 +8,18 @@ import { promisify } from 'node:util';
 import pino from 'pino';
 import { afterEach, describe, it } from 'vitest';
 
+import { createAutomationService } from '../src/server/automation/service.js';
 import { loadConfig } from '../src/server/config.js';
 import { createConfigurationStore } from '../src/server/configuration.js';
 import { initializeDatabase } from '../src/server/db/migrate.js';
 import { createRepositoryService } from '../src/server/repository/service.js';
 import type { RepositoryService } from '../src/server/repository/service.js';
-import { createRunArchiver } from '../src/server/runs/archiver.js';
+import { createRunArchiver, type RunArchiver } from '../src/server/runs/archiver.js';
 import { createControlledCommandRunner } from '../src/server/runs/command-runner.js';
 import { createRunOrchestrator } from '../src/server/runs/orchestrator.js';
 import type { ProviderAdapter } from '../src/server/runs/provider.js';
 import { createRunStore, type RunStore } from '../src/server/runs/store.js';
+import { createTestDataManager } from '../src/server/runs/test-data.js';
 import { createSecretStore } from '../src/server/security/secret-store.js';
 import {
   startLocalModelProtocol,
@@ -56,6 +58,82 @@ describe('Closure 6 local production Pi path', () => {
     assert.match(result.artifacts['report.md'] ?? '', /Reviewer 已独立确认/);
   });
 
+  it('creates the first scenario branch through FIFO before one six-Session production Pi initialization Run', async () => {
+    const context = await createContext('autonomous', 'normal', false);
+    let releasePreparation: () => void = () => undefined;
+    const preparationGate = new Promise<void>((resolve) => {
+      releasePreparation = resolve;
+    });
+    let markPreparationStarted: () => void = () => undefined;
+    const preparationStarted = new Promise<void>((resolve) => {
+      markPreparationStarted = resolve;
+    });
+    const repository = new Proxy(context.repository, {
+      get(target, property, receiver) {
+        if (property === 'prepareMergeRequest') {
+          return async (...args: Parameters<RepositoryService['prepareMergeRequest']>) => {
+            markPreparationStarted();
+            await preparationGate;
+            return target.prepareMergeRequest(...args);
+          };
+        }
+        const value = Reflect.get(target, property, receiver) as unknown;
+        return typeof value === 'function' ? value.bind(target) : value;
+      },
+    }) as RepositoryService;
+    const automation = createAutomationService({
+      database: context.database.sqlite,
+      configuration: context.configuration,
+      repository,
+      runs: context.orchestrator,
+      archiver: noopArchiver(),
+      runStore: context.runStore,
+      reportDir: context.reportDir,
+      logger: pino({ level: 'silent' }),
+    });
+
+    const submission = await automation.submitTestRequest({
+      request: '从 main 首次创建场景分支并初始化',
+      trigger: 'manual',
+      requestKind: 'manual-merge-source',
+      sourceRef: 'main',
+      confirmed: true,
+      initialization: true,
+    });
+    assert.equal(submission.queue.status, 'queued');
+    assert.equal(submission.run, null);
+    await preparationStarted;
+    assert.equal(
+      await (await context.repository.getRepository()).remoteBranchHead('scenario-testing'),
+      null,
+    );
+
+    releasePreparation();
+    await waitFor(() => automation.getQueue(submission.queue.queueId)?.runId !== null);
+    const running = automation.getQueue(submission.queue.queueId);
+    assert.ok(running?.runId);
+    assert.equal(running?.initialization, true);
+    assert.equal(running?.preparedMergeMode, 'initial-create');
+    assert.equal(running?.preparedMergeCommit, running?.resolvedTargetCommit);
+    const result = await context.orchestrator.wait(running?.runId as string);
+    assert.equal(result?.status, 'completed', JSON.stringify(result));
+    assert.equal(result?.result, 'passed');
+    assert.equal(result?.targetCommit, running?.resolvedTargetCommit);
+    assertSessionSequence(context.model, [
+      'main-a',
+      'runner',
+      'main-a',
+      'runner',
+      'reviewer',
+      'main-b',
+    ]);
+    await waitForAsync(
+      async () =>
+        automation.getQueue(submission.queue.queueId)?.status === 'completed' &&
+        (await repository.readMergeRequestRef(submission.queue.queueId)) === null,
+    );
+  });
+
   it('runs unfamiliar-project direct initialization through six isolated production Pi Sessions', async () => {
     const context = await createContext('autonomous', 'normal');
     const result = await context.orchestrator.run({
@@ -89,7 +167,7 @@ describe('Closure 6 local production Pi path', () => {
   });
 
   it('stops review-required initialization after three Sessions and selectively finalizes two artifacts', async () => {
-    const context = await createContext('review-all', 'normal');
+    const context = await createContext('review-all', 'special-cleanup');
     const result = await context.orchestrator.run({
       request: '初始化陌生项目但场景变更必须人工审核',
       trigger: 'manual',
@@ -109,6 +187,10 @@ describe('Closure 6 local production Pi path', () => {
       context.model.sessions.some((session) => session.role === 'main-b'),
       false,
     );
+    assert.equal(context.specialCleanupCalls(), 1);
+    assert.match(result.artifacts['report.md'] ?? '', /测试数据：全部登记测试数据均已独立核验清理/);
+    assert.match(result.artifacts['report.md'] ?? '', /特殊归档仅保留/);
+    assert.doesNotMatch(result.artifacts['report.md'] ?? '', /测试数据残留|清理失败/);
 
     const publicationModes: string[] = [];
     const archiveRepository = {
@@ -186,12 +268,15 @@ interface ProductionContext {
   database: ReturnType<typeof initializeDatabase>;
   reportDir: string;
   repository: ReturnType<typeof createRepositoryService>;
+  configuration: ReturnType<typeof createConfigurationStore>;
   runStore: RunStore;
+  specialCleanupCalls(): number;
 }
 
 async function createContext(
   scenarioMode: 'autonomous' | 'review-all',
   behavior: LocalModelBehavior,
+  withScenarioBranch = true,
 ): Promise<ProductionContext> {
   const root = await mkdtemp(join(tmpdir(), 'luowang-closure6-'));
   cleanup.push(async () => rm(root, { recursive: true, force: true }));
@@ -210,8 +295,10 @@ async function createContext(
   await git(['commit', '-m', 'fixture: initialize target'], source);
   await git(['remote', 'add', 'origin', remote], source);
   await git(['push', '-u', 'origin', 'main'], source);
-  await git(['checkout', '-b', 'scenario-testing'], source);
-  await git(['push', '-u', 'origin', 'scenario-testing'], source);
+  if (withScenarioBranch) {
+    await git(['checkout', '-b', 'scenario-testing'], source);
+    await git(['push', '-u', 'origin', 'scenario-testing'], source);
+  }
 
   const config = loadConfig({
     NODE_ENV: 'test',
@@ -252,6 +339,16 @@ async function createContext(
   const runStore = createRunStore(database.sqlite);
   const model = await startLocalModelProtocol(behavior);
   cleanup.push(() => model.close());
+  let specialCleanupCalls = 0;
+  const testData = createTestDataManager({
+    cleanupAdapter: {
+      id: 'closure6-special-cleanup',
+      cleanupAndVerify: async () => {
+        specialCleanupCalls += 1;
+        return { absent: true, content: 'not found', statusCode: 404 };
+      },
+    },
+  });
   const orchestrator = createRunOrchestrator({
     configuration,
     repository,
@@ -260,11 +357,21 @@ async function createContext(
     provider: {} as ProviderAdapter,
     sessions: model.sessionFactory,
     commandRunner: createControlledCommandRunner(process.env),
+    testData,
     runStore,
     logger: pino({ level: 'silent' }),
     browser: disabledBrowser(),
   });
-  return { orchestrator, model, database, reportDir, repository, runStore };
+  return {
+    orchestrator,
+    model,
+    database,
+    reportDir,
+    repository,
+    configuration,
+    runStore,
+    specialCleanupCalls: () => specialCleanupCalls,
+  };
 }
 
 function assertSessionSequence(model: LocalModelProtocol, expected: string[]): void {
@@ -329,6 +436,36 @@ function assertSessionSequence(model: LocalModelProtocol, expected: string[]): v
       }
     }
   }
+}
+
+function noopArchiver(): RunArchiver {
+  return {
+    archive: async (runId) => ({
+      runId,
+      status: 'completed',
+      reportStatus: 'published',
+      reportCommitSha: null,
+      issues: [],
+      progressed: true,
+      archiveStatus: 'completed',
+      errorMessage: null,
+      indexerTriggered: false,
+    }),
+    scan: async () => [],
+    retry: async (runId) => noopArchiver().archive(runId),
+  };
+}
+
+async function waitFor(predicate: () => boolean): Promise<void> {
+  return waitForAsync(async () => predicate());
+}
+
+async function waitForAsync(predicate: () => Promise<boolean>): Promise<void> {
+  for (let attempt = 0; attempt < 400; attempt += 1) {
+    if (await predicate()) return;
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+  throw new Error('condition was not reached');
 }
 
 function disabledBrowser() {
