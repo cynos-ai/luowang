@@ -1374,6 +1374,7 @@ class FixtureSessionFactory implements AgentSessionFactory {
         }
         if (input.role === 'runner') {
           await invokeTool(input, 'read_run_artifact', { name: 'plan.md' });
+          await invokeTool(input, 'begin_scenario_execution', { scenarioIds: [] });
           const dataPrefix = toolText(await invokeTool(input, 'get_test_data_prefix', {}));
           await invokeTool(input, 'register_test_data', {
             id: `${dataPrefix}phase9-login-fixture`,
