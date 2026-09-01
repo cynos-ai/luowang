@@ -229,7 +229,7 @@ const AC_DEFINITIONS: Array<{
   },
   {
     id: 'AC-AGENT-01',
-    title: '人工请求按 Main A、Runner、Reviewer、Main B 产生五文件',
+    title: '人工请求按 Main · 规划、Runner、Reviewer、Main · 最终汇总产生五文件',
     proof: 'run',
     evidence: ['tests/phase3.test.ts', 'tests/acceptance/phase9.ts: four-session proof'],
   },
@@ -1342,7 +1342,7 @@ class FixtureSessionFactory implements AgentSessionFactory {
     this.created.push(input.role);
     return {
       prompt: async () => {
-        const target = extractTarget(input.systemPrompt);
+        const target = extractTarget(input.userMessage);
         if (input.role === 'main-a') {
           await invokeTool(input, 'get_run_context', {});
           await invokeTool(input, 'write_plan', {
@@ -1379,7 +1379,7 @@ class FixtureSessionFactory implements AgentSessionFactory {
           await invokeTool(input, 'read_run_artifact', { name });
         }
         await invokeTool(input, 'write_report', {
-          content: reportForContext(input.systemPrompt, target),
+          content: reportForContext(input.userMessage, target),
         });
       },
       dispose: () => {

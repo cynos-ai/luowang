@@ -11,7 +11,7 @@
   "type": "module",
   "scripts": {
     "build": "npm run build:server && vite build",
-    "build:server": "tsc -p tsconfig.json && node scripts/build-pi-mcp-adapter.mjs",
+    "build:server": "tsc -p tsconfig.json && node scripts/build-pi-mcp-adapter.mjs && node scripts/copy-agent-role-resources.mjs",
     "db:migrate": "tsx src/server/db/migrate-cli.ts",
     "dev": "concurrently -k \"npm run dev:server\" \"vite\"",
     "dev:server": "tsx watch src/server/main.ts",
