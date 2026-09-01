@@ -44,7 +44,12 @@ import {
   type RunEvidenceStore,
 } from './evidence.js';
 import { createProviderAdapter, type ProviderAdapter } from './provider.js';
-import { createTestDataManager, createTestDataTools, type TestDataManager } from './test-data.js';
+import {
+  createReviewerTestDataTools,
+  createTestDataManager,
+  createTestDataTools,
+  type TestDataManager,
+} from './test-data.js';
 import {
   createRoleInstructionLoader,
   RoleInstructionError,
@@ -402,6 +407,7 @@ class DefaultRunOrchestrator implements RunOrchestrator {
           'Reviewer 未读取截图 evidence，无法完成独立视觉审核。',
         ]);
       }
+      await this.finalizeTestData(workspace, context);
       if (runnerCleanup.uploaded && !runnerCleanup.uploadFailed) {
         await this.cleanupRetainedEvidence(workspace, context, evidenceStore);
       }
@@ -743,7 +749,11 @@ class DefaultRunOrchestrator implements RunOrchestrator {
         this.options.configuration.getRepository(),
         this.options.secretStore,
       ),
-      ...createTestDataTools(this.options.testData ?? createTestDataManager(), context.runId),
+      ...createTestDataTools(
+        this.options.testData ?? createTestDataManager(),
+        context.runId,
+        evidenceStore,
+      ),
       ...(evidenceStore ? createRunnerEvidenceTools(evidenceStore) : []),
       createArtifactWriterTool(
         'write_execution',
@@ -888,12 +898,7 @@ class DefaultRunOrchestrator implements RunOrchestrator {
       notes.push('UI 场景没有产生可审核的 evidence。');
     }
 
-    let cleanup: {
-      ok: boolean;
-      attempted: number;
-      failed: string[];
-      message: string;
-    };
+    let cleanup: Awaited<ReturnType<TestDataManager['cleanup']>>;
     try {
       cleanup = await this.options.testData!.cleanup(context.runId);
     } catch {
@@ -902,12 +907,16 @@ class DefaultRunOrchestrator implements RunOrchestrator {
         attempted: 0,
         failed: [],
         message: '测试数据清理适配器执行失败',
+        receipts: [],
       };
     }
-    if (!cleanup.ok) {
-      this.addBlockingReason(context, `测试数据清理失败：${cleanup.message}`);
-    }
-    notes.push(`测试数据清理：${cleanup.message}`);
+    notes.push(`测试数据清理适配器：${cleanup.message}`);
+    notes.push(
+      ...cleanup.receipts.map(
+        (receipt) =>
+          `清理核验 receipt：${receipt.dataId} · ${receipt.sourceId} · ${receipt.queriedAt} · ${receipt.statusCode === undefined ? `exit ${receipt.exitCode ?? 'n/a'}` : `HTTP ${receipt.statusCode}`} · summary ${receipt.summary} · sha256 ${receipt.sha256}`,
+      ),
+    );
     if (cleanup.failed.length > 0) {
       notes.push(`测试数据清理失败项数量：${cleanup.failed.length}`);
     }
@@ -916,6 +925,24 @@ class DefaultRunOrchestrator implements RunOrchestrator {
     }
     await this.appendExecutionNotes(workspace, notes);
     return { uploaded, uploadFailed };
+  }
+
+  private async finalizeTestData(workspace: RunWorkspace, context: RunContext): Promise<void> {
+    const result = (this.options.testData ?? createTestDataManager()).finalize(context.runId);
+    const notes = [`测试数据最终核验：${result.message}`];
+    if (!result.ok) {
+      this.addBlockingReason(context, `测试数据清理失败：${result.message}`);
+      notes.push(
+        ...result.pending.map(
+          (entry) =>
+            `测试数据残留：${entry.id}（${entry.status}${entry.rejectionReason ? `：${entry.rejectionReason}` : ''}）`,
+        ),
+      );
+    }
+    if (context.blockingReasons.length > 0) {
+      notes.push(...context.blockingReasons.map((reason) => `Harness 阻塞：${reason}`));
+    }
+    await this.appendExecutionNotes(workspace, notes);
   }
 
   private async cleanupRetainedEvidence(
@@ -976,6 +1003,11 @@ class DefaultRunOrchestrator implements RunOrchestrator {
         ]),
       ),
       ...(evidenceStore ? createReviewerEvidenceTools(evidenceStore) : []),
+      ...createReviewerTestDataTools(
+        this.options.testData ?? createTestDataManager(),
+        context.runId,
+        evidenceStore,
+      ),
       createArtifactWriterTool(
         'write_review',
         '写入独立审核',
@@ -1703,7 +1735,7 @@ ${JSON.stringify(runnerContext(context), null, 2)}`;
 
 function runnerOutputContract(): string {
   return `先读取 plan.md，再按计划使用受控 target、工作场景、命令、环境、测试数据和 evidence 工具。UI 场景只能使用受控的 headless、isolated Playwright MCP，优先使用 accessibility snapshot/ref；截图使用相对文件名并通过 list_evidence_files 确认存在。
-测试账号只用于当前操作，绝不能写入日志、命令输出、Markdown 或证据。使用 get_test_data_prefix 标记临时数据，登记后执行 cleanup_test_data。每个场景记录实际观察、命令退出码、决定性/辅助证据、偏差和清理结果。结束前分别通过 write_execution 和 write_draft_report 写完整工件；不可用条件记录为 blocked。`;
+测试账号只用于当前操作，绝不能写入日志、命令输出、Markdown 或证据。使用 get_test_data_prefix 标记临时数据；创建后立即登记，删除后只能提交 Harness 捕获的受控查询证据或 Playwright 截图声明，并检查待核验列表。不能自填 evidence 正文、状态码、摘要或 hash。每个场景记录实际观察、命令退出码、决定性/辅助证据、偏差和清理结果。结束前分别通过 write_execution 和 write_draft_report 写完整工件；不可用条件记录为 blocked。`;
 }
 
 function reviewerUserMessage(context: RunContext): string {
@@ -1714,7 +1746,7 @@ ${JSON.stringify(reviewerContext(context), null, 2)}`;
 }
 
 function reviewerOutputContract(): string {
-  return `依次读取 plan.md、execution.md、draft-report.md 和存在的 scenario-changes.patch；原始证据先于 Runner 草稿。查看截图只能使用 list_evidence_files 和 read_evidence_image，不能执行命令、读取测试账号或任意路径。
+  return `依次读取 plan.md、execution.md、draft-report.md 和存在的 scenario-changes.patch；原始证据先于 Runner 草稿。清理声明必须先通过 read_test_data_cleanup_evidence 读取 Harness 捕获的受控文本证据，或通过 read_evidence_image 实际查看删除后截图，再调用 verify_test_data_cleanup 确认或拒绝；纯 Runner 声明不构成已清理。查看截图只能使用 list_evidence_files 和 read_evidence_image，不能执行命令、读取测试账号或任意路径。
 截图不可访问、上传失败、视觉能力不足、清理未确认、场景缺失或影响不明时维持 blocked。零场景只有在 Main · 规划的计划确有依据时才能确认。结束前通过 write_review 写完整 review.md，并明确是否同意最终结果。`;
 }
 
