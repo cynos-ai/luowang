@@ -111,6 +111,49 @@ describe('Phase 3 agent run', () => {
     assert.doesNotMatch(runnerToolContext, /historyIssues|indexedReports|indexedScenarios/);
   });
 
+  it('moves one recognizable final report frontmatter block before an agent preamble', async () => {
+    const fixture = await createGitFixture();
+    const context = await createRunContext(
+      fixture,
+      ['passed'],
+      undefined,
+      undefined,
+      '# Final Report\n\n',
+    );
+
+    const result = await context.orchestrator.run({
+      request: '验证最终报告 frontmatter 位置',
+      trigger: 'manual',
+    });
+
+    assert.equal(result.status, 'completed', JSON.stringify(result));
+    assert.equal(result.result, 'passed');
+    assert.match(result.artifacts['report.md'] ?? '', /^---\nrun_id:/);
+    assert.match(result.artifacts['report.md'] ?? '', /# Final Report/);
+  });
+
+  it('preserves CRLF content while moving final report frontmatter', async () => {
+    const fixture = await createGitFixture();
+    const context = await createRunContext(
+      fixture,
+      ['passed'],
+      undefined,
+      undefined,
+      '# Final Report\n\n',
+      '\r\n',
+    );
+
+    const result = await context.orchestrator.run({
+      request: '验证 CRLF 最终报告 frontmatter 位置',
+      trigger: 'manual',
+    });
+
+    assert.equal(result.status, 'completed', JSON.stringify(result));
+    const report = result.artifacts['report.md'] ?? '';
+    assert.match(report, /^---\r\nrun_id:/);
+    assert.equal(report.replaceAll('\r\n', '').includes('\n'), false);
+  });
+
   it('isolates repeated Main and Runner Sessions during initialization', async () => {
     const fixture = await createGitFixture();
     const context = await createRunContext(fixture, ['passed', 'passed']);
@@ -462,6 +505,8 @@ async function createRunContext(
   outcomes: Array<'passed' | 'failed' | 'blocked'>,
   beforeReport?: () => Promise<void>,
   progress?: ProgressFixture,
+  reportPreamble = '',
+  reportLineEnding: '\n' | '\r\n' = '\n',
 ): Promise<TestContext> {
   const dataDir = await mkdtemp(join(tmpdir(), 'luowang-phase3-data-'));
   const reportDir = join(dataDir, 'report');
@@ -497,7 +542,13 @@ async function createRunContext(
     repoDir: config.repoDir,
     allowLocalRepository: true,
   });
-  const sessions = new RecordingSessionFactory(outcomes, beforeReport, progress);
+  const sessions = new RecordingSessionFactory(
+    outcomes,
+    beforeReport,
+    progress,
+    reportPreamble,
+    reportLineEnding,
+  );
   const orchestrator = createRunOrchestrator({
     configuration,
     repository,
@@ -521,6 +572,8 @@ class RecordingSessionFactory implements AgentSessionFactory {
     private readonly outcomes: Array<'passed' | 'failed' | 'blocked'>,
     private readonly beforeReport?: () => Promise<void>,
     private readonly progress?: ProgressFixture,
+    private readonly reportPreamble = '',
+    private readonly reportLineEnding: '\n' | '\r\n' = '\n',
   ) {}
 
   async create(input: AgentSessionInput) {
@@ -595,17 +648,19 @@ class RecordingSessionFactory implements AgentSessionFactory {
           }
           if (outcome === 'passed') {
             await invokeTool(input, 'write_report', {
-              content: this.progress
-                ? progressReportFor(context, this.progress.scenarioIds)
-                : reportFor(context, 'passed', false),
+              content: this.formatReport(
+                this.progress
+                  ? progressReportFor(context, this.progress.scenarioIds)
+                  : reportFor(context, 'passed', false),
+              ),
             });
           } else if (outcome === 'failed') {
             await invokeTool(input, 'write_report', {
-              content: reportFor(context, 'failed', true),
+              content: this.formatReport(reportFor(context, 'failed', true)),
             });
           } else {
             await invokeTool(input, 'write_report', {
-              content: reportFor(context, 'blocked', false),
+              content: this.formatReport(reportFor(context, 'blocked', false)),
             });
           }
         }
@@ -616,6 +671,10 @@ class RecordingSessionFactory implements AgentSessionFactory {
     };
     this.sessionObjects.push(session);
     return session;
+  }
+
+  private formatReport(content: string): string {
+    return `${this.reportPreamble}${content}`.replaceAll('\n', this.reportLineEnding);
   }
 }
 

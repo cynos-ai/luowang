@@ -1181,7 +1181,8 @@ class DefaultRunOrchestrator implements RunOrchestrator {
         'write_report',
         '写入最终报告',
         '写入本次 Run 唯一的 report.md。必须使用指定最小 frontmatter，不得写其他文件。',
-        (content) => workspace.writer('main-b').writeReport(content),
+        (content) =>
+          workspace.writer('main-b').writeReport(normalizeFinalReportFrontmatter(content)),
       ),
       ...(context.initialization
         ? [
@@ -1813,6 +1814,22 @@ function toSummary(state: RunSnapshot): RunSummary {
   if (state.blockingReasons !== undefined) summary.blockingReasons = [...state.blockingReasons];
   if (state.updatedAt !== undefined) summary.updatedAt = state.updatedAt;
   return summary;
+}
+
+function normalizeFinalReportFrontmatter(content: string): string {
+  if (content.startsWith('---\n') || content.startsWith('---\r\n')) return content;
+  const candidates = [
+    ...content.matchAll(/(?:^|\r?\n)(---\r?\n[\s\S]*?\r?\n---)(?=\r?\n|$)/g),
+  ].filter((match) => /^run_id:\s*\S+/m.test(match[1] ?? ''));
+  if (candidates.length !== 1) return content;
+  const candidate = candidates[0];
+  const frontmatter = candidate?.[1];
+  if (!candidate || !frontmatter || candidate.index === undefined) return content;
+  const prefixLength = candidate[0].length - frontmatter.length;
+  const start = candidate.index + prefixLength;
+  const body = `${content.slice(0, start)}${content.slice(start + frontmatter.length)}`;
+  const lineEnding = frontmatter.includes('\r\n') ? '\r\n' : '\n';
+  return `${frontmatter}${body.startsWith('\n') || body.startsWith('\r\n') ? '' : lineEnding}${body}`;
 }
 
 function safeMessage(error: unknown): string {
