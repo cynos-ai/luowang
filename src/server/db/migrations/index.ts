@@ -4,6 +4,7 @@ import { repositoryIndexMigration } from './0002-repository-index.js';
 import { runArchiveMigration } from './0003-run-archive.js';
 import { automationRecoveryMigration } from './0004-automation-recovery.js';
 import { scenarioLifecycleMigration } from './0005-scenario-lifecycle.js';
+import { closureMergeQueueMigration } from './0006-closure-merge-queue.js';
 
 export type { Migration } from './0000-foundation.js';
 
@@ -14,4 +15,5 @@ export const migrations = [
   runArchiveMigration,
   automationRecoveryMigration,
   scenarioLifecycleMigration,
+  closureMergeQueueMigration,
 ];

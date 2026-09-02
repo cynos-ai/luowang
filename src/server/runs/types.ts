@@ -12,6 +12,16 @@ import type { ScenarioPatchValidation } from '../repository/scenario-patch.js';
 
 export type AgentRole = 'main-a' | 'runner' | 'reviewer' | 'main-b';
 
+export type AgentSessionKind =
+  'main-planning' | 'runner-execution' | 'reviewer-audit' | 'main-finalization';
+
+export interface RoleInstructionVersion {
+  id: string;
+  formatVersion: string;
+  applicationVersion: string;
+  sha256: string;
+}
+
 export const RUN_ARTIFACT_NAMES = [
   'plan.md',
   'execution.md',
@@ -28,6 +38,8 @@ export type RunArtifactName =
 export interface RunInput {
   request: string;
   trigger: RunTrigger;
+  /** Internal deterministic ID reserved by the FIFO coordinator. Never accepted from the API. */
+  runId?: string;
   targetCommit?: string;
   initialization?: boolean;
 }
@@ -39,6 +51,8 @@ export interface RunContext {
   baseCommit: string | null;
   targetCommit: string;
   includedCommits: string[];
+  startedAt: string;
+  reportFinishedAt: string | null;
   repositoryDirectory: string;
   runDirectory: string;
   historyIssues: RepositoryIssue[];
@@ -53,15 +67,19 @@ export interface RunContext {
 
 export interface AgentSessionInput {
   role: AgentRole;
+  sessionKind: AgentSessionKind;
   config: AgentConfig;
   cwd: string;
   toolNames: string[];
   customTools: ToolDefinition[];
   systemPrompt: string;
+  userMessage: string;
+  roleInstructionVersions: RoleInstructionVersion[];
   extensionFactories?: InlineExtension[];
 }
 
 export interface AgentSession {
+  readonly sessionId?: string;
   prompt(message: string): Promise<void>;
   dispose(): void | Promise<void>;
 }

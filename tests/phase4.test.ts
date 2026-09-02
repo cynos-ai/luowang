@@ -19,7 +19,11 @@ import {
   createReviewerEvidenceTools,
   createRunEvidenceStore,
 } from '../src/server/runs/evidence.js';
-import { createTestDataManager } from '../src/server/runs/test-data.js';
+import {
+  createReviewerTestDataTools,
+  createTestDataManager,
+  createTestDataTools,
+} from '../src/server/runs/test-data.js';
 import { RunWorkspace } from '../src/server/runs/workspace.js';
 import { createOssAdapter, type OssAdapter, type S3ClientLike } from '../src/server/storage/oss.js';
 import type { SecretStore } from '../src/server/security/secret-store.js';
@@ -110,26 +114,32 @@ describe('Phase 4 browser and evidence boundaries', () => {
 
   it('blocks cleanup when data was registered without a real cleanup adapter', async () => {
     const manager = createTestDataManager();
-    await manager.register('01K00000000000000000000001', { id: 'luowang-test-user-1' });
+    const runId = '01K00000000000000000000001';
+    const dataId = `${manager.prefix(runId)}test-user-1`;
+    await manager.register(runId, { id: dataId });
 
-    const result = await manager.cleanup('01K00000000000000000000001');
+    const result = await manager.cleanup(runId);
 
     assert.equal(result.ok, false);
-    assert.equal(result.attempted, 1);
-    assert.deepEqual(result.failed, ['luowang-test-user-1']);
+    assert.equal(result.attempted, 0);
+    assert.deepEqual(result.failed, [dataId]);
     assert.match(result.message, /清理适配器/);
   });
 
   it('passes registered data to the cleanup adapter and forgets it after success', async () => {
     const calls: Array<{ runId: string; ids: string[] }> = [];
     const manager = createTestDataManager({
-      cleanup: async (runId, entries) => {
-        calls.push({ runId, ids: entries.map((entry) => entry.id) });
-        return [];
+      cleanupAdapter: {
+        id: 'fixture-cleanup',
+        cleanupAndVerify: async ({ runId, entry }) => {
+          calls.push({ runId, ids: [entry.id] });
+          return { absent: true, content: 'not found', statusCode: 404 };
+        },
       },
     });
     const runId = '01K00000000000000000000001';
-    await manager.register(runId, { id: 'luowang-test-user-1' });
+    const dataId = `${manager.prefix(runId)}test-user-1`;
+    await manager.register(runId, { id: dataId });
 
     const first = await manager.cleanup(runId);
     const second = await manager.cleanup(runId);
@@ -137,10 +147,7 @@ describe('Phase 4 browser and evidence boundaries', () => {
     assert.equal(first.ok, true);
     assert.equal(first.attempted, 1);
     assert.equal(second.attempted, 0);
-    assert.deepEqual(calls, [
-      { runId, ids: ['luowang-test-user-1'] },
-      { runId, ids: [] },
-    ]);
+    assert.deepEqual(calls, [{ runId, ids: [dataId] }]);
   });
 
   it('lets Reviewer read only uploaded image evidence as image content', async () => {
@@ -149,9 +156,51 @@ describe('Phase 4 browser and evidence boundaries', () => {
     const workspace = new RunWorkspace('01K00000000000000000000001', directory);
     await workspace.create();
     await writeFile(join(workspace.evidenceDirectory, 'login.png'), Buffer.from('png-bytes'));
+    await writeFile(join(workspace.evidenceDirectory, 'console.log'), 'text-only evidence');
     const store = createRunEvidenceStore(workspace, fakeOss());
     const upload = await store.uploadAll();
     assert.equal(upload.failures.length, 0);
+    const listTool = createReviewerEvidenceTools(store).find(
+      (candidate) => candidate.name === 'list_evidence_files',
+    );
+    assert.ok(listTool);
+    const listed = (await listTool.execute(
+      'list',
+      {} as never,
+      undefined,
+      undefined,
+      {} as never,
+    )) as AgentToolResult<Record<string, unknown>>;
+    const listedText = listed.content.find((item) => item.type === 'text');
+    assert.ok(listedText && listedText.type === 'text');
+    assert.deepEqual(JSON.parse(listedText.text), [{ name: 'login.png', sizeBytes: 9 }]);
+    const manager = createTestDataManager();
+    const dataId = `${manager.prefix(workspace.runId)}screenshot-user`;
+    await manager.register(workspace.runId, { id: dataId });
+    const claimTool = createTestDataTools(manager, workspace.runId, store).find(
+      (candidate) => candidate.name === 'submit_test_data_cleanup_claim',
+    );
+    assert.ok(claimTool);
+    await claimTool.execute(
+      'claim',
+      { dataId, evidenceIds: ['login.png'] } as never,
+      undefined,
+      undefined,
+      {} as never,
+    );
+    const verifyTool = createReviewerTestDataTools(manager, workspace.runId, store).find(
+      (candidate) => candidate.name === 'verify_test_data_cleanup',
+    );
+    assert.ok(verifyTool);
+    const unread = (await verifyTool.execute(
+      'verify-before-read',
+      { dataId, decision: 'confirm' } as never,
+      undefined,
+      undefined,
+      {} as never,
+    )) as AgentToolResult<Record<string, unknown>>;
+    assert.equal(unread.details.error, true);
+
     const tool = createReviewerEvidenceTools(store).find(
       (candidate) => candidate.name === 'read_evidence_image',
     );
@@ -171,10 +220,19 @@ describe('Phase 4 browser and evidence boundaries', () => {
       createReviewerEvidenceTools(store).some((item) => item.name === 'run_fixture_command'),
       false,
     );
+    const verified = (await verifyTool.execute(
+      'verify-after-read',
+      { dataId, decision: 'confirm' } as never,
+      undefined,
+      undefined,
+      {} as never,
+    )) as AgentToolResult<Record<string, unknown>>;
+    assert.equal(verified.details.error, undefined);
+    assert.equal(manager.finalize(workspace.runId).ok, true);
     await store.cleanupLocal();
     assert.deepEqual(
       (await store.list()).map((file) => file.name),
-      ['login.png'],
+      ['console.log', 'login.png'],
     );
     assert.equal(
       await access(join(workspace.evidenceDirectory, 'login.png')).then(
@@ -183,6 +241,12 @@ describe('Phase 4 browser and evidence boundaries', () => {
       ),
       false,
     );
+    const uploadedCleanup = await store.cleanupUploaded();
+    assert.deepEqual(uploadedCleanup, {
+      deleted: ['console.log', 'login.png'],
+      failures: [],
+    });
+    assert.deepEqual(await store.list(), []);
   });
 });
 

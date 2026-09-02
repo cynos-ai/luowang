@@ -170,13 +170,40 @@ export class RunWorkspace implements RunArtifactReader {
       if (error instanceof RunWorkspaceError) throw error;
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
     }
+    if (options.specialScenarioReview) await this.retainSpecialScenarioReviewArtifacts();
     await rename(this.runningDirectory, this.completedDirectory);
+  }
+
+  private async retainSpecialScenarioReviewArtifacts(): Promise<void> {
+    const retained = new Set<string>([SCENARIO_PATCH_ARTIFACT_NAME, 'report.md']);
+    for (const entry of await readdir(this.runningDirectory)) {
+      if (!retained.has(entry)) {
+        await rm(resolve(this.runningDirectory, entry), { recursive: true, force: false });
+      }
+    }
   }
 
   async listEvidence(): Promise<RunEvidenceFile[]> {
     const files: RunEvidenceFile[] = [];
     await this.walkEvidence(this.evidenceDirectory, '', files);
     return files.sort((left, right) => left.name.localeCompare(right.name));
+  }
+
+  async writeHarnessEvidence(name: string, content: string): Promise<void> {
+    if (!/^cleanup-query-[a-f0-9]{16}-[0-9]+\.json$/.test(name)) {
+      throw new RunWorkspaceError('ARTIFACT_NOT_ALLOWED', 'Harness 清理证据文件名无效');
+    }
+    if (typeof content !== 'string' || content.includes('\u0000')) {
+      throw new RunWorkspaceError('ARTIFACT_INVALID', 'Harness 清理证据内容无效');
+    }
+    if (Buffer.byteLength(content, 'utf8') > 256 * 1024) {
+      throw new RunWorkspaceError('ARTIFACT_INVALID', 'Harness 清理证据超出大小限制');
+    }
+    await writeFile(this.evidencePath(name), content, {
+      encoding: 'utf8',
+      flag: 'wx',
+      mode: 0o600,
+    });
   }
 
   async readEvidence(name: string): Promise<Buffer> {

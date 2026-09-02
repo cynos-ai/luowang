@@ -201,6 +201,9 @@ export async function createApp(options: AppOptions) {
   const app = Fastify({
     loggerInstance: options.logger ?? createLogger(options.config),
     requestIdHeader: 'x-request-id',
+    // Private evidence IDs encode an allowlisted OSS prefix, Run ID, and filename.
+    // Fastify's 100-character default would reject these valid stable URLs at routing time.
+    routerOptions: { maxParamLength: 2048 },
   });
   const staticRoot = options.config.webRoot;
   const loginLimiter = new LoginRateLimiter();
@@ -303,6 +306,7 @@ export async function createApp(options: AppOptions) {
   app.put('/api/config', async (request, reply) => {
     requireAuth(request, auth);
     const body = readBody(request);
+    assertRepositoryIdentityMutable(body.repository, configuration, automation);
     updateConfiguration(body, configuration, secretStore);
     return reply.send(makeConfigResponse(configuration, secretStore));
   });
@@ -318,6 +322,7 @@ export async function createApp(options: AppOptions) {
   app.put('/api/config/repository', async (request, reply) => {
     requireAuth(request, auth);
     const body = readBody(request);
+    assertRepositoryIdentityMutable(body, configuration, automation);
     applySecretValues(body.secrets, secretStore);
     if (body.repository !== undefined && typeof body.repository === 'string') {
       validateRepositoryUrl(body.repository);
@@ -337,14 +342,13 @@ export async function createApp(options: AppOptions) {
     return reply.send(await indexer.sync());
   });
 
-  app.post('/api/repository/scenario-branch', async (request, reply) => {
+  app.post('/api/repository/scenario-branch', async (request) => {
     requireAuth(request, auth);
-    const body = readBody(request);
-    const initialRef = body.initialRef;
-    if (initialRef !== undefined && typeof initialRef !== 'string') {
-      throw new AppError('INVALID_REQUEST', 'initialRef 必须是字符串', 400);
-    }
-    return reply.send(await repository.ensureScenarioBranch(initialRef));
+    throw new AppError(
+      'SCENARIO_BRANCH_QUEUE_REQUIRED',
+      '场景测试分支不能在队列外创建；请提交 confirmed initialization merge-source 请求',
+      409,
+    );
   });
 
   app.post('/api/repository/merge', async (request, reply) => {
@@ -353,10 +357,28 @@ export async function createApp(options: AppOptions) {
     if (typeof body.sourceRef !== 'string' || body.sourceRef.trim() === '') {
       throw new AppError('INVALID_REQUEST', 'sourceRef 必须是非空字符串', 400);
     }
-    if (typeof body.confirmed !== 'boolean') {
+    if (body.confirmed !== true) {
       throw new AppError('MERGE_CONFIRMATION_REQUIRED', '需要明确确认后才能合并', 400);
     }
-    return reply.send(await repository.mergeSourceRef(body.sourceRef, body.confirmed));
+    if (body.initialization !== undefined && typeof body.initialization !== 'boolean') {
+      throw new AppError('RUN_REQUEST_INVALID', 'initialization 必须是布尔值', 400);
+    }
+    if (body.request !== undefined && typeof body.request !== 'string') {
+      throw new AppError('RUN_REQUEST_INVALID', 'request 必须是字符串', 400);
+    }
+    const sourceRef = body.sourceRef.trim();
+    const submission = await automation.submitTestRequest({
+      request:
+        typeof body.request === 'string' && body.request.trim() !== ''
+          ? body.request
+          : '合并已确认来源并测试固定场景分支 target',
+      trigger: 'manual',
+      requestKind: 'manual-merge-source',
+      sourceRef,
+      confirmed: true,
+      ...(body.initialization === true ? { initialization: true } : {}),
+    });
+    return reply.status(202).send(formatAutomationSubmission(submission));
   });
 
   app.get('/api/repository/tree', async (request, reply) => {
@@ -429,11 +451,12 @@ export async function createApp(options: AppOptions) {
     if (typeof body.request !== 'string' || body.request.trim() === '') {
       throw new AppError('RUN_REQUEST_REQUIRED', 'Run 请求内容不能为空', 400);
     }
-    if (body.targetCommit !== undefined && typeof body.targetCommit !== 'string') {
-      throw new AppError('RUN_TARGET_INVALID', 'targetCommit 必须是字符串', 400);
-    }
-    if (typeof body.targetCommit === 'string' && body.targetCommit.trim() === '') {
-      throw new AppError('RUN_TARGET_INVALID', 'targetCommit 不能为空', 400);
+    if (body.targetCommit !== undefined || body.targetRef !== undefined) {
+      throw new AppError(
+        'RUN_TARGET_INVALID',
+        '普通 Run 不能指定任意 target；请使用 merge-source 或当前场景分支 HEAD',
+        400,
+      );
     }
     if (body.initialization !== undefined && typeof body.initialization !== 'boolean') {
       throw new AppError('RUN_REQUEST_INVALID', 'initialization 必须是布尔值', 400);
@@ -445,7 +468,7 @@ export async function createApp(options: AppOptions) {
     const submission = await automation.submitTestRequest({
       request: body.request,
       trigger,
-      targetCommit: body.targetCommit as string | undefined,
+      requestKind: 'manual-current-head',
       ...(body.initialization === true ? { initialization: true } : {}),
     });
     return reply.status(202).send(formatAutomationSubmission(submission));
@@ -838,7 +861,11 @@ function formatAutomationSubmission(submission: AutomationSubmission): Record<st
     status: queue.status,
     trigger: queue.trigger,
     request: queue.request,
-    targetCommit: queue.targetRef,
+    requestKind: queue.requestKind,
+    sourceRef: queue.sourceRef,
+    preparedMergeCommit: queue.preparedMergeCommit,
+    preparedMergeMode: queue.preparedMergeMode,
+    resolvedTargetCommit: queue.resolvedTargetCommit,
     run: null,
     errorMessage: queue.errorMessage,
   };
@@ -863,6 +890,35 @@ function makeConfigResponse(
     secrets: secretStore.metadata(),
     secretStore: { available: secretStore.isAvailable() },
   };
+}
+
+function assertRepositoryIdentityMutable(
+  value: unknown,
+  configuration: ConfigurationStore,
+  automation: AutomationService,
+): void {
+  if (value === undefined || typeof value !== 'object' || value === null || Array.isArray(value)) {
+    return;
+  }
+  const candidate = value as JsonRecord;
+  const current = configuration.getRepository();
+  const repositoryChanges =
+    typeof candidate.repository === 'string' && candidate.repository !== current.repository;
+  const branchChanges =
+    typeof candidate.scenarioBranch === 'string' &&
+    candidate.scenarioBranch !== current.scenarioBranch;
+  if (
+    (repositoryChanges || branchChanges) &&
+    automation
+      .listQueue()
+      .some((item) => ['queued', 'running', 'waiting_archive'].includes(item.status))
+  ) {
+    throw new AppError(
+      'REPOSITORY_CHANGE_BLOCKED',
+      '存在未结束的测试请求，不能更换目标仓库或场景测试分支',
+      409,
+    );
+  }
 }
 
 function updateConfiguration(

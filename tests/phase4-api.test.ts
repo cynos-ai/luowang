@@ -41,6 +41,15 @@ describe('Phase 4 evidence Gateway', () => {
     assert.match(response.headers['content-type'] ?? '', /^image\/png/);
     assert.equal(response.headers['cache-control'], 'private, no-store');
 
+    const longEvidenceId = `evidence-${'a'.repeat(256)}`;
+    const longResponse = await app.inject({
+      method: 'GET',
+      url: `/api/evidence/${longEvidenceId}`,
+      headers: { cookie },
+    });
+    assert.equal(longResponse.statusCode, 200);
+    assert.equal(longResponse.body, 'phase4-image');
+
     const missing = await app.inject({
       method: 'GET',
       url: '/api/evidence/missing-id',
@@ -98,7 +107,7 @@ function fakeOss(): OssAdapter {
       if (stableId === 'missing-id') {
         throw new OssError('OSS_OBJECT_NOT_FOUND', 'OSS 对象不存在');
       }
-      if (stableId !== 'evidence-id') {
+      if (stableId !== 'evidence-id' && !/^evidence-a{256}$/.test(stableId)) {
         throw new OssError('OSS_OBJECT_INVALID', 'OSS 对象标识无效');
       }
       return {

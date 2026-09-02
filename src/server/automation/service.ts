@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto';
+
 import type Database from 'better-sqlite3';
 import type { Logger } from 'pino';
 
@@ -8,7 +10,7 @@ import type { RepositoryService } from '../repository/service.js';
 import type { RunArchiver, ArchiveResult } from '../runs/archiver.js';
 import type { RunOrchestrator } from '../runs/orchestrator.js';
 import type { RunStore } from '../runs/store.js';
-import { RunWorkspaceStore } from '../runs/workspace.js';
+import { createRunId, RunWorkspaceStore } from '../runs/workspace.js';
 import { createRunRecoveryStore, type RunRecoveryStore } from './recovery.js';
 import {
   createTestRequestQueue,
@@ -93,6 +95,7 @@ class DefaultAutomationService implements AutomationService {
   private activeQueueId: number | null = null;
   private activeRunId: string | null = null;
   private dispatching = false;
+  private dispatchScheduled = false;
   private recovering = false;
 
   constructor(
@@ -108,12 +111,8 @@ class DefaultAutomationService implements AutomationService {
 
   async submitTestRequest(input: TestRequestInput): Promise<AutomationSubmission> {
     const queued = this.options.queue.enqueue(input);
-    const dispatched = await this.dispatchNext();
-    const current = this.options.queue.get(queued.queueId) ?? queued;
-    return {
-      queue: current,
-      run: dispatched?.queueId === queued.queueId ? dispatched.run : null,
-    };
+    this.kickDispatch();
+    return { queue: queued, run: null };
   }
 
   listQueue(): TestRequestRecord[] {
@@ -129,6 +128,7 @@ class DefaultAutomationService implements AutomationService {
     this.recovering = true;
     try {
       await this.options.runs.recover();
+      await this.reconcileMergeRequestRefs();
       for (const item of this.options.queue.listInFlight()) {
         await this.recoverQueueItem(item);
       }
@@ -148,7 +148,7 @@ class DefaultAutomationService implements AutomationService {
     for (const item of this.options.queue.listInFlight()) {
       if (item.status !== 'waiting_archive' || !item.runId) continue;
       const result = byRunId.get(item.runId);
-      if (result) this.finishArchive(item.queueId, item.runId, result);
+      if (result) await this.finishArchive(item.queueId, item.runId, result);
       else await this.archiveQueueItem(item.queueId, item.runId);
     }
     await this.dispatchNext();
@@ -161,10 +161,15 @@ class DefaultAutomationService implements AutomationService {
     if (!this.options.runStore) return result;
 
     const cutoff = this.now().getTime() - retentionDays * 24 * 60 * 60 * 1_000;
+    const current = await this.options.runs.current();
     for (const run of this.options.runStore.list()) {
       if (run.archiveStatus !== 'completed') continue;
       const finishedAt = Date.parse(run.finishedAt);
       if (Number.isNaN(finishedAt) || finishedAt > cutoff) continue;
+      if (current?.runId === run.runId || this.hasPendingRunOperations(run.runId)) {
+        result.skippedRunIds.push(run.runId);
+        continue;
+      }
       try {
         await this.workspaceStore.remove(run.runId, 'completed');
         result.removedRunIds.push(run.runId);
@@ -188,7 +193,7 @@ class DefaultAutomationService implements AutomationService {
     return this.submitTestRequest({
       request: rerunRequest,
       trigger: 'manual',
-      targetRef: detail.targetCommit,
+      requestKind: 'manual-current-head',
     });
   }
 
@@ -198,6 +203,19 @@ class DefaultAutomationService implements AutomationService {
       throw new AutomationServiceError('AUTOMATION_RUN_ACTIVE', '当前 Run 正在执行，不能清理');
     }
     const knownRun = await this.options.runs.get(runId);
+    const storedRun = this.options.runStore?.get(runId);
+    if (!storedRun || storedRun.archiveStatus !== 'completed') {
+      throw new AutomationServiceError(
+        'AUTOMATION_CLEANUP_FAILED',
+        'Run 归档尚未完成，必须保留 report、场景 patch 和 Issue 重试工件',
+      );
+    }
+    if (this.hasPendingRunOperations(runId)) {
+      throw new AutomationServiceError(
+        'AUTOMATION_CLEANUP_FAILED',
+        'Run 仍有关联的队列、归档或发布重试操作，不能清理',
+      );
+    }
     let removed = false;
     for (const placement of ['running', 'completed'] as const) {
       if ((await this.workspaceStore.list(placement)).includes(runId)) {
@@ -215,6 +233,13 @@ class DefaultAutomationService implements AutomationService {
     return this.options.state;
   }
 
+  private hasPendingRunOperations(runId: string): boolean {
+    return this.options.queue
+      .list()
+      .filter((item) => item.runId === runId || queueRunId(item) === runId)
+      .some((item) => item.status !== 'completed' || item.archiveStatus !== 'completed');
+  }
+
   private async dispatchNext(): Promise<{ queueId: number; run: RunSummary } | null> {
     if (this.activeQueueId !== null || this.dispatching || this.recovering) return null;
     this.dispatching = true;
@@ -226,10 +251,12 @@ class DefaultAutomationService implements AutomationService {
 
       this.activeQueueId = item.queueId;
       try {
+        const targetCommit = await this.resolveTarget(item);
         const runInput = {
           request: item.request,
           trigger: item.trigger,
-          targetCommit: item.targetRef ?? undefined,
+          runId: queueRunId(item),
+          targetCommit,
           ...(item.initialization ? { initialization: true as const } : {}),
         };
         const run = await this.options.runs.start(runInput);
@@ -238,12 +265,10 @@ class DefaultAutomationService implements AutomationService {
         void this.monitorRun(item.queueId, run.runId);
         return { queueId: item.queueId, run };
       } catch (error) {
-        this.options.queue.fail(item.queueId, safeMessage(error));
+        await this.failQueueItem(item.queueId, safeMessage(error));
         this.activeQueueId = null;
         this.activeRunId = null;
-        Promise.resolve()
-          .then(() => this.dispatchNext())
-          .catch(() => undefined);
+        this.kickDispatch();
         return null;
       }
     } finally {
@@ -255,24 +280,24 @@ class DefaultAutomationService implements AutomationService {
     try {
       const detail = await this.options.runs.wait(runId);
       if (!detail) {
-        this.options.queue.fail(queueId, 'Run 完成状态无法读取');
+        await this.failQueueItem(queueId, 'Run 完成状态无法读取');
         return;
       }
       if (detail.status === 'completed') {
         this.options.queue.markWaitingArchive(queueId, runId);
         await this.archiveQueueItem(queueId, runId);
       } else if (detail.status === 'interrupted') {
-        this.options.queue.fail(
+        await this.failQueueItem(
           queueId,
           detail.errorMessage ?? 'Run 因进程重启而中断',
           'interrupted',
         );
       } else {
-        this.options.queue.fail(queueId, detail.errorMessage ?? 'Run 执行失败');
+        await this.failQueueItem(queueId, detail.errorMessage ?? 'Run 执行失败');
       }
     } catch (error) {
       try {
-        this.options.queue.fail(queueId, safeMessage(error));
+        await this.failQueueItem(queueId, safeMessage(error));
       } catch {
         // The queue may have been reconciled by the recovery or archive task.
       }
@@ -285,52 +310,186 @@ class DefaultAutomationService implements AutomationService {
         this.activeQueueId = null;
         this.activeRunId = null;
       }
-      await this.dispatchNext();
+      this.kickDispatch();
     }
+  }
+
+  private kickDispatch(): void {
+    if (this.dispatchScheduled) return;
+    this.dispatchScheduled = true;
+    setImmediate(() => {
+      this.dispatchScheduled = false;
+      this.dispatchNext().catch((error: unknown) => {
+        this.options.logger?.error(
+          { errorName: error instanceof Error ? error.name : 'UnknownError' },
+          'background automation dispatch failed',
+        );
+      });
+    });
   }
 
   private async recoverQueueItem(item: TestRequestRecord): Promise<void> {
     if (item.status === 'waiting_archive') {
-      if (item.runId) await this.archiveQueueItem(item.queueId, item.runId);
-      else this.options.queue.fail(item.queueId, '等待归档的队列请求缺少 Run ID');
+      if (item.runId) {
+        const detail = await this.options.runs.get(item.runId);
+        if (!item.resolvedTargetCommit && detail?.targetCommit) {
+          this.options.queue.markResolved(item.queueId, detail.targetCommit);
+        }
+        await this.archiveQueueItem(item.queueId, item.runId);
+      } else {
+        await this.failQueueItem(item.queueId, '等待归档的队列请求缺少 Run ID');
+      }
       return;
     }
 
-    if (!item.runId) {
-      this.options.queue.requeue(item.queueId);
-      return;
+    let runId = item.runId;
+    if (!runId) {
+      const reservedRunId = queueRunId(item);
+      const reservedRun = await this.options.runs.get(reservedRunId);
+      if (!reservedRun) {
+        this.options.queue.requeue(item.queueId);
+        return;
+      }
+      this.options.queue.markStarted(item.queueId, reservedRunId);
+      runId = reservedRunId;
+      item = this.options.queue.get(item.queueId) ?? item;
     }
 
-    const detail = await this.options.runs.get(item.runId);
+    const detail = await this.options.runs.get(runId);
+    if (!item.resolvedTargetCommit && detail?.targetCommit) {
+      this.options.queue.markResolved(item.queueId, detail.targetCommit);
+    }
     if (detail?.status === 'completed') {
-      this.options.queue.markWaitingArchive(item.queueId, item.runId);
-      await this.archiveQueueItem(item.queueId, item.runId);
+      this.options.queue.markWaitingArchive(item.queueId, runId);
+      await this.archiveQueueItem(item.queueId, runId);
     } else if (detail?.status === 'interrupted' || !detail) {
       if (detail?.status === 'interrupted') {
         this.options.recoveryStore.record(
-          {
-            ...detail,
-            trigger: item.trigger,
-            request: item.request,
-            targetCommit: detail.targetCommit ?? item.targetRef,
-          },
+          { ...detail, trigger: item.trigger, request: item.request },
           { interruptedAt: detail.finishedAt ?? undefined },
         );
       }
-      this.options.queue.fail(
+      await this.failQueueItem(
         item.queueId,
         '进程重启时 Run 尚在 running 目录，未恢复 Agent 会话',
         'interrupted',
       );
     } else if (detail.status === 'failed') {
-      this.options.queue.fail(item.queueId, detail.errorMessage ?? 'Run 执行失败');
+      await this.failQueueItem(item.queueId, detail.errorMessage ?? 'Run 执行失败');
+    }
+  }
+
+  private async resolveTarget(item: TestRequestRecord): Promise<string> {
+    if (item.resolvedTargetCommit) {
+      if (!(await this.options.repository.isPublishedTarget(item.resolvedTargetCommit))) {
+        throw new AutomationServiceError(
+          'AUTOMATION_REQUEST_INVALID',
+          '已固定的 target 不在远端场景测试分支历史中',
+        );
+      }
+      return item.resolvedTargetCommit;
+    }
+
+    if (item.requestKind === 'manual-merge-source') {
+      let prepared = item.preparedMergeCommit;
+      if (!prepared) {
+        if (!item.sourceRef) {
+          throw new AutomationServiceError(
+            'AUTOMATION_REQUEST_INVALID',
+            'merge-source 请求缺少 sourceRef',
+          );
+        }
+        if (await this.options.repository.readMergeRequestRef(item.queueId)) {
+          throw new AutomationServiceError(
+            'AUTOMATION_REQUEST_INVALID',
+            'internal ref 已存在但 prepared commit 尚未持久化，拒绝猜测或重做 merge',
+          );
+        }
+        const result = await this.options.repository.prepareMergeRequest(
+          item.sourceRef,
+          item.queueId,
+          item.initialization,
+        );
+        prepared = result.preparedCommit;
+        this.options.queue.markPrepared(item.queueId, prepared, result.mode);
+      }
+      const refreshed = this.options.queue.get(item.queueId);
+      const published = await this.options.repository.publishPreparedMerge(
+        item.queueId,
+        prepared,
+        refreshed?.preparedMergeMode ?? item.preparedMergeMode,
+      );
+      return this.options.queue.markResolved(item.queueId, published).resolvedTargetCommit!;
+    }
+
+    const repository = await this.options.repository.getRepository();
+    await repository.fetch();
+    const head = await repository.remoteBranchHead(this.options.repository.getScenarioBranch());
+    if (!head) {
+      throw new AutomationServiceError(
+        'AUTOMATION_REQUEST_INVALID',
+        item.requestKind === 'automatic-head'
+          ? '场景测试分支尚未创建，自动请求没有可测试批次'
+          : '场景测试分支尚未创建；请通过 initialization merge-source 请求首次创建',
+      );
+    }
+    return this.options.queue.markResolved(item.queueId, head).resolvedTargetCommit!;
+  }
+
+  private async reconcileMergeRequestRefs(): Promise<void> {
+    if (
+      typeof this.options.repository.getRepositoryUrl !== 'function' ||
+      typeof this.options.repository.listMergeRequestRefs !== 'function' ||
+      this.options.repository.getRepositoryUrl().trim() === ''
+    )
+      return;
+    const records = new Map(this.options.queue.list().map((item) => [item.queueId, item]));
+    for (const queueId of await this.options.repository.listMergeRequestRefs()) {
+      const item = records.get(queueId);
+      if (!item || !['queued', 'running', 'waiting_archive'].includes(item.status)) {
+        await this.cleanupMergeRequestRef(queueId);
+        continue;
+      }
+      if (!item.preparedMergeCommit || !item.preparedMergeMode) {
+        await this.failQueueItem(
+          queueId,
+          'internal ref 已存在但 prepared commit 尚未持久化，拒绝猜测或重做 merge',
+        );
+      }
+    }
+  }
+
+  private async failQueueItem(
+    queueId: number,
+    message: string,
+    status: 'failed' | 'interrupted' = 'failed',
+  ): Promise<void> {
+    this.options.queue.fail(queueId, message, status);
+    await this.cleanupTerminalRef(queueId);
+  }
+
+  private async cleanupTerminalRef(queueId: number): Promise<void> {
+    const item = this.options.queue.get(queueId);
+    if (!item || item.requestKind !== 'manual-merge-source') return;
+    if (!['completed', 'failed', 'interrupted'].includes(item.status)) return;
+    await this.cleanupMergeRequestRef(queueId);
+  }
+
+  private async cleanupMergeRequestRef(queueId: number): Promise<void> {
+    try {
+      await this.options.repository.cleanupMergeRequestRef(queueId);
+    } catch (error) {
+      this.options.logger?.warn(
+        { queueId, errorName: error instanceof Error ? error.name : 'UnknownError' },
+        'terminal merge request internal ref cleanup failed',
+      );
     }
   }
 
   private async archiveQueueItem(queueId: number, runId: string): Promise<void> {
     try {
       const result = await this.options.archiver.archive(runId);
-      this.finishArchive(queueId, runId, result);
+      await this.finishArchive(queueId, runId, result);
     } catch (error) {
       this.options.queue.complete(queueId, {
         runId,
@@ -338,17 +497,32 @@ class DefaultAutomationService implements AutomationService {
         progressed: false,
         errorMessage: safeMessage(error),
       });
+      await this.cleanupTerminalRef(queueId);
     }
   }
 
-  private finishArchive(queueId: number, runId: string, result: ArchiveResult): void {
+  private async finishArchive(
+    queueId: number,
+    runId: string,
+    result: ArchiveResult,
+  ): Promise<void> {
     this.options.queue.complete(queueId, {
       runId,
       archiveStatus: result.status,
       progressed: result.progressed,
       errorMessage: result.errorMessage,
     });
+    await this.cleanupTerminalRef(queueId);
   }
+}
+
+function queueRunId(item: Pick<TestRequestRecord, 'createdAt' | 'requestId'>): string {
+  const timestamp = Date.parse(item.createdAt);
+  if (!Number.isFinite(timestamp)) {
+    throw new AutomationServiceError('AUTOMATION_REQUEST_INVALID', '队列请求创建时间无效');
+  }
+  const entropy = createHash('sha256').update(item.requestId).digest().subarray(0, 10);
+  return createRunId(timestamp, entropy);
 }
 
 function safeMessage(error: unknown): string {

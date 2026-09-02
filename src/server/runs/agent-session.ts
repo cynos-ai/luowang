@@ -12,7 +12,14 @@ import { Type, type Static } from 'typebox';
 
 import type { AgentConfig } from '../../shared/types.js';
 import type { ProviderAdapter } from './provider.js';
-import type { AgentRole, AgentSession, AgentSessionFactory, AgentSessionInput } from './types.js';
+import type {
+  AgentRole,
+  AgentSession,
+  AgentSessionFactory,
+  AgentSessionInput,
+  AgentSessionKind,
+  RoleInstructionVersion,
+} from './types.js';
 
 export interface PiAgentSessionFactoryOptions {
   provider: ProviderAdapter;
@@ -77,16 +84,20 @@ class PiAgentSessionFactory implements AgentSessionFactory {
 
 class ManagedAgentSession implements AgentSession {
   private disposed = false;
+  readonly sessionId: string;
 
   constructor(
     private readonly session: {
+      sessionId: string;
       prompt(message: string): Promise<void>;
       dispose(): void;
       extensionRunner: {
         emit(event: SessionShutdownEvent): Promise<unknown>;
       };
     },
-  ) {}
+  ) {
+    this.sessionId = session.sessionId;
+  }
 
   prompt(message: string): Promise<void> {
     if (this.disposed) return Promise.reject(new Error('Agent session 已释放'));
@@ -301,19 +312,25 @@ export function createRunnerCommandTool(
 
 export function buildSessionInput(
   role: AgentRole,
+  sessionKind: AgentSessionKind,
   config: AgentConfig,
   cwd: string,
   customTools: ToolDefinition[],
   systemPrompt: string,
+  userMessage: string,
+  roleInstructionVersions: RoleInstructionVersion[],
   extensionFactories: InlineExtension[] = [],
 ): AgentSessionInput {
   return {
     role,
+    sessionKind,
     config,
     cwd,
     toolNames: [],
     customTools,
     systemPrompt,
+    userMessage,
+    roleInstructionVersions,
     extensionFactories,
   };
 }

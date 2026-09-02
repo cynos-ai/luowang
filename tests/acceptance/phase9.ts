@@ -229,7 +229,7 @@ const AC_DEFINITIONS: Array<{
   },
   {
     id: 'AC-AGENT-01',
-    title: '人工请求按 Main A、Runner、Reviewer、Main B 产生五文件',
+    title: '人工请求按 Main · 规划、Runner、Reviewer、Main · 最终汇总产生五文件',
     proof: 'run',
     evidence: ['tests/phase3.test.ts', 'tests/acceptance/phase9.ts: four-session proof'],
   },
@@ -626,8 +626,17 @@ async function createRepositoryProofContext(
       repoDir: config.repoDir,
       allowLocalRepository: true,
     });
-    const created = await repository.ensureScenarioBranch('main');
-    assert.equal(created.created, true);
+    const initialPrepared = await repository.prepareMergeRequest('main', 9001, true);
+    assert.equal(initialPrepared.mode, 'initial-create');
+    assert.equal(
+      await repository.publishPreparedMerge(
+        9001,
+        initialPrepared.preparedCommit,
+        initialPrepared.mode,
+      ),
+      initialPrepared.preparedCommit,
+    );
+    await repository.cleanupMergeRequestRef(9001);
 
     await git(['fetch', 'origin'], fixture.sourceDir);
     await git(['checkout', '-B', 'scenario-testing', 'origin/scenario-testing'], fixture.sourceDir);
@@ -659,9 +668,11 @@ async function createRepositoryProofContext(
     await git(['commit', '-m', 'feat: improve Cynos login flow'], fixture.sourceDir);
     await git(['push', 'origin', 'main'], fixture.sourceDir);
     const productCommit = (await git(['rev-parse', 'HEAD'], fixture.sourceDir)).stdout.trim();
-    const merged = await repository.mergeSourceRef('main', true);
+    const merged = await repository.prepareMergeRequest('main', 9002, false);
     assert.equal(merged.alreadyIncluded, false);
-    assert.ok(merged.mergeCommit);
+    assert.notEqual(merged.preparedCommit, merged.originalHead);
+    await repository.publishPreparedMerge(9002, merged.preparedCommit, merged.mode);
+    await repository.cleanupMergeRequestRef(9002);
     await git(['fetch', 'origin'], fixture.sourceDir);
     await git(['checkout', '-B', 'scenario-testing', 'origin/scenario-testing'], fixture.sourceDir);
 
@@ -742,7 +753,16 @@ async function runRunProof(context: RepositoryProofContext): Promise<void> {
     provider: {} as ProviderAdapter,
     sessions,
     commandRunner: createControlledCommandRunner({ ...process.env, PHASE9_SECRET: SAMPLE_SECRET }),
-    testData: createTestDataManager({ cleanup: async () => [] }),
+    testData: createTestDataManager({
+      cleanupAdapter: {
+        id: 'acceptance-cleanup',
+        cleanupAndVerify: async () => ({
+          absent: true,
+          content: 'fixture data not found',
+          statusCode: 404,
+        }),
+      },
+    }),
     runStore: context.runStore,
     recoveryStore,
     logger: pino({ level: 'silent' }),
@@ -976,19 +996,19 @@ async function runAutomationProof(
   const automatic = queue.enqueue({
     request: 'Git product change',
     trigger: 'git',
-    targetRef: SAMPLE_TARGET,
+    requestKind: 'automatic-head',
   });
   const merged = queue.enqueue({
     request: 'Cron product change',
     trigger: 'schedule',
-    targetRef: 'b'.repeat(40),
+    requestKind: 'automatic-head',
   });
   assert.equal(merged.queueId, automatic.queueId);
   assert.deepEqual(merged.triggerSources, ['git', 'schedule']);
   const manual = queue.enqueue({
-    request: '人工重测同一 target',
+    request: '人工重测当前 HEAD',
     trigger: 'manual',
-    targetRef: 'b'.repeat(40),
+    requestKind: 'manual-current-head',
   });
   assert.notEqual(manual.queueId, automatic.queueId);
   const claimed = queue.claimNext();
@@ -1053,7 +1073,9 @@ async function runAutomationProof(
   await git(['add', '--all'], context.fixture.sourceDir);
   await git(['commit', '-m', 'feat: add logout flow'], context.fixture.sourceDir);
   await git(['push', 'origin', 'main'], context.fixture.sourceDir);
-  await context.repository.mergeSourceRef('main', true);
+  const pollMerge = await context.repository.prepareMergeRequest('main', 9003, false);
+  await context.repository.publishPreparedMerge(9003, pollMerge.preparedCommit, pollMerge.mode);
+  await context.repository.cleanupMergeRequestRef(9003);
   const queued = await poller.poll('git');
   assert.equal(queued.status, 'queued');
   assert.ok(queued.includedCommits.length > 0);
@@ -1342,7 +1364,7 @@ class FixtureSessionFactory implements AgentSessionFactory {
     this.created.push(input.role);
     return {
       prompt: async () => {
-        const target = extractTarget(input.systemPrompt);
+        const target = extractTarget(input.userMessage);
         if (input.role === 'main-a') {
           await invokeTool(input, 'get_run_context', {});
           await invokeTool(input, 'write_plan', {
@@ -1352,9 +1374,10 @@ class FixtureSessionFactory implements AgentSessionFactory {
         }
         if (input.role === 'runner') {
           await invokeTool(input, 'read_run_artifact', { name: 'plan.md' });
-          await invokeTool(input, 'get_test_data_prefix', {});
+          await invokeTool(input, 'begin_scenario_execution', { scenarioIds: [] });
+          const dataPrefix = toolText(await invokeTool(input, 'get_test_data_prefix', {}));
           await invokeTool(input, 'register_test_data', {
-            id: 'phase9-login-fixture',
+            id: `${dataPrefix}phase9-login-fixture`,
             description: '本地样例登录数据',
           });
           const command = await invokeTool(input, 'run_fixture_command', {
@@ -1379,7 +1402,7 @@ class FixtureSessionFactory implements AgentSessionFactory {
           await invokeTool(input, 'read_run_artifact', { name });
         }
         await invokeTool(input, 'write_report', {
-          content: reportForContext(input.systemPrompt, target),
+          content: reportForContext(input.userMessage, target),
         });
       },
       dispose: () => {

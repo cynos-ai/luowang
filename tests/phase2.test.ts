@@ -32,24 +32,44 @@ describe('Phase 2 repository control', () => {
       remoteUrl: fixture.remoteDir,
     });
 
-    const initialHead = await repository.createScenarioBranch('scenario-testing', 'main');
+    const initial = await repository.prepareMergeRequest('scenario-testing', 'main', 1, true);
+    const initialHead = await repository.publishPreparedMerge(
+      'scenario-testing',
+      1,
+      initial.preparedCommit,
+      initial.mode,
+    );
+    await repository.deleteInternalRef(1);
     assert.equal(await repository.remoteBranchHead('scenario-testing'), initialHead);
 
     await git(['checkout', '-b', 'develop', 'main'], fixture.sourceDir);
     await writeFile(join(fixture.sourceDir, 'README.md'), 'developed product\n');
     await commitAndPush(fixture.sourceDir, 'develop product', 'develop');
 
-    const merged = await repository.mergeNoFastForward('scenario-testing', 'develop', true);
+    const merged = await repository.prepareMergeRequest('scenario-testing', 'develop', 2, false);
     assert.equal(merged.alreadyIncluded, false);
-    assert.ok(merged.mergeCommit);
-    assert.equal(merged.scenarioBranchHead, await repository.remoteBranchHead('scenario-testing'));
+    await repository.publishPreparedMerge(
+      'scenario-testing',
+      2,
+      merged.preparedCommit,
+      merged.mode,
+    );
+    await repository.deleteInternalRef(2);
+    assert.equal(merged.preparedCommit, await repository.remoteBranchHead('scenario-testing'));
 
-    const repeated = await repository.mergeNoFastForward('scenario-testing', 'develop', true);
+    const repeated = await repository.prepareMergeRequest('scenario-testing', 'develop', 3, false);
     assert.equal(repeated.alreadyIncluded, true);
-    assert.equal(repeated.scenarioBranchHead, merged.scenarioBranchHead);
+    assert.equal(repeated.preparedCommit, merged.preparedCommit);
+    await repository.publishPreparedMerge(
+      'scenario-testing',
+      3,
+      repeated.preparedCommit,
+      repeated.mode,
+    );
+    await repository.deleteInternalRef(3);
 
     await writeFile(join(fixture.cloneDir, 'untracked.txt'), 'temporary workspace data');
-    await repository.checkoutTarget(merged.scenarioBranchHead);
+    await repository.checkoutTarget(merged.preparedCommit);
     await assert.rejects(
       () => readFile(join(fixture.cloneDir, 'untracked.txt')),
       (error: NodeJS.ErrnoException) => error.code === 'ENOENT',
@@ -60,7 +80,7 @@ describe('Phase 2 repository control', () => {
       fixture.sourceDir,
     );
     await assert.rejects(
-      () => repository.assertAncestor(merged.scenarioBranchHead, initialHead),
+      () => repository.assertAncestor(merged.preparedCommit, initialHead),
       (error: unknown) => error instanceof Error && error.message.includes('历史已断裂'),
     );
   }, 15_000);
@@ -71,7 +91,14 @@ describe('Phase 2 repository control', () => {
       directory: fixture.cloneDir,
       remoteUrl: fixture.remoteDir,
     });
-    await repository.createScenarioBranch('scenario-testing', 'main');
+    const initial = await repository.prepareMergeRequest('scenario-testing', 'main', 10, true);
+    await repository.publishPreparedMerge(
+      'scenario-testing',
+      10,
+      initial.preparedCommit,
+      initial.mode,
+    );
+    await repository.deleteInternalRef(10);
 
     const competingDir = join(fixture.rootDir, 'competing');
     await git(['clone', fixture.remoteDir, competingDir], fixture.rootDir);
@@ -88,7 +115,7 @@ describe('Phase 2 repository control', () => {
     await commitAndPush(fixture.sourceDir, 'source side', 'develop');
 
     await assert.rejects(
-      () => repository.mergeNoFastForward('scenario-testing', 'develop', true),
+      () => repository.prepareMergeRequest('scenario-testing', 'develop', 11, false),
       (error: unknown) => error instanceof Error && error.message.includes('存在冲突'),
     );
     const status = (await git(['status', '--porcelain'], fixture.cloneDir)).stdout.trim();

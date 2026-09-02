@@ -1,10 +1,10 @@
 # LuoWang
 
-罗网（LuoWang）是一个独立部署的 AI 场景测试 Harness。当前仓库已完成 Phase 0–9，并已发布 v0.1.0：除了安全配置控制台、唯一 GitHub 目标仓库索引、Main → Runner → Reviewer → Main 的本地 Run、受控 Playwright MCP UI 执行、S3-compatible OSS 证据 Gateway、幂等归档和持久 FIFO 自动化队列，还支持长期场景生命周期、三种场景维护模式、陌生项目初始化，以及展示 Git 树标记、场景历史、Run 工件/证据/归档、当前执行、队列、后台任务、依赖健康和陈旧缓存恢复的完整运维控制台。Phase 9 已完成 34 个 AC 的全量验收；验收会创建隔离的样例仓库和样例 Web 应用，并在结束后清理临时资源。
+罗网（LuoWang）是一个独立部署的 AI 场景测试 Harness。当前仓库已完成 Phase 0–9 的主要模块和 v0.7 生产闭环：除了安全配置控制台、唯一 GitHub 目标仓库索引、Main → Runner → Reviewer → Main 的本地 Run、受控 Playwright MCP UI 执行、S3-compatible OSS 证据 Gateway、幂等归档和持久 FIFO 自动化队列，还支持长期场景生命周期、三种场景维护模式、陌生项目初始化，以及完整运维控制台。本次生产闭环发布版本为 v0.2.0；v0.1.0 继续保持既有不可变指向。
 
 ## 本地启动
 
-需要 Node.js 24 和 npm。生产模式：
+优先使用下文的 Docker Compose 或固定 quality/runtime 镜像复现。原生运行需要 Node.js 24 和 npm；当 `better-sqlite3` 没有匹配的预编译包时，还需要 `python3`、`make` 和 `g++`。生产模式：
 
 ```bash
 npm ci
@@ -25,17 +25,30 @@ curl --fail http://127.0.0.1:3000/health
 docker compose down
 ```
 
-执行 Phase 9 验收：
-
-```bash
-npm run test:acceptance
-```
-
-该命令会在隔离环境中运行公共质量命令，使用临时 Git bare 仓库、Cynos 官网登录/注册样例应用、SQLite、队列、归档和 headless Chromium 验证 34 个 AC，并在 `.cynos/acceptance/<timestamp>/` 保存不含凭据的 JSON/Markdown 报告。真实 GitHub、DeepSeek、OSS 和非生产测试环境 smoke 不会默认执行；如需运行已存在的 GitHub 只读 smoke，必须显式提供 `LUOWANG_ACCEPTANCE_LIVE=1`、`LUOWANG_SMOKE_REPOSITORY=https://github.com/cynos-ai/cynos-website` 和临时 `LUOWANG_SMOKE_GITHUB_TOKEN`。
-
 Compose 将数据保存到 `luowang-data` 卷，并把宿主机端口绑定到 `127.0.0.1`。管理员密码只在空数据库首次启动时读取；主密钥只用于进程内派生 Secret Store 密钥，二者都不会写入 SQLite。
 
-打开 <http://127.0.0.1:3000/> 后使用管理员密码登录。登录后可以维护 Harness、仓库/测试环境、MCP 和 S3-compatible OSS 的普通配置；Provider Key、Git Token、测试账号和 OSS Access Key 等 Secret 只能覆盖或显式删除，页面只显示“已配置”和固定掩码。v0.1.0 提供 GitHub 仓库读取、场景测试分支写入、PR/Issue 权限检查、场景/报告同步、场景 patch 校验、三种场景维护模式、直接/PR 发布、陌生项目初始化、归档和自动化队列接口，并注册 Provider、Playwright MCP 与 OSS 的独立连通性检查。启用 MCP 后，Runner 使用 headless、isolated 浏览器上下文和 accessibility snapshot/ref；截图等证据上传到 OSS，私有 bucket 使用登录后的 `/api/evidence/<id>` 稳定地址。后台默认每 60 秒轮询 Git、每 10 秒扫描归档、每 5 分钟兜底索引和保留清理；队列、调度游标和恢复状态保存在 SQLite。
+## 验收状态
+
+验收命令按证明范围严格分层：
+
+```bash
+# 无外部凭据；真实经过 Pi SDK Session 和本地模型协议服务。兼容别名 npm run test:acceptance 也只指向 local。
+npm run test:acceptance:local
+
+# 真实外部联合验收；缺少任一必需输入时列出 missing 名称并非零退出。
+npm run test:acceptance:live
+
+# 先执行公共质量与 local，再执行 live；live blocked/failed 时非零退出。
+npm run test:acceptance:release
+```
+
+`local` 使用临时 Git bare 仓库、样例应用、SQLite、队列、归档、headless Chromium 和本地可控模型协议服务；Agent 流程真实调用生产 `createAgentSession()`，但本地 test double 只能证明 `local.status=passed`。报告保存在 `.cynos/acceptance/<timestamp>-<mode>/`，分别记录 `local.status`、`live.status`、`release.status`、资源检查、逐 AC 证据和命令。CI 只运行 local，并明确不读取 live Secret。
+
+`test:acceptance:live` 在 38 项安全/授权输入齐全后，连接候选实例（默认 `http://127.0.0.1:3000`，可用 `LUOWANG_LIVE_HARNESS_URL` 覆盖）并只读复核已经完成的真实验收事实：首次分支创建的 prepared/resolved 与唯一 Run、带截图和独立清理确认的 passed Run、双 Bug/Issue failed Run、不推进的 blocked Run、场景 PR、当前 HEAD 重测、Indexer 回读、实时活动、私有 Evidence Gateway、GitHub PR/Issues 及 Secret 值扫描。任何事实缺失或资源检查失败都会令 `live.status` 为 failed；live 未通过时 `release.status` 必须保持 blocked/failed。它不会用输入齐全或有限 smoke 冒充通过。
+
+可选的 GitHub smoke 仍只用于单独诊断仓库读取路径，不属于 live 或 release 证明。它不会默认执行；如需运行，必须显式提供 `LUOWANG_ACCEPTANCE_LIVE=1`、`LUOWANG_SMOKE_REPOSITORY=https://github.com/cynos-ai/cynos-website` 和临时 `LUOWANG_SMOKE_GITHUB_TOKEN`。
+
+打开 <http://127.0.0.1:3000/> 后使用管理员密码登录。登录后可以维护 Harness、仓库/测试环境、MCP 和 S3-compatible OSS 的普通配置；Provider Key、Git Token、测试账号和 OSS Access Key 等 Secret 只能覆盖或显式删除，页面只显示“已配置”和固定掩码。v0.2.0 提供 GitHub 仓库读取、场景测试分支写入、PR/Issue 权限检查、场景/报告同步、场景 patch 校验、三种场景维护模式、直接/PR 发布、陌生项目初始化、归档和自动化队列接口，并注册 Provider、Playwright MCP 与 OSS 的独立连通性检查。启用 MCP 后，Runner 使用 headless、isolated 浏览器上下文和 accessibility snapshot/ref；截图等证据上传到 OSS，私有 bucket 使用登录后的 `/api/evidence/<id>` 稳定地址。后台默认每 60 秒轮询 Git、每 10 秒扫描归档、每 5 分钟兜底索引和保留清理；队列、调度游标和恢复状态保存在 SQLite。
 
 配置 GitHub 仓库后，先在“仓库事实与场景”区域准备 `scenario-testing` 分支，再点击“同步索引”。Git Token 只由 Repository Service 使用，不会写入 Git URL、命令参数、子进程环境、日志或测试 Agent。
 

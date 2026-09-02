@@ -20,7 +20,7 @@ import {
 } from './github.js';
 import {
   GitRepository,
-  type GitMergeResult,
+  type PreparedMergeResult,
   type GitTreeEntry,
   type ReportFileName,
   type ReportPublishResult,
@@ -31,13 +31,20 @@ import type { ScenarioPatchValidation } from './scenario-patch.js';
 
 export interface RepositoryService {
   getStatus(): Promise<RepositoryStatusResponse>;
-  ensureScenarioBranch(initialRef?: string): Promise<{
-    created: boolean;
-    scenarioBranch: string;
-    head: string;
-    sourceCommit?: string;
-  }>;
-  mergeSourceRef(sourceRef: string, confirmed: boolean): Promise<GitMergeResult>;
+  prepareMergeRequest(
+    sourceRef: string,
+    queueId: number,
+    initialization: boolean,
+  ): Promise<PreparedMergeResult>;
+  publishPreparedMerge(
+    queueId: number,
+    preparedCommit: string,
+    mode: PreparedMergeResult['mode'] | null,
+  ): Promise<string>;
+  isPublishedTarget(commit: string): Promise<boolean>;
+  readMergeRequestRef(queueId: number): Promise<string | null>;
+  listMergeRequestRefs(): Promise<number[]>;
+  cleanupMergeRequestRef(queueId: number): Promise<void>;
   checkoutTarget(target: string): Promise<string>;
   assertScenarioHistory(baseCommit: string, targetCommit: string): Promise<void>;
   cleanWorkspace(): Promise<void>;
@@ -144,33 +151,52 @@ class DefaultRepositoryService implements RepositoryService {
     };
   }
 
-  async ensureScenarioBranch(initialRef?: string) {
+  async prepareMergeRequest(
+    sourceRef: string,
+    queueId: number,
+    initialization: boolean,
+  ): Promise<PreparedMergeResult> {
     const config = this.requireRepositoryConfig();
-    const repository = await this.getRepository();
-    await repository.fetch();
-    const existing = await repository.remoteBranchHead(config.scenarioBranch);
-    if (existing) {
-      return { created: false, scenarioBranch: config.scenarioBranch, head: existing };
-    }
-    if (!initialRef || initialRef.trim() === '') {
-      throw new RepositoryError(
-        'SCENARIO_BRANCH_INITIAL_REF_REQUIRED',
-        '场景测试分支不存在，请提供已确认的初始 branch、tag 或 SHA',
-        400,
-      );
-    }
-    const sourceCommit = await repository.resolveRemoteRef(initialRef.trim());
-    if (!sourceCommit) {
-      throw new RepositoryError('TARGET_INVALID', `无法解析初始 Git ref：${initialRef}`, 400);
-    }
-    const head = await repository.createScenarioBranch(config.scenarioBranch, initialRef.trim());
-    return { created: true, scenarioBranch: config.scenarioBranch, head, sourceCommit };
+    return (await this.getRepository()).prepareMergeRequest(
+      config.scenarioBranch,
+      sourceRef.trim(),
+      queueId,
+      initialization,
+    );
   }
 
-  async mergeSourceRef(sourceRef: string, confirmed: boolean): Promise<GitMergeResult> {
+  async publishPreparedMerge(
+    queueId: number,
+    preparedCommit: string,
+    mode: PreparedMergeResult['mode'] | null,
+  ): Promise<string> {
     const config = this.requireRepositoryConfig();
-    const repository = await this.getRepository();
-    return repository.mergeNoFastForward(config.scenarioBranch, sourceRef.trim(), confirmed);
+    return (await this.getRepository()).publishPreparedMerge(
+      config.scenarioBranch,
+      queueId,
+      preparedCommit,
+      mode,
+    );
+  }
+
+  async isPublishedTarget(commit: string): Promise<boolean> {
+    const config = this.requireRepositoryConfig();
+    return (await this.getRepository()).isPublishedOnBranch(config.scenarioBranch, commit);
+  }
+
+  async readMergeRequestRef(queueId: number): Promise<string | null> {
+    this.requireRepositoryConfig();
+    return (await this.getRepository()).readInternalRef(queueId);
+  }
+
+  async listMergeRequestRefs(): Promise<number[]> {
+    this.requireRepositoryConfig();
+    return (await this.getRepository()).listInternalMergeRequestIds();
+  }
+
+  async cleanupMergeRequestRef(queueId: number): Promise<void> {
+    this.requireRepositoryConfig();
+    await (await this.getRepository()).deleteInternalRef(queueId);
   }
 
   async checkoutTarget(target: string): Promise<string> {

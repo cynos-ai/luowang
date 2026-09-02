@@ -45,11 +45,13 @@ export interface GitTreeEntry {
   sha: string;
 }
 
-export interface GitMergeResult {
-  originalHead: string;
+export type PreparedMergeMode = 'existing-branch' | 'initial-create';
+
+export interface PreparedMergeResult {
+  mode: PreparedMergeMode;
   sourceCommit: string;
-  mergeCommit: string | null;
-  scenarioBranchHead: string;
+  originalHead: string | null;
+  preparedCommit: string;
   alreadyIncluded: boolean;
 }
 
@@ -216,64 +218,50 @@ export class GitRepository {
     }
   }
 
-  async createScenarioBranch(branch: string, initialRef: string): Promise<string> {
+  async prepareMergeRequest(
+    branch: string,
+    sourceRef: string,
+    queueId: number,
+    initialization: boolean,
+  ): Promise<PreparedMergeResult> {
     assertBranchName(branch);
+    assertQueueId(queueId);
     await this.fetch();
-    if (await this.remoteBranchHead(branch)) {
+    const internalRef = mergeRequestRef(queueId);
+    if (await this.readInternalRef(queueId)) {
       throw new RepositoryError(
-        'SCENARIO_BRANCH_REMOTE_CHANGED',
-        '场景测试分支已被其他请求创建，请重新读取状态',
+        'MERGE_REQUEST_STATE_INVALID',
+        'merge 请求 internal ref 已存在',
         409,
       );
     }
-    const source = await this.resolveRemoteRef(initialRef);
-    if (!source) {
-      throw new RepositoryError('TARGET_INVALID', `无法解析初始 Git ref：${initialRef}`, 400);
-    }
-    try {
-      await this.checkoutTarget(source);
-      await this.run(['push', 'origin', `HEAD:refs/heads/${branch}`]);
-      const head = await this.remoteBranchHead(branch);
-      if (!head)
-        throw new RepositoryError('PUSH_REJECTED', '场景测试分支创建后无法读取远端 HEAD', 502);
-      return head;
-    } catch (error) {
-      await this.cleanWorkspace();
-      throw error;
-    } finally {
-      await this.cleanWorkspace();
-    }
-  }
-
-  async mergeNoFastForward(
-    branch: string,
-    sourceRef: string,
-    confirmed: boolean,
-  ): Promise<GitMergeResult> {
-    assertBranchName(branch);
-    if (!confirmed) {
-      throw new RepositoryError(
-        'MERGE_CONFIRMATION_REQUIRED',
-        '合并到场景测试分支前需要操作者确认',
-        400,
-      );
-    }
-    await this.fetch();
     const originalHead = await this.remoteBranchHead(branch);
+    const sourceCommit = await this.resolvePublishedSourceCommit(sourceRef);
     if (!originalHead) {
-      throw new RepositoryError('SCENARIO_BRANCH_NOT_FOUND', '场景测试分支尚未创建', 409);
-    }
-    const sourceCommit = await this.resolveRemoteRef(sourceRef);
-    if (!sourceCommit) {
-      throw new RepositoryError('TARGET_INVALID', `无法解析来源 Git ref：${sourceRef}`, 400);
-    }
-    if (await this.isAncestor(sourceCommit, originalHead)) {
-      await this.cleanWorkspace();
+      if (!initialization) {
+        throw new RepositoryError(
+          'SCENARIO_BRANCH_NOT_FOUND',
+          '场景测试分支尚未创建；首次创建必须提交 initialization merge-source 请求',
+          409,
+        );
+      }
+      await this.createInternalRef(internalRef, sourceCommit, 'initial-create');
       return {
-        originalHead,
+        mode: 'initial-create',
         sourceCommit,
-        mergeCommit: null,
-        scenarioBranchHead: originalHead,
+        originalHead: null,
+        preparedCommit: sourceCommit,
+        alreadyIncluded: false,
+      };
+    }
+
+    if (await this.isAncestor(sourceCommit, originalHead)) {
+      await this.createInternalRef(internalRef, originalHead, 'existing-branch');
+      return {
+        mode: 'existing-branch',
+        sourceCommit,
+        originalHead,
+        preparedCommit: originalHead,
         alreadyIncluded: true,
       };
     }
@@ -289,6 +277,8 @@ export class GitRepository {
           'merge',
           '--no-ff',
           '--no-edit',
+          '-m',
+          `luowang merge request #${queueId}`,
           sourceCommit,
         ]);
       } catch (error) {
@@ -302,41 +292,139 @@ export class GitRepository {
         }
         throw error;
       }
-      const latestRemoteHead = await this.remoteBranchHead(branch);
-      if (latestRemoteHead !== originalHead) {
-        await this.cleanWorkspace();
-        throw new RepositoryError(
-          'SCENARIO_BRANCH_REMOTE_CHANGED',
-          '合并期间远端场景测试分支发生变化，请重新尝试',
-          409,
-        );
-      }
-      const mergeCommit = (await this.run(['rev-parse', 'HEAD'])).stdout.trim();
-      await this.run(['push', 'origin', `HEAD:refs/heads/${branch}`]);
-      const scenarioBranchHead = await this.remoteBranchHead(branch);
-      if (!scenarioBranchHead) {
-        throw new RepositoryError('PUSH_REJECTED', '推送成功后无法读取场景测试分支 HEAD', 502);
-      }
+      const preparedCommit = normalizeSha((await this.run(['rev-parse', 'HEAD'])).stdout);
+      await this.createInternalRef(internalRef, preparedCommit, 'existing-branch');
       return {
-        originalHead,
+        mode: 'existing-branch',
         sourceCommit,
-        mergeCommit,
-        scenarioBranchHead,
+        originalHead,
+        preparedCommit,
         alreadyIncluded: false,
       };
-    } catch (error) {
-      await this.cleanWorkspace();
-      if (error instanceof GitCommandError) {
-        throw new RepositoryError(
-          'PUSH_REJECTED',
-          '场景测试分支推送被拒绝，未执行 force push',
-          409,
-        );
-      }
-      throw error;
     } finally {
       await this.cleanWorkspace();
     }
+  }
+
+  async publishPreparedMerge(
+    branch: string,
+    queueId: number,
+    preparedCommit: string,
+    mode: PreparedMergeMode | null,
+  ): Promise<string> {
+    assertBranchName(branch);
+    assertQueueId(queueId);
+    const prepared = normalizeSha(preparedCommit);
+    await this.fetch();
+    const remoteHead = await this.remoteBranchHead(branch);
+    if (remoteHead && (await this.isAncestor(prepared, remoteHead))) return prepared;
+
+    const internal = await this.readInternalRef(queueId);
+    if (internal !== prepared) {
+      throw new RepositoryError(
+        'MERGE_REQUEST_STATE_INVALID',
+        'prepared merge commit 与 internal ref 不一致',
+        409,
+      );
+    }
+    if (mode !== 'initial-create' && mode !== 'existing-branch') {
+      throw new RepositoryError(
+        'MERGE_REQUEST_STATE_INVALID',
+        'prepared merge commit 缺少持久化准备模式',
+        409,
+      );
+    }
+    if (mode === 'initial-create' && remoteHead) {
+      throw new RepositoryError(
+        'SCENARIO_BRANCH_REMOTE_CHANGED',
+        '首次创建场景测试分支时发生远端竞争，未发布 prepared commit',
+        409,
+      );
+    }
+    if (mode === 'existing-branch' && !remoteHead) {
+      throw new RepositoryError(
+        'SCENARIO_BRANCH_REMOTE_CHANGED',
+        '准备 merge 后远端场景测试分支已被删除，未重新创建',
+        409,
+      );
+    }
+
+    try {
+      // An empty expected object is a create-only compare-and-swap: despite Git's
+      // option name, it cannot update or overwrite an existing remote ref.
+      const pushArguments =
+        mode === 'initial-create'
+          ? [
+              'push',
+              `--force-with-lease=refs/heads/${branch}:`,
+              'origin',
+              `${prepared}:refs/heads/${branch}`,
+            ]
+          : ['push', 'origin', `${prepared}:refs/heads/${branch}`];
+      await this.run(pushArguments);
+    } catch (error) {
+      if (!(error instanceof GitCommandError)) throw error;
+      await this.fetch();
+      const recoveredHead = await this.remoteBranchHead(branch);
+      if (recoveredHead && (await this.isAncestor(prepared, recoveredHead))) return prepared;
+      throw new RepositoryError(
+        'PUSH_REJECTED',
+        mode === 'initial-create'
+          ? '首次创建场景测试分支时发生远端竞争，未发布 prepared commit'
+          : '场景测试分支推送被拒绝，未执行 force push',
+        409,
+      );
+    }
+    await this.fetch();
+    const publishedHead = await this.remoteBranchHead(branch);
+    if (!publishedHead || !(await this.isAncestor(prepared, publishedHead))) {
+      throw new RepositoryError('PUSH_REJECTED', 'prepared commit 发布后无法在远端分支验证', 502);
+    }
+    return prepared;
+  }
+
+  async isPublishedOnBranch(branch: string, commit: string): Promise<boolean> {
+    assertBranchName(branch);
+    const normalized = normalizeSha(commit);
+    await this.fetch();
+    const remoteHead = await this.remoteBranchHead(branch);
+    return remoteHead !== null && (await this.isAncestor(normalized, remoteHead));
+  }
+
+  async readInternalRef(queueId: number): Promise<string | null> {
+    assertQueueId(queueId);
+    await this.ensureClone();
+    try {
+      return normalizeSha(
+        (await this.run(['rev-parse', '--verify', mergeRequestRef(queueId)])).stdout,
+      );
+    } catch (error) {
+      if (error instanceof GitCommandError) return null;
+      throw error;
+    }
+  }
+
+  async listInternalMergeRequestIds(): Promise<number[]> {
+    await this.ensureClone();
+    const output = await this.run([
+      'for-each-ref',
+      '--format=%(refname)',
+      'refs/luowang/merge-requests/',
+    ]);
+    return output.stdout
+      .split(/\r?\n/)
+      .map((line) => line.trim().match(/^refs\/luowang\/merge-requests\/(\d+)$/)?.[1])
+      .filter((value): value is string => value !== undefined)
+      .map(Number)
+      .filter((value) => Number.isSafeInteger(value) && value > 0)
+      .sort((left, right) => left - right);
+  }
+
+  async deleteInternalRef(queueId: number): Promise<void> {
+    assertQueueId(queueId);
+    await this.ensureClone();
+    if (!(await this.readInternalRef(queueId))) return;
+    await this.run(['update-ref', '-d', mergeRequestRef(queueId)]);
   }
 
   async publishRunReports(
@@ -826,6 +914,117 @@ export class GitRepository {
     return changes;
   }
 
+  private async resolvePublishedSourceCommit(sourceRef: string): Promise<string> {
+    assertRef(sourceRef);
+    if (sourceRef.startsWith('refs/luowang/') || sourceRef.startsWith('refs/remotes/')) {
+      throw new RepositoryError('TARGET_INVALID', '无法解析或验证远端来源 Git ref', 400);
+    }
+
+    if (SHA_PATTERN.test(sourceRef)) {
+      let commit: string;
+      try {
+        commit = await this.resolveCommit(sourceRef);
+      } catch {
+        throw new RepositoryError('TARGET_INVALID', '无法解析或验证远端来源 Git ref', 400);
+      }
+      const containing = await this.run([
+        'for-each-ref',
+        '--contains',
+        commit,
+        '--format=%(refname)',
+        'refs/remotes/origin/',
+      ]);
+      const onRemoteBranch = containing.stdout
+        .split(/\r?\n/)
+        .map((line) => line.trim())
+        .some(
+          (ref) => ref.startsWith('refs/remotes/origin/') && ref !== 'refs/remotes/origin/HEAD',
+        );
+      const remoteTags = await this.run(['ls-remote', '--tags', 'origin']);
+      const isAdvertisedTagCommit = remoteTags.stdout
+        .split(/\r?\n/)
+        .map((line) => line.trim().split(/\s+/, 2)[0]?.toLowerCase())
+        .some((sha) => sha === commit);
+      if (!onRemoteBranch && !isAdvertisedTagCommit) {
+        throw new RepositoryError('TARGET_INVALID', '无法解析或验证远端来源 Git ref', 400);
+      }
+      return commit;
+    }
+
+    const candidates: Array<{
+      localRef: string;
+      remoteKind: 'heads' | 'tags';
+      remoteRef: string;
+    }> = [];
+    if (sourceRef.startsWith('refs/heads/')) {
+      candidates.push({
+        localRef: `refs/remotes/origin/${sourceRef.slice('refs/heads/'.length)}`,
+        remoteKind: 'heads',
+        remoteRef: sourceRef,
+      });
+    } else if (sourceRef.startsWith('refs/tags/')) {
+      candidates.push({ localRef: sourceRef, remoteKind: 'tags', remoteRef: sourceRef });
+    } else if (!sourceRef.startsWith('refs/')) {
+      candidates.push(
+        {
+          localRef: `refs/remotes/origin/${sourceRef}`,
+          remoteKind: 'heads',
+          remoteRef: `refs/heads/${sourceRef}`,
+        },
+        {
+          localRef: `refs/tags/${sourceRef}`,
+          remoteKind: 'tags',
+          remoteRef: `refs/tags/${sourceRef}`,
+        },
+      );
+    }
+    for (const candidate of candidates) {
+      try {
+        const advertised = await this.run([
+          'ls-remote',
+          `--${candidate.remoteKind}`,
+          'origin',
+          candidate.remoteRef,
+        ]);
+        const advertisedObject = normalizeSha(advertised.stdout.trim().split(/\s+/, 1)[0] ?? '');
+        const localObject = normalizeSha(
+          (await this.run(['rev-parse', '--verify', '--end-of-options', candidate.localRef]))
+            .stdout,
+        );
+        if (advertisedObject !== localObject) continue;
+        return normalizeSha(
+          (
+            await this.run([
+              'rev-parse',
+              '--verify',
+              '--end-of-options',
+              `${candidate.localRef}^{commit}`,
+            ])
+          ).stdout,
+        );
+      } catch {
+        // Try the next explicitly allowed and currently advertised remote namespace.
+      }
+    }
+    throw new RepositoryError('TARGET_INVALID', '无法解析或验证远端来源 Git ref', 400);
+  }
+
+  private async createInternalRef(
+    ref: string,
+    commit: string,
+    mode: PreparedMergeMode,
+  ): Promise<void> {
+    await this.run([
+      'update-ref',
+      '--create-reflog',
+      '-m',
+      `luowang-${mode}`,
+      ref,
+      normalizeSha(commit),
+      '0000000000000000000000000000000000000000',
+    ]);
+  }
+
   private async isGitWorktree(): Promise<boolean> {
     try {
       await this.run(['rev-parse', '--git-dir']);
@@ -923,6 +1122,25 @@ function safeGitEnvironment(): NodeJS.ProcessEnv {
 
 function sanitize(value: string, secret: string | undefined): string {
   return secret ? value.split(secret).join('[REDACTED]') : value;
+}
+
+function normalizeSha(value: string): string {
+  const normalized = value.trim().split(/\r?\n/, 1)[0]?.toLowerCase() ?? '';
+  if (!SHA_PATTERN.test(normalized)) {
+    throw new RepositoryError('TARGET_INVALID', 'Git commit SHA 格式无效', 400);
+  }
+  return normalized;
+}
+
+function mergeRequestRef(queueId: number): string {
+  assertQueueId(queueId);
+  return `refs/luowang/merge-requests/${queueId}`;
+}
+
+function assertQueueId(queueId: number): void {
+  if (!Number.isSafeInteger(queueId) || queueId <= 0) {
+    throw new RepositoryError('TARGET_INVALID', 'merge 请求队列 ID 无效', 400);
+  }
 }
 
 function assertRef(ref: string): void {
