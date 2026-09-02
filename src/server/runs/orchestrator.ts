@@ -614,7 +614,17 @@ class DefaultRunOrchestrator implements RunOrchestrator {
         'write_scenario_patch',
         '写入候选场景 patch',
         '只写入 docs/scenario-testing/scenarios/** 范围内的标准 git unified patch；不能直接修改目标仓库或创建 suite、catalog、journey 或能力图文件。',
-        (content) => workspace.writer('main-a').writeScenarioPatch(content),
+        async (content) => {
+          try {
+            await repository.validateScenarioPatch(context.targetCommit, content);
+          } catch (error) {
+            throw new RunOrchestratorError(
+              'RUN_ARTIFACT_INVALID',
+              `候选场景 patch 无效，请修正后重新调用 write_scenario_patch：${safeMessage(error)}`,
+            );
+          }
+          await workspace.writer('main-a').writeScenarioPatch(content);
+        },
       ),
     ];
     await this.invoke(
