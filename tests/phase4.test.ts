@@ -156,9 +156,24 @@ describe('Phase 4 browser and evidence boundaries', () => {
     const workspace = new RunWorkspace('01K00000000000000000000001', directory);
     await workspace.create();
     await writeFile(join(workspace.evidenceDirectory, 'login.png'), Buffer.from('png-bytes'));
+    await writeFile(join(workspace.evidenceDirectory, 'console.log'), 'text-only evidence');
     const store = createRunEvidenceStore(workspace, fakeOss());
     const upload = await store.uploadAll();
     assert.equal(upload.failures.length, 0);
+    const listTool = createReviewerEvidenceTools(store).find(
+      (candidate) => candidate.name === 'list_evidence_files',
+    );
+    assert.ok(listTool);
+    const listed = (await listTool.execute(
+      'list',
+      {} as never,
+      undefined,
+      undefined,
+      {} as never,
+    )) as AgentToolResult<Record<string, unknown>>;
+    const listedText = listed.content.find((item) => item.type === 'text');
+    assert.ok(listedText && listedText.type === 'text');
+    assert.deepEqual(JSON.parse(listedText.text), [{ name: 'login.png', sizeBytes: 9 }]);
     const manager = createTestDataManager();
     const dataId = `${manager.prefix(workspace.runId)}screenshot-user`;
     await manager.register(workspace.runId, { id: dataId });
@@ -217,7 +232,7 @@ describe('Phase 4 browser and evidence boundaries', () => {
     await store.cleanupLocal();
     assert.deepEqual(
       (await store.list()).map((file) => file.name),
-      ['login.png'],
+      ['console.log', 'login.png'],
     );
     assert.equal(
       await access(join(workspace.evidenceDirectory, 'login.png')).then(
@@ -227,7 +242,10 @@ describe('Phase 4 browser and evidence boundaries', () => {
       false,
     );
     const uploadedCleanup = await store.cleanupUploaded();
-    assert.deepEqual(uploadedCleanup, { deleted: ['login.png'], failures: [] });
+    assert.deepEqual(uploadedCleanup, {
+      deleted: ['console.log', 'login.png'],
+      failures: [],
+    });
     assert.deepEqual(await store.list(), []);
   });
 });

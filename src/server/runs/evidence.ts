@@ -297,11 +297,13 @@ export function createReviewerEvidenceTools(store: RunEvidenceStore): ToolDefini
     {
       name: 'list_evidence_files',
       label: '列出审核证据',
-      description: '列出本次 Run 已产生的证据文件；只能读取当前 Run 的证据。',
+      description: '列出本次 Run 已上传且可供视觉审核的截图；只能读取当前 Run 的图片证据。',
       parameters: Type.Object({}),
       execute: async (): Promise<AgentToolResult<Record<string, unknown>>> => {
         try {
-          const files = await store.list();
+          const files = (await store.list()).filter(({ name }) =>
+            contentTypeFor(name).startsWith('image/'),
+          );
           return createTextResult(
             JSON.stringify(files.map(({ name, sizeBytes }) => ({ name, sizeBytes }))),
           );
