@@ -6,10 +6,14 @@ import { describe, it } from 'vitest';
 import {
   LIVE_INPUT_NAMES,
   createLayeredReport,
+  isNewSemVerTag,
   localOnlyEnvironment,
   missingLiveInputs,
+  parseGitHubRepository,
+  parseHarnessUrl,
   PUBLIC_QUALITY_SCRIPTS,
   redactAcceptanceText,
+  selectLiveFacts,
   type ClosureProofStatuses,
 } from './acceptance/closure.js';
 
@@ -92,11 +96,146 @@ describe('Closure 6 acceptance status layering', () => {
     assert.equal(report.local.status, 'passed');
     assert.equal(report.live.status, 'blocked');
     assert.equal(report.release.status, 'blocked');
-    assert.equal(report.acEvidence.length, 14);
-    assert.equal(new Set(report.acEvidence.map((item) => item.ac)).size, 14);
+    assert.equal(report.acEvidence.length, 18);
+    assert.equal(new Set(report.acEvidence.map((item) => item.ac)).size, 18);
     assert.equal(
       report.resourceChecks.every((item) => item.evidence.length > 0),
       true,
+    );
+  });
+
+  it('selects independent completed live lifecycle facts without treating blocked as passed', () => {
+    const queue = [
+      {
+        queueId: 1,
+        requestKind: 'manual-merge-source',
+        initialization: true,
+        preparedMergeMode: 'initial-create',
+        preparedMergeCommit: 'a'.repeat(40),
+        resolvedTargetCommit: 'a'.repeat(40),
+        status: 'completed',
+        archiveStatus: 'completed',
+        runId: 'init-run',
+      },
+      {
+        queueId: 2,
+        requestKind: 'manual-current-head',
+        status: 'completed',
+        archiveStatus: 'completed',
+        runId: 'passed-run',
+      },
+    ];
+    const runs = [
+      {
+        runId: 'init-run',
+        initialization: true,
+        targetCommit: 'a'.repeat(40),
+        status: 'completed',
+        result: 'blocked',
+      },
+      {
+        runId: 'passed-run',
+        status: 'completed',
+        result: 'passed',
+        scenarioProgress: { completed: 1, total: 1 },
+        evidence: [{ contentType: 'image/png' }],
+        activities: [{ message: '开始场景 AUTH-001' }, { message: '完成场景 AUTH-001' }],
+      },
+      {
+        runId: 'failed-run',
+        status: 'completed',
+        result: 'failed',
+        confirmedBugs: [{ key: 'BUG-1' }, { key: 'BUG-2' }],
+        issues: [
+          {
+            status: 'succeeded',
+            issueNumber: 1,
+            issueUrl: 'https://github.com/example/repo/issues/1',
+          },
+          {
+            status: 'succeeded',
+            issueNumber: 2,
+            issueUrl: 'https://github.com/example/repo/issues/2',
+          },
+        ],
+      },
+      {
+        runId: 'blocked-run',
+        status: 'completed',
+        result: 'blocked',
+        scenarioResults: [{ id: 'AUTH-001', result: 'blocked' }],
+        archive: { archiveStatus: 'completed', progressed: false },
+      },
+      {
+        runId: 'review-run',
+        status: 'completed',
+        result: 'blocked',
+        artifactNames: ['scenario-changes.patch', 'report.md'],
+        scenarioPrUrl: 'https://github.com/example/repo/pull/1',
+        archive: {
+          reportStatus: 'not_applicable',
+          archiveStatus: 'completed',
+          scenarioStatus: 'pull_request',
+          progressed: false,
+        },
+      },
+    ];
+    const facts = selectLiveFacts(queue, runs);
+    assert.equal(facts.initializationRunId, 'init-run');
+    assert.equal(facts.passedRunId, 'passed-run');
+    assert.equal(facts.failedRunId, 'failed-run');
+    assert.equal(facts.blockedRunId, 'blocked-run');
+    assert.equal(facts.scenarioReviewRunId, 'review-run');
+    assert.equal(facts.currentHeadRetestRunId, 'passed-run');
+    assert.equal(facts.progressRunId, 'passed-run');
+  });
+
+  it('rejects credential-exfiltrating live URLs and non-SemVer release tags', () => {
+    assert.equal(parseHarnessUrl('http://127.0.0.1:3000', ''), 'http://127.0.0.1:3000');
+    assert.throws(() => parseHarnessUrl('http://example.test:3000', 'http://example.test:3000'));
+    assert.throws(() => parseHarnessUrl('https://user:pass@example.test', 'https://example.test'));
+    assert.throws(() => parseHarnessUrl('https://example.test/path', 'https://example.test'));
+    assert.equal(
+      parseHarnessUrl('https://harness.example.test', 'https://harness.example.test'),
+      'https://harness.example.test',
+    );
+    assert.deepEqual(parseGitHubRepository('https://github.com/cynos-ai/luowang.git'), {
+      owner: 'cynos-ai',
+      name: 'luowang',
+    });
+    assert.throws(() => parseGitHubRepository('http://github.com/cynos-ai/luowang'));
+    assert.throws(() => parseGitHubRepository('https://user@github.com/cynos-ai/luowang'));
+    assert.equal(isNewSemVerTag('v0.2.0'), true);
+    assert.equal(isNewSemVerTag('v1.0.0'), true);
+    assert.equal(isNewSemVerTag('v0.1.0'), false);
+    assert.equal(isNewSemVerTag('release-latest'), false);
+    assert.equal(isNewSemVerTag('v0.2.0-rc.1'), false);
+  });
+
+  it('keeps the publication AC blocked until the immutable release tag is verified', () => {
+    const preRelease = createLayeredReport({
+      mode: 'release',
+      startedAt: '2026-09-01T00:00:00.000Z',
+      local: { status: 'passed', message: 'local passed' },
+      live: { status: 'passed', message: 'live passed' },
+      proofs: proofStatuses(),
+    });
+    assert.equal(preRelease.release.status, 'passed');
+    assert.equal(
+      preRelease.acEvidence.find((item) => item.ac === 'AC-CLOSURE-RELEASE-01')?.status,
+      'blocked',
+    );
+    const published = createLayeredReport({
+      mode: 'release',
+      startedAt: '2026-09-01T00:00:00.000Z',
+      local: { status: 'passed', message: 'local passed' },
+      live: { status: 'passed', message: 'live passed' },
+      proofs: proofStatuses(),
+      releasePublished: true,
+    });
+    assert.equal(
+      published.acEvidence.find((item) => item.ac === 'AC-CLOSURE-RELEASE-01')?.status,
+      'passed',
     );
   });
 
