@@ -1,6 +1,6 @@
 # LuoWang
 
-罗网（LuoWang）是一个独立部署的 AI 场景测试 Harness。当前仓库已完成 Phase 0–9 的主要模块和 v0.7 生产闭环：除了安全配置控制台、唯一 GitHub 目标仓库索引、Main → Runner → Reviewer → Main 的本地 Run、受控 Playwright MCP UI 执行、S3-compatible OSS 证据 Gateway、幂等归档和持久 FIFO 自动化队列，还支持长期场景生命周期、三种场景维护模式、陌生项目初始化，以及完整运维控制台。v0.1.0 保持为既有不可变版本；新的生产闭环版本只有在公共质量、local、真实 live 联合验收和发布 PR 全部通过后才发布。
+罗网（LuoWang）是一个独立部署的 AI 场景测试 Harness。当前仓库已完成 Phase 0–9 的主要模块和 v0.7 生产闭环：除了安全配置控制台、唯一 GitHub 目标仓库索引、Main → Runner → Reviewer → Main 的本地 Run、受控 Playwright MCP UI 执行、S3-compatible OSS 证据 Gateway、幂等归档和持久 FIFO 自动化队列，还支持长期场景生命周期、三种场景维护模式、陌生项目初始化，以及完整运维控制台。本次生产闭环发布版本为 v0.2.0；v0.1.0 继续保持既有不可变指向。
 
 ## 本地启动
 
@@ -48,7 +48,7 @@ npm run test:acceptance:release
 
 可选的 GitHub smoke 仍只用于单独诊断仓库读取路径，不属于 live 或 release 证明。它不会默认执行；如需运行，必须显式提供 `LUOWANG_ACCEPTANCE_LIVE=1`、`LUOWANG_SMOKE_REPOSITORY=https://github.com/cynos-ai/cynos-website` 和临时 `LUOWANG_SMOKE_GITHUB_TOKEN`。
 
-打开 <http://127.0.0.1:3000/> 后使用管理员密码登录。登录后可以维护 Harness、仓库/测试环境、MCP 和 S3-compatible OSS 的普通配置；Provider Key、Git Token、测试账号和 OSS Access Key 等 Secret 只能覆盖或显式删除，页面只显示“已配置”和固定掩码。v0.1.0 提供 GitHub 仓库读取、场景测试分支写入、PR/Issue 权限检查、场景/报告同步、场景 patch 校验、三种场景维护模式、直接/PR 发布、陌生项目初始化、归档和自动化队列接口，并注册 Provider、Playwright MCP 与 OSS 的独立连通性检查。启用 MCP 后，Runner 使用 headless、isolated 浏览器上下文和 accessibility snapshot/ref；截图等证据上传到 OSS，私有 bucket 使用登录后的 `/api/evidence/<id>` 稳定地址。后台默认每 60 秒轮询 Git、每 10 秒扫描归档、每 5 分钟兜底索引和保留清理；队列、调度游标和恢复状态保存在 SQLite。
+打开 <http://127.0.0.1:3000/> 后使用管理员密码登录。登录后可以维护 Harness、仓库/测试环境、MCP 和 S3-compatible OSS 的普通配置；Provider Key、Git Token、测试账号和 OSS Access Key 等 Secret 只能覆盖或显式删除，页面只显示“已配置”和固定掩码。v0.2.0 提供 GitHub 仓库读取、场景测试分支写入、PR/Issue 权限检查、场景/报告同步、场景 patch 校验、三种场景维护模式、直接/PR 发布、陌生项目初始化、归档和自动化队列接口，并注册 Provider、Playwright MCP 与 OSS 的独立连通性检查。启用 MCP 后，Runner 使用 headless、isolated 浏览器上下文和 accessibility snapshot/ref；截图等证据上传到 OSS，私有 bucket 使用登录后的 `/api/evidence/<id>` 稳定地址。后台默认每 60 秒轮询 Git、每 10 秒扫描归档、每 5 分钟兜底索引和保留清理；队列、调度游标和恢复状态保存在 SQLite。
 
 配置 GitHub 仓库后，先在“仓库事实与场景”区域准备 `scenario-testing` 分支，再点击“同步索引”。Git Token 只由 Repository Service 使用，不会写入 Git URL、命令参数、子进程环境、日志或测试 Agent。
 
