@@ -176,6 +176,38 @@ describe('Phase 3 agent run', () => {
     assert.match(result.artifacts['report.md'] ?? '', /^---\nrun_id:/);
   });
 
+  it('rejects malformed scenario patches so the same Session can correct them', async () => {
+    const fixture = await createGitFixture();
+    const context = await createRunContext(
+      fixture,
+      ['passed', 'passed'],
+      undefined,
+      undefined,
+      '',
+      '\n',
+      false,
+      true,
+    );
+
+    const result = await context.orchestrator.run({
+      request: '初始化并验证候选场景 patch 写入时校验与重试',
+      trigger: 'manual',
+      initialization: true,
+    });
+
+    assert.equal(result.status, 'completed', JSON.stringify(result));
+    assert.match(result.artifacts['scenario-changes.patch'] ?? '', /^diff --git /);
+    assert.doesNotMatch(result.artifacts['scenario-changes.patch'] ?? '', /not a git patch/);
+    assert.deepEqual(context.sessions.created, [
+      'main-a',
+      'runner',
+      'main-a',
+      'runner',
+      'reviewer',
+      'main-b',
+    ]);
+  });
+
   it('isolates repeated Main and Runner Sessions during initialization', async () => {
     const fixture = await createGitFixture();
     const context = await createRunContext(fixture, ['passed', 'passed']);
@@ -530,6 +562,7 @@ async function createRunContext(
   reportPreamble = '',
   reportLineEnding: '\n' | '\r\n' = '\n',
   invalidReportFirst = false,
+  invalidScenarioPatchFirst = false,
 ): Promise<TestContext> {
   const dataDir = await mkdtemp(join(tmpdir(), 'luowang-phase3-data-'));
   const reportDir = join(dataDir, 'report');
@@ -572,6 +605,7 @@ async function createRunContext(
     reportPreamble,
     reportLineEnding,
     invalidReportFirst,
+    invalidScenarioPatchFirst,
   );
   const orchestrator = createRunOrchestrator({
     configuration,
@@ -599,6 +633,7 @@ class RecordingSessionFactory implements AgentSessionFactory {
     private readonly reportPreamble = '',
     private readonly reportLineEnding: '\n' | '\r\n' = '\n',
     private readonly invalidReportFirst = false,
+    private readonly invalidScenarioPatchFirst = false,
   ) {}
 
   async create(input: AgentSessionInput) {
@@ -618,6 +653,12 @@ class RecordingSessionFactory implements AgentSessionFactory {
           await invokeTool(input, 'read_run_artifact', { name: 'plan.md' });
           await invokeTool(input, 'read_run_artifact', { name: 'execution.md' });
           await invokeTool(input, 'read_run_artifact', { name: 'draft-report.md' });
+          if (this.invalidScenarioPatchFirst) {
+            const rejected = await invokeTool(input, 'write_scenario_patch', {
+              content: 'not a git patch',
+            });
+            assert.equal(rejected.details.error, true);
+          }
           await invokeTool(input, 'write_scenario_patch', {
             content: initializationScenarioPatch(),
           });
