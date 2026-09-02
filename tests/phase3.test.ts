@@ -695,6 +695,8 @@ function parsePromptContext(prompt: string): {
   baseCommit: string | null;
   targetCommit: string;
   includedCommits: string[];
+  startedAt: string;
+  finishedAt: string;
 } {
   const match = prompt.match(/动态 Run 上下文：\s*([\s\S]+)$/);
   const json = match?.[1];
@@ -726,8 +728,8 @@ base_commit: ${context.baseCommit ?? 'null'}
 target_commit: ${context.targetCommit}
 included_commits:${included}
 result: ${result}
-started_at: 2026-08-30T00:00:00Z
-finished_at: 2026-08-30T00:01:00Z
+started_at: ${context.startedAt}
+finished_at: ${context.finishedAt}
 scenario_results: ${scenarioResults}
 confirmed_bugs: ${bugs}
 ---
@@ -753,8 +755,8 @@ base_commit: ${context.baseCommit ?? 'null'}
 target_commit: ${context.targetCommit}
 included_commits: []
 result: passed
-started_at: 2026-08-30T00:00:00Z
-finished_at: 2026-08-30T00:01:00Z
+started_at: ${context.startedAt}
+finished_at: ${context.finishedAt}
 scenario_results:
 ${scenarioIds.map((id) => `  - id: ${id}\n    result: passed`).join('\n')}
 confirmed_bugs: []

@@ -51,6 +51,8 @@ export interface RunContext {
   baseCommit: string | null;
   targetCommit: string;
   includedCommits: string[];
+  startedAt: string;
+  reportFinishedAt: string | null;
   repositoryDirectory: string;
   runDirectory: string;
   historyIssues: RepositoryIssue[];

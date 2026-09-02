@@ -327,6 +327,8 @@ class DefaultRunOrchestrator implements RunOrchestrator {
         baseCommit: state.baseCommit,
         targetCommit: prepared.targetCommit,
         includedCommits: state.includedCommits,
+        startedAt: state.startedAt,
+        reportFinishedAt: null,
         repositoryDirectory: prepared.repository.directory,
         runDirectory: workspace.runningDirectory,
         historyIssues: history.issues,
@@ -1156,6 +1158,7 @@ class DefaultRunOrchestrator implements RunOrchestrator {
     context: RunContext,
   ): Promise<void> {
     this.setPhase(state, 'main-b', 'Main · 最终汇总正在汇总最终报告');
+    context.reportFinishedAt = this.now().toISOString();
     const artifactsRead = new Set<string>();
     const issueCandidates = createIssueCandidateController(
       { runStore: this.options.runStore, repository: this.options.repository },
@@ -1924,6 +1927,8 @@ function finalizationPromptContext(context: RunContext): Record<string, unknown>
     baseCommit: context.baseCommit,
     targetCommit: context.targetCommit,
     includedCommits: context.includedCommits,
+    startedAt: context.startedAt,
+    finishedAt: context.reportFinishedAt,
     scenarioMode: context.scenarioMode,
     initialization: context.initialization,
     scenarioChanges: context.scenarioChanges ?? null,
@@ -1949,7 +1954,7 @@ ${JSON.stringify(finalizationPromptContext(context), null, 2)}`;
 }
 
 function mainBOutputContract(): string {
-  return `必须先读取 plan.md、execution.md、draft-report.md、review.md；初始化且存在 scenario-changes.patch 时也读取它。读取草稿和审核后，必须为每个本次 confirmed Bug 按 title、keywords 或 bug_key 调用 query_issue_candidates；严格区分 ok、empty、unavailable，unavailable 最多原样重试一次。查询 unavailable、重试或预算耗尽时必须在正文写“## Issue 查询覆盖缺口”并列出对应 Bug key，不得伪装成 empty。最终 report.md frontmatter 只能包含 run_id、trigger、base_commit、target_commit、included_commits、result、started_at、finished_at、scenario_results、confirmed_bugs，字段值必须与固定 Run 一致。result 优先级为 blocked > failed > passed；blockingReasons 非空时必须 blocked。
+  return `必须先读取 plan.md、execution.md、draft-report.md、review.md；初始化且存在 scenario-changes.patch 时也读取它。读取草稿和审核后，必须为每个本次 confirmed Bug 按 title、keywords 或 bug_key 调用 query_issue_candidates；严格区分 ok、empty、unavailable，unavailable 最多原样重试一次。查询 unavailable、重试或预算耗尽时必须在正文写“## Issue 查询覆盖缺口”并列出对应 Bug key，不得伪装成 empty。最终 report.md frontmatter 只能包含 run_id、trigger、base_commit、target_commit、included_commits、result、started_at、finished_at、scenario_results、confirmed_bugs；started_at 和 finished_at 必须逐字使用动态 Run 上下文提供的值，其他字段值也必须与固定 Run 一致。result 优先级为 blocked > failed > passed；blockingReasons 非空时必须 blocked。
 scenario_results 必须是 YAML 数组，每项只能有 id 和 result。confirmed_bugs 每项只能有 key、title、scenario_ids、issue_action，以及 link 时必需的 issue_url；failed 至少有一个 confirmed bug，issue_action 只能 create 或 link。零场景 passed 必须在计划、审核和最终报告中都有“无需场景测试”依据。
 证据只写在正文并引用稳定 URL。不得复述任何测试账号字段、Secret、隐藏推理、短期签名 URL 或绝对路径。结束前通过 write_report 写完整 report.md。`;
 }

@@ -450,8 +450,8 @@ base_commit: ${context.baseCommit ?? 'null'}
 target_commit: ${context.targetCommit}
 included_commits:${included}
 result: passed
-started_at: 2026-09-01T00:00:00Z
-finished_at: 2026-09-01T00:01:00Z
+started_at: ${context.startedAt}
+finished_at: ${context.finishedAt}
 scenario_results:${scenarioResults}
 confirmed_bugs: []
 ---
@@ -468,6 +468,8 @@ function parseRunContext(prompt: string): {
   baseCommit: string | null;
   targetCommit: string;
   includedCommits: string[];
+  startedAt: string;
+  finishedAt: string;
 } {
   const dynamic = prompt.match(/动态 Run 上下文：\s*(\{[\s\S]*\})\s*$/);
   const fixed = prompt.match(/固定 Run 上下文：\s*([\s\S]*?)\s*\n\s*(?:必须|请|先)/);
