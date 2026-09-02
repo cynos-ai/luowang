@@ -1181,8 +1181,18 @@ class DefaultRunOrchestrator implements RunOrchestrator {
         'write_report',
         '写入最终报告',
         '写入本次 Run 唯一的 report.md。必须使用指定最小 frontmatter，不得写其他文件。',
-        (content) =>
-          workspace.writer('main-b').writeReport(normalizeFinalReportFrontmatter(content)),
+        async (content) => {
+          const normalized = normalizeFinalReportFrontmatter(content);
+          try {
+            parseReportMarkdown(normalized, 'report.md', state.runId);
+          } catch (error) {
+            throw new RunOrchestratorError(
+              'RUN_ARTIFACT_INVALID',
+              `最终报告格式无效，请修正后重新调用 write_report：${safeMessage(error)}`,
+            );
+          }
+          await workspace.writer('main-b').writeReport(normalized);
+        },
       ),
       ...(context.initialization
         ? [

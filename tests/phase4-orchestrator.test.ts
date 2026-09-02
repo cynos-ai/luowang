@@ -95,15 +95,15 @@ describe('Phase 4 Run blocking boundaries', () => {
 
     assert.equal(result.status, 'failed', JSON.stringify(result));
     assert.equal(result.result, null, JSON.stringify(result));
-    assert.equal(result.errorMessage, 'Run 执行失败，未生成可信最终结论');
-    assert.match(result.artifacts['report.md'] ?? '', /scenario: PHASE4-FIXTURE/);
+    assert.equal(result.errorMessage, '角色没有写入必需工件：report.md');
+    assert.equal(result.artifacts['report.md'], undefined);
     assert.equal(
       await pathExists(join(context.reportDir, 'completed', result.runId, 'report.md')),
       false,
     );
     assert.equal(
       await pathExists(join(context.reportDir, 'running', result.runId, 'report.md')),
-      true,
+      false,
     );
   });
 });
