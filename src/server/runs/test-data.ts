@@ -482,6 +482,14 @@ export function createReviewerTestDataTools(
   );
   return [
     {
+      name: 'list_pending_test_data',
+      label: '列出待核验测试数据',
+      description: '列出当前 Run 待 Reviewer 核验的 data ID、状态和清理声明 evidence IDs。',
+      parameters: Type.Object({}, { additionalProperties: false }),
+      execute: async () =>
+        createTextResult(JSON.stringify(manager.pending(runId).map(publicRecord))),
+    },
+    {
       name: 'read_test_data_cleanup_evidence',
       label: '读取测试数据清理证据',
       description:

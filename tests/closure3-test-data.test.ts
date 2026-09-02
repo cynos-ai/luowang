@@ -74,6 +74,14 @@ describe('Closure 3 verified test data lifecycle', () => {
       dataId: DATA_ID,
       evidenceIds: [evidenceId],
     });
+    const pending = await invokeJson(reviewer, 'list_pending_test_data', {});
+    assert.deepEqual(pending, [
+      {
+        id: DATA_ID,
+        status: 'cleanup-claimed',
+        evidenceIds: [evidenceId],
+      },
+    ]);
     const unread = await invokeJson(reviewer, 'verify_test_data_cleanup', {
       dataId: DATA_ID,
       decision: 'confirm',
