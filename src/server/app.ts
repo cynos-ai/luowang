@@ -201,6 +201,9 @@ export async function createApp(options: AppOptions) {
   const app = Fastify({
     loggerInstance: options.logger ?? createLogger(options.config),
     requestIdHeader: 'x-request-id',
+    // Private evidence IDs encode an allowlisted OSS prefix, Run ID, and filename.
+    // Fastify's 100-character default would reject these valid stable URLs at routing time.
+    routerOptions: { maxParamLength: 2048 },
   });
   const staticRoot = options.config.webRoot;
   const loginLimiter = new LoginRateLimiter();
