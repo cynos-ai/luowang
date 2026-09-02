@@ -154,6 +154,28 @@ describe('Phase 3 agent run', () => {
     assert.equal(report.replaceAll('\r\n', '').includes('\n'), false);
   });
 
+  it('rejects malformed report writes so the same Session can correct them', async () => {
+    const fixture = await createGitFixture();
+    const context = await createRunContext(
+      fixture,
+      ['passed'],
+      undefined,
+      undefined,
+      '',
+      '\n',
+      true,
+    );
+
+    const result = await context.orchestrator.run({
+      request: '验证最终报告写入时校验与重试',
+      trigger: 'manual',
+    });
+
+    assert.equal(result.status, 'completed', JSON.stringify(result));
+    assert.equal(result.result, 'passed');
+    assert.match(result.artifacts['report.md'] ?? '', /^---\nrun_id:/);
+  });
+
   it('isolates repeated Main and Runner Sessions during initialization', async () => {
     const fixture = await createGitFixture();
     const context = await createRunContext(fixture, ['passed', 'passed']);
@@ -507,6 +529,7 @@ async function createRunContext(
   progress?: ProgressFixture,
   reportPreamble = '',
   reportLineEnding: '\n' | '\r\n' = '\n',
+  invalidReportFirst = false,
 ): Promise<TestContext> {
   const dataDir = await mkdtemp(join(tmpdir(), 'luowang-phase3-data-'));
   const reportDir = join(dataDir, 'report');
@@ -548,6 +571,7 @@ async function createRunContext(
     progress,
     reportPreamble,
     reportLineEnding,
+    invalidReportFirst,
   );
   const orchestrator = createRunOrchestrator({
     configuration,
@@ -574,6 +598,7 @@ class RecordingSessionFactory implements AgentSessionFactory {
     private readonly progress?: ProgressFixture,
     private readonly reportPreamble = '',
     private readonly reportLineEnding: '\n' | '\r\n' = '\n',
+    private readonly invalidReportFirst = false,
   ) {}
 
   async create(input: AgentSessionInput) {
@@ -645,6 +670,12 @@ class RecordingSessionFactory implements AgentSessionFactory {
             this.outcomes[Math.min(this.outcomeIndex - 1, this.outcomes.length - 1)] ?? 'passed';
           if (outcome === 'failed') {
             await invokeTool(input, 'query_issue_candidates', { bug_key: 'BUG-LOGIN-001' });
+          }
+          if (this.invalidReportFirst) {
+            const rejected = await invokeTool(input, 'write_report', {
+              content: '# Final Report\n\n缺少 frontmatter。\n',
+            });
+            assert.equal(rejected.details.error, true);
           }
           if (outcome === 'passed') {
             await invokeTool(input, 'write_report', {
