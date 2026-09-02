@@ -237,6 +237,19 @@ describe('Closure 6 acceptance status layering', () => {
       published.acEvidence.find((item) => item.ac === 'AC-CLOSURE-RELEASE-01')?.status,
       'passed',
     );
+    const livePostPublication = createLayeredReport({
+      mode: 'live',
+      startedAt: '2026-09-01T00:00:00.000Z',
+      local: { status: 'not_run', message: 'not run' },
+      live: { status: 'passed', message: 'live passed' },
+      proofs: proofStatuses(),
+      releasePublished: true,
+    });
+    assert.equal(livePostPublication.release.status, 'blocked');
+    assert.equal(
+      livePostPublication.acEvidence.find((item) => item.ac === 'AC-CLOSURE-RELEASE-01')?.status,
+      'passed',
+    );
   });
 
   it('derives each AC status from its corresponding proof instead of the local aggregate', () => {

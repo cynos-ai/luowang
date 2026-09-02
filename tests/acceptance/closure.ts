@@ -528,9 +528,10 @@ export function createLayeredReport(input: {
       },
       {
         ac: 'AC-CLOSURE-RELEASE-01',
-        status: releasePassed && input.releasePublished === true ? 'passed' : 'blocked',
+        status:
+          input.live.status === 'passed' && input.releasePublished === true ? 'passed' : 'blocked',
         evidence:
-          releasePassed && input.releasePublished === true
+          input.live.status === 'passed' && input.releasePublished === true
             ? ['Immutable SemVer tag, main and release commit verified after publication']
             : [
                 'Pre-release gate requires local.status=passed and live.status=passed',
