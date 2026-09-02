@@ -1952,7 +1952,7 @@ ${JSON.stringify(reviewerContext(context), null, 2)}`;
 }
 
 function reviewerOutputContract(): string {
-  return `依次读取 plan.md、execution.md、draft-report.md 和存在的 scenario-changes.patch；原始证据先于 Runner 草稿。清理声明必须先通过 read_test_data_cleanup_evidence 读取 Harness 捕获的受控文本证据，或通过 read_evidence_image 实际查看删除后截图，再调用 verify_test_data_cleanup 确认或拒绝；纯 Runner 声明不构成已清理。查看截图只能使用 list_evidence_files 和 read_evidence_image，不能执行命令、读取测试账号或任意路径。
+  return `依次读取 plan.md、execution.md、draft-report.md 和存在的 scenario-changes.patch；原始证据先于 Runner 草稿。必须先调用 list_pending_test_data 获取精确 data ID 和清理声明 evidence IDs；每项清理声明再通过 read_test_data_cleanup_evidence 读取 Harness 捕获的受控文本证据，或通过 read_evidence_image 实际查看全部删除后截图，随后调用 verify_test_data_cleanup 确认或拒绝；纯 Runner 声明不构成已清理。查看截图只能使用 list_evidence_files 和 read_evidence_image，不能执行命令、读取测试账号或任意路径。
 截图不可访问、上传失败、视觉能力不足、清理未确认、场景缺失或影响不明时维持 blocked。零场景只有在 Main · 规划的计划确有依据时才能确认。结束前通过 write_review 写完整 review.md，并明确是否同意最终结果。`;
 }
 
