@@ -112,6 +112,8 @@ let config = makeConfig();
 let archiveRetried = false;
 let nextSubmission = 0;
 let expireNextDashboard = false;
+let allChecksRequested = false;
+let importedYaml = '';
 const responseBodies: string[] = [];
 
 try {
@@ -140,6 +142,19 @@ try {
     await page.getByRole('button', { name: '配置', exact: true }).click();
     await page.getByRole('heading', { name: '模型服务' }).waitFor();
     await page.getByText('已载入 3 个 deepseek 模型', { exact: true }).waitFor();
+    await page.getByRole('heading', { name: '配置文件' }).waitFor();
+    const downloadPromise = page.waitForEvent('download');
+    await page.getByRole('button', { name: '导出 YAML', exact: true }).click();
+    const download = await downloadPromise;
+    assert.equal(download.suggestedFilename(), 'luowang-config.yml');
+    page.once('dialog', (dialog) => void dialog.accept());
+    await page.locator('input[type="file"]').setInputFiles({
+      name: 'luowang-config.yml',
+      mimeType: 'application/yaml',
+      buffer: Buffer.from('version: 1\nharness: {}\nrepository: {}\n'),
+    });
+    await page.getByText('普通配置已从 YAML 原子导入', { exact: false }).waitFor();
+    assert.ok(importedYaml.startsWith('version: 1'));
     await page.getByLabel('Provider Base URL（可选）').fill('https://models.example.test/v1');
     await page.getByLabel('环境说明').fill('尚未保存的环境草稿');
     const providerSection = page.locator('section').filter({ hasText: '模型服务' }).first();
@@ -165,6 +180,38 @@ try {
     await repositorySection.getByRole('button', { name: '保存', exact: true }).click();
     await page.getByText('GitHub 仓库配置已保存', { exact: true }).waitFor();
     assert.ok((await page.getByText('•••••••• · 已安全保存', { exact: true }).count()) > 0);
+    assert.equal(
+      await repositorySection
+        .getByRole('button', { name: '保存并测试 GitHub', exact: true })
+        .count(),
+      1,
+    );
+    await repositorySection.getByRole('button', { name: '保存并测试 GitHub', exact: true }).click();
+    await page.getByText('GitHub 综合检查完成：4/4 项通过', { exact: true }).waitFor();
+    await repositorySection.getByText('4/4 项通过', { exact: true }).waitFor();
+
+    const automationSection = page.locator('section').filter({ hasText: '自动触发' }).first();
+    await automationSection.getByText('自动测试默认关闭', { exact: false }).waitFor();
+    assert.equal(
+      await automationSection.getByRole('checkbox', { name: /新 commit 自动测试/ }).isChecked(),
+      false,
+    );
+    assert.equal(
+      await automationSection
+        .getByRole('spinbutton', { name: /新提交检查间隔（分钟）/ })
+        .isDisabled(),
+      true,
+    );
+
+    const overviewSection = page.locator('section').filter({ hasText: '配置检查总览' }).first();
+    assert.equal(
+      await overviewSection.getByRole('button', { name: '测试全部', exact: true }).count(),
+      1,
+    );
+    await overviewSection.getByRole('button', { name: '测试全部', exact: true }).click();
+    await page.getByText('全部配置检查完成：7/8 项通过', { exact: true }).waitFor();
+    await overviewSection.getByText('测试环境返回 503，请检查部署状态', { exact: true }).waitFor();
+    assert.equal(allChecksRequested, true);
 
     await page.getByRole('button', { name: 'Git 树', exact: true }).click();
     await page.getByRole('heading', { name: '仓库事实与场景' }).waitFor();
@@ -277,6 +324,16 @@ async function installApiFixtures(page: import('playwright').Page): Promise<void
     if (path === '/api/config' && request.method() === 'GET') {
       return fulfillJson(route, config);
     }
+    if (path === '/api/config/export' && request.method() === 'GET') {
+      return fulfillJson(route, {
+        fileName: 'luowang-config.yml',
+        yaml: 'version: 1\nharness: {}\nrepository: {}\n',
+      });
+    }
+    if (path === '/api/config/import' && request.method() === 'POST') {
+      importedYaml = String(readJson(request.postData()).yaml ?? '');
+      return fulfillJson(route, config);
+    }
     if (path === '/api/provider/providers' && request.method() === 'GET') {
       return fulfillJson(route, {
         providers: [
@@ -290,6 +347,20 @@ async function installApiFixtures(page: import('playwright').Page): Promise<void
         provider: url.searchParams.get('provider') ?? config.harness.provider,
         models: makeProviderModels(),
       });
+    }
+    if (path === '/api/connectivity/checks' && request.method() === 'POST') {
+      allChecksRequested = true;
+      const checks = makeChecks();
+      checks[0] = {
+        ...checks[0]!,
+        result: {
+          status: 'failed',
+          message: '测试环境返回 503，请检查部署状态',
+          checkedAt: '2026-08-30T02:01:00.000Z',
+          latencyMs: 24,
+        },
+      };
+      return fulfillJson(route, { checks });
     }
     if (path.startsWith('/api/connectivity/checks/') && request.method() === 'POST') {
       const checkId = path.slice('/api/connectivity/checks/'.length);
@@ -431,9 +502,9 @@ function makeConfig(): ConfigResponse {
       scenarioBranch: 'scenario-testing',
       scenarioMode: 'review-all',
       scenarioLabels: ['core'],
-      pollIntervalSeconds: 60,
+      pollIntervalSeconds: 300,
       cron: '',
-      triggerOnCommit: true,
+      triggerOnCommit: false,
       environmentDescription: 'Cynos 官网非生产测试环境',
       baseUrl: 'https://staging.example.test',
       externalDatabase: '非生产测试数据库（凭据由 Secret Store 提供）',
@@ -508,7 +579,7 @@ function makeChecks(): ConnectivityCheck[] {
     },
     ok('provider-model', '模型 Provider 与模型', 'Provider 可用'),
     ok('github-repository-read', 'GitHub 仓库读取'),
-    ok('github-scenario-branch-write', '场景测试分支非 force 写入'),
+    ok('github-scenario-branch-write', '场景测试分支写入前提'),
     ok('github-pull-request', 'GitHub Pull Request 权限'),
     ok('github-issue', 'GitHub Issue 权限'),
     ok('playwright-mcp', 'Playwright MCP'),
