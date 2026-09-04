@@ -157,7 +157,7 @@ describe('Phase 6 persistent automation', () => {
     });
     configuration.updateRepository({
       repository: 'https://github.com/cynos-ai/cynos-website',
-      pollIntervalSeconds: 60,
+      pollIntervalSeconds: 300,
       cron: '5 * * * *',
       triggerOnCommit: true,
     });
@@ -220,8 +220,9 @@ describe('Phase 6 persistent automation', () => {
     await scheduler.tick(new Date('2026-08-30T00:00:10.000Z'));
     assert.equal(archiveCalls, 1);
     await scheduler.tick(new Date('2026-08-30T00:01:00.000Z'));
-    assert.deepEqual(pollCalls, ['git']);
+    assert.deepEqual(pollCalls, []);
     await scheduler.tick(new Date('2026-08-30T00:05:00.000Z'));
+    assert.equal(pollCalls.includes('git'), true);
     assert.equal(scheduler.status().lastCronKey, '2026-08-30-00-05');
     assert.equal(pollCalls.includes('schedule'), true);
     assert.equal(cleanupCalls, 1);

@@ -24,6 +24,7 @@ import { TestRequestQueueError } from './automation/queue.js';
 import { createRunRecoveryStore, type RunRecoveryStore } from './automation/recovery.js';
 import { createGitPoller } from './automation/poller.js';
 import { createConfigurationStore, type ConfigurationStore } from './configuration.js';
+import { exportConfigurationYaml, parseConfigurationYaml } from './config-transfer.js';
 import { createConnectivityRegistry, type ConnectivityRegistry } from './connectivity.js';
 import { createPlaywrightMcpAdapter, type BrowserMcpAdapter } from './browser/playwright-mcp.js';
 import type { AppConfig } from './config.js';
@@ -300,6 +301,33 @@ export async function createApp(options: AppOptions) {
 
   app.get('/api/config', async (request, reply) => {
     requireAuth(request, auth);
+    return reply.send(makeConfigResponse(configuration, secretStore));
+  });
+
+  app.get('/api/config/export', async (request, reply) => {
+    requireAuth(request, auth);
+    return reply.send({
+      fileName: 'luowang-config.yml',
+      yaml: exportConfigurationYaml({
+        harness: configuration.getHarness(),
+        repository: configuration.getRepository(),
+      }),
+    });
+  });
+
+  app.post('/api/config/import', async (request, reply) => {
+    requireAuth(request, auth);
+    const body = readBody(request);
+    const imported = parseConfigurationYaml(body.yaml);
+    assertRepositoryIdentityMutable(imported.repository, configuration, automation);
+    if (imported.repository.repository.trim() !== '') {
+      validateRepositoryUrl(imported.repository.repository);
+    }
+    options.database.sqlite.transaction(() => {
+      configuration.updateHarness(imported.harness);
+      configuration.updateRepository(imported.repository);
+    })();
+    connectivity.invalidate?.(connectivity.list().map((check) => check.id));
     return reply.send(makeConfigResponse(configuration, secretStore));
   });
 
@@ -722,6 +750,11 @@ export async function createApp(options: AppOptions) {
   app.get('/api/connectivity', async (request, reply) => {
     requireAuth(request, auth);
     return reply.send({ checks: connectivity.list() });
+  });
+
+  app.post('/api/connectivity/checks', async (request, reply) => {
+    requireAuth(request, auth);
+    return reply.send({ checks: await connectivity.runAll() });
   });
 
   app.post('/api/connectivity/checks/:checkId', async (request, reply) => {

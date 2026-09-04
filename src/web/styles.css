@@ -330,6 +330,33 @@ dd {
   background: rgba(234, 179, 8, 0.1);
 }
 
+.notice-neutral {
+  margin: 0;
+  border: 1px solid #2d3850;
+  background: rgba(15, 20, 32, 0.35);
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.file-button {
+  display: inline-flex;
+  align-items: center;
+}
+
+.button-disabled {
+  cursor: wait;
+  opacity: 0.55;
+  pointer-events: none;
+}
+
 .form-grid,
 .secret-grid,
 .agent-grid {
@@ -1488,6 +1515,100 @@ dd {
   margin: 0 0 1rem;
 }
 
+.checkbox-row-leading {
+  align-items: flex-start;
+  margin: 0 0 1rem;
+}
+
+.checkbox-row-leading input {
+  margin-top: 0.25rem;
+}
+
+.checkbox-row-leading span {
+  display: grid;
+  gap: 0.25rem;
+}
+
+.checkbox-row-leading strong {
+  color: #eef1f8;
+}
+
+.checkbox-row-leading small {
+  color: #8995aa;
+  line-height: 1.45;
+}
+
+.github-check-summary {
+  margin-top: 1rem;
+  border: 1px solid #2d3850;
+  border-radius: 0.7rem;
+  background: rgba(15, 20, 32, 0.35);
+}
+
+.github-check-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  border-bottom: 1px solid #2d3850;
+  padding: 0.8rem 1rem;
+}
+
+.github-check-heading > div {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.github-check-heading strong {
+  color: #eef1f8;
+}
+
+.github-check-heading small {
+  color: #66738b;
+}
+
+.github-check-list {
+  display: grid;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.github-check-list li {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+  gap: 0.6rem;
+  padding: 0.75rem 1rem;
+}
+
+.github-check-list li + li {
+  border-top: 1px solid rgba(45, 56, 80, 0.72);
+}
+
+.github-check-list .check-dot {
+  margin-top: 0.32rem;
+}
+
+.github-check-list strong {
+  color: #dce1eb;
+  font-size: 0.8rem;
+}
+
+.github-check-list p,
+.github-check-list small {
+  margin: 0.22rem 0 0;
+  color: #8995aa;
+  font-size: 0.74rem;
+  line-height: 1.45;
+}
+
+.github-check-list small {
+  color: #66738b;
+  font-size: 0.68rem;
+}
+
 @media (max-width: 900px) {
   .site-header {
     align-items: stretch;
@@ -1534,8 +1655,15 @@ dd {
     justify-content: stretch;
   }
 
-  .section-actions .button {
+  .section-actions .button,
+  .section-actions .file-button {
     flex: 1 1 auto;
+    justify-content: center;
+  }
+
+  .github-check-heading {
+    align-items: flex-start;
+    flex-direction: column;
   }
 
   .inline-check {

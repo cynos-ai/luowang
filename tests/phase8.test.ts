@@ -46,6 +46,15 @@ describe('Phase 8 operations console read model', () => {
     assert.equal(login.statusCode, 200);
     const cookie = firstCookie(login.headers['set-cookie']);
 
+    const allChecks = await fixture.app.inject({
+      method: 'POST',
+      url: '/api/connectivity/checks',
+      headers: { cookie },
+    });
+    assert.equal(allChecks.statusCode, 200);
+    assert.equal(allChecks.json().checks.length, 1);
+    assert.equal(allChecks.json().checks[0].result.status, 'ok');
+
     const dashboard = await fixture.app.inject({
       method: 'GET',
       url: '/api/dashboard',
@@ -430,26 +439,28 @@ function fakeRuns(active: RunSummary): RunOrchestrator {
 }
 
 function fakeConnectivity(): ConnectivityRegistry {
-  return {
-    list: () => [
-      {
-        id: 'test-environment-url',
-        label: '测试环境基础 URL',
-        available: true,
-        result: {
-          status: 'ok',
-          message: 'ok',
-          checkedAt: '2026-08-30T01:00:00.000Z',
-          latencyMs: 3,
-        },
+  const checks = [
+    {
+      id: 'test-environment-url',
+      label: '测试环境基础 URL',
+      available: true,
+      result: {
+        status: 'ok' as const,
+        message: 'ok',
+        checkedAt: '2026-08-30T01:00:00.000Z',
+        latencyMs: 3,
       },
-    ],
+    },
+  ];
+  return {
+    list: () => checks,
     run: async (id) => ({
       id,
       label: id,
       available: true,
       result: { status: 'ok', message: 'ok', checkedAt: null, latencyMs: 1 },
     }),
+    runAll: async () => checks,
   };
 }
 
