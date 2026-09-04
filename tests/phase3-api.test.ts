@@ -37,6 +37,14 @@ describe('Phase 3 Run API', () => {
       payload: { request: '未认证请求' },
     });
     assert.equal(anonymousStart.statusCode, 401);
+    assert.equal(
+      (await app.inject({ method: 'GET', url: '/api/provider/providers' })).statusCode,
+      401,
+    );
+    assert.equal(
+      (await app.inject({ method: 'GET', url: '/api/provider/models?provider=openai' })).statusCode,
+      401,
+    );
 
     const login = await app.inject({
       method: 'POST',
@@ -127,6 +135,22 @@ describe('Phase 3 Run API', () => {
     });
     assert.equal(models.statusCode, 200);
     assert.deepEqual(models.json(), { provider: '', models: [] });
+
+    const providers = await app.inject({
+      method: 'GET',
+      url: '/api/provider/providers',
+      headers: { cookie },
+    });
+    assert.equal(providers.statusCode, 200);
+    assert.deepEqual(providers.json(), { providers: [{ id: 'fixture', name: 'Fixture' }] });
+
+    const filteredModels = await app.inject({
+      method: 'GET',
+      url: '/api/provider/models?provider=openai',
+      headers: { cookie },
+    });
+    assert.equal(filteredModels.statusCode, 200);
+    assert.deepEqual(filteredModels.json(), { provider: 'openai', models: [] });
   });
 });
 
@@ -192,6 +216,7 @@ function fakeProvider(): ProviderAdapter {
       throw new Error('not used');
     },
     listModels: async () => [],
+    listProviders: async () => [{ id: 'fixture', name: 'Fixture' }],
     checkConnectivity: async () => ({
       status: 'not_available',
       message: 'not used',

@@ -113,6 +113,10 @@ describe('Phase 8 operations console read model', () => {
     assert.equal(detail.statusCode, 200);
     assert.equal(detail.json().run.artifacts['report.md'], 'safe report');
     assert.equal(detail.json().run.artifacts['plan.md'], 'safe plan');
+    assert.equal(detail.json().run.evidence[0].filename, 'login.png');
+    assert.deepEqual(detail.json().run.blockingReasons, ['fixture execution failed']);
+    assert.deepEqual(detail.json().run.scenarioProgress, { completed: 1, total: 1 });
+    assert.equal(detail.json().run.activities[0].message, '完成场景 AUTH-LOGIN-001');
 
     const current = await fixture.app.inject({
       method: 'GET',
@@ -219,6 +223,27 @@ async function makeFixture(options: { repositoryStatus?: Partial<RepositoryStatu
         issueUrl: 'https://github.com/cynos-ai/cynos-website/issues/21',
       },
     ],
+    evidence: [
+      {
+        id: 'evidence-login',
+        filename: 'login.png',
+        objectKey: `${runId}/login.png`,
+        url: '/api/evidence/fixture-login',
+        contentType: 'image/png',
+        sizeBytes: 128,
+        sha256: 'f'.repeat(64),
+        uploadedAt: '2026-08-30T00:05:00.000Z',
+      },
+    ],
+    blockingReasons: ['fixture execution failed'],
+    scenarioProgress: { completed: 1, total: 1 },
+    activities: [
+      {
+        at: '2026-08-30T00:09:00.000Z',
+        message: '完成场景 AUTH-LOGIN-001',
+        kind: 'info',
+      },
+    ],
   });
   runStore.importCompleted({
     runId: reviewRunId,
@@ -234,6 +259,7 @@ async function makeFixture(options: { repositoryStatus?: Partial<RepositoryStatu
     artifacts: { 'scenario-changes.patch': 'patch', 'report.md': 'blocked report' },
     scenarioResults: [{ id: 'AUTH-LOGIN-001', result: 'blocked' }],
     confirmedBugs: [],
+    blockingReasons: ['等待人工审核场景变更'],
     specialRun: true,
   });
   database.sqlite

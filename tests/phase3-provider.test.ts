@@ -54,6 +54,16 @@ describe('Phase 3 Provider connectivity', () => {
     const unsupportedThinkingResult = await unsupportedThinking.checkConnectivity();
     assert.equal(unsupportedThinkingResult.status, 'failed');
     assert.equal(unsupportedThinkingResult.code, 'THINKING_UNSUPPORTED');
+
+    const unsupportedVision = await makeAdapter({
+      provider: 'openai',
+      key: 'synthetic-key',
+      model: 'gpt-4',
+    });
+    const unsupportedVisionResult = await unsupportedVision.checkConnectivity();
+    assert.equal(unsupportedVisionResult.status, 'failed');
+    assert.equal(unsupportedVisionResult.code, 'VISION_UNSUPPORTED');
+    assert.match(unsupportedVisionResult.message, /Reviewer.*图像输入/);
   });
 
   it('reports an unconfigured API key before attempting a model request', async () => {
@@ -61,6 +71,26 @@ describe('Phase 3 Provider connectivity', () => {
     const result = await adapter.checkConnectivity();
     assert.equal(result.status, 'not_configured');
     assert.equal(result.code, 'AUTH_NOT_CONFIGURED');
+  });
+
+  it('lists the static Provider catalog, filters models, and applies a configured base URL', async () => {
+    const adapter = await makeAdapter({
+      provider: 'openai',
+      baseUrl: 'https://trusted-model-gateway.example.test/v1',
+      model: 'gpt-4',
+    });
+
+    const providers = await adapter.listProviders?.();
+    assert.ok(providers?.some((provider) => provider.id === 'openai'));
+    const models = await adapter.listModels('openai');
+    assert.ok(models.some((model) => model.id === 'gpt-4'));
+    assert.ok(models.every((model) => model.provider === 'openai'));
+
+    const runtime = await adapter.getRuntime();
+    assert.equal(
+      runtime.getModel('openai', 'gpt-4')?.baseUrl,
+      'https://trusted-model-gateway.example.test/v1',
+    );
   });
 
   it('treats omitted extended thinking mappings as unsupported and null as unsupported', () => {
@@ -77,6 +107,7 @@ async function makeAdapter(options: {
   provider: string;
   key?: string;
   model?: string;
+  baseUrl?: string;
   thinking?: 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max';
 }) {
   const dataDirectory = await mkdtemp(join(tmpdir(), 'luowang-phase3-provider-'));
@@ -92,6 +123,7 @@ async function makeAdapter(options: {
   const thinking = options.thinking ?? 'off';
   configuration.updateHarness({
     provider: options.provider,
+    providerBaseUrl: options.baseUrl,
     agents: {
       main: { model, thinking },
       runner: { model, thinking },

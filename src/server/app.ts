@@ -308,6 +308,8 @@ export async function createApp(options: AppOptions) {
     const body = readBody(request);
     assertRepositoryIdentityMutable(body.repository, configuration, automation);
     updateConfiguration(body, configuration, secretStore);
+    if (isJsonRecord(body.harness)) invalidateHarnessChecks(body.harness, connectivity);
+    if (isJsonRecord(body.repository)) invalidateRepositoryChecks(body.repository, connectivity);
     return reply.send(makeConfigResponse(configuration, secretStore));
   });
 
@@ -316,6 +318,7 @@ export async function createApp(options: AppOptions) {
     const body = readBody(request);
     applySecretValues(body.secrets, secretStore);
     configuration.updateHarness(body);
+    invalidateHarnessChecks(body, connectivity);
     return reply.send(makeConfigResponse(configuration, secretStore));
   });
 
@@ -328,6 +331,7 @@ export async function createApp(options: AppOptions) {
       validateRepositoryUrl(body.repository);
     }
     configuration.updateRepository(body);
+    invalidateRepositoryChecks(body, connectivity);
     return reply.send(makeConfigResponse(configuration, secretStore));
   });
 
@@ -439,10 +443,20 @@ export async function createApp(options: AppOptions) {
     return reply.send({ report });
   });
 
-  app.get('/api/provider/models', async (_request, reply) => {
-    requireAuth(_request, auth);
+  app.get('/api/provider/providers', async (request, reply) => {
+    requireAuth(request, auth);
+    return reply.send({ providers: (await provider.listProviders?.()) ?? [] });
+  });
+
+  app.get('/api/provider/models', async (request, reply) => {
+    requireAuth(request, auth);
     const harness = configuration.getHarness();
-    return reply.send({ provider: harness.provider, models: await provider.listModels() });
+    const requestedProvider = readOptionalQuery(request, 'provider')?.trim();
+    const selectedProvider = requestedProvider || harness.provider;
+    return reply.send({
+      provider: selectedProvider,
+      models: await provider.listModels(selectedProvider),
+    });
   });
 
   app.post('/api/runs', async (request, reply) => {
@@ -691,6 +705,12 @@ export async function createApp(options: AppOptions) {
       throw new AppError('SECRET_KEY_INVALID', '不支持的 Secret 项', 400);
     }
     secretStore.delete(key);
+    if (key === 'providerApiKey' || key === 'ossAccessKeyId' || key === 'ossAccessKeySecret') {
+      invalidateHarnessChecks({ secrets: { [key]: true } }, connectivity);
+    }
+    if (key === 'gitToken') {
+      invalidateRepositoryChecks({ secrets: { [key]: true } }, connectivity);
+    }
     return reply.send(makeConfigResponse(configuration, secretStore));
   });
 
@@ -948,6 +968,45 @@ function updateConfiguration(
   }
 }
 
+function invalidateHarnessChecks(body: JsonRecord, connectivity: ConnectivityRegistry): void {
+  const secrets = isJsonRecord(body.secrets) ? body.secrets : {};
+  const checkIds: string[] = [];
+  if (
+    ['provider', 'providerBaseUrl', 'agents'].some((key) => body[key] !== undefined) ||
+    secrets.providerApiKey !== undefined
+  ) {
+    checkIds.push('provider-model');
+  }
+  if (body.mcp !== undefined) checkIds.push('playwright-mcp');
+  if (
+    body.oss !== undefined ||
+    secrets.ossAccessKeyId !== undefined ||
+    secrets.ossAccessKeySecret !== undefined
+  ) {
+    checkIds.push('oss');
+  }
+  connectivity.invalidate?.(checkIds);
+}
+
+function invalidateRepositoryChecks(body: JsonRecord, connectivity: ConnectivityRegistry): void {
+  const secrets = isJsonRecord(body.secrets) ? body.secrets : {};
+  const checkIds: string[] = [];
+  if (
+    body.repository !== undefined ||
+    body.scenarioBranch !== undefined ||
+    secrets.gitToken !== undefined
+  ) {
+    checkIds.push(
+      'github-repository-read',
+      'github-scenario-branch-write',
+      'github-pull-request',
+      'github-issue',
+    );
+  }
+  if (body.baseUrl !== undefined) checkIds.push('test-environment-url');
+  connectivity.invalidate?.(checkIds);
+}
+
 function applySecretValues(value: unknown, secretStore: SecretStore): void {
   if (value === undefined) {
     return;
@@ -1020,6 +1079,10 @@ function isWriteMethod(method: string): boolean {
 
 function readBody(request: FastifyRequest): JsonRecord {
   return readRecord(request.body, '请求体必须是 JSON 对象');
+}
+
+function isJsonRecord(value: unknown): value is JsonRecord {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 function readRecord(value: unknown, message: string): JsonRecord {

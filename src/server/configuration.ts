@@ -59,6 +59,7 @@ class SqliteConfigurationStore implements ConfigurationStore {
     const next: HarnessConfig = {
       language: readText(patch.language, current.language, 'language'),
       provider: readText(patch.provider, current.provider, 'provider'),
+      providerBaseUrl: readProviderBaseUrl(patch.providerBaseUrl, current.providerBaseUrl),
       agents: {
         main: readAgent(agents?.main, current.agents.main, 'agents.main'),
         runner: readAgent(agents?.runner, current.agents.runner, 'agents.runner'),
@@ -193,6 +194,7 @@ function normalizeHarness(
   const defaults: HarnessConfig = {
     language: 'zh-CN',
     provider: '',
+    providerBaseUrl: '',
     agents: {
       main: { model: '', thinking: 'medium' },
       runner: { model: '', thinking: 'medium' },
@@ -213,6 +215,7 @@ function normalizeHarness(
   return {
     language: normalizeText(source.language, defaults.language),
     provider: normalizeText(source.provider, defaults.provider),
+    providerBaseUrl: normalizeProviderBaseUrl(source.providerBaseUrl),
     agents: {
       main: normalizeAgent(agents.main, defaults.agents.main),
       runner: normalizeAgent(agents.runner, defaults.agents.runner),
@@ -322,6 +325,17 @@ function readText(value: unknown, fallback: string, field: string): string {
   return value;
 }
 
+function readProviderBaseUrl(value: unknown, fallback: string): string {
+  const candidate = readText(value, fallback, 'providerBaseUrl').trim();
+  if (candidate === '') return '';
+  if (!isSafeHttpUrl(candidate)) {
+    throw new ConfigurationError(
+      'providerBaseUrl must be an HTTP(S) URL without embedded credentials',
+    );
+  }
+  return candidate;
+}
+
 function readBoolean(value: unknown, fallback: boolean, field: string): boolean {
   if (value === undefined) {
     return fallback;
@@ -375,6 +389,20 @@ function readStringArray(value: unknown, field: string): string[] {
 
 function normalizeText(value: unknown, fallback: string): string {
   return typeof value === 'string' && value.length <= MAX_TEXT_LENGTH ? value : fallback;
+}
+
+function normalizeProviderBaseUrl(value: unknown): string {
+  const candidate = normalizeText(value, '').trim();
+  return candidate !== '' && isSafeHttpUrl(candidate) ? candidate : '';
+}
+
+function isSafeHttpUrl(value: string): boolean {
+  try {
+    const url = new URL(value);
+    return ['http:', 'https:'].includes(url.protocol) && url.username === '' && url.password === '';
+  } catch {
+    return false;
+  }
 }
 
 function normalizeBoolean(value: unknown, fallback: boolean): boolean {
