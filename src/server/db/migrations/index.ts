@@ -5,6 +5,8 @@ import { runArchiveMigration } from './0003-run-archive.js';
 import { automationRecoveryMigration } from './0004-automation-recovery.js';
 import { scenarioLifecycleMigration } from './0005-scenario-lifecycle.js';
 import { closureMergeQueueMigration } from './0006-closure-merge-queue.js';
+import { runObservabilityMigration } from './0007-run-observability.js';
+import { runActivityMigration } from './0008-run-activity.js';
 
 export type { Migration } from './0000-foundation.js';
 
@@ -16,4 +18,6 @@ export const migrations = [
   automationRecoveryMigration,
   scenarioLifecycleMigration,
   closureMergeQueueMigration,
+  runObservabilityMigration,
+  runActivityMigration,
 ];

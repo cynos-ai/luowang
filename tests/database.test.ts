@@ -19,6 +19,15 @@ describe('SQLite foundation', () => {
     const migration = first.sqlite
       .prepare('SELECT version FROM schema_migrations WHERE version = ?')
       .get('0000_foundation') as { version: string };
+    const observabilityMigration = first.sqlite
+      .prepare('SELECT version FROM schema_migrations WHERE version = ?')
+      .get('0007_run_observability') as { version: string };
+    const activityMigration = first.sqlite
+      .prepare('SELECT version FROM schema_migrations WHERE version = ?')
+      .get('0008_run_activity') as { version: string };
+    const runColumns = first.sqlite.prepare(`PRAGMA table_info(run_store_runs)`).all() as Array<{
+      name: string;
+    }>;
     first.close();
 
     const second = initializeDatabase(config);
@@ -28,6 +37,12 @@ describe('SQLite foundation', () => {
     second.close();
 
     assert.equal(migration.version, '0000_foundation');
+    assert.equal(observabilityMigration.version, '0007_run_observability');
+    assert.equal(activityMigration.version, '0008_run_activity');
+    assert.ok(runColumns.some((column) => column.name === 'evidence_json'));
+    assert.ok(runColumns.some((column) => column.name === 'blocking_reasons_json'));
+    assert.ok(runColumns.some((column) => column.name === 'scenario_progress_json'));
+    assert.ok(runColumns.some((column) => column.name === 'activities_json'));
     assert.equal(secondInstance.value, firstInstance.value);
     await rm(dataDir, { recursive: true, force: true });
   });

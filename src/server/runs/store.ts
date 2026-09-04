@@ -2,6 +2,8 @@ import type Database from 'better-sqlite3';
 
 import type {
   ConfirmedBugSummary,
+  EvidenceReference,
+  RunActivity,
   RunResult,
   RunTrigger,
   ScenarioMode,
@@ -30,6 +32,10 @@ export interface CompletedRunImport {
   artifacts: Partial<Record<RunArtifactName, string>>;
   scenarioResults: ScenarioResultSummary[];
   confirmedBugs: ConfirmedBugSummary[];
+  evidence?: EvidenceReference[];
+  blockingReasons?: string[];
+  scenarioProgress?: { completed: number; total: number };
+  activities?: RunActivity[];
   specialRun?: boolean;
   scenarioMode?: ScenarioMode;
   initialization?: boolean;
@@ -73,6 +79,10 @@ export interface StoredRun {
   artifacts: Partial<Record<RunArtifactName, string>>;
   scenarioResults: ScenarioResultSummary[];
   confirmedBugs: ConfirmedBugSummary[];
+  evidence: EvidenceReference[];
+  blockingReasons: string[];
+  scenarioProgress: { completed: number; total: number } | null;
+  activities: RunActivity[];
   issues: StoredRunIssue[];
   specialRun: boolean;
   scenarioMode: ScenarioMode;
@@ -170,6 +180,7 @@ class SqliteRunStore implements RunStore {
             .run(input.request.trim(), timestamp, input.runId);
         }
         this.assertStoredArtifacts(input.runId, input.artifacts);
+        this.mergeCompletionDetails(existing, input, timestamp);
         this.ensureIssueRows(input, timestamp);
         return;
       }
@@ -179,12 +190,13 @@ class SqliteRunStore implements RunStore {
         .prepare(
           `INSERT INTO run_store_runs
            (run_id, status, trigger, request, base_commit, target_commit, included_commits_json,
-            result, scenario_results_json, confirmed_bugs_json, started_at, finished_at,
-            completed_directory, report_path, report_status,
-            report_commit_sha, archive_status, archive_error, progressed, progressed_at,
-            created_at, updated_at, scenario_mode, scenario_status, scenario_commit_sha,
-            scenario_pr_url, scenario_error, initialization)
-           VALUES (?, 'completed', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, 'pending', NULL, 0, NULL, ?, ?, ?, ?, NULL, NULL, NULL, ?)`,
+            result, scenario_results_json, confirmed_bugs_json, evidence_json,
+            blocking_reasons_json, scenario_progress_json, activities_json, started_at,
+            finished_at, completed_directory, report_path, report_status, report_commit_sha,
+            archive_status, archive_error, progressed, progressed_at, created_at, updated_at,
+            scenario_mode, scenario_status, scenario_commit_sha, scenario_pr_url, scenario_error,
+            initialization)
+           VALUES (?, 'completed', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, 'pending', NULL, 0, NULL, ?, ?, ?, ?, NULL, NULL, NULL, ?)`,
         )
         .run(
           input.runId,
@@ -196,6 +208,10 @@ class SqliteRunStore implements RunStore {
           input.result,
           JSON.stringify(input.scenarioResults),
           JSON.stringify(input.confirmedBugs),
+          JSON.stringify(input.evidence ?? []),
+          JSON.stringify(input.blockingReasons ?? []),
+          JSON.stringify(input.scenarioProgress ?? null),
+          JSON.stringify(input.activities ?? []),
           input.startedAt,
           input.finishedAt,
           input.completedDirectory,
@@ -473,6 +489,69 @@ class SqliteRunStore implements RunStore {
     }
   }
 
+  private mergeCompletionDetails(row: RunRow, input: CompletedRunImport, timestamp: string): void {
+    const evidence = input.evidence === undefined ? undefined : JSON.stringify(input.evidence);
+    const blockingReasons =
+      input.blockingReasons === undefined ? undefined : JSON.stringify(input.blockingReasons);
+    const scenarioProgress =
+      input.scenarioProgress === undefined ? undefined : JSON.stringify(input.scenarioProgress);
+    const activities =
+      input.activities === undefined ? undefined : JSON.stringify(input.activities);
+    if (evidence !== undefined && row.evidence_json !== '[]' && row.evidence_json !== evidence) {
+      throw new RunStoreError('RUN_STORE_CONFLICT', `Run evidence 元数据冲突：${input.runId}`);
+    }
+    if (
+      blockingReasons !== undefined &&
+      row.blocking_reasons_json !== '[]' &&
+      row.blocking_reasons_json !== blockingReasons
+    ) {
+      throw new RunStoreError('RUN_STORE_CONFLICT', `Run blocking reasons 冲突：${input.runId}`);
+    }
+    if (
+      scenarioProgress !== undefined &&
+      row.scenario_progress_json !== 'null' &&
+      row.scenario_progress_json !== scenarioProgress
+    ) {
+      throw new RunStoreError('RUN_STORE_CONFLICT', `Run scenario progress 冲突：${input.runId}`);
+    }
+    if (
+      activities !== undefined &&
+      row.activities_json !== '[]' &&
+      row.activities_json !== activities
+    ) {
+      throw new RunStoreError('RUN_STORE_CONFLICT', `Run activities 冲突：${input.runId}`);
+    }
+    if (
+      (evidence !== undefined && row.evidence_json === '[]') ||
+      (blockingReasons !== undefined && row.blocking_reasons_json === '[]') ||
+      (scenarioProgress !== undefined && row.scenario_progress_json === 'null') ||
+      (activities !== undefined && row.activities_json === '[]')
+    ) {
+      this.database
+        .prepare(
+          `UPDATE run_store_runs
+           SET evidence_json = COALESCE(?, evidence_json),
+               blocking_reasons_json = COALESCE(?, blocking_reasons_json),
+               scenario_progress_json = COALESCE(?, scenario_progress_json),
+               activities_json = COALESCE(?, activities_json),
+               updated_at = ?
+           WHERE run_id = ?`,
+        )
+        .run(
+          evidence !== undefined && row.evidence_json === '[]' ? evidence : null,
+          blockingReasons !== undefined && row.blocking_reasons_json === '[]'
+            ? blockingReasons
+            : null,
+          scenarioProgress !== undefined && row.scenario_progress_json === 'null'
+            ? scenarioProgress
+            : null,
+          activities !== undefined && row.activities_json === '[]' ? activities : null,
+          timestamp,
+          input.runId,
+        );
+    }
+  }
+
   private ensureIssueRows(input: CompletedRunImport, timestamp: string): void {
     for (const bug of input.confirmedBugs) {
       this.database
@@ -507,6 +586,10 @@ interface RunRow {
   result: RunResult;
   scenario_results_json: string;
   confirmed_bugs_json: string;
+  evidence_json: string;
+  blocking_reasons_json: string;
+  scenario_progress_json: string;
+  activities_json: string;
   started_at: string;
   finished_at: string;
   completed_directory: string;
@@ -584,6 +667,13 @@ function toStoredRun(
     ),
     scenarioResults: parseJson<ScenarioResultSummary[]>(row.scenario_results_json, []),
     confirmedBugs: parseJson<ConfirmedBugSummary[]>(row.confirmed_bugs_json, []),
+    evidence: parseJson<EvidenceReference[]>(row.evidence_json, []),
+    blockingReasons: parseJson<string[]>(row.blocking_reasons_json, []),
+    scenarioProgress: parseJson<{ completed: number; total: number } | null>(
+      row.scenario_progress_json,
+      null,
+    ),
+    activities: parseJson<RunActivity[]>(row.activities_json, []),
     issues: issues.map(toStoredIssue),
     specialRun: row.report_status === 'not_applicable',
     createdAt: row.created_at,
