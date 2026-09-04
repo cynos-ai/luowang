@@ -18,6 +18,7 @@ import type {
   OperationsRunDetail,
   OperationsRunSummary,
   OperationsScenario,
+  ProviderModelInfo,
   RepositoryHistoryResponse,
   RepositoryStatusResponse,
 } from '../../src/shared/types.js';
@@ -137,14 +138,33 @@ try {
     await page.getByText('数据可能陈旧：GitHub 与 OSS 暂时不可用', { exact: false }).waitFor();
 
     await page.getByRole('button', { name: '配置', exact: true }).click();
-    await page.getByRole('heading', { name: '仓库与测试环境' }).waitFor();
+    await page.getByRole('heading', { name: '模型服务' }).waitFor();
+    await page.getByText('已载入 3 个 deepseek 模型', { exact: true }).waitFor();
+    await page.getByLabel('Provider Base URL（可选）').fill('https://models.example.test/v1');
+    await page.getByLabel('环境说明').fill('尚未保存的环境草稿');
+    const providerSection = page.locator('section').filter({ hasText: '模型服务' }).first();
+    await providerSection.getByRole('button', { name: '保存', exact: true }).click();
+    await page.getByText('模型服务配置已保存', { exact: true }).waitFor();
+    await providerSection.getByText('配置已更新，等待检查', { exact: true }).waitFor();
+    assert.equal(await page.getByLabel('环境说明').inputValue(), '尚未保存的环境草稿');
+    await providerSection.getByRole('button', { name: '保存并测试', exact: true }).click();
+    await page.getByText('模型 Provider 与模型：Provider 可用', { exact: true }).waitFor();
+
+    const reviewerCard = page.locator('.agent-card').filter({ hasText: 'Reviewer' });
+    await reviewerCard.getByText('需要视觉', { exact: true }).waitFor();
+    await reviewerCard.getByLabel('模型').fill('unknown-reviewer-model');
+    await reviewerCard.getByText('未匹配当前 Provider 目录', { exact: false }).waitFor();
+    await reviewerCard.getByLabel('模型').fill('deepseek-v4-flash');
+    await reviewerCard.getByText('该模型不支持图像输入', { exact: false }).waitFor();
+    await reviewerCard.getByLabel('模型').fill('deepseek-v4-flash-vision-exp');
+    await reviewerCard.getByText('视觉', { exact: true }).waitFor();
+
+    await page.getByRole('heading', { name: 'GitHub 仓库' }).waitFor();
     await page.getByLabel('目标仓库').fill('https://github.com/cynos-ai/cynos-website');
-    await page.getByRole('button', { name: '保存仓库配置', exact: true }).click();
-    await page.getByText('仓库与测试环境配置已保存', { exact: true }).waitFor();
-    await page.getByLabel('模型 Provider').fill('deepseek');
-    await page.getByRole('button', { name: '保存 Harness', exact: true }).click();
-    await page.getByText('Harness 配置已保存', { exact: true }).waitFor();
-    assert.ok((await page.getByText('••••••••', { exact: true }).count()) > 0);
+    const repositorySection = page.locator('section').filter({ hasText: 'GitHub 仓库' }).first();
+    await repositorySection.getByRole('button', { name: '保存', exact: true }).click();
+    await page.getByText('GitHub 仓库配置已保存', { exact: true }).waitFor();
+    assert.ok((await page.getByText('•••••••• · 已安全保存', { exact: true }).count()) > 0);
 
     await page.getByRole('button', { name: 'Git 树', exact: true }).click();
     await page.getByRole('heading', { name: '仓库事实与场景' }).waitFor();
@@ -257,6 +277,27 @@ async function installApiFixtures(page: import('playwright').Page): Promise<void
     if (path === '/api/config' && request.method() === 'GET') {
       return fulfillJson(route, config);
     }
+    if (path === '/api/provider/providers' && request.method() === 'GET') {
+      return fulfillJson(route, {
+        providers: [
+          { id: 'deepseek', name: 'DeepSeek' },
+          { id: 'openai', name: 'OpenAI' },
+        ],
+      });
+    }
+    if (path === '/api/provider/models' && request.method() === 'GET') {
+      return fulfillJson(route, {
+        provider: url.searchParams.get('provider') ?? config.harness.provider,
+        models: makeProviderModels(),
+      });
+    }
+    if (path.startsWith('/api/connectivity/checks/') && request.method() === 'POST') {
+      const checkId = path.slice('/api/connectivity/checks/'.length);
+      const check = makeChecks().find((item) => item.id === checkId);
+      return check
+        ? fulfillJson(route, check)
+        : fulfillJson(route, { error: { message: 'Check not found' } }, 404);
+    }
     if (path === '/api/config/repository' && request.method() === 'PUT') {
       const body = readJson(request.postData());
       const repositoryPatch = { ...body };
@@ -368,6 +409,7 @@ function makeConfig(): ConfigResponse {
     harness: {
       language: 'zh-CN',
       provider: 'deepseek',
+      providerBaseUrl: '',
       agents: {
         main: { model: 'deepseek-v4-flash', thinking: 'medium' },
         runner: { model: 'deepseek-v4-flash', thinking: 'medium' },
@@ -408,7 +450,50 @@ function makeConfig(): ConfigResponse {
   };
 }
 
+function makeProviderModels(): ProviderModelInfo[] {
+  return [
+    {
+      provider: 'deepseek',
+      id: 'deepseek-v4-flash',
+      name: 'DeepSeek V4 Flash',
+      reasoning: true,
+      input: ['text'],
+      thinkingLevels: ['off', 'low', 'medium', 'high'],
+      available: true,
+    },
+    {
+      provider: 'deepseek',
+      id: 'deepseek-v4-flash-vision-exp',
+      name: 'DeepSeek V4 Flash Vision',
+      reasoning: true,
+      input: ['text', 'image'],
+      thinkingLevels: ['off', 'low', 'medium', 'high'],
+      available: true,
+    },
+    {
+      provider: 'deepseek',
+      id: 'deepseek-chat',
+      name: 'DeepSeek Chat',
+      reasoning: false,
+      input: ['text'],
+      thinkingLevels: ['off'],
+      available: true,
+    },
+  ];
+}
+
 function makeChecks(): ConnectivityCheck[] {
+  const ok = (id: string, label: string, message = '配置可用'): ConnectivityCheck => ({
+    id,
+    label,
+    available: true,
+    result: {
+      status: 'ok',
+      message,
+      checkedAt: '2026-08-30T02:00:00.000Z',
+      latencyMs: 12,
+    },
+  });
   return [
     {
       id: 'test-environment-url',
@@ -421,17 +506,13 @@ function makeChecks(): ConnectivityCheck[] {
         latencyMs: 12,
       },
     },
-    {
-      id: 'provider-model',
-      label: '模型 Provider 与模型',
-      available: true,
-      result: {
-        status: 'ok',
-        message: 'Provider 可用',
-        checkedAt: '2026-08-30T02:00:00.000Z',
-        latencyMs: 20,
-      },
-    },
+    ok('provider-model', '模型 Provider 与模型', 'Provider 可用'),
+    ok('github-repository-read', 'GitHub 仓库读取'),
+    ok('github-scenario-branch-write', '场景测试分支非 force 写入'),
+    ok('github-pull-request', 'GitHub Pull Request 权限'),
+    ok('github-issue', 'GitHub Issue 权限'),
+    ok('playwright-mcp', 'Playwright MCP'),
+    ok('oss', 'OSS 测试对象读写'),
   ];
 }
 

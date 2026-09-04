@@ -4,6 +4,7 @@ import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
+import type Database from 'better-sqlite3';
 import pino from 'pino';
 import { afterEach, describe, it } from 'vitest';
 
@@ -62,7 +63,9 @@ describe('Phase 1 secure console', () => {
     });
     assert.equal(configBefore.statusCode, 200);
     assert.equal(configBefore.json().repository.scenarioBranch, 'scenario-testing');
+    assert.equal(configBefore.json().harness.providerBaseUrl, '');
 
+    seedConnectivity(database.sqlite, ['provider-model', 'oss', 'playwright-mcp']);
     const secretId = 'synthetic-oss-access-id';
     const secretValue = 'synthetic-oss-secret-value';
     const update = await app.inject({
@@ -71,6 +74,7 @@ describe('Phase 1 secure console', () => {
       headers: { cookie },
       payload: {
         provider: 'test-provider',
+        providerBaseUrl: 'https://models.example.test/v1',
         oss: {
           endpoint: 'https://object-storage.example.test',
           bucket: 'test-bucket',
@@ -81,8 +85,41 @@ describe('Phase 1 secure console', () => {
     assert.equal(update.statusCode, 200);
     assert.equal(update.body.includes(secretId), false);
     assert.equal(update.body.includes(secretValue), false);
+    assert.equal(update.json().harness.providerBaseUrl, 'https://models.example.test/v1');
     assert.equal(update.json().secrets.ossAccessKeyId.configured, true);
     assert.equal(update.json().secrets.ossAccessKeySecret.masked, '••••••••');
+    assert.deepEqual(
+      database.sqlite
+        .prepare(
+          `SELECT check_id FROM connectivity_check_results
+           WHERE check_id IN ('provider-model', 'oss', 'playwright-mcp') ORDER BY check_id`,
+        )
+        .all(),
+      [{ check_id: 'playwright-mcp' }],
+    );
+
+    const mcpUpdate = await app.inject({
+      method: 'PUT',
+      url: '/api/config/harness',
+      headers: { cookie },
+      payload: { mcp: { enabled: false } },
+    });
+    assert.equal(mcpUpdate.statusCode, 200);
+    assert.equal(
+      database.sqlite
+        .prepare(`SELECT COUNT(*) AS count FROM connectivity_check_results`)
+        .get<{ count: number }>()?.count,
+      0,
+    );
+
+    const invalidProviderUrl = await app.inject({
+      method: 'PUT',
+      url: '/api/config/harness',
+      headers: { cookie },
+      payload: { providerBaseUrl: 'https://embedded:secret@models.example.test/v1' },
+    });
+    assert.equal(invalidProviderUrl.statusCode, 400);
+    assert.equal(invalidProviderUrl.body.includes('secret'), false);
 
     const emptyOverwrite = await app.inject({
       method: 'PUT',
@@ -117,6 +154,31 @@ describe('Phase 1 secure console', () => {
     });
     assert.equal(wrongOrigin.statusCode, 403);
     assert.equal(wrongOrigin.json().error.code, 'ORIGIN_FORBIDDEN');
+
+    seedConnectivity(database.sqlite, [
+      'github-repository-read',
+      'github-scenario-branch-write',
+      'github-pull-request',
+      'github-issue',
+    ]);
+    const gitToken = 'synthetic-github-token';
+    const repositoryUpdate = await app.inject({
+      method: 'PUT',
+      url: '/api/config/repository',
+      headers: { cookie },
+      payload: {
+        repository: 'https://github.com/example/project',
+        secrets: { gitToken },
+      },
+    });
+    assert.equal(repositoryUpdate.statusCode, 200);
+    assert.equal(repositoryUpdate.body.includes(gitToken), false);
+    assert.equal(
+      database.sqlite
+        .prepare(`SELECT COUNT(*) AS count FROM connectivity_check_results`)
+        .get<{ count: number }>()?.count,
+      0,
+    );
 
     const checks = await app.inject({
       method: 'GET',
@@ -309,6 +371,24 @@ describe('Phase 1 secure console', () => {
     assert.equal(result.statusCode, 200);
     assert.equal(result.json().result.status, 'ok');
     assert.equal(result.json().result.message, '测试环境可访问');
+
+    const changed = await app.inject({
+      method: 'PUT',
+      url: '/api/config/repository',
+      headers: { cookie },
+      payload: { baseUrl: `http://127.0.0.1:${address.port}/changed` },
+    });
+    assert.equal(changed.statusCode, 200);
+    const invalidated = await app.inject({
+      method: 'GET',
+      url: '/api/connectivity/checks',
+      headers: { cookie },
+    });
+    assert.equal(
+      invalidated.json().checks.find((check: { id: string }) => check.id === 'test-environment-url')
+        .result.status,
+      'not_checked',
+    );
   });
 });
 
@@ -325,6 +405,15 @@ async function makeApp(options: { password?: string; masterKey?: string } = {}) 
   const app = await createApp({ config, database, logger: pino({ level: 'silent' }) });
   cleanup.push(async () => app.close());
   return { app, database };
+}
+
+function seedConnectivity(database: Database.Database, checkIds: string[]): void {
+  const statement = database.prepare(
+    `INSERT OR REPLACE INTO connectivity_check_results
+       (check_id, status, message, checked_at, latency_ms)
+     VALUES (?, 'ok', 'fixture check passed', '2026-09-04T00:00:00.000Z', 1)`,
+  );
+  for (const checkId of checkIds) statement.run(checkId);
 }
 
 function readSessionCookie(value: string | string[] | undefined): string {
