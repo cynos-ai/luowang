@@ -25,6 +25,7 @@ const ADAPTER_CHECKS = [
 export interface ConnectivityRegistry {
   list(): ConnectivityCheck[];
   run(checkId: string): Promise<ConnectivityCheck>;
+  invalidate?(checkIds: readonly string[]): void;
 }
 
 interface StoredResult {
@@ -105,6 +106,15 @@ class DefaultConnectivityRegistry implements ConnectivityRegistry {
           : emptyResult('not_available', '对应能力尚未提供'),
       },
     ];
+  }
+
+  invalidate(checkIds: readonly string[]): void {
+    const uniqueIds = [...new Set(checkIds)];
+    if (uniqueIds.length === 0) return;
+    const placeholders = uniqueIds.map(() => '?').join(', ');
+    this.database
+      .prepare(`DELETE FROM connectivity_check_results WHERE check_id IN (${placeholders})`)
+      .run(...uniqueIds);
   }
 
   async run(checkId: string): Promise<ConnectivityCheck> {

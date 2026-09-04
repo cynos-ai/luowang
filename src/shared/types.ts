@@ -28,6 +28,7 @@ export interface AgentConfig {
 export interface HarnessConfig {
   language: string;
   provider: string;
+  providerBaseUrl: string;
   agents: {
     main: AgentConfig;
     runner: AgentConfig;
@@ -118,6 +119,7 @@ export interface ConnectivityResult {
     | 'AUTHENTICATION_FAILED'
     | 'PROVIDER_NOT_FOUND'
     | 'MODEL_NOT_FOUND'
+    | 'VISION_UNSUPPORTED'
     | 'THINKING_UNSUPPORTED'
     | 'REQUEST_FAILED';
 }
@@ -127,6 +129,21 @@ export interface ConnectivityCheck {
   label: string;
   available: boolean;
   result: ConnectivityResult;
+}
+
+export interface ProviderInfo {
+  id: string;
+  name: string;
+}
+
+export interface ProviderModelInfo {
+  provider: string;
+  id: string;
+  name: string;
+  reasoning: boolean;
+  input: string[];
+  thinkingLevels: ThinkingLevel[];
+  available: boolean;
 }
 
 export type ScenarioStatus = 'draft' | 'approved' | 'deprecated';

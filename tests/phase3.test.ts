@@ -10,7 +10,7 @@ import { afterEach, describe, it } from 'vitest';
 
 import type { AgentToolResult } from '@earendil-works/pi-coding-agent';
 import { createConfigurationStore } from '../src/server/configuration.js';
-import { loadConfig } from '../src/server/config.js';
+import { DEFAULT_VERSION, loadConfig } from '../src/server/config.js';
 import { initializeDatabase } from '../src/server/db/migrate.js';
 import { createRunOrchestrator, type RunOrchestrator } from '../src/server/runs/orchestrator.js';
 import { createControlledCommandRunner } from '../src/server/runs/command-runner.js';
@@ -85,7 +85,7 @@ describe('Phase 3 agent run', () => {
       );
       for (const version of input.roleInstructionVersions) {
         assert.match(version.sha256, /^[a-f0-9]{64}$/);
-        assert.equal(version.applicationVersion, '0.1.0');
+        assert.equal(version.applicationVersion, DEFAULT_VERSION);
         assert.equal(version.formatVersion, '1');
       }
     }

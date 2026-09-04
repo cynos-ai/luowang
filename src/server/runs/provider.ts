@@ -1,4 +1,10 @@
-import type { ConnectivityResult, HarnessConfig, ThinkingLevel } from '../../shared/types.js';
+import type {
+  ConnectivityResult,
+  HarnessConfig,
+  ProviderInfo,
+  ProviderModelInfo,
+  ThinkingLevel,
+} from '../../shared/types.js';
 import type { ConfigurationStore } from '../configuration.js';
 import type { SecretStore } from '../security/secret-store.js';
 import { ModelRuntime } from '@earendil-works/pi-coding-agent';
@@ -16,20 +22,11 @@ const THINKING_LEVELS: readonly ThinkingLevel[] = [
 
 export type PiModel = NonNullable<ReturnType<ModelRuntime['getModel']>>;
 
-export interface ProviderModelInfo {
-  provider: string;
-  id: string;
-  name: string;
-  reasoning: boolean;
-  input: string[];
-  thinkingLevels: ThinkingLevel[];
-  available: boolean;
-}
-
 export interface ProviderAdapter {
   getRuntime(): Promise<ModelRuntime>;
   resolveModel(role: AgentRole): Promise<PiModel>;
-  listModels(): Promise<ProviderModelInfo[]>;
+  listModels(provider?: string): Promise<ProviderModelInfo[]>;
+  listProviders?(): Promise<ProviderInfo[]>;
   checkConnectivity(): Promise<ConnectivityResult>;
 }
 
@@ -38,6 +35,7 @@ export class ProviderError extends Error {
     | 'PROVIDER_NOT_CONFIGURED'
     | 'PROVIDER_NOT_FOUND'
     | 'MODEL_NOT_FOUND'
+    | 'VISION_UNSUPPORTED'
     | 'THINKING_UNSUPPORTED'
     | 'AUTHENTICATION_FAILED';
 
@@ -58,6 +56,8 @@ export function createProviderAdapter(
 class PiProviderAdapter implements ProviderAdapter {
   private runtime: ModelRuntime | undefined;
   private runtimeProvider: string | undefined;
+  private runtimeProviderBaseUrl: string | undefined;
+  private catalogRuntime: ModelRuntime | undefined;
   private readonly credentials = new MemoryCredentialStore();
 
   constructor(
@@ -66,17 +66,29 @@ class PiProviderAdapter implements ProviderAdapter {
   ) {}
 
   async getRuntime(): Promise<ModelRuntime> {
-    const provider = this.configuration.getHarness().provider.trim();
+    const harness = this.configuration.getHarness();
+    const provider = harness.provider.trim();
+    const providerBaseUrl = harness.providerBaseUrl.trim();
     if (!provider) throw new ProviderError('PROVIDER_NOT_CONFIGURED', '模型 Provider 尚未配置');
+    if (this.runtimeProvider && this.runtimeProvider !== provider) {
+      await this.credentials.delete(this.runtimeProvider);
+    }
     await this.syncCredential(provider);
-    if (!this.runtime || this.runtimeProvider !== provider) {
-      this.runtime = await ModelRuntime.create({
-        credentials: this.credentials,
-        modelsPath: null,
-        refreshOnCreate: false,
-        allowModelNetwork: false,
-      });
+    if (
+      !this.runtime ||
+      this.runtimeProvider !== provider ||
+      this.runtimeProviderBaseUrl !== providerBaseUrl
+    ) {
+      const runtime = await this.createStaticRuntime(this.credentials);
+      if (providerBaseUrl !== '') {
+        if (!runtime.getProvider(provider)) {
+          throw new ProviderError('PROVIDER_NOT_FOUND', `模型 Provider 不存在：${provider}`);
+        }
+        runtime.registerProvider(provider, { baseUrl: providerBaseUrl });
+      }
+      this.runtime = runtime;
       this.runtimeProvider = provider;
+      this.runtimeProviderBaseUrl = providerBaseUrl;
     }
     return this.runtime;
   }
@@ -100,14 +112,17 @@ class PiProviderAdapter implements ProviderAdapter {
     return model;
   }
 
-  async listModels(): Promise<ProviderModelInfo[]> {
-    const harness = this.configuration.getHarness();
-    const provider = harness.provider.trim();
+  async listModels(requestedProvider?: string): Promise<ProviderModelInfo[]> {
+    const configuredProvider = this.configuration.getHarness().provider.trim();
+    const provider = requestedProvider?.trim() || configuredProvider;
     if (!provider) return [];
-    const runtime = await this.getRuntime();
-    const auth = this.secretStore.get('providerApiKey')
-      ? await runtime.checkAuth(provider)
-      : undefined;
+    const runtime =
+      provider === configuredProvider ? await this.getRuntime() : await this.getCatalogRuntime();
+    if (!runtime.getProvider(provider)) return [];
+    const auth =
+      provider === configuredProvider && this.secretStore.get('providerApiKey')
+        ? await runtime.checkAuth(provider)
+        : undefined;
     return runtime.getModels(provider).map((model) => ({
       provider: model.provider,
       id: model.id,
@@ -117,6 +132,14 @@ class PiProviderAdapter implements ProviderAdapter {
       thinkingLevels: supportedThinkingLevels(model),
       available: auth !== undefined,
     }));
+  }
+
+  async listProviders(): Promise<ProviderInfo[]> {
+    const runtime = await this.getCatalogRuntime();
+    return runtime
+      .getProviders()
+      .map((provider) => ({ id: provider.id, name: provider.name }))
+      .sort((left, right) => left.name.localeCompare(right.name));
   }
 
   async checkConnectivity(): Promise<ConnectivityResult> {
@@ -163,6 +186,15 @@ class PiProviderAdapter implements ProviderAdapter {
           'AUTHENTICATION_FAILED',
         );
       }
+      const reviewerModel = models.find((item) => item.role === 'reviewer')?.model;
+      if (!reviewerModel?.input.some((input) => input.toLowerCase() === 'image')) {
+        return result(
+          'failed',
+          'Reviewer 模型不支持图像输入，无法审核截图证据',
+          startedAt,
+          'VISION_UNSUPPORTED',
+        );
+      }
 
       await runtime.completeSimple(
         mainModel,
@@ -178,6 +210,9 @@ class PiProviderAdapter implements ProviderAdapter {
       if (error instanceof ProviderError) {
         if (error.code === 'MODEL_NOT_FOUND') {
           return result('failed', error.message, startedAt, 'MODEL_NOT_FOUND');
+        }
+        if (error.code === 'VISION_UNSUPPORTED') {
+          return result('failed', error.message, startedAt, 'VISION_UNSUPPORTED');
         }
         if (error.code === 'THINKING_UNSUPPORTED') {
           return result('failed', error.message, startedAt, 'THINKING_UNSUPPORTED');
@@ -213,6 +248,20 @@ class PiProviderAdapter implements ProviderAdapter {
     }
     assertThinkingSupported(model, agent.thinking, role);
     return model;
+  }
+
+  private async getCatalogRuntime(): Promise<ModelRuntime> {
+    this.catalogRuntime ??= await this.createStaticRuntime(new MemoryCredentialStore());
+    return this.catalogRuntime;
+  }
+
+  private async createStaticRuntime(credentials: MemoryCredentialStore): Promise<ModelRuntime> {
+    return ModelRuntime.create({
+      credentials,
+      modelsPath: null,
+      refreshOnCreate: false,
+      allowModelNetwork: false,
+    });
   }
 
   private async syncCredential(provider: string): Promise<void> {
