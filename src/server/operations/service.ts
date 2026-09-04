@@ -442,6 +442,13 @@ function mergeRun(runtimeRuns: RunSummary[], storedRuns: StoredRun[]): Operation
         summary.artifactNames.length > 0
           ? summary.artifactNames
           : Object.keys(stored?.artifacts ?? {}),
+      evidence: summary.evidence ?? stored?.evidence,
+      blockingReasons: summary.blockingReasons ?? stored?.blockingReasons,
+      scenarioProgress: summary.scenarioProgress ?? stored?.scenarioProgress ?? undefined,
+      activities:
+        summary.activities && summary.activities.length > 0
+          ? summary.activities
+          : stored?.activities,
       scenarioMode: summary.scenarioMode ?? stored?.scenarioMode,
       initialization: summary.initialization ?? stored?.initialization,
       scenarioPrUrl: summary.scenarioPrUrl ?? stored?.scenarioPrUrl,
@@ -468,6 +475,10 @@ function storedToSummary(stored: StoredRun): RunSummary {
     finishedAt: stored.finishedAt,
     errorMessage: stored.archiveError,
     artifactNames: Object.keys(stored.artifacts),
+    evidence: stored.evidence,
+    blockingReasons: stored.blockingReasons,
+    scenarioProgress: stored.scenarioProgress ?? undefined,
+    activities: stored.activities,
     scenarioMode: stored.scenarioMode,
     initialization: stored.initialization,
     scenarioPrUrl: stored.scenarioPrUrl,
