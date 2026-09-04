@@ -358,6 +358,11 @@ describe('Closure 6 acceptance status layering', () => {
     assert.match(packageJson.scripts['test:acceptance:release'] ?? '', /closure\.ts release/);
     const workflow = await readFile('.github/workflows/quality.yml', 'utf8');
     assert.match(workflow, /timeout-minutes:\s*60/);
+    assert.match(workflow, /cancel-in-progress:\s*true/);
+    assert.match(workflow, /docker\/setup-buildx-action@v3/);
+    assert.match(workflow, /docker\/build-push-action@v6/);
+    assert.match(workflow, /cache-from:\s*(?:\||type=gha)/);
+    assert.match(workflow, /cache-to:\s*type=gha,mode=max/);
     assert.match(workflow, /npm run test:acceptance:local/);
     assert.doesNotMatch(workflow, /npm run test:acceptance:(?:live|release)/);
     const dockerignore = await readFile('.dockerignore', 'utf8');
