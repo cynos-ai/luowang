@@ -152,6 +152,9 @@ class SqliteConfigurationStore implements ConfigurationStore {
         'externalDatabase',
       ),
     };
+    if (next.triggerOnCommit && next.pollIntervalSeconds < 300) {
+      next.pollIntervalSeconds = 300;
+    }
     this.write(REPOSITORY_KEY, next);
     return next;
   }
@@ -250,6 +253,8 @@ function normalizeHarness(
 function normalizeRepository(value: unknown): RepositoryConfig {
   const source = isRecord(value) ? value : {};
   const storedMode = source.scenarioMode === 'pr-required' ? 'review-all' : source.scenarioMode;
+  const triggerOnCommit = normalizeBoolean(source.triggerOnCommit, false);
+  const storedPollInterval = normalizeInteger(source.pollIntervalSeconds, 300, 0, 31_536_000);
   return {
     repository: normalizeText(source.repository, ''),
     scenarioBranch: normalizeText(source.scenarioBranch, 'scenario-testing'),
@@ -259,9 +264,9 @@ function normalizeRepository(value: unknown): RepositoryConfig {
       'review-all',
     ]) as ScenarioMode,
     scenarioLabels: normalizeStringArray(source.scenarioLabels),
-    pollIntervalSeconds: normalizeInteger(source.pollIntervalSeconds, 60, 0, 31_536_000),
+    pollIntervalSeconds: triggerOnCommit && storedPollInterval < 300 ? 300 : storedPollInterval,
     cron: normalizeText(source.cron, ''),
-    triggerOnCommit: normalizeBoolean(source.triggerOnCommit, false),
+    triggerOnCommit,
     environmentDescription: normalizeText(source.environmentDescription, ''),
     baseUrl: normalizeText(source.baseUrl, ''),
     externalDatabase: normalizeText(source.externalDatabase, ''),

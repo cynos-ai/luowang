@@ -13,12 +13,14 @@ import type {
 } from '../../shared/types';
 import { requestJson, toUserMessage } from '../api';
 import {
+  checkStatusLabel,
   ConnectivityResult,
   Field,
   ModelCapabilities,
   SecretField,
   SectionCard,
 } from '../components/FormControls';
+import { ConfigurationTransferSection } from './ConfigurationTransferSection';
 
 const SECRET_FIELDS: Record<SecretKey, { key: SecretKey; label: string }> = {
   providerApiKey: { key: 'providerApiKey', label: 'Provider API Key' },
@@ -204,8 +206,32 @@ export function SettingsPage({
       `/api/connectivity/checks/${encodeURIComponent(checkId)}`,
       { method: 'POST' },
     );
-    setChecks((current) => [...current.filter((item) => item.id !== next.id), next]);
+    setChecks((current) => replaceChecks(current, [next]));
     onMessage(`${next.label}：${next.result.message}`);
+  };
+
+  const runChecks = async (checkIds: readonly string[]) => {
+    const results: ConnectivityCheck[] = [];
+    for (const checkId of checkIds) {
+      results.push(
+        await requestJson<ConnectivityCheck>(
+          `/api/connectivity/checks/${encodeURIComponent(checkId)}`,
+          { method: 'POST' },
+        ),
+      );
+    }
+    setChecks((current) => replaceChecks(current, results));
+    return results;
+  };
+
+  const runAllChecks = async () => {
+    const response = await requestJson<{ checks: ConnectivityCheck[] }>(
+      '/api/connectivity/checks',
+      { method: 'POST' },
+    );
+    setChecks(response.checks);
+    const passed = response.checks.filter((check) => check.result.status === 'ok').length;
+    onMessage(`全部配置检查完成：${passed}/${response.checks.length} 项通过`);
   };
 
   const deleteSecret = async (secretKey: SecretKey) => {
@@ -235,6 +261,43 @@ export function SettingsPage({
           并重启服务。
         </p>
       )}
+
+      <ConfigurationTransferSection
+        busy={busy}
+        onExport={() =>
+          void execute('config-export', async () => {
+            const response = await requestJson<{ fileName: string; yaml: string }>(
+              '/api/config/export',
+            );
+            downloadTextFile(response.fileName, response.yaml);
+            onMessage('普通配置 YAML 已导出；Secret 未包含在文件中');
+          })
+        }
+        onImport={(file) => {
+          if (
+            !window.confirm(
+              '导入会替换当前普通配置并清除旧连接结果，但不会覆盖或删除任何 Secret。是否继续？',
+            )
+          ) {
+            return;
+          }
+          void execute('config-import', async () => {
+            const yaml = await file.text();
+            const next = await requestJson<ConfigResponse>('/api/config/import', {
+              method: 'POST',
+              body: JSON.stringify({ yaml }),
+            });
+            const checkResponse = await requestJson<{ checks: ConnectivityCheck[] }>(
+              '/api/connectivity/checks',
+            );
+            applyConfig(next);
+            setHarness(next.harness);
+            setRepository(next.repository);
+            setChecks(checkResponse.checks);
+            onMessage('普通配置已从 YAML 原子导入；请点击“测试全部”重新验证');
+          });
+        }}
+      />
 
       <ProviderSection
         harness={harness}
@@ -352,13 +415,9 @@ export function SettingsPage({
         onSaveAndCheck={() =>
           void execute('repository-check', async () => {
             await saveRepository(repositoryIdentityPatch(repository), ['gitToken']);
-            for (const checkId of GITHUB_CHECK_IDS) await runCheck(checkId);
-          })
-        }
-        onRunCheck={(checkId) =>
-          void execute(`check-${checkId}`, async () => {
-            await saveRepository(repositoryIdentityPatch(repository), ['gitToken']);
-            await runCheck(checkId);
+            const results = await runChecks(GITHUB_CHECK_IDS);
+            const passed = results.filter((check) => check.result.status === 'ok').length;
+            onMessage(`GitHub 综合检查完成：${passed}/${results.length} 项通过`);
           })
         }
       />
@@ -398,7 +457,7 @@ export function SettingsPage({
       <ConnectivityOverview
         checks={checks}
         busy={busy}
-        onRun={(checkId) => void execute(`check-${checkId}`, () => runCheck(checkId))}
+        onRunAll={() => void execute('checks-all', runAllChecks)}
       />
 
       <PasswordSection
@@ -950,7 +1009,6 @@ function RepositorySection({
   onDeleteSecret,
   onSave,
   onSaveAndCheck,
-  onRunCheck,
 }: {
   repository: RepositoryConfig;
   secretDraft: Record<SecretKey, string>;
@@ -962,21 +1020,20 @@ function RepositorySection({
   onDeleteSecret: () => void;
   onSave: () => void;
   onSaveAndCheck: () => void;
-  onRunCheck: (checkId: string) => void;
 }) {
   return (
     <SectionCard
       id="repository-title"
       eyebrow="GITHUB PROJECT"
       title="GitHub 仓库"
-      description="一个罗网实例只连接一个可信目标仓库。写入检查坚持 non-force，不制造测试 PR 或 Issue。"
+      description="一个罗网实例只连接一个可信目标仓库。一次执行四项无副作用检查，不制造测试 PR、Issue 或远端分支。"
       actions={
         <>
           <button className="button button-secondary" disabled={busy !== null} onClick={onSave}>
             {busy === 'repository-save' ? '保存中…' : '保存'}
           </button>
           <button className="button" disabled={busy !== null} onClick={onSaveAndCheck}>
-            {busy === 'repository-check' ? '检查中…' : '保存并检查全部'}
+            {busy === 'repository-check' ? '检查中…' : '保存并测试 GitHub'}
           </button>
         </>
       }
@@ -1035,18 +1092,12 @@ function RepositorySection({
           onDelete={onDeleteSecret}
         />
       </div>
-      <div className="connection-grid">
-        {GITHUB_CHECK_IDS.map((checkId) => (
-          <ConnectivityResult
-            key={checkId}
-            check={findCheck(checks, checkId)}
-            busy={busy === `check-${checkId}`}
-            disabled={busy !== null}
-            onRun={() => onRunCheck(checkId)}
-            compact
-          />
-        ))}
-      </div>
+      <GitHubCheckSummary
+        checks={GITHUB_CHECK_IDS.map((checkId) => findCheck(checks, checkId)).filter(
+          (check): check is ConnectivityCheck => check !== undefined,
+        )}
+        busy={busy === 'repository-check'}
+      />
     </SectionCard>
   );
 }
@@ -1145,70 +1196,133 @@ function AutomationSection({
       id="automation-title"
       eyebrow="AUTOMATION"
       title="自动触发"
-      description="配置轮询和可选 Cron；0 秒表示关闭轮询。"
+      description="自动测试默认关闭。新提交检查只负责发现变化后创建 Run，不会按间隔无条件重复测试。"
       actions={
         <button className="button button-secondary" disabled={busy !== null} onClick={onSave}>
           {busy === 'automation-save' ? '保存中…' : '保存'}
         </button>
       }
     >
-      <Field label="Poll 间隔（秒）" hint="建议至少 30 秒；0 表示不轮询">
-        <input
-          type="number"
-          min="0"
-          max="31536000"
-          value={repository.pollIntervalSeconds}
-          onChange={(event) =>
-            onChange({ ...repository, pollIntervalSeconds: Number(event.target.value) })
-          }
-        />
-      </Field>
-      <Field label="Cron" hint="例如 0 2 * * * 表示每天 02:00；留空不启用">
-        <input
-          value={repository.cron}
-          onChange={(event) => onChange({ ...repository, cron: event.target.value })}
-          placeholder="0 2 * * *"
-        />
-      </Field>
-      <label className="checkbox-row">
+      <label className="checkbox-row checkbox-row-leading">
         <input
           type="checkbox"
           checked={repository.triggerOnCommit}
-          onChange={(event) => onChange({ ...repository, triggerOnCommit: event.target.checked })}
+          onChange={(event) =>
+            onChange({
+              ...repository,
+              triggerOnCommit: event.target.checked,
+              pollIntervalSeconds:
+                event.target.checked && repository.pollIntervalSeconds < 300
+                  ? 300
+                  : repository.pollIntervalSeconds,
+            })
+          }
         />
-        新 commit 自动进入顺序队列
+        <span>
+          <strong>新 commit 自动测试</strong>
+          <small>启用后按下方间隔检查场景测试分支，有可测试提交时才进入顺序队列。</small>
+        </span>
       </label>
+      <Field
+        label="新提交检查间隔（分钟）"
+        hint={repository.triggerOnCommit ? '最短 5 分钟' : '启用“新 commit 自动测试”后可编辑'}
+      >
+        <input
+          type="number"
+          min="5"
+          max="525600"
+          step="1"
+          disabled={!repository.triggerOnCommit}
+          value={secondsToMinutes(repository.pollIntervalSeconds)}
+          onChange={(event) =>
+            onChange({
+              ...repository,
+              pollIntervalSeconds: minutesToSeconds(Number(event.target.value)),
+            })
+          }
+        />
+      </Field>
+      <Field label="Cron 定时测试（UTC）" hint="例如 0 2 * * * 表示每天 UTC 02:00；留空不启用">
+        <input
+          value={repository.cron}
+          onChange={(event) => onChange({ ...repository, cron: event.target.value })}
+          placeholder="留空（默认关闭）"
+        />
+      </Field>
     </SectionCard>
+  );
+}
+
+function GitHubCheckSummary({ checks, busy }: { checks: ConnectivityCheck[]; busy: boolean }) {
+  const passed = checks.filter((check) => check.result.status === 'ok').length;
+  const overallStatus =
+    checks.length === GITHUB_CHECK_IDS.length && passed === checks.length
+      ? 'ok'
+      : checks.some((check) => ['failed', 'timeout', 'unreachable'].includes(check.result.status))
+        ? 'failed'
+        : 'unknown';
+  return (
+    <div className="github-check-summary" aria-live="polite">
+      <div className="github-check-heading">
+        <div>
+          <span className={`check-dot check-dot-${overallStatus}`} aria-hidden="true" />
+          <strong>
+            {busy ? '正在执行 GitHub 综合检查…' : `${passed}/${GITHUB_CHECK_IDS.length} 项通过`}
+          </strong>
+        </div>
+        <small>一次操作 · 四项无副作用验证</small>
+      </div>
+      <ul className="github-check-list">
+        {checks.map((check) => (
+          <li key={check.id}>
+            <span className={`check-dot check-dot-${check.result.status}`} aria-hidden="true" />
+            <div>
+              <strong>
+                {check.label} · {checkStatusLabel(check.result.status)}
+              </strong>
+              <p>{check.result.message}</p>
+              <small>
+                {check.result.checkedAt
+                  ? `检查于 ${new Date(check.result.checkedAt).toLocaleString('zh-CN')}`
+                  : '尚未执行'}
+                {check.result.latencyMs !== null ? ` · ${check.result.latencyMs} ms` : ''}
+              </small>
+            </div>
+          </li>
+        ))}
+        {checks.length === 0 && <li className="muted">GitHub 检查状态载入中…</li>}
+      </ul>
+    </div>
   );
 }
 
 function ConnectivityOverview({
   checks,
   busy,
-  onRun,
+  onRunAll,
 }: {
   checks: ConnectivityCheck[];
   busy: string | null;
-  onRun: (checkId: string) => void;
+  onRunAll: () => void;
 }) {
+  const passed = checks.filter((check) => check.result.status === 'ok').length;
   return (
     <SectionCard
       id="checks-title"
       eyebrow="CONNECTIVITY OVERVIEW"
       title="配置检查总览"
-      description="这里汇总所有已保存配置的最近检查结果；建议在首次运行前全部确认。"
+      description={`最近结果：${passed}/${checks.length} 项通过。点击一次测试所有已保存配置，下面逐项显示问题原因。`}
+      actions={
+        <button className="button" type="button" disabled={busy !== null} onClick={onRunAll}>
+          {busy === 'checks-all' ? '正在测试全部…' : '测试全部'}
+        </button>
+      }
     >
       <div className="connection-grid">
         {checks.map((check) => (
           <div className="overview-check" key={check.id}>
             <strong>{check.label}</strong>
-            <ConnectivityResult
-              check={check}
-              busy={busy === `check-${check.id}`}
-              disabled={busy !== null}
-              onRun={() => onRun(check.id)}
-              compact
-            />
+            <ConnectivityResult check={check} busy={busy === 'checks-all'} compact />
           </div>
         ))}
         {checks.length === 0 && <p className="muted">暂无检查项</p>}
@@ -1263,6 +1377,37 @@ function PasswordSection({
       </form>
     </SectionCard>
   );
+}
+
+function replaceChecks(
+  current: ConnectivityCheck[],
+  replacements: ConnectivityCheck[],
+): ConnectivityCheck[] {
+  const byId = new Map(replacements.map((check) => [check.id, check]));
+  const existing = new Set(current.map((check) => check.id));
+  return [
+    ...current.map((check) => byId.get(check.id) ?? check),
+    ...replacements.filter((check) => !existing.has(check.id)),
+  ];
+}
+
+function downloadTextFile(fileName: string, content: string): void {
+  const url = URL.createObjectURL(new Blob([content], { type: 'application/yaml;charset=utf-8' }));
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = fileName;
+  document.body.append(anchor);
+  anchor.click();
+  anchor.remove();
+  URL.revokeObjectURL(url);
+}
+
+function secondsToMinutes(seconds: number): number {
+  return seconds <= 0 ? 5 : Math.max(5, Math.round(seconds / 60));
+}
+
+function minutesToSeconds(minutes: number): number {
+  return Math.max(5, Math.min(525_600, Math.round(minutes))) * 60;
 }
 
 function findCheck(checks: ConnectivityCheck[], id: string): ConnectivityCheck | undefined {

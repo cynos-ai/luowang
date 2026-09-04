@@ -15,6 +15,7 @@ export interface GitHubRepositoryInfo {
   defaultBranch: string;
   private: boolean;
   hasIssues: boolean;
+  oauthScopes: string[];
   permissions: {
     admin?: boolean;
     push?: boolean;
@@ -74,6 +75,7 @@ export class GitHubClient {
       defaultBranch: readString(response.body.default_branch, 'main'),
       private: response.body.private === true,
       hasIssues: response.body.has_issues !== false,
+      oauthScopes: readOauthScopes(response.headers),
       permissions: {
         admin: permissions.admin === true,
         push: permissions.push === true,
@@ -122,11 +124,11 @@ export class GitHubClient {
           throw new GitHubApiError(branchResult.status, '场景测试分支读取失败');
         }
         return {
-          status: 'unknown',
+          status: 'ok',
           message:
             branchResult.status === 200
-              ? 'Token 具备仓库 push 权限；非 force 分支写入还需通过实际保护规则或安全写入确认'
-              : 'Token 具备仓库 push 权限；场景测试分支尚不存在，无法非破坏地确认写入规则',
+              ? 'Token 具备仓库 push 权限；罗网发布时仍使用 non-force/CAS 并校验分支保护结果'
+              : 'Token 具备仓库 push 权限；场景测试分支尚不存在，首次创建仍使用 non-force/CAS',
           latencyMs: Date.now() - startedAt,
         };
       }
@@ -138,13 +140,23 @@ export class GitHubClient {
             latencyMs: Date.now() - startedAt,
           };
         }
-        await this.request(
+        const pullRequestResult = await this.request(
           `/repos/${this.repository.owner}/${this.repository.name}/pulls?state=open&per_page=1`,
         );
+        if (pullRequestResult.status !== 200) {
+          throw new GitHubApiError(pullRequestResult.status, 'GitHub Pull Request 读取失败');
+        }
+        if (hasClassicRepositoryWriteScope(repository)) {
+          return {
+            status: 'ok',
+            message: '已验证仓库 push 权限、PR 读取和 classic PAT 仓库写 scope',
+            latencyMs: Date.now() - startedAt,
+          };
+        }
         return {
           status: 'unknown',
           message:
-            '已验证仓库读取和 push 权限；GitHub 不提供无副作用的 PR 创建权限探测，因此标记为 unknown',
+            '仓库允许 push 和读取 PR，但当前 Token 未公开可验证的 classic PAT 写 scope；为避免创建测试 PR，无法无副作用确认',
           latencyMs: Date.now() - startedAt,
         };
       }
@@ -155,13 +167,23 @@ export class GitHubClient {
           latencyMs: Date.now() - startedAt,
         };
       }
-      await this.request(
+      const issueResult = await this.request(
         `/repos/${this.repository.owner}/${this.repository.name}/issues?state=open&per_page=1`,
       );
+      if (issueResult.status !== 200) {
+        throw new GitHubApiError(issueResult.status, 'GitHub Issues 读取失败');
+      }
+      if (hasClassicRepositoryWriteScope(repository)) {
+        return {
+          status: 'ok',
+          message: '已验证 Issues 已启用、可读取且 classic PAT 具备仓库写 scope',
+          latencyMs: Date.now() - startedAt,
+        };
+      }
       return {
         status: 'unknown',
         message:
-          '已验证 Issues 可读取；GitHub 不提供无副作用的 Issue 创建权限探测，因此标记为 unknown',
+          'Issues 已启用且可读取，但当前 Token 未公开可验证的 classic PAT 写 scope；为避免创建测试 Issue，无法无副作用确认',
         latencyMs: Date.now() - startedAt,
       };
     } catch (error) {
@@ -381,6 +403,20 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function readString(value: unknown, fallback: string): string {
   return typeof value === 'string' ? value : fallback;
+}
+
+function readOauthScopes(headers: Headers): string[] {
+  return (headers.get('x-oauth-scopes') ?? '')
+    .split(',')
+    .map((scope) => scope.trim())
+    .filter(Boolean);
+}
+
+function hasClassicRepositoryWriteScope(repository: GitHubRepositoryInfo): boolean {
+  return (
+    repository.oauthScopes.includes('repo') ||
+    (!repository.private && repository.oauthScopes.includes('public_repo'))
+  );
 }
 
 function toIssuePayload(value: Record<string, unknown>): GitHubIssuePayload | null {

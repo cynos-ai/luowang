@@ -12,7 +12,7 @@ const TEST_ENVIRONMENT_CHECK = 'test-environment-url';
 
 const GITHUB_CHECKS = [
   { id: 'github-repository-read', label: 'GitHub 仓库读取' },
-  { id: 'github-scenario-branch-write', label: '场景测试分支非 force 写入' },
+  { id: 'github-scenario-branch-write', label: '场景测试分支写入前提' },
   { id: 'github-pull-request', label: 'GitHub Pull Request 权限' },
   { id: 'github-issue', label: 'GitHub Issue 权限' },
 ] as const;
@@ -25,6 +25,7 @@ const ADAPTER_CHECKS = [
 export interface ConnectivityRegistry {
   list(): ConnectivityCheck[];
   run(checkId: string): Promise<ConnectivityCheck>;
+  runAll(): Promise<ConnectivityCheck[]>;
   invalidate?(checkIds: readonly string[]): void;
 }
 
@@ -115,6 +116,24 @@ class DefaultConnectivityRegistry implements ConnectivityRegistry {
     this.database
       .prepare(`DELETE FROM connectivity_check_results WHERE check_id IN (${placeholders})`)
       .run(...uniqueIds);
+  }
+
+  async runAll(): Promise<ConnectivityCheck[]> {
+    const results: ConnectivityCheck[] = [];
+    for (const check of this.list()) {
+      if (!check.available) {
+        results.push(check);
+        continue;
+      }
+      try {
+        results.push(await this.run(check.id));
+      } catch {
+        const result = emptyResult('failed', '检查执行失败，请查看服务日志并重试');
+        this.writeResult(check.id, result);
+        results.push({ ...check, result });
+      }
+    }
+    return results;
   }
 
   async run(checkId: string): Promise<ConnectivityCheck> {

@@ -63,6 +63,8 @@ describe('Phase 1 secure console', () => {
     });
     assert.equal(configBefore.statusCode, 200);
     assert.equal(configBefore.json().repository.scenarioBranch, 'scenario-testing');
+    assert.equal(configBefore.json().repository.triggerOnCommit, false);
+    assert.equal(configBefore.json().repository.pollIntervalSeconds, 300);
     assert.equal(configBefore.json().harness.providerBaseUrl, '');
 
     seedConnectivity(database.sqlite, ['provider-model', 'oss', 'playwright-mcp']);
