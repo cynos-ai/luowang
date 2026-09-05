@@ -5,7 +5,8 @@
 - 依据：[intent.md](./intent.md)、[spec.md](./spec.md)
 
 实施分支证明（2026-09-05）：分支为 `feat/scenario-design-quality`，基于
-`develop@09dbed0`；实现提交为 `9e41cf5`。在实现开始前，当前分支的
+`develop@09dbed0`；实现提交为 `9e41cf5`，已通过 PR #56 合入 `develop`，merge commit 为
+`11ea774`。在实现开始前，当前分支的
 `git ls-tree -r --name-only HEAD docs/changes/luowang-scenario-design-quality` 已列出且追踪以下三份文档：
 `intent.md`、`spec.md`、`plan.md`（文档提交为 `38ba5bf`、`2bac167`）。
 
@@ -143,7 +144,7 @@
 
 Docker 证明使用 Dockerfile/CI 中的 pinned Node digest、npm 镜像、Playwright 下载源和 Debian 镜像：`docker build --target quality ... --tag luowang:scenario-design-quality-quality .` 退出码 0，quality 镜像 ID 为 `sha256:faf5d390a90bb395932d207779fd2407b8337eda9fbbc2fd65b932f1397bb56d`，镜像内 `verify:browser` 通过；`docker run --rm --init --ipc=host luowang:scenario-design-quality-quality npm run test:acceptance:local` 退出码 0，`local=passed`、`live=blocked`、`release=blocked`。逐项 local AC 映射和全部工程 proof 均通过，`sdq12` 保持 `not_run`。
 
-本机尝试构建 `runtime` target 时，Docker 未命中 browsers 中间层；显式 cache source 又返回 registry cache importer `403 Forbidden`，为避免重复下载而停止，故不把 runtime 本机尝试记为通过。PR 的 quality workflow 仍会构建 runtime 并执行生产 Chromium 验证。该环境限制不影响已完成的 quality target 证明。
+本机尝试构建 `runtime` target 时，Docker 未命中 browsers 中间层；显式 cache source 又返回 registry cache importer `403 Forbidden`，为避免重复下载而停止，故不把本机尝试记为通过。PR #56 的 quality workflow 已于 `2026-09-05T16:15:07Z` 成功完成 production image 构建和 production Chromium runtime 验证；该 CI 事实补足 runtime 工程证明。
 
 对应：AC-SDQ-01–11 的工程证明，以及 AC-SDQ-12 的本地/真实结果分层。
 
@@ -198,4 +199,4 @@ Docker 证明使用 Dockerfile/CI 中的 pinned Node digest、npm 镜像、Playw
 | AC-SDQ-11                       | Phase 2、3、4 | 工程通过   |
 | AC-SDQ-12                       | Phase 4、5    | 工程/本地通过；真实评测未运行   |
 
-Phase 0–4 的工程实施和证明已完成；Phase 5 因外部输入缺失保持 `not_run/blocked`。分支 PR 仍需向 `develop` 提交并通过仓库 CI；即使 PR 合并，缺少真实质量证据时也不能宣称提示词或场景设计质量已提升。
+Phase 0–4 的工程实施和证明已完成，PR #56 已合入 `develop`；Phase 5 因外部输入缺失保持 `not_run/blocked`。即使工程 PR 已合并，缺少真实质量证据时也不能宣称提示词或场景设计质量已提升。
