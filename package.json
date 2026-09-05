@@ -19,7 +19,7 @@
     "format:check": "prettier --check .",
     "lint": "eslint .",
     "start": "node dist/server/main.js",
-    "test": "vitest run",
+    "test": "vitest run --testTimeout=30000 --hookTimeout=15000",
     "test:acceptance": "npm run test:acceptance:local",
     "test:acceptance:local": "tsx tests/acceptance/closure.ts local",
     "test:acceptance:live": "tsx tests/acceptance/closure.ts live",

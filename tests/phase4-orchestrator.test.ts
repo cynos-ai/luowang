@@ -142,17 +142,25 @@ class FailureBoundarySessionFactory implements AgentSessionFactory {
           await invokeTool(input, 'write_plan', {
             content:
               this.mode === 'cleanup-failure' || this.mode === 'cleanup-review'
-                ? '# Plan\n\n无需场景测试：本次只验证非 UI 的清理边界。\n'
+                ? '# Plan\n\n## execution_scenarios\n\n无需场景测试：本次只验证非 UI 的清理边界。\n'
                 : this.mode === 'vision-reviewer'
-                  ? '# Plan\n\nUI 登录场景：打开登录页面并核对截图差异。\n'
-                  : '# Plan\n\nUI 登录场景：打开登录页面并保存 screenshot 证据。\n',
+                  ? '# Plan\n\nUI 登录场景：打开登录页面并核对截图差异。\n\n## execution_scenarios\n\n- PHASE4-FIXTURE\n'
+                  : '# Plan\n\nUI 登录场景：打开登录页面并保存 screenshot 证据。\n\n## execution_scenarios\n\n- PHASE4-FIXTURE\n',
           });
           return;
         }
 
         if (input.role === 'runner') {
           await invokeTool(input, 'read_run_artifact', { name: 'plan.md' });
-          await invokeTool(input, 'begin_scenario_execution', { scenarioIds: [] });
+          const scenarioIds =
+            this.mode === 'cleanup-failure' || this.mode === 'cleanup-review'
+              ? []
+              : ['PHASE4-FIXTURE'];
+          await invokeTool(input, 'begin_scenario_execution', { scenarioIds });
+          for (const scenarioId of scenarioIds) {
+            await invokeTool(input, 'start_scenario', { scenarioId });
+            await invokeTool(input, 'finish_scenario', { scenarioId });
+          }
           const context = parsePromptContext(input.userMessage);
           if (this.mode === 'cleanup-failure' || this.mode === 'cleanup-review') {
             this.cleanupDataId = `luowang-${context.runId}-test-user-1`;
@@ -229,7 +237,10 @@ class FailureBoundarySessionFactory implements AgentSessionFactory {
           content:
             this.mode === 'malformed-report'
               ? malformedReport(context)
-              : passedReport(context, this.mode === 'vision-reviewer'),
+              : passedReport(
+                  context,
+                  this.mode !== 'cleanup-failure' && this.mode !== 'cleanup-review',
+                ),
         });
       },
       dispose: () => undefined,
@@ -423,7 +434,36 @@ async function createGitFixture(): Promise<Fixture> {
   await git(['config', 'user.name', 'LuoWang Phase 4 Test'], sourceDir);
   await git(['config', 'user.email', 'luowang-phase4@example.test'], sourceDir);
   await writeFile(join(sourceDir, 'README.md'), 'fixture product\n');
-  await git(['add', 'README.md'], sourceDir);
+  await mkdir(join(sourceDir, 'docs/scenario-testing/scenarios'), { recursive: true });
+  await writeFile(
+    join(sourceDir, 'docs/scenario-testing/scenarios/PHASE4-FIXTURE.md'),
+    `---
+id: PHASE4-FIXTURE
+name: Phase 4 UI fixture
+description: 验证 Phase 4 UI 边界
+status: approved
+tags:
+  - core
+---
+
+## 目的
+
+验证 Phase 4 UI 边界。
+
+## 前置条件
+
+使用非生产 fixture 环境。
+
+## 步骤
+
+1. 打开 fixture 页面。
+
+## 期望
+
+页面显示 fixture 内容。
+`,
+  );
+  await git(['add', '-A'], sourceDir);
   await git(['commit', '-m', 'initial product'], sourceDir);
   await git(['remote', 'add', 'origin', remoteDir], sourceDir);
   await git(['push', '-u', 'origin', 'main'], sourceDir);

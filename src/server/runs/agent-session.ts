@@ -11,6 +11,10 @@ import {
 import { Type, type Static } from 'typebox';
 
 import type { AgentConfig } from '../../shared/types.js';
+import {
+  createTargetChangeEvidenceTools,
+  type TargetChangeEvidenceOptions,
+} from './change-evidence.js';
 import type { ProviderAdapter } from './provider.js';
 import type {
   AgentRole,
@@ -177,6 +181,7 @@ export function createTargetContextTools(options: {
   listFiles: () => Promise<string[]>;
   search: (query: string) => Promise<string>;
   context: () => string;
+  changeEvidence?: TargetChangeEvidenceOptions;
 }): ToolDefinition[] {
   const readParameters = Type.Object({
     path: Type.String({ description: '仓库相对路径' }),
@@ -184,7 +189,7 @@ export function createTargetContextTools(options: {
   const searchParameters = Type.Object({
     query: Type.String({ description: '要搜索的文本' }),
   });
-  return [
+  const tools: ToolDefinition[] = [
     {
       name: 'get_run_context',
       label: '读取 Run 上下文',
@@ -232,6 +237,9 @@ export function createTargetContextTools(options: {
       },
     },
   ];
+  if (options.changeEvidence)
+    tools.push(...createTargetChangeEvidenceTools(options.changeEvidence));
+  return tools;
 }
 
 export function createWorkingScenarioTools(options: {

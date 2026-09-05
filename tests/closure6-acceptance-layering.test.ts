@@ -1,5 +1,6 @@
 import { strict as assert } from 'node:assert';
 import { readFile } from 'node:fs/promises';
+import { join } from 'node:path';
 
 import { describe, it } from 'vitest';
 
@@ -64,7 +65,7 @@ describe('Closure 6 acceptance status layering', () => {
       assert.equal(environment.AWS_SECRET_ACCESS_KEY, undefined);
       assert.equal(environment.LUOWANG_MASTER_KEY, undefined);
       assert.equal(environment.NODE_ENV, 'test');
-      assert.equal(environment.HOME, '/tmp/luowang-closure6-environment/isolated-home');
+      assert.equal(environment.HOME, join('/tmp/luowang-closure6-environment', 'isolated-home'));
       assert.doesNotMatch(JSON.stringify(environment), /canary-(?:github|aws|master)-value/);
     } finally {
       restoreEnvironment('GITHUB_TOKEN', original.github);
@@ -96,8 +97,8 @@ describe('Closure 6 acceptance status layering', () => {
     assert.equal(report.local.status, 'passed');
     assert.equal(report.live.status, 'blocked');
     assert.equal(report.release.status, 'blocked');
-    assert.equal(report.acEvidence.length, 18);
-    assert.equal(new Set(report.acEvidence.map((item) => item.ac)).size, 18);
+    assert.equal(report.acEvidence.length, 30);
+    assert.equal(new Set(report.acEvidence.map((item) => item.ac)).size, 30);
     assert.equal(
       report.resourceChecks.every((item) => item.evidence.length > 0),
       true,
@@ -396,6 +397,18 @@ function proofStatuses(overrides: Partial<ClosureProofStatuses> = {}): ClosurePr
     publicQuality: 'passed',
     acceptanceLayering: 'passed',
     acMapping: 'passed',
+    sdq01: 'passed',
+    sdq02: 'passed',
+    sdq03: 'passed',
+    sdq04: 'passed',
+    sdq05: 'passed',
+    sdq06: 'passed',
+    sdq07: 'passed',
+    sdq08: 'passed',
+    sdq09: 'passed',
+    sdq10: 'passed',
+    sdq11: 'passed',
+    sdq12: 'not_run',
     ...overrides,
   };
 }
