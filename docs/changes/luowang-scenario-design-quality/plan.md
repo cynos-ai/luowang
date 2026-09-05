@@ -1,8 +1,13 @@
 # 场景维护与初始化质量改进 Plan
 
 - 日期：2026-09-05
-- 状态：实施计划；本轮仅完成文档编写，Phase 1–5 未开始
+- 状态：工程 Phase 0–4 已完成；Phase 5 真实模型质量对比未运行（blocked）
 - 依据：[intent.md](./intent.md)、[spec.md](./spec.md)
+
+实施分支证明（2026-09-05）：分支为 `feat/scenario-design-quality`，基于
+`develop@09dbed0`；实现提交为 `9e41cf5`。在实现开始前，当前分支的
+`git ls-tree -r --name-only HEAD docs/changes/luowang-scenario-design-quality` 已列出且追踪以下三份文档：
+`intent.md`、`spec.md`、`plan.md`（文档提交为 `38ba5bf`、`2bac167`）。
 
 ## 1. 实施原则与顺序
 
@@ -18,7 +23,7 @@
 - [x] 编写 Spec，定义固定变化证据、维护决策、写作契约、初始化交接、执行清单与质量证明。
 - [x] 在上述范围稳定后编写本 Plan，给出修改 owner、风险和逐项完成证明。
 
-完成证明：目录只包含 intent/spec/plan；链接、AC 引用和内容一致性检查通过。文档完成不代表功能、提示词优化或模型效果完成。
+完成证明：目录只包含 intent/spec/plan；链接、AC 引用和内容一致性检查通过。实现前的分支和文档存在性已由上述 Git 事实确认。文档完成不代表功能、提示词优化或模型效果完成。
 
 ## 3. Phase 1：Main 的固定变化证据
 
@@ -42,6 +47,8 @@
 - base 为 null、base 等于 target、先改后撤销、只有测试资产变化、分页续读和超限内容各有明确结果。
 - 删除前凭据、敏感 rename、越界路径、symlink/submodule 和跨范围游标被拒绝；工具错误不泄露原始敏感参数。
 - Runner、Reviewer、Finalization 不获得新增读取权限；陈旧索引可回到 target 获取真实场景。
+
+实际证明：`tests/scenario-design-quality.test.ts` 的固定 target 变化证据、增改删/rename、二进制、symlink/submodule、分页、游标绑定、不可读/依赖失败和远端 HEAD 移动用例通过；与执行清单和 Phase 3/4 交接专项合计 6 个测试文件、56 个测试通过（退出码 0）。`tests/phase3.test.ts` 的 Main-only 工具边界检查也通过。工程边界已证明，未把固定本地模型输出当作质量效果证明。
 
 对应：AC-SDQ-01、AC-SDQ-02、AC-SDQ-03。
 
@@ -69,6 +76,8 @@
 - 普通 Run 应用场景 patch 后按同一工作场景核对清单；保持稳定 ID rename 兼容。
 - 指令通过既有 loader 装载，system/user 不重复；本地流程能生成符合契约的计划与 patch。
 - 本阶段仅完成质量规则与工程行为证明，不将固定模型返回值当成真实设计效果。
+
+实际证明：`tests/scenario-design-quality.test.ts` 4/4、`tests/closure4-progress.test.ts` 5/5、`tests/closure6-acceptance-layering.test.ts` 13/13、`tests/phase3.test.ts` 19/19 及关联生产 Pi 用例均通过。计划正文中的 ID、历史/draft/deprecated 引用不会扩大执行集合；重复/未知/非 approved/乱序/漏执行结果会拒绝。角色资源仍由既有 loader 确定性装载。
 
 对应：AC-SDQ-04、AC-SDQ-05、AC-SDQ-08、AC-SDQ-11 的工程部分。
 
@@ -101,6 +110,8 @@
 - 普通四 Session、初始化六 Session、人工审核三 Session 分别验证工具、独立 ID、dispose 和工件边界；特殊报告摘要无 Secret。
 - 最终 Main 修订 patch 但不重跑仍 blocked；场景三种维护模式和历史报告不可改写规则回归通过。
 
+实际证明：`tests/closure6-production-pi.test.ts` 8/8、`tests/phase4-orchestrator.test.ts` 7/7、`tests/phase3.test.ts` 中候选计划写入失败、候选 patch 校验失败、计划/工作场景不一致等新增用例均通过。生产 Pi 路径实际创建普通 Run 四个 Session、初始化六个隔离 Session；人工审核路径停止在三个 Session 并只保留两份特殊工件。无 patch 复用 approved 场景、依据充分的 0/0 和最终修订未重跑 blocked 均有覆盖。
+
 对应：AC-SDQ-06、AC-SDQ-07、AC-SDQ-09、AC-SDQ-10 及 AC-SDQ-11 的工程部分。
 
 ## 6. Phase 4：生产路径工程回归
@@ -116,6 +127,23 @@
 ### 完成证明
 
 保存当前 commit、quality 镜像标识、实际命令、退出码、测试结果和逐 AC 证据。标明哪些属于确定性工具/流程证明，哪些质量项仍等待真实模型复核。工程阶段完成时可报告“工程检查通过、模型效果未验证”，不得称完整质量改进已验收。
+
+实际证明（实现提交 `9e41cf5`，宿主机 Windows）：
+
+| 检查 | 退出码 | 结果 |
+| --- | ---: | --- |
+| `npm run format:check` | 0 | 通过 |
+| `npm run lint` | 0 | 通过 |
+| `npm run typecheck` | 0 | 通过 |
+| `npm test` | 0 | 25 个测试文件、147/147 tests 通过；测试脚本固定 30s test timeout、15s hook timeout |
+| `npm run build` | 0 | server/client 构建通过（仅有 chunk size warning） |
+| `npm run test:e2e` | 0 | smoke 与 Phase 8 headless UI smoke 通过 |
+| `npm run test:acceptance:local` | 0 | `local=passed`；报告为 `.cynos/acceptance/2026-09-05T15-37-21-891Z-local/report.json` |
+| `npm run test:acceptance:live` | 1 | 输入门禁按预期 `live=blocked`，未调用真实外部系统 |
+
+Docker 证明使用 Dockerfile/CI 中的 pinned Node digest、npm 镜像、Playwright 下载源和 Debian 镜像：`docker build --target quality ... --tag luowang:scenario-design-quality-quality .` 退出码 0，quality 镜像 ID 为 `sha256:faf5d390a90bb395932d207779fd2407b8337eda9fbbc2fd65b932f1397bb56d`，镜像内 `verify:browser` 通过；`docker run --rm --init --ipc=host luowang:scenario-design-quality-quality npm run test:acceptance:local` 退出码 0，`local=passed`、`live=blocked`、`release=blocked`。逐项 local AC 映射和全部工程 proof 均通过，`sdq12` 保持 `not_run`。
+
+本机尝试构建 `runtime` target 时，Docker 未命中 browsers 中间层；显式 cache source 又返回 registry cache importer `403 Forbidden`，为避免重复下载而停止，故不把 runtime 本机尝试记为通过。PR 的 quality workflow 仍会构建 runtime 并执行生产 Chromium 验证。该环境限制不影响已完成的 quality target 证明。
 
 对应：AC-SDQ-01–11 的工程证明，以及 AC-SDQ-12 的本地/真实结果分层。
 
@@ -142,6 +170,8 @@
 
 脱敏评测输入清单、版本标识、全部输出、逐例复核和对比结果保存于 `.cynos/acceptance/`，分别标注规划与 Reviewer 的证据，在本计划补充非敏感证据位置和实际状态。AC-SDQ-09 的真实质量证明必须来自固定工件的真实 Reviewer 输出和读取记录；未运行这组评测时，即使规划对比或本地流程通过，该 AC 仍保持未完成。凭据、预算或外部条件缺失时记录未运行/受阻及原因，Phase 5 保持未完成，不用本地协议模拟出质量通过。
 
+实际状态：Phase 5 未运行（`not_run/blocked`）。`npm run test:acceptance:live` 在输入检查阶段退出码 1；固定 `cynos-ai/cynos-website` 的不可变快照、非生产 URL/合成账号、GitHub/Provider/OSS 受控凭据、视觉 Reviewer 条件以及明确模型调用预算均未提供。本地 acceptance 报告中的工程 proof 全部通过，但 AC-SDQ-04/05/06/09/12 的真实模型部分仍为 `not_run`；没有基线/新版八类输入三次重复计数、Reviewer 固定工件读取记录或人工复核结论，因此本变更不声称真实场景设计质量已经改善。
+
 对应：AC-SDQ-04、AC-SDQ-05、AC-SDQ-06、AC-SDQ-09 的实际输出质量，以及 AC-SDQ-12。
 
 ## 8. 风险与控制
@@ -160,12 +190,12 @@
 
 | 验收项                          | 实施/证明阶段 | 当前状态 |
 | ------------------------------- | ------------- | -------- |
-| AC-SDQ-01、AC-SDQ-02、AC-SDQ-03 | Phase 1、4    | 未开始   |
-| AC-SDQ-04、AC-SDQ-05            | Phase 2、4、5 | 未开始   |
-| AC-SDQ-06、AC-SDQ-09            | Phase 3、4、5 | 未开始   |
-| AC-SDQ-07、AC-SDQ-10            | Phase 3、4    | 未开始   |
-| AC-SDQ-08                       | Phase 2、3、4 | 未开始   |
-| AC-SDQ-11                       | Phase 2、3、4 | 未开始   |
-| AC-SDQ-12                       | Phase 4、5    | 未开始   |
+| AC-SDQ-01、AC-SDQ-02、AC-SDQ-03 | Phase 1、4    | 工程通过   |
+| AC-SDQ-04、AC-SDQ-05            | Phase 2、4、5 | 工程通过；真实模型部分未运行   |
+| AC-SDQ-06、AC-SDQ-09            | Phase 3、4、5 | 工程通过；真实模型部分未运行   |
+| AC-SDQ-07、AC-SDQ-10            | Phase 3、4    | 工程通过   |
+| AC-SDQ-08                       | Phase 2、3、4 | 工程通过   |
+| AC-SDQ-11                       | Phase 2、3、4 | 工程通过   |
+| AC-SDQ-12                       | Phase 4、5    | 工程/本地通过；真实评测未运行   |
 
-文档编写完成后结束本轮。后续实现以各 Phase 的实际证明更新此表；全部工程 AC、真实质量复核和分支 PR 完成后，才能将本变更标为实施完成。不在缺少真实质量证据时宣称提示词效果已提升。
+Phase 0–4 的工程实施和证明已完成；Phase 5 因外部输入缺失保持 `not_run/blocked`。分支 PR 仍需向 `develop` 提交并通过仓库 CI；即使 PR 合并，缺少真实质量证据时也不能宣称提示词或场景设计质量已提升。
