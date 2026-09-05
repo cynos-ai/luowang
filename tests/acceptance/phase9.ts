@@ -1368,7 +1368,8 @@ class FixtureSessionFactory implements AgentSessionFactory {
         if (input.role === 'main-a') {
           await invokeTool(input, 'get_run_context', {});
           await invokeTool(input, 'write_plan', {
-            content: '# 测试计划\n\n无需场景测试：本批只确认文档工件流转和固定 target。\n',
+            content:
+              '# 测试计划\n\n## execution_scenarios\n\n无需场景测试：本批只确认文档工件流转和固定 target。\n',
           });
           return;
         }
@@ -1587,7 +1588,11 @@ async function readRequestBody(request: IncomingMessage): Promise<string> {
 async function writeCompletedRun(reportDir: string, runId: string, report: string): Promise<void> {
   const directory = join(reportDir, 'completed', runId);
   await mkdir(directory, { recursive: true });
-  await writeFile(join(directory, 'plan.md'), '# Plan\n无需场景测试。\n', 'utf8');
+  await writeFile(
+    join(directory, 'plan.md'),
+    '# Plan\n\n## execution_scenarios\n\n无需场景测试：历史 fixture 仅用于读取兼容性。\n',
+    'utf8',
+  );
   await writeFile(join(directory, 'execution.md'), '# Execution\nfixture execution\n', 'utf8');
   await writeFile(join(directory, 'draft-report.md'), '# Draft\nfixture draft\n', 'utf8');
   await writeFile(join(directory, 'review.md'), '# Review\nfixture review\n', 'utf8');

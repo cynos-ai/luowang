@@ -18,6 +18,7 @@ const execFileAsync = promisify(execFile);
 const SHA_PATTERN = /^[0-9a-f]{40}$/i;
 const REF_PATTERN = /^[^\s~^:?*\\[\]]{1,255}$/;
 const REPORT_FILE_NAMES = ['draft-report.md', 'review.md', 'report.md'] as const;
+const MAX_TARGET_FILE_BYTES = 512 * 1024;
 
 export type ReportFileName = (typeof REPORT_FILE_NAMES)[number];
 
@@ -36,6 +37,24 @@ export interface GitLogEntry {
 export interface GitCommitChanges {
   sha: string;
   paths: string[];
+}
+
+export type GitChangedFileKind = 'added' | 'modified' | 'deleted' | 'renamed';
+
+export interface GitChangedFile {
+  oldPath: string | null;
+  newPath: string | null;
+  kind: GitChangedFileKind;
+  oldMode: string | null;
+  newMode: string | null;
+  oldType: GitTreeEntry['type'] | null;
+  newType: GitTreeEntry['type'] | null;
+}
+
+export interface GitTextFile {
+  content: string;
+  sizeBytes: number;
+  mode: string;
 }
 
 export interface GitTreeEntry {
@@ -721,6 +740,140 @@ export class GitRepository {
       });
   }
 
+  /**
+   * Return the net file changes between two fixed commits. This deliberately
+   * uses the commit trees rather than the current remote HEAD, so callers can
+   * safely retain the result for the lifetime of a Run.
+   */
+  async changedFiles(base: string | null, target: string): Promise<GitChangedFile[]> {
+    const targetSha = await this.resolveCommit(target);
+    const targetEntries = await this.listTree(targetSha);
+    const targetByPath = new Map(targetEntries.map((entry) => [entry.path, entry]));
+    if (base === null) {
+      return targetEntries
+        .filter((entry) => entry.type !== 'tree')
+        .map((entry) => ({
+          oldPath: null,
+          newPath: entry.path,
+          kind: 'added' as const,
+          oldMode: null,
+          newMode: entry.mode,
+          oldType: null,
+          newType: entry.type,
+        }))
+        .sort(compareChangedFiles);
+    }
+
+    const baseSha = await this.resolveCommit(base);
+    if (baseSha === targetSha) return [];
+    const baseEntries = await this.listTree(baseSha);
+    const baseByPath = new Map(baseEntries.map((entry) => [entry.path, entry]));
+    const output = await this.run([
+      'diff',
+      '--name-status',
+      '-z',
+      '--find-renames=50%',
+      '--no-ext-diff',
+      baseSha,
+      targetSha,
+      '--',
+    ]);
+    const tokens = output.stdout.split('\0').filter(Boolean);
+    const changes: GitChangedFile[] = [];
+    for (let index = 0; index < tokens.length;) {
+      const status = tokens[index++];
+      if (!status) continue;
+      const code = status[0];
+      const renamed = code === 'R' || code === 'C';
+      const oldPath = renamed
+        ? (tokens[index++] ?? null)
+        : code === 'D'
+          ? (tokens[index++] ?? null)
+          : null;
+      const newPath = renamed
+        ? (tokens[index++] ?? null)
+        : code === 'D'
+          ? null
+          : (tokens[index++] ?? null);
+      if (!oldPath && !newPath) {
+        throw new RepositoryError('GIT_COMMAND_FAILED', 'Git 变化清单输出格式无效', 502);
+      }
+      const oldEntry = oldPath ? baseByPath.get(oldPath) : undefined;
+      const newEntry = newPath ? targetByPath.get(newPath) : undefined;
+      changes.push({
+        oldPath,
+        newPath,
+        kind: changedFileKind(code, oldPath, newPath),
+        oldMode: oldEntry?.mode ?? null,
+        newMode: newEntry?.mode ?? null,
+        oldType: oldEntry?.type ?? null,
+        newType: newEntry?.type ?? null,
+      });
+    }
+    return changes.sort(compareChangedFiles);
+  }
+
+  /** Read a bounded, regular text blob from one of the fixed commit trees. */
+  async readTextFileAtCommit(commit: string, path: string): Promise<GitTextFile> {
+    assertRelativePath(path);
+    const sha = await this.resolveCommit(commit);
+    const entry = (await this.listTree(sha)).find((item) => item.path === path);
+    if (!entry) throw new RepositoryError('TARGET_INVALID', '固定版本文件不存在', 404);
+    assertReadableTreeEntry(entry);
+    const sizeBytes = Number((await this.run(['cat-file', '-s', entry.sha])).stdout.trim());
+    if (!Number.isSafeInteger(sizeBytes) || sizeBytes < 0) {
+      throw new RepositoryError('TARGET_UNREADABLE', '固定版本文件大小无法确认', 422);
+    }
+    if (sizeBytes > MAX_TARGET_FILE_BYTES) {
+      throw new RepositoryError('TARGET_UNREADABLE', '固定版本文件超过读取上限', 422);
+    }
+    const content = (await this.run(['show', `${sha}:${path}`])).stdout;
+    if (looksBinary(content)) {
+      throw new RepositoryError('TARGET_UNREADABLE', '固定版本文件不是可读文本', 422);
+    }
+    return { content, sizeBytes, mode: entry.mode };
+  }
+
+  /** Read a text diff for one changed path from the fixed commit pair. */
+  async readTextDiff(base: string | null, target: string, path: string): Promise<string> {
+    assertRelativePath(path);
+    if (base === null) return '';
+    const targetSha = await this.resolveCommit(target);
+    const baseSha = await this.resolveCommit(base);
+    if (baseSha === targetSha) return '';
+    const changes = await this.changedFiles(baseSha, targetSha);
+    const change = changes.find((item) => item.oldPath === path || item.newPath === path);
+    if (!change) {
+      throw new RepositoryError('TARGET_INVALID', '固定变化清单中不存在该文件路径', 404);
+    }
+    for (const endpoint of [change.oldPath, change.newPath]) {
+      if (!endpoint) continue;
+      const entry = (await this.listTree(endpoint === change.oldPath ? baseSha : targetSha)).find(
+        (item) => item.path === endpoint,
+      );
+      if (!entry) continue;
+      assertReadableTreeEntry(entry);
+    }
+    const paths = [...new Set([change.oldPath, change.newPath].filter(Boolean))] as string[];
+    const output = await this.run([
+      'diff',
+      '--no-ext-diff',
+      '--no-textconv',
+      '--no-color',
+      '--find-renames=50%',
+      '--patch',
+      '--unified=3',
+      baseSha,
+      targetSha,
+      '--',
+      ...paths,
+    ]);
+    if (looksBinaryDiff(output.stdout)) {
+      throw new RepositoryError('TARGET_UNREADABLE', '固定变化包含二进制内容', 422);
+    }
+    return output.stdout;
+  }
+
   private async materializeScenarioPatch(
     baseCommit: string,
     patch: string,
@@ -1130,6 +1283,38 @@ function normalizeSha(value: string): string {
     throw new RepositoryError('TARGET_INVALID', 'Git commit SHA 格式无效', 400);
   }
   return normalized;
+}
+
+function changedFileKind(
+  status: string,
+  oldPath: string | null,
+  newPath: string | null,
+): GitChangedFileKind {
+  const code = status[0];
+  if (code === 'A' || code === 'C') return 'added';
+  if (code === 'D') return 'deleted';
+  if (code === 'R' || (oldPath !== null && newPath !== null && oldPath !== newPath)) {
+    return 'renamed';
+  }
+  return 'modified';
+}
+
+function compareChangedFiles(left: GitChangedFile, right: GitChangedFile): number {
+  return (left.newPath ?? left.oldPath ?? '').localeCompare(right.newPath ?? right.oldPath ?? '');
+}
+
+function assertReadableTreeEntry(entry: GitTreeEntry): void {
+  if (entry.type !== 'blob' || (entry.mode !== '100644' && entry.mode !== '100755')) {
+    throw new RepositoryError('TARGET_UNREADABLE', '固定变化不是普通文本文件', 422);
+  }
+}
+
+function looksBinary(value: string): boolean {
+  return value.includes('\u0000') || value.includes('\ufffd');
+}
+
+function looksBinaryDiff(value: string): boolean {
+  return value.includes('\u0000') || /(?:^|\n)(?:Binary files |GIT binary patch)/.test(value);
 }
 
 function mergeRequestRef(queueId: number): string {

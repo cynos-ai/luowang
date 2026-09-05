@@ -114,6 +114,18 @@ export interface ClosureProofStatuses {
   publicQuality: LayerStatus;
   acceptanceLayering: LayerStatus;
   acMapping: LayerStatus;
+  sdq01: LayerStatus;
+  sdq02: LayerStatus;
+  sdq03: LayerStatus;
+  sdq04: LayerStatus;
+  sdq05: LayerStatus;
+  sdq06: LayerStatus;
+  sdq07: LayerStatus;
+  sdq08: LayerStatus;
+  sdq09: LayerStatus;
+  sdq10: LayerStatus;
+  sdq11: LayerStatus;
+  sdq12: LayerStatus;
 }
 
 interface AcceptanceReport {
@@ -416,6 +428,35 @@ export function createLayeredReport(input: {
         evidence: ['tests/phase6.test.ts: queued/running/waiting archive restart recovery'],
       },
       {
+        id: 'scenario-design-quality-engineering',
+        status: aggregateStatuses([
+          input.proofs.sdq01,
+          input.proofs.sdq02,
+          input.proofs.sdq03,
+          input.proofs.sdq04,
+          input.proofs.sdq05,
+          input.proofs.sdq06,
+          input.proofs.sdq07,
+          input.proofs.sdq08,
+          input.proofs.sdq09,
+          input.proofs.sdq10,
+          input.proofs.sdq11,
+        ]),
+        evidence: [
+          'tests/scenario-design-quality.test.ts',
+          'tests/phase3.test.ts',
+          'tests/closure6-production-pi.test.ts',
+        ],
+      },
+      {
+        id: 'scenario-design-quality-real-model',
+        status: input.proofs.sdq12,
+        evidence: [
+          'Phase 5 real-model planning and Reviewer comparison is not run by local acceptance.',
+          '真实目标固定快照、受控凭据和模型预算未提供；不能以 local fixture 代替质量证明。',
+        ],
+      },
+      {
         id: 'live-external-resources',
         status: input.live.status,
         evidence:
@@ -538,6 +579,93 @@ export function createLayeredReport(input: {
                 'Set LUOWANG_LIVE_RELEASE_TAG and rerun after publication to verify immutable tag and main',
               ],
       },
+      {
+        ac: 'AC-SDQ-01',
+        status: input.proofs.sdq01,
+        evidence: ['tests/scenario-design-quality.test.ts: fixed change facts and target pinning'],
+      },
+      {
+        ac: 'AC-SDQ-02',
+        status: input.proofs.sdq02,
+        evidence: [
+          'tests/scenario-design-quality.test.ts: empty, paged, invalid, unreadable and unavailable states',
+        ],
+      },
+      {
+        ac: 'AC-SDQ-03',
+        status: input.proofs.sdq03,
+        evidence: [
+          'tests/phase3.test.ts: descriptions, index freshness, language, labels and Main-only tools',
+        ],
+      },
+      {
+        ac: 'AC-SDQ-04',
+        status: qualityGatedStatus(input.proofs.sdq04),
+        evidence: [
+          'tests/closure6-acceptance-layering.test.ts: engineering instruction checks',
+          'Phase 5 real-model maintenance-decision comparison: not run',
+        ],
+      },
+      {
+        ac: 'AC-SDQ-05',
+        status: qualityGatedStatus(input.proofs.sdq05),
+        evidence: [
+          'tests/closure6-acceptance-layering.test.ts: engineering writing-contract checks',
+          'Phase 5 real-model scenario-writing comparison: not run',
+        ],
+      },
+      {
+        ac: 'AC-SDQ-06',
+        status: qualityGatedStatus(input.proofs.sdq06),
+        evidence: [
+          'tests/closure6-production-pi.test.ts: initialization handoff and candidate flow',
+          'Phase 5 real-model initialization comparison: not run',
+        ],
+      },
+      {
+        ac: 'AC-SDQ-07',
+        status: input.proofs.sdq07,
+        evidence: [
+          'tests/closure6-production-pi.test.ts: reuse-without-patch and formal empty initialization',
+        ],
+      },
+      {
+        ac: 'AC-SDQ-08',
+        status: input.proofs.sdq08,
+        evidence: [
+          'tests/scenario-design-quality.test.ts and tests/closure4-progress.test.ts: explicit ordered selection',
+        ],
+      },
+      {
+        ac: 'AC-SDQ-09',
+        status: qualityGatedStatus(input.proofs.sdq09),
+        evidence: [
+          'tests/closure6-production-pi.test.ts: Reviewer production Session/order engineering check',
+          'Phase 5 real-model fixed-artifact Reviewer comparison: not run',
+        ],
+      },
+      {
+        ac: 'AC-SDQ-10',
+        status: input.proofs.sdq10,
+        evidence: [
+          'tests/closure6-production-pi.test.ts: four/six/three Session disposal and revision boundaries',
+        ],
+      },
+      {
+        ac: 'AC-SDQ-11',
+        status: input.proofs.sdq11,
+        evidence: [
+          'tests/closure1-role-instructions.test.ts and tests/closure6-production-pi.test.ts: deterministic resource isolation',
+        ],
+      },
+      {
+        ac: 'AC-SDQ-12',
+        status: qualityGatedStatus(input.proofs.sdq12),
+        evidence: [
+          'Engineering/local proof is reported separately.',
+          'Phase 5 eight-category, three-repeat real-model comparison: not run.',
+        ],
+      },
     ],
     commands: input.commands ?? [],
     proofs: input.proofs,
@@ -549,6 +677,10 @@ function aggregateStatuses(statuses: LayerStatus[]): LayerStatus {
   if (statuses.some((status) => status === 'failed')) return 'failed';
   if (statuses.some((status) => status === 'blocked')) return 'blocked';
   return 'not_run';
+}
+
+function qualityGatedStatus(engineering: LayerStatus): LayerStatus {
+  return engineering === 'failed' ? 'failed' : 'not_run';
 }
 
 function assertLive(condition: unknown, message: string): asserts condition {
@@ -735,6 +867,18 @@ function emptyProofStatuses(status: LayerStatus): ClosureProofStatuses {
     publicQuality: status,
     acceptanceLayering: status,
     acMapping: status,
+    sdq01: status,
+    sdq02: status,
+    sdq03: status,
+    sdq04: status,
+    sdq05: status,
+    sdq06: status,
+    sdq07: status,
+    sdq08: status,
+    sdq09: status,
+    sdq10: status,
+    sdq11: status,
+    sdq12: status,
   };
 }
 
@@ -916,6 +1060,73 @@ async function runLocal(artifactDirectory: string): Promise<AcceptanceReport> {
       pattern: 'recovers queued, running and waiting-archive',
     },
     {
+      key: 'sdq01',
+      label: 'AC-SDQ-01 fixed target change evidence',
+      file: 'tests/scenario-design-quality.test.ts',
+      pattern: 'returns fixed add/modify/delete/rename',
+    },
+    {
+      key: 'sdq02',
+      label: 'AC-SDQ-02 bounded evidence states and boundaries',
+      file: 'tests/scenario-design-quality.test.ts',
+      pattern: 'distinguishes no baseline',
+    },
+    {
+      key: 'sdq03',
+      label: 'AC-SDQ-03 Main scenario index and context boundary',
+      file: 'tests/phase3.test.ts',
+      pattern: 'scenario descriptions',
+    },
+    {
+      key: 'sdq04',
+      label: 'AC-SDQ-04 maintenance decision method engineering proof',
+      file: 'tests/closure6-acceptance-layering.test.ts',
+      pattern: 'validates integrated role instruction method content',
+    },
+    {
+      key: 'sdq05',
+      label: 'AC-SDQ-05 scenario writing contract engineering proof',
+      file: 'tests/closure6-acceptance-layering.test.ts',
+      pattern: 'validates integrated role instruction method content',
+    },
+    {
+      key: 'sdq06',
+      label: 'AC-SDQ-06 initialization candidate engineering proof',
+      file: 'tests/closure6-production-pi.test.ts',
+      pattern: 'unfamiliar-project direct initialization|reuses an existing approved',
+    },
+    {
+      key: 'sdq07',
+      label: 'AC-SDQ-07 initialization handoff and reuse engineering proof',
+      file: 'tests/closure6-production-pi.test.ts',
+      pattern: 'reuses an existing approved|formal 0/0',
+    },
+    {
+      key: 'sdq08',
+      label: 'AC-SDQ-08 explicit execution selection engineering proof',
+      file: 'tests/scenario-design-quality.test.ts',
+      pattern: 'uses only the explicit|rejects duplicate',
+    },
+    {
+      key: 'sdq09',
+      label: 'AC-SDQ-09 Reviewer order engineering proof',
+      file: 'tests/closure6-production-pi.test.ts',
+      pattern: 'ordinary four-session',
+    },
+    {
+      key: 'sdq10',
+      label: 'AC-SDQ-10 Session and revision boundary engineering proof',
+      file: 'tests/closure6-production-pi.test.ts',
+      pattern:
+        'unfamiliar-project direct initialization|review-required initialization|finalization revisions',
+    },
+    {
+      key: 'sdq11',
+      label: 'AC-SDQ-11 resource loading and compatibility engineering proof',
+      file: 'tests/closure1-role-instructions.test.ts',
+      pattern: 'loads only the fixed|adds initialization rules',
+    },
+    {
       key: 'acceptanceLayering',
       label: 'AC-CLOSURE-ACCEPT-01 command and status layering',
       file: 'tests/closure6-acceptance-layering.test.ts',
@@ -957,18 +1168,24 @@ async function runLocal(artifactDirectory: string): Promise<AcceptanceReport> {
         definition.file,
         '-t',
         definition.pattern,
+        '--testTimeout=30000',
+        '--hookTimeout=15000',
       ],
       environment,
     );
     proofs[definition.key] = proof.status;
     commands.push(proof.command);
   }
+  const localEngineeringStatuses = Object.entries(proofs)
+    .filter(([key]) => key !== 'sdq12')
+    .map(([, status]) => status);
   const passed =
-    phase9.status === 'passed' && Object.values(proofs).every((status) => status === 'passed');
+    phase9.status === 'passed' && localEngineeringStatuses.every((status) => status === 'passed');
   const local: LayerResult = passed
     ? {
         status: 'passed',
-        message: '本地质量、fixture、真实 Pi SDK Session 和逐 AC 专项证明通过。',
+        message:
+          '工程质量、fixture、真实 Pi SDK Session 和工程专项证明通过；真实模型质量对比（Phase 5）未运行，不能据此声称质量改善。',
       }
     : {
         status: 'failed',
@@ -1399,6 +1616,7 @@ export function localOnlyEnvironment(phase9Directory: string): NodeJS.ProcessEnv
     NPM_CONFIG_REGISTRY: process.env.NPM_CONFIG_REGISTRY,
     npm_config_registry: process.env.npm_config_registry,
     LUOWANG_ACCEPTANCE_ARTIFACT_DIR: phase9Directory,
+    npm_execpath: process.env.npm_execpath,
   };
   if (process.platform === 'win32') {
     environment.SystemRoot = process.env.SystemRoot;

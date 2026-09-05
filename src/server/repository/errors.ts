@@ -19,6 +19,7 @@ export type RepositoryErrorCode =
   | 'ISSUE_NOT_FOUND'
   | 'ISSUE_CREATE_FAILED'
   | 'TARGET_INVALID'
+  | 'TARGET_UNREADABLE'
   | 'INDEX_UNAVAILABLE';
 
 export class RepositoryError extends Error {

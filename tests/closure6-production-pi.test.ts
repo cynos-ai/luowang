@@ -56,6 +56,14 @@ describe('Closure 6 local production Pi path', () => {
     assert.equal(context.model.sessions[0]?.model, context.model.sessions[3]?.model);
     assert.notDeepEqual(context.model.sessions[0]?.tools, context.model.sessions[3]?.tools);
     assert.match(result.artifacts['report.md'] ?? '', /Reviewer 已独立确认/);
+    const reviewerPrompt =
+      context.model.sessions.find((session) => session.role === 'reviewer')?.systemPrompt ?? '';
+    const planIndex = reviewerPrompt.indexOf('先读取计划、唯一执行清单');
+    const evidenceIndex = reviewerPrompt.indexOf('再独立读取原始命令/API/截图/清理证据');
+    const executionIndex = reviewerPrompt.indexOf('最后读取执行记录和 Runner 草稿');
+    assert.ok(planIndex >= 0, 'Reviewer must receive the plan-first reading rule');
+    assert.ok(evidenceIndex > planIndex, 'Reviewer must read raw evidence after the plan');
+    assert.ok(executionIndex > evidenceIndex, 'Reviewer must read execution drafts last');
   });
 
   it('creates the first scenario branch through FIFO before one six-Session production Pi initialization Run', async () => {
@@ -164,6 +172,53 @@ describe('Closure 6 local production Pi path', () => {
     assert.match(result.artifacts['scenario-changes.patch'] ?? '', /ONBOARD-SMOKE-001/);
     assert.equal(context.model.sessions.filter((session) => session.role === 'main-a').length, 2);
     assert.equal(context.model.sessions.filter((session) => session.role === 'runner').length, 2);
+  });
+
+  it('reuses an existing approved scenario without manufacturing a patch', async () => {
+    const context = await createContext('autonomous', 'reuse-existing');
+    const result = await context.orchestrator.run({
+      request: '初始化时复用 target 中已有的高价值场景',
+      trigger: 'manual',
+      initialization: true,
+    });
+
+    assert.equal(result.status, 'completed', JSON.stringify(result));
+    assert.equal(result.result, 'passed', JSON.stringify(result));
+    assert.equal(result.artifacts['scenario-changes.patch'], undefined);
+    assert.match(result.artifacts['plan.md'] ?? '', /CORE-STATE-001/);
+    assert.deepEqual(result.scenarioProgress, { completed: 1, total: 1 });
+    assertSessionSequence(context.model, [
+      'main-a',
+      'runner',
+      'main-a',
+      'runner',
+      'reviewer',
+      'main-b',
+    ]);
+  });
+
+  it('runs a justified empty initialization plan through formal 0/0 review', async () => {
+    const context = await createContext('autonomous', 'empty-initialization');
+    const result = await context.orchestrator.run({
+      request: '初始化时记录没有可信场景的依据',
+      trigger: 'manual',
+      initialization: true,
+    });
+
+    assert.equal(result.status, 'completed', JSON.stringify(result));
+    assert.equal(result.result, 'passed');
+    assert.equal(result.scenarioProgress?.completed, 0);
+    assert.equal(result.scenarioProgress?.total, 0);
+    assert.match(result.artifacts['plan.md'] ?? '', /无需场景测试/);
+    assert.equal(result.artifacts['scenario-changes.patch'], undefined);
+    assertSessionSequence(context.model, [
+      'main-a',
+      'runner',
+      'main-a',
+      'runner',
+      'reviewer',
+      'main-b',
+    ]);
   });
 
   it('stops review-required initialization after three Sessions and selectively finalizes two artifacts', async () => {
@@ -291,7 +346,32 @@ async function createContext(
   await git(['config', 'user.name', 'LuoWang Closure 6'], source);
   await git(['config', 'user.email', 'luowang-closure6@example.test'], source);
   await writeFile(join(source, 'README.md'), '# Local Pi target\n', 'utf8');
-  await git(['add', 'README.md'], source);
+  if (behavior === 'reuse-existing') {
+    const scenarioDirectory = join(source, 'docs', 'scenario-testing', 'scenarios');
+    await mkdir(scenarioDirectory, { recursive: true });
+    await writeFile(
+      join(scenarioDirectory, 'CORE-STATE-001.md'),
+      `---
+id: CORE-STATE-001
+name: 状态保持
+description: 验证状态保持的业务结果
+status: approved
+tags:
+  - core
+---
+
+## 目的
+
+验证状态保持。
+
+## 期望
+
+操作后仍保持状态。
+`,
+      'utf8',
+    );
+  }
+  await git(['add', '-A'], source);
   await git(['commit', '-m', 'fixture: initialize target'], source);
   await git(['remote', 'add', 'origin', remote], source);
   await git(['push', '-u', 'origin', 'main'], source);

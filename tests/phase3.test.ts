@@ -18,6 +18,7 @@ import type { ProviderAdapter } from '../src/server/runs/provider.js';
 import type { AgentSessionFactory, AgentSessionInput } from '../src/server/runs/types.js';
 import { RunWorkspace } from '../src/server/runs/workspace.js';
 import { createRepositoryService } from '../src/server/repository/service.js';
+import type { RepositoryIndexer } from '../src/server/repository/indexer.js';
 import type { SecretStore } from '../src/server/security/secret-store.js';
 
 const execFileAsync = promisify(execFile);
@@ -208,6 +209,96 @@ describe('Phase 3 agent run', () => {
     ]);
   });
 
+  it('does not reuse the static plan when candidate plan writing fails', async () => {
+    const fixture = await createGitFixture();
+    const context = await createRunContext(
+      fixture,
+      ['passed'],
+      undefined,
+      undefined,
+      '',
+      '\n',
+      false,
+      false,
+      {
+        candidate: { planWriteFailureOnly: true },
+      },
+    );
+
+    const result = await context.orchestrator.run({
+      request: '初始化候选计划写入失败时不得继续使用旧计划',
+      trigger: 'manual',
+      initialization: true,
+    });
+
+    assert.equal(result.status, 'failed', JSON.stringify(result));
+    assert.equal(result.result, null);
+    assert.match(result.errorMessage ?? '', /未成功更新 plan\.md/);
+    assert.doesNotMatch(result.artifacts['plan.md'] ?? '', /INIT-HOME-001/);
+    assert.deepEqual(context.sessions.created, ['main-a', 'runner', 'main-a']);
+  });
+
+  it('does not continue initialization after candidate patch validation fails', async () => {
+    const fixture = await createGitFixture();
+    const context = await createRunContext(
+      fixture,
+      ['passed'],
+      undefined,
+      undefined,
+      '',
+      '\n',
+      false,
+      false,
+      {
+        candidate: { patchValidationFailureOnly: true },
+      },
+    );
+
+    const result = await context.orchestrator.run({
+      request: '初始化候选场景 patch 校验失败时不得继续验证',
+      trigger: 'manual',
+      initialization: true,
+    });
+
+    assert.equal(result.status, 'failed', JSON.stringify(result));
+    assert.equal(result.result, null);
+    assert.match(result.errorMessage ?? '', /patch 未成功写入/);
+    assert.equal(result.artifacts['scenario-changes.patch'], undefined);
+    assert.deepEqual(context.sessions.created, ['main-a', 'runner', 'main-a']);
+  });
+
+  it('fails with the plan/worktree mismatch instead of executing an old scenario set', async () => {
+    const fixture = await createGitFixture();
+    const context = await createRunContext(
+      fixture,
+      ['passed'],
+      undefined,
+      undefined,
+      '',
+      '\n',
+      false,
+      false,
+      {
+        candidate: {
+          planScenarioId: 'INIT-MISMATCH-001',
+          patchScenarioId: 'INIT-HOME-001',
+        },
+      },
+    );
+
+    const result = await context.orchestrator.run({
+      request: '初始化候选计划与工作场景不一致时必须失败',
+      trigger: 'manual',
+      initialization: true,
+    });
+
+    assert.equal(result.status, 'failed', JSON.stringify(result));
+    assert.equal(result.result, null);
+    assert.match(result.errorMessage ?? '', /未知场景 ID：INIT-MISMATCH-001/);
+    assert.deepEqual(context.sessions.created, ['main-a', 'runner', 'main-a']);
+    assert.equal(context.sessions.created.includes('reviewer'), false);
+  });
+
   it('isolates repeated Main and Runner Sessions during initialization', async () => {
     const fixture = await createGitFixture();
     const context = await createRunContext(fixture, ['passed', 'passed']);
@@ -333,6 +424,84 @@ describe('Phase 3 agent run', () => {
     );
   });
 
+  it('passes scenario descriptions, index freshness, language, and labels only to Main', async () => {
+    const fixture = await createGitFixture();
+    const indexer = {
+      sync: async () => {
+        throw new Error('not used');
+      },
+      listScenarios: () => [
+        {
+          id: 'AUTH-LOGIN-001',
+          path: 'docs/scenario-testing/scenarios/AUTH-LOGIN-001.md',
+          name: '登录状态恢复',
+          description: '验证刷新后的登录状态保持。',
+          status: 'approved' as const,
+          tags: ['core'],
+          content: 'not injected',
+          commitSha: fixture.initialHead,
+          indexedAt: '2026-09-05T00:00:00.000Z',
+        },
+      ],
+      getScenario: () => null,
+      listReports: () => [],
+      getReport: () => null,
+      indexState: () => ({
+        commitSha: fixture.initialHead,
+        syncedAt: '2026-09-05T00:00:00.000Z',
+        errors: [],
+      }),
+    } satisfies RepositoryIndexer;
+    const context = await createRunContext(
+      fixture,
+      ['passed'],
+      undefined,
+      undefined,
+      '',
+      '\n',
+      false,
+      false,
+      {
+        indexer,
+      },
+    );
+    context.configuration.updateRepository({ scenarioLabels: ['core', 'security'] });
+    const result = await context.orchestrator.run({
+      request: '验证 Main 规划上下文中的场景索引摘要',
+      trigger: 'manual',
+    });
+
+    assert.equal(result.result, 'passed', JSON.stringify(result));
+    const mainInput = context.sessions.inputs[0] as AgentSessionInput;
+    const runnerInput = context.sessions.inputs[1] as AgentSessionInput;
+    const mainContext = commandText(await invokeTool(mainInput, 'get_run_context', {}));
+    assert.match(mainContext, /验证刷新后的登录状态保持/);
+    assert.match(mainContext, new RegExp(`"indexCommit":"${fixture.initialHead}"`));
+    assert.match(mainContext, /"scenarioLanguage":"zh-CN"/);
+    assert.match(mainContext, /"scenarioLabels":\["core","security"\]/);
+    assert.match(mainContext, /"stale":false/);
+    assert.equal(
+      mainInput.customTools.some((tool) => tool.name === 'list_target_changes'),
+      true,
+    );
+    assert.equal(
+      mainInput.customTools.some((tool) => tool.name === 'read_target_diff'),
+      true,
+    );
+    assert.equal(
+      mainInput.customTools.some((tool) => tool.name === 'read_target_file_version'),
+      true,
+    );
+    assert.equal(
+      runnerInput.customTools.some((tool) => tool.name === 'list_target_changes'),
+      false,
+    );
+    assert.equal(
+      runnerInput.customTools.some((tool) => tool.name === 'read_target_diff'),
+      false,
+    );
+  });
+
   it('publishes a real two-scenario Runner progression from 0/2 to 2/2', async () => {
     const fixture = await createGitFixture(true);
     const gate = new ProgressGate();
@@ -404,7 +573,11 @@ describe('Phase 3 agent run', () => {
     assert.equal(failed.result, 'failed');
     assert.match(failed.artifacts['report.md'] ?? '', /confirmed_bugs/);
 
-    const blockedContext = await createRunContext(fixture, ['blocked']);
+    const blockedFixture = await createGitFixture(true);
+    const blockedContext = await createRunContext(blockedFixture, ['blocked'], undefined, {
+      scenarioIds: ['AUTH-LOGIN-001'],
+      checkpoint: async () => undefined,
+    });
     const blocked = await blockedContext.orchestrator.run({
       request: '验证当前测试命令',
       trigger: 'manual',
@@ -507,6 +680,7 @@ interface TestContext {
   orchestrator: RunOrchestrator;
   reportDir: string;
   repository: ReturnType<typeof createRepositoryService>;
+  configuration: ReturnType<typeof createConfigurationStore>;
   sessions: RecordingSessionFactory;
 }
 
@@ -514,6 +688,13 @@ interface ProgressFixture {
   scenarioIds: string[];
   checkpoint(name: string): Promise<void>;
   failAfterFirstStart?: boolean;
+}
+
+interface CandidateTestOptions {
+  planWriteFailureOnly?: boolean;
+  patchValidationFailureOnly?: boolean;
+  planScenarioId?: string;
+  patchScenarioId?: string;
 }
 
 class ProgressGate {
@@ -563,6 +744,7 @@ async function createRunContext(
   reportLineEnding: '\n' | '\r\n' = '\n',
   invalidReportFirst = false,
   invalidScenarioPatchFirst = false,
+  options: { indexer?: RepositoryIndexer; candidate?: CandidateTestOptions } = {},
 ): Promise<TestContext> {
   const dataDir = await mkdtemp(join(tmpdir(), 'luowang-phase3-data-'));
   const reportDir = join(dataDir, 'report');
@@ -606,16 +788,18 @@ async function createRunContext(
     reportLineEnding,
     invalidReportFirst,
     invalidScenarioPatchFirst,
+    options.candidate,
   );
   const orchestrator = createRunOrchestrator({
     configuration,
     repository,
+    indexer: options.indexer,
     reportDir,
     sessions,
     provider: {} as ProviderAdapter,
     logger: pino({ level: 'silent' }),
   });
-  return { orchestrator, reportDir, repository, sessions };
+  return { orchestrator, reportDir, repository, configuration, sessions };
 }
 
 class RecordingSessionFactory implements AgentSessionFactory {
@@ -634,6 +818,7 @@ class RecordingSessionFactory implements AgentSessionFactory {
     private readonly reportLineEnding: '\n' | '\r\n' = '\n',
     private readonly invalidReportFirst = false,
     private readonly invalidScenarioPatchFirst = false,
+    private readonly candidateOptions: CandidateTestOptions = {},
   ) {}
 
   async create(input: AgentSessionInput) {
@@ -642,17 +827,31 @@ class RecordingSessionFactory implements AgentSessionFactory {
     const session = {
       prompt: async (message: string) => {
         this.messages.push(message);
-        if (input.role === 'main-a' && hasTool(input, 'write_plan')) {
-          await invokeTool(input, 'get_run_context', {});
-          await invokeTool(input, 'write_plan', {
-            content: this.progress
-              ? `# Plan\n\n按顺序执行场景：\n${this.progress.scenarioIds.map((id) => `- ${id}`).join('\n')}\n`
-              : '# Plan\n\n无需场景测试：本次请求只验证文档事实，不影响产品行为。\n',
-          });
-        } else if (input.role === 'main-a') {
+        const candidateMain =
+          input.role === 'main-a' &&
+          hasTool(input, 'write_plan') &&
+          hasTool(input, 'read_run_artifact') &&
+          hasTool(input, 'write_scenario_patch');
+        if (candidateMain) {
           await invokeTool(input, 'read_run_artifact', { name: 'plan.md' });
           await invokeTool(input, 'read_run_artifact', { name: 'execution.md' });
           await invokeTool(input, 'read_run_artifact', { name: 'draft-report.md' });
+          if (this.candidateOptions.planWriteFailureOnly) {
+            const rejected = await invokeTool(input, 'write_plan', { content: '' });
+            assert.equal(rejected.details.error, true);
+            return;
+          }
+          const planScenarioId = this.candidateOptions.planScenarioId ?? 'INIT-HOME-001';
+          await invokeTool(input, 'write_plan', {
+            content: `# Initialization candidate plan\n\n侦察发现首页入口需要正式验证。\n\n## execution_scenarios\n\n- ${planScenarioId}\n`,
+          });
+          if (this.candidateOptions.patchValidationFailureOnly) {
+            const rejected = await invokeTool(input, 'write_scenario_patch', {
+              content: 'not a git patch',
+            });
+            assert.equal(rejected.details.error, true);
+            return;
+          }
           if (this.invalidScenarioPatchFirst) {
             const rejected = await invokeTool(input, 'write_scenario_patch', {
               content: 'not a git patch',
@@ -660,8 +859,17 @@ class RecordingSessionFactory implements AgentSessionFactory {
             assert.equal(rejected.details.error, true);
           }
           await invokeTool(input, 'write_scenario_patch', {
-            content: initializationScenarioPatch(),
+            content: initializationScenarioPatch(this.candidateOptions.patchScenarioId),
           });
+        } else if (input.role === 'main-a' && hasTool(input, 'write_plan')) {
+          await invokeTool(input, 'get_run_context', {});
+          await invokeTool(input, 'write_plan', {
+            content: this.progress
+              ? `# Plan\n\n按顺序执行场景。\n\n## execution_scenarios\n\n${this.progress.scenarioIds.map((id) => `- ${id}`).join('\n')}\n`
+              : '# Plan\n\n## execution_scenarios\n\n无需场景测试：本次请求只验证文档事实，不影响产品行为。\n',
+          });
+        } else if (input.role === 'main-a') {
+          throw new Error('fixture Main received an unexpected tool boundary');
         } else if (input.role === 'runner') {
           await invokeTool(input, 'read_run_artifact', { name: 'plan.md' });
           const progressAvailable = hasTool(input, 'begin_scenario_execution');
@@ -723,16 +931,22 @@ class RecordingSessionFactory implements AgentSessionFactory {
               content: this.formatReport(
                 this.progress
                   ? progressReportFor(context, this.progress.scenarioIds)
-                  : reportFor(context, 'passed', false),
+                  : /"initialization"\s*:\s*true/.test(input.userMessage)
+                    ? progressReportFor(context, ['INIT-HOME-001'])
+                    : reportFor(context, 'passed', false),
               ),
             });
           } else if (outcome === 'failed') {
             await invokeTool(input, 'write_report', {
-              content: this.formatReport(reportFor(context, 'failed', true)),
+              content: this.formatReport(
+                reportFor(context, 'failed', true, this.progress?.scenarioIds ?? []),
+              ),
             });
           } else {
             await invokeTool(input, 'write_report', {
-              content: this.formatReport(reportFor(context, 'blocked', false)),
+              content: this.formatReport(
+                reportFor(context, 'blocked', false, this.progress?.scenarioIds ?? []),
+              ),
             });
           }
         }
@@ -770,9 +984,9 @@ async function invokeTool(
   ) as Promise<AgentToolResult<Record<string, unknown>>>;
 }
 
-function initializationScenarioPatch(): string {
+function initializationScenarioPatch(id = 'INIT-HOME-001'): string {
   const content = `---
-id: INIT-HOME-001
+id: ${id}
 name: 首页可访问
 description: 验证项目首页可访问
 status: approved
@@ -806,11 +1020,11 @@ tags:
     .map((line) => `+${line}`)
     .join('\n');
   const lines = content.trimEnd().split('\n').length;
-  return `diff --git a/docs/scenario-testing/scenarios/INIT-HOME-001.md b/docs/scenario-testing/scenarios/INIT-HOME-001.md
+  return `diff --git a/docs/scenario-testing/scenarios/${id}.md b/docs/scenario-testing/scenarios/${id}.md
 new file mode 100644
 index 0000000..1111111
 --- /dev/null
-+++ b/docs/scenario-testing/scenarios/INIT-HOME-001.md
++++ b/docs/scenario-testing/scenarios/${id}.md
 @@ -0,0 +1,${lines} @@
 ${additions}
 `;
@@ -843,9 +1057,11 @@ function reportFor(
   context: ReturnType<typeof parsePromptContext>,
   result: 'passed' | 'failed' | 'blocked',
   failedBug: boolean,
+  scenarioIds: readonly string[] = [],
 ): string {
-  const scenarioResults =
-    result === 'passed' ? '[]' : `\n  - id: AUTH-LOGIN-001\n    result: ${result}`;
+  const scenarioResults = scenarioIds.length
+    ? `\n${scenarioIds.map((id) => `  - id: ${id}\n    result: ${result}`).join('\n')}`
+    : '[]';
   const bugs = failedBug
     ? `\n  - key: BUG-LOGIN-001\n    title: 登录状态丢失\n    scenario_ids:\n      - AUTH-LOGIN-001\n    issue_action: create`
     : '[]';
