@@ -184,7 +184,7 @@ describe('Closure 6 local production Pi path', () => {
     assert.equal(result.status, 'failed');
     assert.equal(result.result, null);
     assert.match(result.errorMessage ?? '', /approved 场景未纳入执行清单：ONBOARD-OMITTED-002/);
-    assertSessionSequence(context.model, ['main-a', 'runner', 'main-a']);
+    assertSessionSequence(context.model, ['main-a', 'runner', 'main-a'], [1, 1, 3]);
   });
 
   it('rejects initialization when a modified approved scene is omitted', async () => {
@@ -197,7 +197,7 @@ describe('Closure 6 local production Pi path', () => {
     assert.equal(result.status, 'failed');
     assert.equal(result.result, null);
     assert.match(result.errorMessage ?? '', /approved 场景未纳入执行清单：CORE-STATE-001/);
-    assertSessionSequence(context.model, ['main-a', 'runner', 'main-a']);
+    assertSessionSequence(context.model, ['main-a', 'runner', 'main-a'], [1, 1, 3]);
   });
 
   it('allows unselected draft candidates without treating them as passed', async () => {
@@ -500,7 +500,11 @@ tags:
   };
 }
 
-function assertSessionSequence(model: LocalModelProtocol, expected: string[]): void {
+function assertSessionSequence(
+  model: LocalModelProtocol,
+  expected: string[],
+  promptCounts = expected.map(() => 1),
+): void {
   assert.deepEqual(
     model.sessions.map((session) => session.role),
     expected,
@@ -509,9 +513,9 @@ function assertSessionSequence(model: LocalModelProtocol, expected: string[]): v
     model.sessions.every((session) => session.disposed),
     true,
   );
-  assert.equal(
-    model.sessions.every((session) => session.prompts.length === 1),
-    true,
+  assert.deepEqual(
+    model.sessions.map((session) => session.prompts.length),
+    promptCounts,
   );
   assert.equal(new Set(model.sessions.map((session) => session.id)).size, expected.length);
   if (model.sessions.some((session) => session.roleInstructionVersions.length > 0)) {

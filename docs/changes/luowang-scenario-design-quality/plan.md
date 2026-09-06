@@ -1,7 +1,7 @@
 # 场景维护与初始化质量改进 Plan
 
 - 日期：2026-09-05
-- 状态：审核发现的四项工程缺口已修复并通过回归；Phase 5 真实模型质量对比未运行（blocked）
+- 状态：首轮 Qwen 72 Session 矩阵已运行但未通过质量验收；真实输出反馈修复与复评进行中
 - 依据：[intent.md](./intent.md)、[spec.md](./spec.md)
 
 实施分支证明（2026-09-05）：分支为 `feat/scenario-design-quality`，基于
@@ -26,6 +26,23 @@
 本轮使用既有 Docker `quality` 镜像 `luowang:0.3.1-quality-candidate`（`11c930d63cb2`），只读挂载修复后的源码、测试、角色资源、文档、package.json 和 CI workflow。已核对镜像与当前 lockfile SHA-256 均为 `46406eef352d638790d8537d4c3cd72fe58acf108be6800326266903b2c71281`；不是宿主机 Chromium 验收，也不将其冒称新版本镜像构建证明。原样新建 quality 镜像曾因 npm 镜像下载 ECONNRESET 受阻，未记为通过。
 
 命令日志保存在本机 `.cynos/acceptance/sdq-review/fix-quality.log`、`fix-acceptance.log`；未运行真实模型或外部官网写入。本次证明仅关闭上述四项工程缺口，不宣称 Phase 5 已完成或真实模型质量已提升。
+
+## 真实模型反馈修复（2026-09-06）
+
+用户授权使用 Pi 中显式选择的 `aliyun-coding-plan/qwen3.7-plus`，Thinking off，仅作离线设计比较，不加载用户扩展/Skills，不切换按量接口或发布目标仓库。首轮冻结 `09dbed0` / `d5c4d00` 两版本和 `cynos-ai/cynos-website@46f971a65b9a28a4961ee7f9bfbf27eb21ca8be7` 派生夹具，完成 72 次 Session 尝试（893 次请求）；此前 pilot 单独保留。初始化使用固定合成侦察，Reviewer 使用明确标记的合成证据，不代表现场官网测试。
+
+原始汇总为 58 completed / 14 failed，但不等于质量通过率：两例请求超时后恢复产出仍被驱动标为 failed；新版 17 个 completed 普通规划中五例有 draft/deprecated 清单或无效 patch。12 个初始化尝试均未形成可信完整交接；新版 Reviewer 有一次必需覆盖错误放行和一次提前读取草稿。完整日志、冻结规则及 109 次本地 patch 重放、24 份新版计划检查见 `.cynos/acceptance/sdq-evaluation/{full-output,audit}/`，不改写旧结果，独立人工最终评分仍未运行。
+
+修复分支 `fix/scenario-quality-feedback` 从最新 `origin/develop@d5c4d00` 建立，范围为：
+
+- 完整五字段示例、ID/状态语义、完整 patch 与末尾换行约定，以及限长/不泄露 stderr 的校验提示。
+- Main 在同一 Session 内最多两次接收联合校验反馈；复用既有 patch、工作树和执行清单 validator，结束清理临时应用，不增加角色或 Session。
+- Reviewer 工具约束计划/原始图片/草稿顺序，图片失败保留 blocked；明确执行清单不能豁免本批必需覆盖。
+- 评测驱动区分请求恢复、角色终态、工件检查、质量判断；拒绝的读取请求不算实际读到内容，旧结果及失败全部保留。
+
+本轮工程验证：Docker quality 镜像中 format/lint/typecheck 及 26 文件 162/162 tests 通过；local acceptance（包含 build、headless E2E、生产 Pi 专项）通过，live/release 仍 blocked。最终证据为 `.cynos/acceptance/sdq-evaluation/audit/fix-release-check.log` 和 `.cynos/acceptance/sdq-feedback-quality/2026-09-06T15-25-43-681Z-local/report.json`，该 acceptance 覆盖 162-test 全量回归、联合修正反馈、Reviewer 顺序约束及评测状态分类。测试使用 lockfile 匹配的既有 quality 镜像并挂载当前发布源码/测试/角色资源/文档/CI，不冒称已构建新镜像。宿主机缺少 SQLite native binding，因此最终以容器结果为准；初次挂载遗漏 CI workflow、误把被忽略评测脚本纳入 lint 的失败日志也保留。
+
+Qwen 复评在工程回归后冻结新 commit，沿用 `full-manifest.json` 的 12 类夹具、评分规则、原始基线 `09dbed0`、模型和 Thinking，每例每版三次。结果另存 `retest-output/`，不修改首轮 `full-output/`；本轮请求上限 1200、单例 24，遇额度/权限错误停止，不切按量接口。复评驱动及状态分类单测分开记录请求恢复、角色终态、工件有效性和被拒绝读取；独立人工质量评分仍待完成，不把修复后的模板示例或评分答案注入夹具，也不预先宣布质量验收通过。
 
 ## 1. 实施原则与顺序
 
@@ -188,7 +205,7 @@ Docker 证明使用 Dockerfile/CI 中的 pinned Node digest、npm 镜像、Playw
 
 脱敏评测输入清单、版本标识、全部输出、逐例复核和对比结果保存于 `.cynos/acceptance/`，分别标注规划与 Reviewer 的证据，在本计划补充非敏感证据位置和实际状态。AC-SDQ-09 的真实质量证明必须来自固定工件的真实 Reviewer 输出和读取记录；未运行这组评测时，即使规划对比或本地流程通过，该 AC 仍保持未完成。凭据、预算或外部条件缺失时记录未运行/受阻及原因，Phase 5 保持未完成，不用本地协议模拟出质量通过。
 
-实际状态：Phase 5 未运行（`not_run/blocked`）。`npm run test:acceptance:live` 在输入检查阶段退出码 1；固定 `cynos-ai/cynos-website` 的不可变快照、非生产 URL/合成账号、GitHub/Provider/OSS 受控凭据、视觉 Reviewer 条件以及明确模型调用预算均未提供。本地 acceptance 报告中的工程 proof 全部通过，但 AC-SDQ-04/05/06/09/12 的真实模型部分仍为 `not_run`；没有基线/新版八类输入三次重复计数、Reviewer 固定工件读取记录或人工复核结论，因此本变更不声称真实场景设计质量已经改善。
+实际状态：已完成首轮真实 Qwen 72 Session 离线矩阵，发现质量及评测统计缺口（见本文“真实模型反馈修复”）；不是现场 live Run 验收。修复后复评和独立人工计数未完成，Phase 5 保持未通过，不声称稳定质量改善。原先因输入不足退出的 live 验收记录是历史事实，不再作为本轮离线模型评测未运行的理由。
 
 对应：AC-SDQ-04、AC-SDQ-05、AC-SDQ-06、AC-SDQ-09 的实际输出质量，以及 AC-SDQ-12。
 
@@ -209,11 +226,11 @@ Docker 证明使用 Dockerfile/CI 中的 pinned Node digest、npm 镜像、Playw
 | 验收项                          | 实施/证明阶段 | 当前状态 |
 | ------------------------------- | ------------- | -------- |
 | AC-SDQ-01、AC-SDQ-02、AC-SDQ-03 | Phase 1、4    | 工程通过   |
-| AC-SDQ-04、AC-SDQ-05            | Phase 2、4、5 | 工程通过；真实模型部分未运行   |
-| AC-SDQ-06、AC-SDQ-09            | Phase 3、4、5 | 工程通过；真实模型部分未运行   |
+| AC-SDQ-04、AC-SDQ-05            | Phase 2、4、5 | 首轮真实模型有缺口；修复复评中 |
+| AC-SDQ-06、AC-SDQ-09            | Phase 3、4、5 | 首轮真实模型有缺口；修复复评中 |
 | AC-SDQ-07、AC-SDQ-10            | Phase 3、4    | 工程通过   |
 | AC-SDQ-08                       | Phase 2、3、4 | 工程通过   |
 | AC-SDQ-11                       | Phase 2、3、4 | 工程通过   |
-| AC-SDQ-12                       | Phase 4、5    | 工程/本地通过；真实评测未运行   |
+| AC-SDQ-12                       | Phase 4、5    | 首轮矩阵已运行；最终人工计数未完成 |
 
-PR #56 已合入 `develop`，其 Phase 0–4 原工程证明存在的四项遗漏已在上述修复分支完成回归，修复合并状态以 PR 为准；Phase 5 因外部输入缺失保持 `not_run/blocked`。即使工程 PR 已合并，缺少真实质量证据时也不能宣称提示词或场景设计质量已提升。
+PR #56 和四项工程遗漏修复 PR #58 已合入 `develop`；本轮真实反馈修复尚在独立分支。Phase 5 已运行首轮矩阵但未通过质量验收，修复复评与独立人工评分待完成，不因工程检查通过就宣称场景设计质量已提升。

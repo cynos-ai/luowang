@@ -30,7 +30,7 @@ import {
   supportsVision,
   type BrowserMcpAdapter,
 } from '../browser/playwright-mcp.js';
-import { createOssAdapter, type OssAdapter } from '../storage/oss.js';
+import { contentTypeFor, createOssAdapter, type OssAdapter } from '../storage/oss.js';
 import {
   buildSessionInput,
   createArtifactWriterTool,
@@ -52,6 +52,7 @@ import { createProviderAdapter, type ProviderAdapter } from './provider.js';
 import { createIssueCandidateController, createRunHistoryTool } from './run-history.js';
 import { createScenarioProgressController, type ProgressScenario } from './scenario-progress.js';
 import { scenarioReviewSummary } from './scenario-review-summary.js';
+import { createReviewReadOrder } from './review-order.js';
 import {
   assertScenarioResultsMatchPlan,
   ExecutionPlanError,
@@ -563,7 +564,10 @@ class DefaultRunOrchestrator implements RunOrchestrator {
               'write_scenario_patch',
               '写入场景变更 patch',
               '只写入 docs/scenario-testing/scenarios/** 范围内的标准 git unified patch；不能直接修改目标仓库或其他目录。',
-              (content) => workspace.writer('main-a').writeScenarioPatch(content),
+              async (content) => {
+                await repository.validateScenarioPatch(context.targetCommit, content);
+                await workspace.writer('main-a').writeScenarioPatch(content);
+              },
             ),
           ]),
     ];
@@ -576,6 +580,10 @@ class DefaultRunOrchestrator implements RunOrchestrator {
       mainAUserMessage(context),
       mainAOutputContract(context),
       context.initialization,
+      [],
+      context.initialization
+        ? undefined
+        : () => this.validatePlanningOutput(workspace, repository, context),
     );
     await assertArtifact(workspace, 'plan.md');
     if (!context.initialization) await parseExecutionScenarioPlan(await workspace.read('plan.md'));
@@ -640,6 +648,7 @@ class DefaultRunOrchestrator implements RunOrchestrator {
         '只写入 docs/scenario-testing/scenarios/** 范围内的标准 git unified patch；不能直接修改目标仓库或创建 suite、catalog、journey 或能力图文件。',
         async (content) => {
           patchWriteAttempted = true;
+          patchWriteSucceeded = false;
           try {
             await repository.validateScenarioPatch(context.targetCommit, content);
           } catch (error) {
@@ -662,6 +671,14 @@ class DefaultRunOrchestrator implements RunOrchestrator {
       initializationCandidateUserMessage(context),
       initializationCandidateOutputContract(),
       true,
+      [],
+      async () => {
+        if (!planWriteSucceeded)
+          throw new ExecutionPlanError('候选 Main 未成功更新 plan.md，不能使用旧静态计划');
+        if (patchWriteAttempted && !patchWriteSucceeded)
+          throw new ExecutionPlanError('最后一次候选 patch 未成功写入，必须修正后重新提交');
+        await this.validatePlanningOutput(workspace, repository, context);
+      },
     );
     if (!planWriteSucceeded) {
       throw new RunOrchestratorError(
@@ -677,6 +694,24 @@ class DefaultRunOrchestrator implements RunOrchestrator {
     }
     await assertArtifact(workspace, 'plan.md');
     parseExecutionScenarioPlan(await workspace.read('plan.md'));
+  }
+
+  private async validatePlanningOutput(
+    workspace: RunWorkspace,
+    repository: GitRepository,
+    context: RunContext,
+  ): Promise<void> {
+    const patch = await readOptionalScenarioPatch(workspace);
+    try {
+      await repository.checkoutTarget(context.targetCommit);
+      const scenarioChanges =
+        patch === undefined
+          ? undefined
+          : await repository.applyScenarioPatch(context.targetCommit, patch);
+      await this.progressScenarios(workspace, repository, { ...context, scenarioChanges });
+    } finally {
+      await repository.cleanWorkspace();
+    }
   }
 
   private async prepareScenarioPatch(
@@ -1199,16 +1234,23 @@ class DefaultRunOrchestrator implements RunOrchestrator {
     evidenceStore: RunEvidenceStore | undefined,
   ): Promise<void> {
     this.setPhase(state, 'reviewer', 'Reviewer 正在独立审核执行结果');
-    const tools = [
-      createReadArtifactTool((name) =>
+    const readOrder = createReviewReadOrder(
+      (name) =>
         readAllowedArtifact(workspace, name, [
           'plan.md',
           'execution.md',
           'draft-report.md',
           'scenario-changes.patch',
         ]),
-      ),
-      ...(evidenceStore ? createReviewerEvidenceTools(evidenceStore) : []),
+      context.evidence
+        .filter((item) => contentTypeFor(item.filename).startsWith('image/'))
+        .map((item) => item.filename),
+      () => this.addBlockingReason(context, 'Reviewer 原始图片读取失败，不能确认通过'),
+      await workspace.exists('scenario-changes.patch'),
+    );
+    const tools = [
+      createReadArtifactTool(readOrder.readArtifact),
+      ...(evidenceStore ? createReviewerEvidenceTools(evidenceStore).map(readOrder.wrap) : []),
       ...createReviewerTestDataTools(
         this.options.testData ?? createTestDataManager(),
         context.runId,
@@ -1218,7 +1260,10 @@ class DefaultRunOrchestrator implements RunOrchestrator {
         'write_review',
         '写入独立审核',
         '写入本次 Run 的完整 review.md。必须独立核对执行证据和零场景判断。',
-        (content) => workspace.writer('reviewer').writeReview(content),
+        (content) => {
+          readOrder.assertReady();
+          return workspace.writer('reviewer').writeReview(content);
+        },
       ),
     ];
     await this.invoke(
@@ -1348,6 +1393,7 @@ class DefaultRunOrchestrator implements RunOrchestrator {
     outputContract: string,
     initialization: boolean,
     extensionFactories: InlineExtension[] = [],
+    validateOutput?: () => Promise<void>,
   ): Promise<void> {
     let session: AgentSession | undefined;
     try {
@@ -1366,6 +1412,20 @@ class DefaultRunOrchestrator implements RunOrchestrator {
       );
       session = await this.sessions.create(input);
       await session.prompt(input.userMessage);
+      if (validateOutput) {
+        // Keep correction in the same isolated Session; never launch extra roles or loop unboundedly.
+        for (let attempt = 0; ; attempt += 1) {
+          try {
+            await validateOutput();
+            break;
+          } catch (error) {
+            if (attempt >= 2) throw error;
+            await session.prompt(
+              `规划工件联合校验失败：${safeMessage(error)}\n请在当前 Session 修正完整 plan.md/场景 patch 后结束。execution_scenarios 只能引用应用后实际存在的 approved 场景；draft/deprecated 不可执行。不要通过删去必需覆盖来掩盖问题，也不要重复发送未修正工件。`,
+            );
+          }
+        }
+      }
     } finally {
       if (session) await session.dispose();
     }

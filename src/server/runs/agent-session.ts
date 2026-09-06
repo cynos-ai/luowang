@@ -137,7 +137,10 @@ export function createArtifactWriterTool(
 ): ToolDefinition {
   const parameters = Type.Object({
     content: Type.String({
-      description: '要写入的完整 Markdown 文本',
+      description:
+        name === 'write_scenario_patch'
+          ? '要原样保存的完整标准 git unified diff（不是 Markdown 围栏），最后一行必须以换行符结束；本次内容替换整个 patch'
+          : '要写入的完整 Markdown 文本',
       maxLength: 4 * 1024 * 1024,
     }),
   });

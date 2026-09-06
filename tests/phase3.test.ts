@@ -299,6 +299,44 @@ describe('Phase 3 agent run', () => {
     assert.equal(context.sessions.created.includes('reviewer'), false);
   });
 
+  it('repairs a rejected candidate plan inside the same Main Session before Runner starts', async () => {
+    const fixture = await createGitFixture();
+    const context = await createRunContext(
+      fixture,
+      ['passed', 'passed'],
+      undefined,
+      undefined,
+      '',
+      '\n',
+      false,
+      false,
+      {
+        candidate: { repairPlanOnce: true },
+      },
+    );
+    const result = await context.orchestrator.run({
+      request: '修正候选清单后再验证',
+      trigger: 'manual',
+      initialization: true,
+    });
+    assert.equal(result.status, 'completed', JSON.stringify(result));
+    assert.deepEqual(context.sessions.created, [
+      'main-a',
+      'runner',
+      'main-a',
+      'runner',
+      'reviewer',
+      'main-b',
+    ]);
+    assert.equal(
+      context.sessions.messages.filter((message) => message.includes('规划工件联合校验失败'))
+        .length,
+      1,
+    );
+    assert.doesNotMatch(result.artifacts['plan.md'] ?? '', /INIT-MISSING-001/);
+    assert.match(result.artifacts['plan.md'] ?? '', /INIT-HOME-001/);
+  });
+
   it('isolates repeated Main and Runner Sessions during initialization', async () => {
     const fixture = await createGitFixture();
     const context = await createRunContext(fixture, ['passed', 'passed']);
@@ -724,6 +762,7 @@ interface CandidateTestOptions {
   planWriteFailureOnly?: boolean;
   patchValidationFailureOnly?: boolean;
   planScenarioId?: string;
+  repairPlanOnce?: boolean;
   patchScenarioId?: string;
 }
 
@@ -871,7 +910,10 @@ class RecordingSessionFactory implements AgentSessionFactory {
             assert.equal(rejected.details.error, true);
             return;
           }
-          const planScenarioId = this.candidateOptions.planScenarioId ?? 'INIT-HOME-001';
+          const planScenarioId =
+            this.candidateOptions.repairPlanOnce && !message.includes('规划工件联合校验失败')
+              ? 'INIT-MISSING-001'
+              : (this.candidateOptions.planScenarioId ?? 'INIT-HOME-001');
           await invokeTool(input, 'write_plan', {
             content: `# Initialization candidate plan\n\n侦察发现首页入口需要正式验证。\n\n## execution_scenarios\n\n- ${planScenarioId}\n`,
           });
@@ -887,6 +929,11 @@ class RecordingSessionFactory implements AgentSessionFactory {
               content: 'not a git patch',
             });
             assert.equal(rejected.details.error, true);
+            const missingNewline = await invokeTool(input, 'write_scenario_patch', {
+              content: initializationScenarioPatch(this.candidateOptions.patchScenarioId).trimEnd(),
+            });
+            assert.equal(missingNewline.details.error, true);
+            assert.match(commandText(missingNewline), /缺少末尾换行/);
           }
           await invokeTool(input, 'write_scenario_patch', {
             content: initializationScenarioPatch(this.candidateOptions.patchScenarioId),
@@ -932,7 +979,13 @@ class RecordingSessionFactory implements AgentSessionFactory {
             content: `# Draft\n\n结果：${outcome}\n`,
           });
         } else if (input.role === 'reviewer') {
+          const premature = await invokeTool(input, 'read_run_artifact', {
+            name: 'draft-report.md',
+          });
+          assert.equal(premature.details.error, true);
+          assert.doesNotMatch(commandText(premature), /# Draft/);
           await invokeTool(input, 'read_run_artifact', { name: 'plan.md' });
+          await invokeTool(input, 'read_run_artifact', { name: 'scenario-changes.patch' });
           await invokeTool(input, 'read_run_artifact', { name: 'execution.md' });
           await invokeTool(input, 'read_run_artifact', { name: 'draft-report.md' });
           await invokeTool(input, 'write_review', {

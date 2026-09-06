@@ -451,7 +451,12 @@ function nextTool(
   }
 
   if (has('write_review')) {
-    const unreadArtifact = nextUnreadArtifact(['plan.md', 'execution.md', 'draft-report.md']);
+    const unreadArtifact = nextUnreadArtifact([
+      'plan.md',
+      'scenario-changes.patch',
+      'execution.md',
+      'draft-report.md',
+    ]);
     if (unreadArtifact) return unreadArtifact;
     if (count('write_review') === 0) {
       return tool('write_review', {
