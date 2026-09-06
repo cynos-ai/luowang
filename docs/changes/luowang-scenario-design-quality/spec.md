@@ -133,7 +133,7 @@ Harness 依据场景变更的审批状态和更新后的执行清单分流，不
 
 达到时间或工具预算只能说明停止原因，不能证明覆盖完整。必要条件缺失时仍可结束本次尝试，但结果和初始化完成声明遵循 blocked 规则。结果聚合保持 `blocked > failed > passed`。
 
-人工审核路径仍只保留 `scenario-changes.patch` 与 Harness 生成的 `report.md`；特殊报告应包含计划中必要的候选范围和覆盖缺口摘要，摘要经过既有脱敏且不改变报告 frontmatter。不能为保留计划而突破特殊工件 allowlist，不能等待 PR 合并或额外启动审核/验证 Session。Archiver 仍按原有模式发布 patch、关联 PR；最终 Main 修订未重新执行的候选仍 blocked。
+人工审核路径仍只保留 `scenario-changes.patch` 与 Harness 生成的 `report.md`；特殊报告应包含计划中必要的候选范围和覆盖缺口摘要，摘要经过既有脱敏且不改变报告 frontmatter。新计划将这段必要业务摘要写在同一 `plan.md` 的 `## scenario_review_summary` 下，正文遵循生成语言；Harness 只提取此段和执行清单，兼容已有的候选范围/覆盖缺口章节，不复制其他分析、代码块或原始 diff。Secret 值及凭据模式在截断前脱敏，临时地址和本地路径不保留；摘要缺失或截断必须明确说明，不能伪称覆盖完整。不能为保留计划而突破特殊工件 allowlist，不能等待 PR 合并或额外启动审核/验证 Session。Archiver 仍按原有模式发布 patch、关联 PR；最终 Main 修订未重新执行的候选仍 blocked。
 
 ## 7. 计划选择与独立审核
 

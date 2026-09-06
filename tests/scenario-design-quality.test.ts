@@ -16,6 +16,7 @@ import {
 } from '../src/server/runs/execution-plan.js';
 import { createTargetChangeEvidenceTools } from '../src/server/runs/change-evidence.js';
 import { GitRepository } from '../src/server/repository/git-repository.js';
+import { scenarioReviewSummary } from '../src/server/runs/scenario-review-summary.js';
 
 const execFileAsync = promisify(execFile);
 const cleanup: Array<() => Promise<void>> = [];
@@ -83,6 +84,49 @@ describe('scenario design quality execution contract', () => {
   });
 });
 
+describe('special scenario review summary', () => {
+  it('retains only bounded candidate/gap prose with secrets and raw evidence removed', () => {
+    const summary = scenarioReviewSummary(
+      `
+# Plan
+PRIVATE_ANALYSIS_MUST_NOT_BE_COPIED
+## execution_scenarios
+- AUTH-A-001
+## scenario_review_summary
+候选范围：登录会话。
+- 覆盖缺口：退款权限风险。
+secret-value-without-a-label
+password: other-fake-value
+https://example.test/image?X-Amz-Signature=synthetic
+/tmp/local/run/image.png
+\`\`\`diff
+## scenario_review_summary
+RAW_DIFF_MUST_NOT_BE_COPIED
+\`\`\`
+## 内部分析
+UNSELECTED_SECTION
+`,
+      ['secret-value-without-a-label'],
+    );
+    assert.match(summary, /AUTH-A-001/);
+    assert.match(summary, /退款权限风险/);
+    assert.doesNotMatch(
+      summary,
+      /PRIVATE_ANALYSIS|RAW_DIFF|UNSELECTED_SECTION|secret-value|other-fake-value|https:|\/tmp\//,
+    );
+    assert.match(
+      scenarioReviewSummary('## execution_scenarios\n无需场景测试：无影响。', []),
+      /未提供/,
+    );
+    const long = scenarioReviewSummary(
+      '## execution_scenarios\n- AUTH-A-001\n## scenario_review_summary\n' + '文'.repeat(9000),
+      [],
+    );
+    assert.match(long, /摘要已截断/);
+    assert.ok(long.length < 8200);
+  });
+});
+
 describe('fixed target change evidence', () => {
   it('returns fixed add/modify/delete/rename facts and bounded text reads', async () => {
     const fixture = await createGitFixture();
@@ -94,6 +138,8 @@ describe('fixed target change evidence', () => {
     const changes = await repository.changedFiles(fixture.base, fixture.target);
     const byPath = new Map(changes.map((change) => [change.newPath ?? change.oldPath, change]));
     assert.equal(byPath.get('modified.txt')?.kind, 'modified');
+    assert.equal(byPath.get('modified.txt')?.oldPath, 'modified.txt');
+    assert.equal(byPath.get('modified.txt')?.oldMode, '100644');
     assert.equal(byPath.get('deleted.txt')?.kind, 'deleted');
     assert.equal(byPath.get('renamed-new.txt')?.kind, 'renamed');
     assert.equal(byPath.get('added.txt')?.kind, 'added');
@@ -132,6 +178,60 @@ describe('fixed target change evidence', () => {
       'moving remote HEAD must not change fixed base/target facts',
     );
   }, 20_000);
+
+  it('paginates fixed version files at UTF-8 boundaries and binds cursors to version and path', async () => {
+    const content = '中'.repeat(24000);
+    const options = {
+      baseCommit: 'a'.repeat(40),
+      targetCommit: 'b'.repeat(40),
+      listChanges: async () => [],
+      readDiff: async () => ({ status: 'empty' as const }),
+      readFile: async () => ({ status: 'ok' as const, content }),
+    };
+    const tools = createTargetChangeEvidenceTools(options);
+    let cursor: string | undefined;
+    let collected = '';
+    do {
+      const page = json(
+        await invoke(tools, 'read_target_file_version', {
+          version: 'base',
+          path: 'large.txt',
+          ...(cursor ? { cursor } : {}),
+        }),
+      );
+      assert.ok(Buffer.byteLength(page.content as string, 'utf8') <= 32 * 1024);
+      assert.doesNotMatch(page.content as string, /\ufffd/);
+      collected += page.content;
+      cursor = page.nextCursor as string | undefined;
+      if (cursor) {
+        assert.equal(page.status, 'partial');
+        for (const params of [
+          { version: 'target', path: 'large.txt' },
+          { version: 'base', path: 'other.txt' },
+        ]) {
+          assert.equal(
+            (await invoke(tools, 'read_target_file_version', { ...params, cursor })).details.error,
+            true,
+          );
+        }
+        const otherRun = createTargetChangeEvidenceTools({
+          ...options,
+          targetCommit: 'c'.repeat(40),
+        });
+        assert.equal(
+          (
+            await invoke(otherRun, 'read_target_file_version', {
+              version: 'base',
+              path: 'large.txt',
+              cursor,
+            })
+          ).details.error,
+          true,
+        );
+      } else assert.equal(page.status, 'ok');
+    } while (cursor);
+    assert.equal(collected, content);
+  });
 
   it('distinguishes no baseline, stable pagination, and cursor scope errors', async () => {
     const descriptors = Array.from({ length: 101 }, (_, index) => ({

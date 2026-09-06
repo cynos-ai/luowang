@@ -927,6 +927,7 @@ async function runLocal(artifactDirectory: string): Promise<AcceptanceReport> {
     key: keyof ClosureProofStatuses;
     label: string;
     file: string;
+    additionalFiles?: string[];
     pattern: string;
     requires?: string[];
   }> = [
@@ -1069,7 +1070,8 @@ async function runLocal(artifactDirectory: string): Promise<AcceptanceReport> {
       key: 'sdq02',
       label: 'AC-SDQ-02 bounded evidence states and boundaries',
       file: 'tests/scenario-design-quality.test.ts',
-      pattern: 'distinguishes no baseline',
+      additionalFiles: ['tests/phase3.test.ts'],
+      pattern: 'distinguishes no baseline|paginates fixed version|sensitive rename endpoints',
     },
     {
       key: 'sdq03',
@@ -1099,7 +1101,8 @@ async function runLocal(artifactDirectory: string): Promise<AcceptanceReport> {
       key: 'sdq07',
       label: 'AC-SDQ-07 initialization handoff and reuse engineering proof',
       file: 'tests/closure6-production-pi.test.ts',
-      pattern: 'reuses an existing approved|formal 0/0',
+      pattern:
+        'reuses an existing approved|formal 0/0|approved patch candidate|modified approved scene|unselected draft candidates',
     },
     {
       key: 'sdq08',
@@ -1117,8 +1120,9 @@ async function runLocal(artifactDirectory: string): Promise<AcceptanceReport> {
       key: 'sdq10',
       label: 'AC-SDQ-10 Session and revision boundary engineering proof',
       file: 'tests/closure6-production-pi.test.ts',
+      additionalFiles: ['tests/scenario-design-quality.test.ts'],
       pattern:
-        'unfamiliar-project direct initialization|review-required initialization|finalization revisions',
+        'unfamiliar-project direct initialization|review-required initialization|finalization revisions|bounded candidate/gap prose',
     },
     {
       key: 'sdq11',
@@ -1140,7 +1144,8 @@ async function runLocal(artifactDirectory: string): Promise<AcceptanceReport> {
     },
   ];
   for (const definition of definitions) {
-    const requiredPaths = [definition.file, ...(definition.requires ?? [])];
+    const testFiles = [definition.file, ...(definition.additionalFiles ?? [])];
+    const requiredPaths = [...testFiles, ...(definition.requires ?? [])];
     const available = await Promise.all(
       requiredPaths.map((path) =>
         access(join(process.cwd(), path)).then(
@@ -1165,7 +1170,7 @@ async function runLocal(artifactDirectory: string): Promise<AcceptanceReport> {
       [
         join(process.cwd(), 'node_modules', 'vitest', 'vitest.mjs'),
         'run',
-        definition.file,
+        ...testFiles,
         '-t',
         definition.pattern,
         '--testTimeout=30000',

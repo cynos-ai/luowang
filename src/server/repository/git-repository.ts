@@ -789,7 +789,9 @@ export class GitRepository {
         ? (tokens[index++] ?? null)
         : code === 'D'
           ? (tokens[index++] ?? null)
-          : null;
+          : code === 'A'
+            ? null
+            : (tokens[index] ?? null);
       const newPath = renamed
         ? (tokens[index++] ?? null)
         : code === 'D'
@@ -846,11 +848,12 @@ export class GitRepository {
     if (!change) {
       throw new RepositoryError('TARGET_INVALID', '固定变化清单中不存在该文件路径', 404);
     }
-    for (const endpoint of [change.oldPath, change.newPath]) {
+    for (const [commit, endpoint] of [
+      [baseSha, change.oldPath],
+      [targetSha, change.newPath],
+    ] as const) {
       if (!endpoint) continue;
-      const entry = (await this.listTree(endpoint === change.oldPath ? baseSha : targetSha)).find(
-        (item) => item.path === endpoint,
-      );
+      const entry = (await this.listTree(commit)).find((item) => item.path === endpoint);
       if (!entry) continue;
       assertReadableTreeEntry(entry);
     }
@@ -866,7 +869,7 @@ export class GitRepository {
       baseSha,
       targetSha,
       '--',
-      ...paths,
+      ...paths.map((path) => `:(literal)${path}`),
     ]);
     if (looksBinaryDiff(output.stdout)) {
       throw new RepositoryError('TARGET_UNREADABLE', '固定变化包含二进制内容', 422);

@@ -659,7 +659,7 @@ function validStatusCode(value: number | undefined): value is number {
   return Number.isInteger(value) && (value ?? 0) >= 100 && (value ?? 0) <= 599;
 }
 
-function redactSensitiveText(value: string): string {
+export function redactSensitiveText(value: string): string {
   return value
     .replace(/(authorization\s*[:=]\s*)(?:bearer\s+)?[^,;\r\n}]+/gi, '$1[REDACTED]')
     .replace(/(bearer\s+)[A-Za-z0-9._~+/-]+/gi, '$1[REDACTED]')
