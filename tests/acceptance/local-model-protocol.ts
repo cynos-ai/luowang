@@ -20,7 +20,10 @@ export type LocalModelBehavior =
   | 'invalid-tool'
   | 'special-cleanup'
   | 'reuse-existing'
-  | 'empty-initialization';
+  | 'empty-initialization'
+  | 'omit-approved'
+  | 'omit-modified'
+  | 'unselected-draft';
 
 export interface LocalPiSessionRecord {
   id: string;
@@ -338,7 +341,12 @@ function nextTool(
             ? '# 初始化候选计划\n\n复用 target 中已有的 approved 状态场景。\n\n## execution_scenarios\n\n- CORE-STATE-001\n'
             : '# 初始化候选计划\n\n侦察发现核心入口需要验证。\n\n## execution_scenarios\n\n- ONBOARD-SMOKE-001\n';
       return tool('write_plan', {
-        content: candidatePlan,
+        content:
+          candidatePlan +
+          '\n## scenario_review_summary\n\n候选范围：核心入口验证。\n\n覆盖缺口：退款权限风险尚未覆盖。\n' +
+          (behavior === 'special-cleanup'
+            ? '\npassword: local-synthetic-password\nhttps://example.test/evidence?token=synthetic-only\n'
+            : ''),
       });
     }
     if (
@@ -346,7 +354,18 @@ function nextTool(
       behavior !== 'empty-initialization' &&
       count('write_scenario_patch') === 0
     ) {
-      return tool('write_scenario_patch', { content: scenarioAddPatch('ONBOARD-SMOKE-001') });
+      const extra =
+        behavior === 'omit-approved' || behavior === 'unselected-draft'
+          ? scenarioAddPatch('ONBOARD-OMITTED-002').replace(
+              'status: approved',
+              `status: ${behavior === 'unselected-draft' ? 'draft' : 'approved'}`,
+            )
+          : behavior === 'omit-modified'
+            ? 'diff --git a/docs/scenario-testing/scenarios/CORE-STATE-001.md b/docs/scenario-testing/scenarios/CORE-STATE-001.md\n--- a/docs/scenario-testing/scenarios/CORE-STATE-001.md\n+++ b/docs/scenario-testing/scenarios/CORE-STATE-001.md\n@@ -1,7 +1,7 @@\n ---\n id: CORE-STATE-001\n name: 状态保持\n-description: 验证状态保持的业务结果\n+description: 验证权限隔离后的状态保持结果\n status: approved\n tags:\n   - core\n'
+            : '';
+      return tool('write_scenario_patch', {
+        content: scenarioAddPatch('ONBOARD-SMOKE-001').trimEnd() + '\n' + extra,
+      });
     }
     return null;
   }

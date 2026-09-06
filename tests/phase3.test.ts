@@ -502,6 +502,36 @@ describe('Phase 3 agent run', () => {
     );
   });
 
+  it('rejects sensitive rename endpoints through Main diff tools', async () => {
+    const fixture = await createGitFixture();
+    const common = Array.from({ length: 40 }, (_, i) => `ordinary line ${i}\n`).join('');
+    await writeFile(
+      join(fixture.sourceDir, 'credentials.txt'),
+      common + 'SYNTHETIC_PRIVATE_VALUE\n',
+    );
+    await writeFile(join(fixture.sourceDir, 'public-old.txt'), common + 'ordinary\n');
+    await commitAndPush(fixture.sourceDir, 'base for rename checks', 'scenario-testing');
+    const context = await createRunContext(fixture, ['passed']);
+    assert.equal(
+      (await context.orchestrator.run({ request: 'base', trigger: 'manual' })).result,
+      'passed',
+    );
+    await git(['mv', 'credentials.txt', 'public-new.txt'], fixture.sourceDir);
+    await git(['mv', 'public-old.txt', 'secret-new.txt'], fixture.sourceDir);
+    await writeFile(join(fixture.sourceDir, 'public-new.txt'), common + 'replacement\n');
+    await commitAndPush(fixture.sourceDir, 'rename checks', 'scenario-testing');
+    assert.equal(
+      (await context.orchestrator.run({ request: 'target', trigger: 'manual' })).result,
+      'passed',
+    );
+    const main = context.sessions.inputs[4] as AgentSessionInput;
+    for (const path of ['public-new.txt', 'credentials.txt', 'public-old.txt', 'secret-new.txt']) {
+      const response = commandText(await invokeTool(main, 'read_target_diff', { path }));
+      assert.match(response, /"status":"unreadable"/);
+      assert.doesNotMatch(response, /SYNTHETIC_PRIVATE_VALUE/);
+    }
+  });
+
   it('publishes a real two-scenario Runner progression from 0/2 to 2/2', async () => {
     const fixture = await createGitFixture(true);
     const gate = new ProgressGate();

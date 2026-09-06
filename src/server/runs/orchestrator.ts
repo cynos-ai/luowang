@@ -51,6 +51,7 @@ import {
 import { createProviderAdapter, type ProviderAdapter } from './provider.js';
 import { createIssueCandidateController, createRunHistoryTool } from './run-history.js';
 import { createScenarioProgressController, type ProgressScenario } from './scenario-progress.js';
+import { scenarioReviewSummary } from './scenario-review-summary.js';
 import {
   assertScenarioResultsMatchPlan,
   ExecutionPlanError,
@@ -791,7 +792,22 @@ class DefaultRunOrchestrator implements RunOrchestrator {
   ): Promise<void> {
     this.addBlockingReason(context, 'Run 等待场景变更人工审核，不等待 PR 合并');
     const finishedAt = this.now().toISOString();
-    const reportContent = buildScenarioReviewReport(state, context, finishedAt, closure);
+    const secrets: string[] = [];
+    for (const key of [
+      'providerApiKey',
+      'gitToken',
+      'testUsername',
+      'testPassword',
+      'ossAccessKeyId',
+      'ossAccessKeySecret',
+    ] as const) {
+      // Fail closed if the Secret Store cannot supply the redaction values.
+      const value = this.options.secretStore?.get(key);
+      if (value) secrets.push(value);
+    }
+    const summary = scenarioReviewSummary(await workspace.read('plan.md'), secrets);
+    const reportContent = buildScenarioReviewReport(state, context, finishedAt, closure, summary);
+    assertSafeReportContent(reportContent, workspace, this.options.secretStore);
     await workspace.writer('main-b').writeReport(reportContent);
     const report = parseReportMarkdown(
       reportContent,
@@ -859,7 +875,7 @@ class DefaultRunOrchestrator implements RunOrchestrator {
         ? undefined
         : createScenarioProgressController({
             state,
-            allowedScenarios: await this.progressScenarios(workspace, repository),
+            allowedScenarios: await this.progressScenarios(workspace, repository, context),
             now: this.now,
           });
     const tools = [
@@ -925,15 +941,35 @@ class DefaultRunOrchestrator implements RunOrchestrator {
   private async progressScenarios(
     workspace: RunWorkspace,
     repository: GitRepository,
+    context: RunContext,
   ): Promise<ProgressScenario[]> {
     const plan = await workspace.read('plan.md');
     const executionPlan = parseExecutionScenarioPlan(plan);
     const candidates: ExecutionScenarioCandidate[] = [];
+    const changes = new Map(
+      context.scenarioChanges?.changes.map((change) => [change.newPath, change]),
+    );
+    const requiredIds: string[] = [];
     for (const path of await repository.listWorkingScenarioFiles()) {
-      const parsed = parseScenarioMarkdown(await repository.readWorkingScenarioFile(path), path);
+      const content = await repository.readWorkingScenarioFile(path);
+      const parsed = parseScenarioMarkdown(content, path);
       candidates.push({ id: parsed.id, name: parsed.name, status: parsed.status });
+      const change = changes.get(path);
+      if (context.initialization && change && parsed.status === 'approved') {
+        // A byte-identical rename is asset maintenance, not a new assertion.
+        const unchangedRename =
+          change.kind === 'rename' &&
+          change.oldPath !== null &&
+          (await repository.readFile(context.targetCommit, change.oldPath)) === content;
+        if (!unchangedRename) requiredIds.push(parsed.id);
+      }
     }
     validateExecutionScenarioPlan(executionPlan, candidates);
+    for (const id of requiredIds) {
+      if (!executionPlan.scenarioIds.includes(id)) {
+        throw new ExecutionPlanError(`初始化变更的 approved 场景未纳入执行清单：${id}`);
+      }
+    }
     const byId = new Map(candidates.map((candidate) => [candidate.id, candidate]));
     return executionPlan.scenarioIds.map((id) => {
       const scenario = byId.get(id);
@@ -1386,6 +1422,12 @@ class DefaultRunOrchestrator implements RunOrchestrator {
             return { status: 'no_baseline', reason: '本 Run 没有可比较的 base commit' } as const;
           }
           try {
+            const change = (
+              await repository.changedFiles(context.baseCommit, context.targetCommit)
+            ).find((item) => item.oldPath === path || item.newPath === path);
+            if (change && !toTargetChangeDescriptor(change).readable) {
+              return { status: 'unreadable', reason: '变化的前后路径或文件类型受限' } as const;
+            }
             return {
               status: 'ok',
               content: await repository.readTextDiff(
@@ -1791,6 +1833,7 @@ function buildScenarioReviewReport(
   context: RunContext,
   finishedAt: string,
   closure: ScenarioReviewClosure,
+  summary: string,
 ): string {
   const changes = context.scenarioChanges
     ? `变更文件：${context.scenarioChanges.changedPaths.join(', ')}`
@@ -1815,6 +1858,8 @@ confirmed_bugs: []
 本次 Run 只产生了待人工审核的场景资产变更，没有等待 PR 合并，也没有把说明写入正式报告目录。
 
 ${changes}
+
+${summary}
 
 ## Harness 收尾
 
@@ -1933,12 +1978,13 @@ function isTestAssetPath(path: string): boolean {
 function toTargetChangeDescriptor(change: GitChangedFile): TargetChangeDescriptor {
   const paths = [change.oldPath, change.newPath].filter((path): path is string => path !== null);
   const restricted = paths.some((path) => SENSITIVE_PATH.test(path));
-  const regular = paths.every((path) => {
-    const isOld = path === change.oldPath;
-    const type = isOld ? change.oldType : change.newType;
-    const mode = isOld ? change.oldMode : change.newMode;
-    return type === 'blob' && (mode === '100644' || mode === '100755');
-  });
+  const regular = [
+    { path: change.oldPath, type: change.oldType, mode: change.oldMode },
+    { path: change.newPath, type: change.newType, mode: change.newMode },
+  ].every(
+    ({ path, type, mode }) =>
+      path === null || (type === 'blob' && (mode === '100644' || mode === '100755')),
+  );
   return {
     ...change,
     oldPath: restricted ? null : change.oldPath,
@@ -2108,6 +2154,7 @@ function mainAOutputContract(context: RunContext): string {
     : '如需维护长期场景，只能通过 write_scenario_patch 写场景目录内的标准 git unified patch。';
   return `必须先调用 get_run_context、list_target_files，并按需调用 list_target_changes、read_target_diff、read_target_file_version、read_target_file/search_target_files；变化证据不完整时必须记录未读范围，不能声称已审阅全部变化。需要历史判断时只通过 query_run_history 查询有限、脱敏的 Run 摘要。必须在结束前通过 write_plan 写入完整 plan.md；historyIssuesAvailable=false 时在覆盖缺口中说明。正式验证计划必须包含唯一的 ## execution_scenarios 区域：无序列表逐行列稳定 ID，正文其他区域的 ID 不构成选择；若无需测试则写出“无需场景测试”及依据。${context.initialization ? '静态初始化计划可暂不声明正式执行清单，候选 Main 必须补齐。' : ''}
 ${patchInstruction}
+有场景变更时，在 plan.md 的 ## scenario_review_summary 下写必要的候选范围、依据和覆盖缺口摘要；不含代码块、原始 diff、Secret 或临时证据地址，供人工审核特殊报告保留。
 如果确有依据判断无需测试，明确写出“无需场景测试”的理由；否则保留场景缺失、影响不明或证据不足的覆盖缺口。`;
 }
 
@@ -2120,7 +2167,7 @@ ${JSON.stringify(mainPlanningContext(context), null, 2)}`;
 
 function initializationCandidateOutputContract(): string {
   return `先读取 plan.md、execution.md 和 draft-report.md，再核对固定 target 的必要事实和变更证据。临时能力图只能写在本次 plan.md 正文中；保留静态依据和必要侦察事实，把业务结果相近的步骤合并，覆盖主要用户、入口、核心成功路径、权限/校验/持久化风险和明确外部依赖。每个 approved 场景必须有可追溯依据，不确定期望保持 draft。
-结束前必须通过 write_plan 成功更新同一个 plan.md，补齐唯一 ## execution_scenarios 区域、候选/复用理由、期望依据、执行安排和覆盖缺口。无 patch 时也必须列出复用的 approved 场景或有依据的空清单；没有可信候选时记录 blocked/draft 原因，不伪造 patch。
+结束前必须通过 write_plan 成功更新同一个 plan.md，补齐唯一 ## execution_scenarios 区域、候选/复用理由、期望依据、执行安排和覆盖缺口。无 patch 时也必须列出复用的 approved 场景或有依据的空清单；没有可信候选时记录 blocked/draft 原因，不伪造 patch。有 patch 时将必要候选范围、依据和覆盖缺口写在 ## scenario_review_summary 下，不含代码块、原始 diff、Secret 或临时证据地址；人工审核特殊报告只保留此安全摘要。
 候选资产只能通过 write_scenario_patch 写标准 git unified patch，且只能新增、修改或目录内 rename docs/scenario-testing/scenarios/** 的 Markdown。`;
 }
 

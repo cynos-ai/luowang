@@ -174,6 +174,45 @@ describe('Closure 6 local production Pi path', () => {
     assert.equal(context.model.sessions.filter((session) => session.role === 'runner').length, 2);
   });
 
+  it('rejects initialization when an approved patch candidate is omitted from the plan', async () => {
+    const context = await createContext('autonomous', 'omit-approved');
+    const result = await context.orchestrator.run({
+      request: '不能跳过新增 approved 场景',
+      trigger: 'manual',
+      initialization: true,
+    });
+    assert.equal(result.status, 'failed');
+    assert.equal(result.result, null);
+    assert.match(result.errorMessage ?? '', /approved 场景未纳入执行清单：ONBOARD-OMITTED-002/);
+    assertSessionSequence(context.model, ['main-a', 'runner', 'main-a']);
+  });
+
+  it('rejects initialization when a modified approved scene is omitted', async () => {
+    const context = await createContext('autonomous', 'omit-modified');
+    const result = await context.orchestrator.run({
+      request: '修改 approved 也必须执行',
+      trigger: 'manual',
+      initialization: true,
+    });
+    assert.equal(result.status, 'failed');
+    assert.equal(result.result, null);
+    assert.match(result.errorMessage ?? '', /approved 场景未纳入执行清单：CORE-STATE-001/);
+    assertSessionSequence(context.model, ['main-a', 'runner', 'main-a']);
+  });
+
+  it('allows unselected draft candidates without treating them as passed', async () => {
+    const context = await createContext('autonomous', 'unselected-draft');
+    const result = await context.orchestrator.run({
+      request: 'draft 只记录缺口',
+      trigger: 'manual',
+      initialization: true,
+    });
+    assert.equal(result.result, 'passed', JSON.stringify(result));
+    assert.match(result.artifacts['scenario-changes.patch'] ?? '', /status: draft/);
+    assert.doesNotMatch(result.artifacts['report.md'] ?? '', /ONBOARD-OMITTED-002/);
+    assert.deepEqual(result.scenarioProgress, { completed: 1, total: 1 });
+  });
+
   it('reuses an existing approved scenario without manufacturing a patch', async () => {
     const context = await createContext('autonomous', 'reuse-existing');
     const result = await context.orchestrator.run({
@@ -234,6 +273,13 @@ describe('Closure 6 local production Pi path', () => {
     assertSessionSequence(context.model, ['main-a', 'runner', 'main-a']);
     assert.deepEqual(Object.keys(result.artifacts).sort(), ['report.md', 'scenario-changes.patch']);
     assert.match(result.artifacts['report.md'] ?? '', /等待场景变更人工审核/);
+    assert.match(result.artifacts['report.md'] ?? '', /候选范围：核心入口验证/);
+    assert.match(result.artifacts['report.md'] ?? '', /退款权限风险尚未覆盖/);
+    assert.match(result.artifacts['report.md'] ?? '', /ONBOARD-SMOKE-001/);
+    assert.doesNotMatch(
+      result.artifacts['report.md'] ?? '',
+      /local-synthetic-password|https:\/\/example.test/,
+    );
     assert.equal(
       context.model.sessions.some((session) => session.role === 'reviewer'),
       false,
@@ -346,7 +392,7 @@ async function createContext(
   await git(['config', 'user.name', 'LuoWang Closure 6'], source);
   await git(['config', 'user.email', 'luowang-closure6@example.test'], source);
   await writeFile(join(source, 'README.md'), '# Local Pi target\n', 'utf8');
-  if (behavior === 'reuse-existing') {
+  if (behavior === 'reuse-existing' || behavior === 'omit-modified') {
     const scenarioDirectory = join(source, 'docs', 'scenario-testing', 'scenarios');
     await mkdir(scenarioDirectory, { recursive: true });
     await writeFile(

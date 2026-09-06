@@ -57,6 +57,7 @@ export function createTargetChangeEvidenceTools(
     {
       version: Type.Union([Type.Literal('base'), Type.Literal('target')]),
       path: Type.String({ description: '固定版本中的仓库相对路径' }),
+      cursor: Type.Optional(Type.String({ description: '上一次固定版本文件响应的续读游标' })),
     },
     { additionalProperties: false },
   );
@@ -204,7 +205,7 @@ export function createTargetChangeEvidenceTools(
       name: 'read_target_file_version',
       label: '读取固定版本文件',
       description:
-        '按 base 或 target 读取一个固定版本的非敏感文本文件；版本只能是 base/target，不能指定任意 ref、SHA 或路径范围。',
+        '按 base 或 target 分页读取固定版本的非敏感文本文件，每页最多 32 KiB；使用返回游标续读，不能指定任意 ref、SHA 或路径范围。',
       parameters: fileParameters,
       execute: async (
         _toolCallId: string,
@@ -212,6 +213,8 @@ export function createTargetChangeEvidenceTools(
       ): Promise<AgentToolResult<Record<string, unknown>>> => {
         try {
           const path = assertPath(params.path);
+          const kind = params.version === 'base' ? 'file-base' : 'file-target';
+          const cursor = decodeCursor(params.cursor, kind, options, path);
           const result = await options.readFile(params.version, path);
           if (result.status === 'unavailable') {
             return unavailableResult(
@@ -219,14 +222,32 @@ export function createTargetChangeEvidenceTools(
               '固定版本文件依赖不可用',
             );
           }
+          const page =
+            result.status === 'ok' || result.status === 'empty'
+              ? paginateUtf8(result.content ?? '', cursor?.offset ?? 0)
+              : null;
+          const nextCursor =
+            page && page.nextOffset < page.totalBytes
+              ? encodeCursor({
+                  version: CURSOR_VERSION,
+                  kind,
+                  baseCommit: options.baseCommit,
+                  targetCommit: options.targetCommit,
+                  path,
+                  offset: page.nextOffset,
+                })
+              : null;
           return textResult(
             JSON.stringify({
-              status: result.status,
+              status: nextCursor ? 'partial' : result.status,
               version: params.version,
               baseCommit: options.baseCommit,
               targetCommit: options.targetCommit,
               path: safePath(path),
-              ...(result.content !== undefined ? { content: result.content } : {}),
+              ...(page
+                ? { content: page.content, bytes: Buffer.byteLength(page.content, 'utf8') }
+                : {}),
+              nextCursor,
               ...(result.reason ? { reason: result.reason } : {}),
             }),
           );
@@ -240,7 +261,7 @@ export function createTargetChangeEvidenceTools(
 
 interface Cursor {
   version: number;
-  kind: 'changes' | 'diff';
+  kind: 'changes' | 'diff' | 'file-base' | 'file-target';
   baseCommit: string | null;
   targetCommit: string;
   path?: string;
@@ -272,7 +293,7 @@ function decodeCursor(
   ) {
     throw new Error('固定变化续读游标与当前 base/target 不匹配');
   }
-  if (kind === 'diff' && (typeof cursor.path !== 'string' || cursor.path !== path)) {
+  if (kind !== 'changes' && (typeof cursor.path !== 'string' || cursor.path !== path)) {
     throw new Error('固定 diff 续读游标与当前路径不匹配');
   }
   return cursor as Cursor;
@@ -291,7 +312,9 @@ function paginateUtf8(
   totalBytes: number;
 } {
   const bytes = Buffer.from(value, 'utf8');
-  if (offset > bytes.byteLength) throw new Error('固定 diff 续读游标超出内容范围');
+  if (offset > bytes.byteLength || (offset < bytes.byteLength && (bytes[offset] & 0xc0) === 0x80)) {
+    throw new Error('固定文本续读游标超出内容范围或不在 UTF-8 字符边界');
+  }
   let end = Math.min(offset + MAX_DIFF_PAGE_BYTES, bytes.byteLength);
   while (end > offset && end < bytes.byteLength && (bytes[end] & 0xc0) === 0x80) end -= 1;
   if (end === offset && offset < bytes.byteLength)

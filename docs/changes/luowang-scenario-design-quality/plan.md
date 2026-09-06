@@ -1,7 +1,7 @@
 # 场景维护与初始化质量改进 Plan
 
 - 日期：2026-09-05
-- 状态：工程 Phase 0–4 已完成；Phase 5 真实模型质量对比未运行（blocked）
+- 状态：审核发现的四项工程缺口已修复并通过回归；Phase 5 真实模型质量对比未运行（blocked）
 - 依据：[intent.md](./intent.md)、[spec.md](./spec.md)
 
 实施分支证明（2026-09-05）：分支为 `feat/scenario-design-quality`，基于
@@ -9,6 +9,23 @@
 `11ea774`。在实现开始前，当前分支的
 `git ls-tree -r --name-only HEAD docs/changes/luowang-scenario-design-quality` 已列出且追踪以下三份文档：
 `intent.md`、`spec.md`、`plan.md`（文档提交为 `38ba5bf`、`2bac167`）。
+
+## 审核修复（2026-09-06）
+
+原 Phase 0–4 的通过记录只证明当时测试集合，不能覆盖审核发现的四个缺口：rename 旧端敏感内容绕过、初始化 approved 候选漏执行仍通过、特殊报告丢失计划摘要、固定版本文件没有 32 KiB 分页。
+
+修复分支：`fix/scenario-quality-gaps`（起点 `develop@efef55e`）。修复与回归范围：
+
+- Main diff 执行边界检查变更两端路径/类型；普通修改保留旧路径和 mode，Git diff 使用 literal pathspec。
+- 初始化执行前校验 patch 新增/内容修改的 approved 场景全部入选；draft 和未变更已有场景不全选，字节不变 rename 不强制重跑。
+- 特殊两工件报告保留同一计划中的候选/缺口摘要，复用脱敏规则并过滤原始 diff、代码块、地址和本地路径；不扩大工件 allowlist。
+- base/target 文件均使用 32 KiB UTF-8 分页，游标绑定固定提交、版本和路径。
+
+实际验证（退出码均为 0）：format、typecheck、lint、25 个测试文件的 153/153 单元/集成测试、build、headless E2E 及 `test:acceptance:local` 通过。local 输出为 `local=passed, live=blocked, release=blocked`。新增回归覆盖敏感 rename 双向访问、新增/修改 approved 漏选拒绝、draft 排除、特殊摘要保留/脱敏/截断及 UTF-8 文件分页与跨版本/路径/commit 游标拒绝，已纳入对应 local AC 专项。
+
+本轮使用既有 Docker `quality` 镜像 `luowang:0.3.1-quality-candidate`（`11c930d63cb2`），只读挂载修复后的源码、测试、角色资源、文档、package.json 和 CI workflow。已核对镜像与当前 lockfile SHA-256 均为 `46406eef352d638790d8537d4c3cd72fe58acf108be6800326266903b2c71281`；不是宿主机 Chromium 验收，也不将其冒称新版本镜像构建证明。原样新建 quality 镜像曾因 npm 镜像下载 ECONNRESET 受阻，未记为通过。
+
+命令日志保存在本机 `.cynos/acceptance/sdq-review/fix-quality.log`、`fix-acceptance.log`；未运行真实模型或外部官网写入。本次证明仅关闭上述四项工程缺口，不宣称 Phase 5 已完成或真实模型质量已提升。
 
 ## 1. 实施原则与顺序
 
@@ -199,4 +216,4 @@ Docker 证明使用 Dockerfile/CI 中的 pinned Node digest、npm 镜像、Playw
 | AC-SDQ-11                       | Phase 2、3、4 | 工程通过   |
 | AC-SDQ-12                       | Phase 4、5    | 工程/本地通过；真实评测未运行   |
 
-Phase 0–4 的工程实施和证明已完成，PR #56 已合入 `develop`；Phase 5 因外部输入缺失保持 `not_run/blocked`。即使工程 PR 已合并，缺少真实质量证据时也不能宣称提示词或场景设计质量已提升。
+PR #56 已合入 `develop`，其 Phase 0–4 原工程证明存在的四项遗漏已在上述修复分支完成回归，修复合并状态以 PR 为准；Phase 5 因外部输入缺失保持 `not_run/blocked`。即使工程 PR 已合并，缺少真实质量证据时也不能宣称提示词或场景设计质量已提升。
