@@ -29,6 +29,7 @@ import { createRunArchiver } from '../../src/server/runs/archiver.js';
 import { createControlledCommandRunner } from '../../src/server/runs/command-runner.js';
 import type { ProviderAdapter } from '../../src/server/runs/provider.js';
 import { createRunOrchestrator } from '../../src/server/runs/orchestrator.js';
+import { localEvidenceTransport } from './local-evidence.js';
 import { createRunRecoveryStore } from '../../src/server/automation/recovery.js';
 import { createRunStore, type RunStore } from '../../src/server/runs/store.js';
 import { createTestDataManager } from '../../src/server/runs/test-data.js';
@@ -753,6 +754,7 @@ async function runRunProof(context: RepositoryProofContext): Promise<void> {
     provider: {} as ProviderAdapter,
     sessions,
     commandRunner: createControlledCommandRunner({ ...process.env, PHASE9_SECRET: SAMPLE_SECRET }),
+    oss: localEvidenceTransport().oss,
     testData: createTestDataManager({
       cleanupAdapter: {
         id: 'acceptance-cleanup',

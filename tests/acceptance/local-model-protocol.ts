@@ -451,6 +451,18 @@ function nextTool(
   }
 
   if (has('write_review')) {
+    const prerequisite = nextUnreadArtifact(['plan.md', 'scenario-changes.patch']);
+    if (prerequisite) return prerequisite;
+    if (has('read_command_evidence')) {
+      if (count('list_evidence_files') === 0) return tool('list_evidence_files', {});
+      const commandIds = [
+        ...new Set(
+          [...prompt.matchAll(/"filename":\s*"(command-\d+\.json)"/g)].map((match) => match[1]),
+        ),
+      ];
+      const filename = commandIds[count('read_command_evidence')];
+      if (filename) return tool('read_command_evidence', { filename });
+    }
     const unreadArtifact = nextUnreadArtifact([
       'plan.md',
       'scenario-changes.patch',
@@ -578,7 +590,7 @@ ${lines.map((line) => `+${line}`).join('\n')}
 `;
 }
 
-function messageText(message: ChatRequest['messages'] extends Array<infer T> ? T : never): string {
+function messageText(message: NonNullable<ChatRequest['messages']>[number] | undefined): string {
   if (!message) return '';
   if (typeof message.content === 'string') return message.content;
   if (Array.isArray(message.content)) {

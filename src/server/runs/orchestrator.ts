@@ -22,7 +22,7 @@ import { RepositoryError } from '../repository/errors.js';
 import type { RepositoryIndexer } from '../repository/indexer.js';
 import type { RepositoryService } from '../repository/service.js';
 import type { ConfigurationStore } from '../configuration.js';
-import type { SecretStore } from '../security/secret-store.js';
+import { SECRET_KEYS, type SecretStore } from '../security/secret-store.js';
 import {
   browserNeedsVision,
   browserScenarioRequested,
@@ -45,6 +45,7 @@ import { createControlledCommandRunner, type ControlledCommandRunner } from './c
 import {
   createReviewerEvidenceTools,
   createRunEvidenceStore,
+  redactCommandText,
   createRunnerEvidenceTools,
   type RunEvidenceStore,
 } from './evidence.js';
@@ -350,9 +351,7 @@ class DefaultRunOrchestrator implements RunOrchestrator {
         scenarioMode: this.options.configuration.getRepository().scenarioMode,
         initialization: input.initialization === true,
       };
-      const evidenceStore = this.options.oss
-        ? createRunEvidenceStore(workspace, this.options.oss)
-        : undefined;
+      const evidenceStore = createRunEvidenceStore(workspace, this.options.oss);
 
       if (context.initialization)
         await this.assessInitializationPreflight(context, prepared.repository);
@@ -920,14 +919,48 @@ class DefaultRunOrchestrator implements RunOrchestrator {
         read: (path) => repository.readWorkingScenarioFile(path),
       }),
       createReadArtifactTool((name) => readAllowedArtifact(workspace, name, ['plan.md'])),
-      createRunnerCommandTool((command, signal) =>
-        this.commandRunner.run(command, {
-          cwd: context.repositoryDirectory,
-          runId: context.runId,
-          targetCommit: context.targetCommit,
-          signal,
-        }),
-      ),
+      createRunnerCommandTool(async (command, signal) => {
+        // Obtain redaction values before execution; failure must not persist raw output.
+        let secrets: string[];
+        try {
+          if (!evidenceStore) throw new Error('evidence store unavailable');
+          secrets = SECRET_KEYS.map((key) => this.options.secretStore?.get(key)).filter(
+            (value): value is string => Boolean(value),
+          );
+        } catch {
+          this.addBlockingReason(context, '受控命令证据存储或脱敏条件不可用');
+          throw new Error('受控命令证据存储或脱敏条件不可用，未执行命令');
+        }
+        const capture = async (result: Parameters<RunEvidenceStore['captureCommand']>[2]) => {
+          try {
+            return await evidenceStore.captureCommand(
+              command,
+              context.targetCommit,
+              result,
+              secrets,
+            );
+          } catch {
+            this.addBlockingReason(context, '受控命令结果保存失败，不能确认执行结果');
+            throw new Error('受控命令结果保存失败，不能确认执行结果');
+          }
+        };
+        let result;
+        try {
+          result = await this.commandRunner.run(command, {
+            cwd: context.repositoryDirectory,
+            runId: context.runId,
+            targetCommit: context.targetCommit,
+            signal,
+          });
+        } catch (error) {
+          const evidenceId = await capture({ error: safeMessage(error) });
+          throw new Error(
+            `${redactCommandText(safeMessage(error), secrets)}（命令证据 ${evidenceId}）`,
+          );
+        }
+        const evidenceId = await capture(result);
+        return { ...result, evidenceId };
+      }),
       createRunnerEnvironmentTool(
         this.options.configuration.getRepository(),
         this.options.secretStore,
@@ -1089,7 +1122,7 @@ class DefaultRunOrchestrator implements RunOrchestrator {
       files = [];
     }
 
-    if (files.length > 0) {
+    if (files.length > 0 || (evidenceStore?.commandEvidenceIds().length ?? 0) > 0) {
       if (!evidenceStore) {
         uploadFailed = true;
         this.addBlockingReason(context, 'Run 产生了证据文件，但 OSS Adapter 不可用');
@@ -1247,6 +1280,7 @@ class DefaultRunOrchestrator implements RunOrchestrator {
         .map((item) => item.filename),
       () => this.addBlockingReason(context, 'Reviewer 原始图片读取失败，不能确认通过'),
       await workspace.exists('scenario-changes.patch'),
+      () => this.addBlockingReason(context, 'Reviewer 无法读取受控命令证据，不能确认相关结果'),
     );
     const tools = [
       createReadArtifactTool(readOrder.readArtifact),
@@ -2255,7 +2289,7 @@ ${JSON.stringify(runnerContext(context), null, 2)}`;
 
 function runnerOutputContract(): string {
   return `先读取 plan.md，再按计划使用受控 target、工作场景、命令、环境、测试数据和 evidence 工具。正式场景必须通过场景进度工具按计划顺序声明、开始和完成；初始化侦察不得伪造正式场景进度。UI 场景只能使用受控的 headless、isolated Playwright MCP，优先使用 accessibility snapshot/ref；截图使用相对文件名并通过 list_evidence_files 确认存在。
-测试账号只用于当前操作，绝不能写入日志、命令输出、Markdown 或证据。使用 get_test_data_prefix 标记临时数据；创建后立即登记，删除后只能提交 Harness 捕获的受控查询证据或 Playwright 截图声明，并检查待核验列表。不能自填 evidence 正文、状态码、摘要或 hash。每个场景记录实际观察、命令退出码、决定性/辅助证据、偏差和清理结果。结束前分别通过 write_execution 和 write_draft_report 写完整工件；不可用条件记录为 blocked。`;
+测试账号只用于当前操作，绝不能写入日志、命令输出、Markdown 或证据。使用 get_test_data_prefix 标记临时数据；创建后立即登记，删除后只能提交 Harness 捕获的受控查询证据或 Playwright 截图声明，并检查待核验列表。不能自填 evidence 正文、状态码、摘要或 hash。命令工具返回的 evidenceId 对应 Harness 捕获的脱敏原始结果，按需引用，不自行重造证据。每个场景记录实际观察、命令退出码、决定性/辅助证据、偏差和清理结果。结束前分别通过 write_execution 和 write_draft_report 写完整工件；不可用条件记录为 blocked。`;
 }
 
 function reviewerUserMessage(context: RunContext): string {
@@ -2266,7 +2300,7 @@ ${JSON.stringify(reviewerContext(context), null, 2)}`;
 }
 
 function reviewerOutputContract(): string {
-  return `先读取 plan.md 和唯一 ## execution_scenarios 清单、存在的 scenario-changes.patch 及 Harness 阻塞事实；再读取原始命令/API/截图/清理证据；最后才读取 execution.md 和 draft-report.md。原始证据优先于 Runner 草稿。必须先调用 list_pending_test_data 获取精确 data ID 和清理声明 evidence IDs；每项清理声明再通过 read_test_data_cleanup_evidence 读取 Harness 捕获的受控文本证据，或通过 read_evidence_image 实际查看全部删除后截图，随后调用 verify_test_data_cleanup 确认或拒绝；纯 Runner 声明不构成已清理。查看截图只能使用 list_evidence_files 和 read_evidence_image，不能执行命令、读取测试账号或任意路径。
+  return `先读取 plan.md 和唯一 ## execution_scenarios 清单、存在的 scenario-changes.patch 及 Harness 阻塞事实；再读取原始命令/API/截图/清理证据；最后才读取 execution.md 和 draft-report.md。原始证据优先于 Runner 草稿；需要核对命令时，通过 list_evidence_files 和 read_command_evidence 只读查看本 Run 的 Harness 捕获结果，截断或执行错误不等于测试通过。必须先调用 list_pending_test_data 获取精确 data ID 和清理声明 evidence IDs；每项清理声明再通过 read_test_data_cleanup_evidence 读取 Harness 捕获的受控文本证据，或通过 read_evidence_image 实际查看全部删除后截图，随后调用 verify_test_data_cleanup 确认或拒绝；纯 Runner 声明不构成已清理。查看截图只能使用 list_evidence_files 和 read_evidence_image，不能执行命令、读取测试账号或任意路径。
 截图不可访问、上传失败、视觉能力不足、清理未确认、场景缺失或影响不明时维持 blocked。零场景只有在 Main · 规划的计划确有依据时才能确认。结束前通过 write_review 写完整 review.md，并明确是否同意最终结果。`;
 }
 

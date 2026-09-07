@@ -291,6 +291,7 @@ export function createRunnerCommandTool(
     stderr: string;
     exitCode: number | null;
     environmentKeys: string[];
+    evidenceId?: string;
   }>,
 ): ToolDefinition {
   const parameters = Type.Object({
@@ -311,6 +312,7 @@ export function createRunnerCommandTool(
             stdout: result.stdout,
             stderr: result.stderr,
             environmentKeys: result.environmentKeys,
+            evidenceId: result.evidenceId,
           }),
           { exitCode: result.exitCode },
         );

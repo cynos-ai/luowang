@@ -7,6 +7,7 @@ export function createReviewReadOrder(
   requiredImages: readonly string[],
   onImageFailure: () => void,
   requirePatch = false,
+  onCommandFailure: () => void = onImageFailure,
 ) {
   let planRead = false;
   let patchRead = false;
@@ -32,17 +33,21 @@ export function createReviewReadOrder(
       return content;
     },
     wrap(tool: ToolDefinition): ToolDefinition {
-      if (tool.name !== 'read_evidence_image') return tool;
+      if (tool.name !== 'read_evidence_image' && tool.name !== 'read_command_evidence') return tool;
       return {
         ...tool,
         async execute(...args) {
           if (!planRead || (requirePatch && !patchRead))
             return createTextResult(
-              'Reviewer 必须先读取 plan.md 和存在的 scenario-changes.patch，再核对原始图片',
+              'Reviewer 必须先读取 plan.md 和存在的 scenario-changes.patch，再核对原始证据',
               { error: true },
             );
           const filename = (args[1] as { filename: string }).filename;
           const result = await tool.execute(...args);
+          if (tool.name === 'read_command_evidence') {
+            if ((result.details as { error?: boolean } | undefined)?.error) onCommandFailure();
+            return result;
+          }
           attemptedImages.add(filename);
           // Failed evidence remains a blocking fact, but may be described in the review.
           if (

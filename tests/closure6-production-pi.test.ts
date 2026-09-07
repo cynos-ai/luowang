@@ -1,12 +1,14 @@
 import { strict as assert } from 'node:assert';
 import { execFile } from 'node:child_process';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { localEvidenceTransport } from './acceptance/local-evidence.js';
+import { RunWorkspace } from '../src/server/runs/workspace.js';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
 
 import pino from 'pino';
-import { afterEach, describe, it } from 'vitest';
+import { afterEach, describe, it, vi } from 'vitest';
 
 import { createAutomationService } from '../src/server/automation/service.js';
 import { loadConfig } from '../src/server/config.js';
@@ -53,6 +55,19 @@ describe('Closure 6 local production Pi path', () => {
     ]);
     assertSessionSequence(context.model, ['main-a', 'runner', 'reviewer', 'main-b']);
     assert.ok(context.model.requestCount > context.model.sessions.length);
+    const commandKey = `${result.runId}/command-1.json`;
+    assert.ok(
+      context.evidence.reads.includes(commandKey),
+      'production Pi Reviewer must read the captured command object',
+    );
+    const command = JSON.parse(context.evidence.objects.get(commandKey)!.toString());
+    assert.equal(command.runId, result.runId);
+    assert.equal(command.targetCommit, result.targetCommit);
+    assert.equal(command.command, 'node --version');
+    assert.equal(command.result.exitCode, 0);
+    assert.match(command.result.stdout, /^v\d+\.\d+\.\d+/);
+    assert.ok(context.model.sessions[2]?.tools.includes('read_command_evidence'));
+    assert.ok(!context.model.sessions[2]?.tools.includes('run_fixture_command'));
     assert.equal(context.model.sessions[0]?.model, context.model.sessions[3]?.model);
     assert.notDeepEqual(context.model.sessions[0]?.tools, context.model.sessions[3]?.tools);
     assert.match(result.artifacts['report.md'] ?? '', /Reviewer 已独立确认/);
@@ -78,6 +93,37 @@ describe('Closure 6 local production Pi path', () => {
       assert.ok(!prompt.includes('luowang-role-id: scenario-initialization;'));
     }
   });
+
+  it.each(['capture', 'upload'] as const)(
+    'keeps command evidence %s failures blocked through production Pi',
+    async (failure) => {
+      const context = await createContext('review-all', 'normal');
+      const capture =
+        failure === 'capture'
+          ? vi
+              .spyOn(RunWorkspace.prototype, 'writeHarnessEvidence')
+              .mockRejectedValueOnce(new Error('fixture write failure'))
+          : undefined;
+      if (failure === 'upload')
+        context.evidence.oss.uploadFile = async () => {
+          throw new Error('fixture upload failure');
+        };
+      try {
+        const result = await context.orchestrator.run({
+          request: '验证命令证据失败不能被草稿通过掩盖',
+          trigger: 'manual',
+        });
+        assert.equal(result.status, 'completed', JSON.stringify(result));
+        assert.equal(result.result, 'blocked');
+        assert.match(
+          result.artifacts['report.md'] ?? '',
+          failure === 'capture' ? /受控命令结果保存失败/ : /证据上传失败/,
+        );
+      } finally {
+        capture?.mockRestore();
+      }
+    },
+  );
 
   it('creates the first scenario branch through FIFO before one six-Session production Pi initialization Run', async () => {
     const context = await createContext('autonomous', 'normal', false);
@@ -313,7 +359,7 @@ describe('Closure 6 local production Pi path', () => {
     const publicationModes: string[] = [];
     const archiveRepository = {
       validateScenarioPatch: (target: string, patch: string) =>
-        context.repository.validateScenarioPatch(target, patch),
+        context.repository.validateScenarioPatch!(target, patch),
       publishScenarioChanges: async (
         _runId: string,
         _patch: string,
@@ -389,6 +435,7 @@ interface ProductionContext {
   configuration: ReturnType<typeof createConfigurationStore>;
   runStore: RunStore;
   specialCleanupCalls(): number;
+  evidence: ReturnType<typeof localEvidenceTransport>;
 }
 
 async function createContext(
@@ -482,6 +529,7 @@ tags:
   const runStore = createRunStore(database.sqlite);
   const model = await startLocalModelProtocol(behavior);
   cleanup.push(() => model.close());
+  const evidence = localEvidenceTransport();
   let specialCleanupCalls = 0;
   const testData = createTestDataManager({
     cleanupAdapter: {
@@ -500,6 +548,7 @@ tags:
     provider: {} as ProviderAdapter,
     sessions: model.sessionFactory,
     commandRunner: createControlledCommandRunner(process.env),
+    oss: evidence.oss,
     testData,
     runStore,
     logger: pino({ level: 'silent' }),
@@ -514,6 +563,7 @@ tags:
     configuration,
     runStore,
     specialCleanupCalls: () => specialCleanupCalls,
+    evidence,
   };
 }
 

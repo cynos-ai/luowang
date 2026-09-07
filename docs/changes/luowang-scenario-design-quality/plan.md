@@ -110,6 +110,17 @@ Qwen 复评在工程回归后冻结新 commit，沿用 `full-manifest.json` 的 
 
 最新修正版检查覆盖实际 system prompt、动态阶段任务和输出协议，不只检查资源文件：通过本地生产 Pi 普通四 Session、直接初始化六 Session，捕获并核对 10 个实际 Session 输入，完整资源恰好加载一次、无串角色，旧“少量高价值”任务句消失，非穷尽目标与 core 标签含义一致。证据在 `.cynos/acceptance/scenario-workflow-rewrite/prompt-inspection/`。24 项本地专项及修改文件 lint/format/diff 检查通过，未做全量工程验收或新增真实模型调用。冻结只记录当前修正，不把本轮 `19bb136` 的结果移作新版本效果；环境能力和非 Main 语言上下文等已知限制另行保留，不顺手扩大实现范围。串联尚未启动，本轮预算消耗仍为 246 次真实请求。
 
+### 串联前置补齐：原始命令结果交接
+
+串联准备发现纯 API 命令结果只进入 Runner 工具返回，Reviewer 原有接口仅支持图片及清理文本。负责人已批准最小受控只读交接，范围为现有 evidence 存储、命令回调、Reviewer 工具与本地验证，不扩大任意路径/执行权限，也不新增正式工件或证明矩阵。
+
+- Harness 自动捕获固定 Run/target 的命令结果或执行错误；脱敏后保存并返回 evidence ID，限制大小并标记截断。记录 ID 与捕获 hash 绑定，拒绝伪造、跨 Run、删除后隐身或内容篡改。
+- Reviewer 经 plan/存在的 patch 后按需读取原始命令结果，不要求逐命令证明；图片与独立清理边界不变。保存、读取及上传故障不能由草稿通过掩盖。无 OSS 时保留本地原始记录，但不冒称发布成功。
+- 新增命令证据边界测试，并在生产 Pi 本地协议中实际运行 `node --version`，由隔离 Reviewer 读取捕获的退出码、输出和固定版本信息；补充保存/上传失败的整链 blocked 检查。原有无证据上传依赖的正向夹具改用本地传输，不借此放宽产品规则。
+- 日志保留在 `.cynos/acceptance/command-evidence/`，包括首次未扩展 Harness 文件名白名单、旧夹具缺少上传依赖及测试类型检查失败的原始记录。最终 `local-final/report.json` 为 local passed：174/174 单元与集成测试、format/lint/typecheck/build、E2E、Phase 9 和生产 Pi 专项全部通过；新增测试及生产 Pi 测试还完成独立 TypeScript 检查。live/release 仍 blocked，不以本地通过冒充真实模型或现场验收。
+
+原始规划轮和已冻结 8c20c23 不改写。本次工程能力补齐需单独冻结；后续两版串联必须给予相同的命令执行/证据读取基础能力并记录版本差异，不能把新增工具能力归因为提示词改善。未新增真实模型调用，剩余预算仍为 24 Sessions / 554 请求，真实四角色串联仍未启动。
+
 ## 1. 实施原则与顺序
 
 本计划以 `09dbed0` 为代码检查基线。实现时从最新 `develop` 建立 `feat/scenario-design-quality`，若下列 owner 已有增量修改，先核对调用关系并在原职责边界内集成，不另起一套规划或场景系统。

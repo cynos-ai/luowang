@@ -1,9 +1,11 @@
+import { createHash } from 'node:crypto';
 import { Type, type Static } from 'typebox';
 import type { AgentToolResult, ToolDefinition } from '@earendil-works/pi-coding-agent';
 
 import type { EvidenceReference } from '../../shared/types.js';
 import { createTextResult } from './agent-session.js';
-import type { TestDataVerificationReceipt } from './test-data.js';
+import { redactSensitiveText, type TestDataVerificationReceipt } from './test-data.js';
+import type { CommandRunResult } from './command-runner.js';
 import type { OssAdapter } from '../storage/oss.js';
 import { contentTypeFor } from '../storage/oss.js';
 import { RunWorkspace, type RunEvidenceFile } from './workspace.js';
@@ -37,6 +39,14 @@ export interface RunEvidenceStore {
   recordReadFailure?: () => void;
   reviewReadCount?: () => number;
   recordReviewRead?: (evidenceId?: string) => void;
+  captureCommand(
+    command: string,
+    targetCommit: string,
+    result: CommandRunResult | { error: string },
+    secrets: readonly string[],
+  ): Promise<string>;
+  commandEvidenceIds(): string[];
+  readCommandEvidence(filename: string): Promise<string>;
   captureCleanupQuery(
     receipt: TestDataVerificationReceipt,
     redactedContent: string,
@@ -54,7 +64,10 @@ export interface EvidenceReadResult {
   url: string | null;
 }
 
-export function createRunEvidenceStore(workspace: RunWorkspace, oss: OssAdapter): RunEvidenceStore {
+export function createRunEvidenceStore(
+  workspace: RunWorkspace,
+  oss?: OssAdapter,
+): RunEvidenceStore {
   return new DefaultRunEvidenceStore(workspace, oss);
 }
 
@@ -65,11 +78,18 @@ class DefaultRunEvidenceStore implements RunEvidenceStore {
   private cleanupSequence = 0;
   private readonly cleanupEvidence = new Map<string, TestDataVerificationReceipt>();
   private readonly reviewedEvidence = new Set<string>();
+  private readonly commandEvidence = new Map<string, { sha256: string; sizeBytes: number }>();
+  private commandSequence = 0;
 
   constructor(
     private readonly workspace: RunWorkspace,
-    private readonly oss: OssAdapter,
+    private readonly configuredOss?: OssAdapter,
   ) {}
+
+  private get oss(): OssAdapter {
+    if (!this.configuredOss) throw new Error('OSS Adapter 不可用，证据仅保留在本地');
+    return this.configuredOss;
+  }
 
   async list(): Promise<RunEvidenceFile[]> {
     const files = await this.workspace.listEvidence();
@@ -83,6 +103,9 @@ class DefaultRunEvidenceStore implements RunEvidenceStore {
         });
       }
     }
+    for (const [name, captured] of this.commandEvidence) {
+      if (!byName.has(name)) byName.set(name, { name, path: '', sizeBytes: captured.sizeBytes });
+    }
     return [...byName.values()].sort((left, right) => left.name.localeCompare(right.name));
   }
 
@@ -92,6 +115,9 @@ class DefaultRunEvidenceStore implements RunEvidenceStore {
     const files = await this.workspace.listEvidence();
     const file = files.find((item) => item.name === filename);
     if (!file) throw new Error(`证据文件不存在：${filename}`);
+    if (this.commandEvidence.has(filename)) {
+      this.assertCommandIntegrity(filename, await this.workspace.readEvidence(filename));
+    }
     const reference = await this.oss.uploadFile(this.workspace.runId, filename, file.path);
     this.references.set(filename, reference);
     return reference;
@@ -100,7 +126,7 @@ class DefaultRunEvidenceStore implements RunEvidenceStore {
   async uploadAll(): Promise<EvidenceUploadResult> {
     const references: EvidenceReference[] = [];
     const failures: EvidenceUploadFailure[] = [];
-    for (const file of await this.workspace.listEvidence()) {
+    for (const file of await this.list()) {
       try {
         references.push(await this.upload(file.name));
       } catch (error) {
@@ -194,6 +220,63 @@ class DefaultRunEvidenceStore implements RunEvidenceStore {
     if (evidenceId) this.reviewedEvidence.add(evidenceId);
   }
 
+  async captureCommand(
+    command: string,
+    targetCommit: string,
+    result: CommandRunResult | { error: string },
+    secrets: readonly string[],
+  ): Promise<string> {
+    const clean = (value: string, limit?: number) => redactCommandText(value, secrets, limit);
+    const content = `${JSON.stringify(
+      {
+        runId: this.workspace.runId,
+        targetCommit,
+        command: clean(command, 16 * 1024),
+        result:
+          'error' in result
+            ? { error: clean(result.error) }
+            : {
+                exitCode: result.exitCode,
+                stdout: clean(result.stdout),
+                stderr: clean(result.stderr),
+              },
+      },
+      null,
+      2,
+    )}\n`;
+    const filename = `command-${++this.commandSequence}.json`;
+    await this.workspace.writeHarnessEvidence(filename, content);
+    this.commandEvidence.set(filename, {
+      sha256: createHash('sha256').update(content).digest('hex'),
+      sizeBytes: Buffer.byteLength(content),
+    });
+    return filename;
+  }
+
+  commandEvidenceIds(): string[] {
+    return [...this.commandEvidence.keys()];
+  }
+
+  private assertCommandIntegrity(filename: string, body: Buffer): void {
+    const expected = this.commandEvidence.get(filename);
+    if (
+      !expected ||
+      body.byteLength > 1024 * 1024 ||
+      createHash('sha256').update(body).digest('hex') !== expected.sha256
+    ) {
+      throw new Error('命令证据不属于本 Run 的 Harness 捕获记录或内容已改变');
+    }
+  }
+
+  async readCommandEvidence(filename: string): Promise<string> {
+    // Membership is checked before any path or OSS access. Other JSON/text is not readable.
+    if (!this.commandEvidence.has(filename)) throw new Error('不是本 Run 的受控命令证据 ID');
+    const evidence = await this.read(filename);
+    this.assertCommandIntegrity(filename, evidence.body);
+    this.recordReviewRead(filename);
+    return evidence.body.toString('utf8');
+  }
+
   async captureCleanupQuery(
     receipt: TestDataVerificationReceipt,
     redactedContent: string,
@@ -238,6 +321,35 @@ class DefaultRunEvidenceStore implements RunEvidenceStore {
     const captured = this.cleanupEvidence.get(evidenceId);
     return this.reviewedEvidence.has(evidenceId) && (captured ? captured.absent : true);
   }
+}
+
+export function redactCommandText(
+  value: string,
+  secrets: readonly string[],
+  limit = 64 * 1024,
+): string {
+  let text = value;
+  const representations = secrets
+    .filter(Boolean)
+    .flatMap((secret) => [secret, JSON.stringify(secret).slice(1, -1), encodeURIComponent(secret)]);
+  for (const secret of representations.sort((a, b) => b.length - a.length)) {
+    text = text.split(secret).join('[REDACTED]');
+  }
+  // Remove complete header/quoted credential values, not just the first word.
+  text = text
+    .replace(/((?:set-cookie|cookie|authorization)\s*["']?\s*[:=])[^\r\n]*/gi, '$1 [REDACTED]')
+    .replace(
+      /((?:password|passwd|token|secret|api[-_]?key)\s*["']?\s*[:=]\s*)(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^\r\n,;}]+)/gi,
+      '$1[REDACTED]',
+    );
+  text = redactSensitiveText(text);
+  const bytes = Buffer.from(text);
+  return bytes.length <= limit
+    ? text
+    : `${bytes
+        .subarray(0, limit)
+        .toString('utf8')
+        .replace(/\uFFFD$/, '')}\n[command evidence truncated]`;
 }
 
 export function createRunnerEvidenceTools(store: RunEvidenceStore): ToolDefinition[] {
@@ -297,18 +409,39 @@ export function createReviewerEvidenceTools(store: RunEvidenceStore): ToolDefini
     {
       name: 'list_evidence_files',
       label: '列出审核证据',
-      description: '列出本次 Run 已上传且可供视觉审核的截图；只能读取当前 Run 的图片证据。',
+      description: '列出本次 Run 的图片及 Harness 捕获的脱敏命令结果；其他文本与任意路径不可读。',
       parameters: Type.Object({}),
       execute: async (): Promise<AgentToolResult<Record<string, unknown>>> => {
         try {
-          const files = (await store.list()).filter(({ name }) =>
-            contentTypeFor(name).startsWith('image/'),
+          const commandIds = store.commandEvidenceIds();
+          const files = (await store.list()).filter(
+            ({ name }) => contentTypeFor(name).startsWith('image/') || commandIds.includes(name),
           );
           return createTextResult(
             JSON.stringify(files.map(({ name, sizeBytes }) => ({ name, sizeBytes }))),
           );
         } catch (error) {
           return createTextResult(safeMessage(error), { error: true });
+        }
+      },
+    },
+    {
+      name: 'read_command_evidence',
+      label: '读取受控命令结果',
+      description:
+        '按本 Run 的证据 ID 只读查询 Harness 捕获的命令、退出码和脱敏输出；截断会标注，不执行命令，不读取任意文本、路径或其他 Session。',
+      parameters: Type.Object({
+        filename: Type.String({ description: 'list_evidence_files 返回的 command 证据 ID' }),
+      }),
+      execute: async (_toolCallId: string, params: { filename: string }) => {
+        try {
+          return createTextResult(await store.readCommandEvidence(params.filename));
+        } catch {
+          store.recordReadFailure?.();
+          return createTextResult(
+            '受控命令证据不可用或校验失败；请核对本 Run 的证据 ID，不能确认相关结果',
+            { error: true },
+          );
         }
       },
     },

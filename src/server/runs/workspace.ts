@@ -190,14 +190,15 @@ export class RunWorkspace implements RunArtifactReader {
   }
 
   async writeHarnessEvidence(name: string, content: string): Promise<void> {
-    if (!/^cleanup-query-[a-f0-9]{16}-[0-9]+\.json$/.test(name)) {
-      throw new RunWorkspaceError('ARTIFACT_NOT_ALLOWED', 'Harness 清理证据文件名无效');
+    const command = /^command-[1-9][0-9]*\.json$/.test(name);
+    if (!command && !/^cleanup-query-[a-f0-9]{16}-[0-9]+\.json$/.test(name)) {
+      throw new RunWorkspaceError('ARTIFACT_NOT_ALLOWED', 'Harness 证据文件名无效');
     }
     if (typeof content !== 'string' || content.includes('\u0000')) {
-      throw new RunWorkspaceError('ARTIFACT_INVALID', 'Harness 清理证据内容无效');
+      throw new RunWorkspaceError('ARTIFACT_INVALID', 'Harness 证据内容无效');
     }
-    if (Buffer.byteLength(content, 'utf8') > 256 * 1024) {
-      throw new RunWorkspaceError('ARTIFACT_INVALID', 'Harness 清理证据超出大小限制');
+    if (Buffer.byteLength(content, 'utf8') > (command ? 1024 : 256) * 1024) {
+      throw new RunWorkspaceError('ARTIFACT_INVALID', 'Harness 证据超出大小限制');
     }
     await writeFile(this.evidencePath(name), content, {
       encoding: 'utf8',

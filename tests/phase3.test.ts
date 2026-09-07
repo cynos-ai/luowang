@@ -1,4 +1,5 @@
 import { strict as assert } from 'node:assert';
+import { localEvidenceTransport } from './acceptance/local-evidence.js';
 import { execFile } from 'node:child_process';
 import { lstat, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -866,6 +867,7 @@ async function createRunContext(
     reportDir,
     sessions,
     provider: {} as ProviderAdapter,
+    oss: localEvidenceTransport().oss,
     logger: pino({ level: 'silent' }),
   });
   return { orchestrator, reportDir, repository, configuration, sessions };
