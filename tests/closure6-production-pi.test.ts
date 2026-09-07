@@ -64,6 +64,15 @@ describe('Closure 6 local production Pi path', () => {
     assert.ok(planIndex >= 0, 'Reviewer must receive the plan-first reading rule');
     assert.ok(evidenceIndex > planIndex, 'Reviewer must read raw evidence after the plan');
     assert.ok(executionIndex > evidenceIndex, 'Reviewer must read execution drafts last');
+    // Resource-delivery proof only; semantic decisions require the paired real-model cases.
+    const mainPrompt = context.model.sessions[0]?.systemPrompt ?? '';
+    assert.equal(mainPrompt.split('### 契约变化的直接覆盖核对').length - 1, 1);
+    assert.match(mainPrompt, /旧断言仍有效不等于新契约已验证/);
+    assert.match(mainPrompt, /必要前置和关键验证受阻/);
+    assert.match(mainPrompt, /不要求所有参数变动都新增场景/);
+    assert.match(reviewerPrompt, /若仍保留旧行为也能满足全部断言/);
+    assert.match(reviewerPrompt, /不凭空增加规格未要求的断言/);
+    assert.doesNotMatch(reviewerPrompt, /### 契约变化的直接覆盖核对/);
   });
 
   it('creates the first scenario branch through FIFO before one six-Session production Pi initialization Run', async () => {
