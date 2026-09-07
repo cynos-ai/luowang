@@ -320,7 +320,7 @@ describe('Closure 6 acceptance status layering', () => {
     const all = contents.join('\n');
     assert.match(all, /不得用当前实现反推正确期望/);
     assert.match(all, /证据优先级/);
-    assert.match(all, /Runner 报告是待审核假设/);
+    assert.match(all, /Main 的计划和 Runner 的报告都可能出错/);
     assert.match(all, /清理声明不是独立核验事实/);
     assert.match(all, /不影响验证目标的偏差可以记录后继续/);
     assert.match(all, /blocked > failed > passed/);
