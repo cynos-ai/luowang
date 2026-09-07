@@ -313,8 +313,16 @@ export function browserNeedsVision(plan: string): boolean {
 }
 
 export function browserScenarioRequested(plan: string): boolean {
-  return /浏览器|页面|网页|UI|登录|点击|填充|导航|Playwright|browser|web|snapshot|screenshot/i.test(
-    plan,
+  // Authentication and source/package names do not imply browser interaction.
+  // Ignore explicit scope exclusions, but retain unavailable required capabilities.
+  const scope = plan
+    .replace(
+      /(?:无需|不需要|不要求|不使用|不依赖|不涉及|不包含|不执行|不覆盖|不验证|不做|排除|非)\s*(?:浏览器|页面|网页|UI\b|Playwright\b|browser\b)/gi,
+      '',
+    )
+    .replace(/\b(?:no|without)\s+(?:browser|UI)\b/gi, '');
+  return /浏览器|页面|网页|点击|填充|导航|\b(?:UI|Playwright|browser|webpage|snapshot|screenshot)\b/i.test(
+    scope,
   );
 }
 
