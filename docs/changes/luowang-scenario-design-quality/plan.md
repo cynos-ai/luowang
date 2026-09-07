@@ -127,6 +127,18 @@ Qwen 复评在工程回归后冻结新 commit，沿用 `full-manifest.json` 的 
 
 预检发现 `browserScenarioRequested` 把 API 登录、明确的非 UI 范围、`build`/`cynos-website` 字符子串误判为浏览器必需，导致无关阻塞。最小修复去掉登录即 UI 的推断、给英文术语增加词边界，并排除直接的否定范围表述；真实页面操作及必需但不可用的浏览器仍触发检查，不放开新工具或环境权限。原实现与新增断言的失败证据保留在 `.cynos/acceptance/linked-workflow/browser-before.*`；修复后全量 174 tests、lint/typecheck 通过，见 `browser-after.*`。两版在真实调用前同步该工程基础，不将工程检测改善归因为角色指令效果。
 
+### 真实四角色串联收尾
+
+六条串联已监控至全部结束：6/6 Run completed，24/24 独立生产 Pi Session completed/disposed，289 次 Qwen 请求，fatal null。三个请求级错误均在原 Session 恢复，无认证/额度错误。候选应用固定 `3b8d56e`；对照为原 `73380ad` 同步命令证据与 API/browser 修复后的离线评测提交 `9247996`，两版共享工程能力，原版本和旧成绩不改写。
+
+正常代码两版均为 passed；移除服务端 logout 撤销的缺陷两版均为 failed（原 Cookie 请求实际 200≠401，删除账号场景仍 passed）；执行条件缺失两版均为 blocked，没有从静态代码推断通过。实际启动 9 个断网、只读、临时数据容器，另 3 次命令调用在不可用条件下拒绝。12 份原始命令记录全部被 Reviewer 读取，读取字节与存储对象一致；独立清理和最终 Run label 查询均无残留。无远端 Git/Issue/OSS 发布、无共享账号操作。
+
+助手已复核全部 30 份 Markdown 工件、24 个实际 Session 输入、337 个输入/应用/驱动文件 hash 和六个固定干净工作树。结果分类正确不代表质量改善：candidate 缺陷例 Reviewer 先读 execution/draft 再读原始命令，原始证据优先为 2/3（baseline 3/3）；candidate blocked 最终报告未完整保留 Reviewer 对通用错误摘要的保留意见，并提出超出本轮约定的共享服务建议。candidate 两次不合格清理工具调用被边界拒绝，实际清理由 Harness 独立完成。baseline 两次测试名过滤器错误均恢复，但一例执行记录漏记首次失败。工程诊断信息被通用安全摘要压缩的问题与模型判断分别归因，不伪造未启动进程的退出码或 stdout。
+
+最新候选完整工程验收 `engineering-clean/report.json` 为 local passed（174 tests、format/lint/typecheck/build、E2E、Phase 9 与生产 Pi 专项），official live/release 仍 blocked。原始调用、预检和挂载失败、完整复核及最终计数保存于 `.cynos/acceptance/linked-workflow/`，关键文件为 `manifest.json`、`live-output/summary.json`、`review/findings.md` 和 `review/post-checks.json`。第一次工程挂载把手动评测脚本纳入 lint，改为正式源码和独立输出目录后通过，未通过改产品规避失败。
+
+本轮仅复验明确 API 场景，每版每条件一次；不能替代全面初始化/模糊场景、八类三次重复、独立人工或真实外部发布验收。六条链的执行与复核已经结束，不为追求全绿无限追加；质量改善仍未证明，Phase 5 保持未通过。没有推送、发布或改写历史工件。
+
 ## 1. 实施原则与顺序
 
 本计划以 `09dbed0` 为代码检查基线。实现时从最新 `develop` 建立 `feat/scenario-design-quality`，若下列 owner 已有增量修改，先核对调用关系并在原职责边界内集成，不另起一套规划或场景系统。
