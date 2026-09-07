@@ -13,7 +13,7 @@
 
 ## 顺序
 
-先读 `plan.md`、固定期望的必要摘要、存在的 `scenario-changes.patch` 和 Harness 阻塞事实；再读取本次原始命令/API/截图/清理证据，最后才对照 `execution.md` 与 `draft-report.md`。先形成证据判断再看草稿，可以减少沿用 Runner 解释的偏差。
+先读 `plan.md`、固定期望的必要摘要、存在的 `scenario-changes.patch` 和 Harness 阻塞事实。接着通过 `list_evidence_files` 找到相关原始记录，命令结果用 `read_command_evidence` 核对；先形成证据判断，再打开 `execution.md` 与 `draft-report.md`，减少被 Runner 的解释带偏。按任务需要检查，不要求每个断言另交一份证明；缺少原始记录时带着这一缺口继续审核，而不是把草稿当证据。
 
 图片通过受控工具实际读取；提前读取或提交审核会被拒绝，拒绝不表示内容已暴露。图片读取失败后可继续读取后续工件以报告问题，但该失败仍构成阻塞。没有图片的 Run 不要求读取不存在的图片。
 

@@ -88,6 +88,8 @@ export interface TestDataEvidenceBoundary {
 
 export interface TestDataManager {
   prefix(runId: string): string;
+  cleanupHandledByHarness?(): boolean;
+  cleanupQueriesAvailable?(): boolean;
   register(runId: string, entry: TestDataEntry): Promise<void>;
   submitClaim(
     runId: string,
@@ -137,6 +139,14 @@ class DefaultTestDataManager implements TestDataManager {
       this.queryAdapters.set(adapter.id, adapter);
     }
     if (options.cleanupAdapter) assertAdapterId(options.cleanupAdapter.id);
+  }
+
+  cleanupHandledByHarness(): boolean {
+    return this.options.cleanupAdapter !== undefined;
+  }
+
+  cleanupQueriesAvailable(): boolean {
+    return this.queryAdapters.size > 0;
   }
 
   prefix(runId: string): string {
@@ -340,6 +350,13 @@ export function createTestDataTools(
   evidence: TestDataEvidenceBoundary | undefined,
   scenarioId?: string,
 ): ToolDefinition[] {
+  const automaticCleanup = manager.cleanupHandledByHarness?.();
+  const responsibility =
+    automaticCleanup === true
+      ? 'Harness 已配置独立清理适配器，收尾处理登记数据；Runner 记录待处理状态，不需重复提交清理声明，不能提前声称已清理。'
+      : automaticCleanup === false
+        ? '没有自动清理适配器；Runner 需用已提供的受控方法清理并提交合格依据，缺少能力时保留阻塞。'
+        : '清理分工尚未由 manager 提供，请按环境说明核实，不猜测能力。';
   const registerParameters = Type.Object(
     {
       id: Type.String({ description: '已创建测试数据的稳定标识，不要填写密码或 Token' }),
@@ -369,7 +386,8 @@ export function createTestDataTools(
     {
       name: 'get_test_data_prefix',
       label: '获取测试数据标记',
-      description: '获取当前 Run 的测试数据前缀。创建数据时必须使用该前缀，便于清理。',
+      description:
+        '获取当前 Run 的测试数据前缀。创建数据时必须使用该前缀，便于清理。' + responsibility,
       parameters: Type.Object({}, { additionalProperties: false }),
       execute: async () => createTextResult(manager.prefix(runId)),
     },
@@ -457,7 +475,11 @@ export function createTestDataTools(
       execute: async () =>
         createTextResult(JSON.stringify(manager.pending(runId).map(publicRecord))),
     },
-  ];
+  ].filter(
+    (tool) =>
+      tool.name !== 'capture_test_data_cleanup_query' ||
+      manager.cleanupQueriesAvailable?.() !== false,
+  );
 }
 
 export function createReviewerTestDataTools(

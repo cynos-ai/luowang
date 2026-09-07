@@ -92,6 +92,14 @@ export class ControlledCommandError extends Error {
   }
 }
 
+// Only known executor errors carry reviewed diagnostics. Unknown exceptions may
+// contain host paths or credentials; do not expose their message or stack.
+export function commandFailureMessage(error: unknown): string {
+  return error instanceof ControlledCommandError
+    ? `${error.code}: ${error.message}`
+    : '受控命令执行器异常，未获得可用的进程结果；具体原因未确认';
+}
+
 export function createControlledCommandRunner(
   environment: NodeJS.ProcessEnv = process.env,
   timeoutMs = 120_000,

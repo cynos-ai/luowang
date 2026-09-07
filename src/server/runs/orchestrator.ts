@@ -41,7 +41,11 @@ import {
   createTextResult,
   createWorkingScenarioTools,
 } from './agent-session.js';
-import { createControlledCommandRunner, type ControlledCommandRunner } from './command-runner.js';
+import {
+  commandFailureMessage,
+  createControlledCommandRunner,
+  type ControlledCommandRunner,
+} from './command-runner.js';
 import {
   createReviewerEvidenceTools,
   createRunEvidenceStore,
@@ -953,10 +957,9 @@ class DefaultRunOrchestrator implements RunOrchestrator {
             signal,
           });
         } catch (error) {
-          const evidenceId = await capture({ error: safeMessage(error) });
-          throw new Error(
-            `${redactCommandText(safeMessage(error), secrets)}（命令证据 ${evidenceId}）`,
-          );
+          const diagnostic = redactCommandText(commandFailureMessage(error), secrets);
+          const evidenceId = await capture({ error: diagnostic });
+          throw new Error(`${diagnostic}（命令证据 ${evidenceId}）`);
         }
         const evidenceId = await capture(result);
         return { ...result, evidenceId };
@@ -2289,11 +2292,11 @@ ${JSON.stringify(runnerContext(context), null, 2)}`;
 
 function runnerOutputContract(): string {
   return `先读取 plan.md，再按计划使用受控 target、工作场景、命令、环境、测试数据和 evidence 工具。正式场景必须通过场景进度工具按计划顺序声明、开始和完成；初始化侦察不得伪造正式场景进度。UI 场景只能使用受控的 headless、isolated Playwright MCP，优先使用 accessibility snapshot/ref；截图使用相对文件名并通过 list_evidence_files 确认存在。
-测试账号只用于当前操作，绝不能写入日志、命令输出、Markdown 或证据。使用 get_test_data_prefix 标记临时数据；创建后立即登记，删除后只能提交 Harness 捕获的受控查询证据或 Playwright 截图声明，并检查待核验列表。不能自填 evidence 正文、状态码、摘要或 hash。命令工具返回的 evidenceId 对应 Harness 捕获的脱敏原始结果，按需引用，不自行重造证据。每个场景记录实际观察、命令退出码、决定性/辅助证据、偏差和清理结果。结束前分别通过 write_execution 和 write_draft_report 写完整工件；不可用条件记录为 blocked。`;
+测试账号只用于当前操作，绝不能写入日志、命令输出、Markdown 或证据。使用 get_test_data_prefix 标记临时数据并确认清理分工；创建后立即登记。Harness 负责清理时等待其收尾核验并如实记录待处理状态，不重复提交声明；需要 Runner 清理时，只用当前提供的能力，删除后引用合格受控查询证据或 Playwright 截图声明，并检查待核验列表。普通命令结果不是清理声明。不能自填 evidence 正文、状态码、摘要或 hash。命令工具返回的 evidenceId 对应 Harness 捕获的脱敏原始结果，按需引用，不自行重造证据。每个场景记录实际观察、命令退出码、决定性/辅助证据、偏差和清理结果。结束前分别通过 write_execution 和 write_draft_report 写完整工件；不可用条件记录为 blocked。`;
 }
 
 function reviewerUserMessage(context: RunContext): string {
-  return `当前任务：独立核对计划、原始执行证据、场景变更、场景结果、confirmed Bugs、截图事实、清理和 Harness 阻塞原因。
+  return `当前任务：先读计划及存在的 patch，再列出并核对相关原始证据，形成初步判断后才打开 execution.md 和 draft-report.md，避免被 Runner 的结论带偏。完成独立审核，记录场景结果、问题、清理及无法确认的事项。
 
 动态 Run 上下文：
 ${JSON.stringify(reviewerContext(context), null, 2)}`;
@@ -2331,7 +2334,7 @@ function finalizationPromptContext(context: RunContext): Record<string, unknown>
 function mainBUserMessage(context: RunContext): string {
   const task = context.initialization
     ? '汇总初始化 Run；可在 Reviewer 意见支持下用受限 writer 修订尚未发布的候选场景 patch，但修订后未重新执行必须保持 blocked。'
-    : '汇总日常测试 Run，不修改场景 patch。';
+    : '汇总日常测试 Run，不修改场景 patch。保留 Reviewer 的疑问和限制，不把“原因未确认”写成“审核已确认”。';
   return `当前任务：${task}
 
 动态 Run 上下文：

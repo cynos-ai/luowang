@@ -74,8 +74,8 @@ describe('Closure 6 local production Pi path', () => {
     const reviewerPrompt =
       context.model.sessions.find((session) => session.role === 'reviewer')?.systemPrompt ?? '';
     const planIndex = reviewerPrompt.indexOf('先读 `plan.md`');
-    const evidenceIndex = reviewerPrompt.indexOf('再读取本次原始命令/API/截图/清理证据');
-    const executionIndex = reviewerPrompt.indexOf('最后才对照 `execution.md`');
+    const evidenceIndex = reviewerPrompt.indexOf('接着通过 `list_evidence_files`');
+    const executionIndex = reviewerPrompt.indexOf('再打开 `execution.md`');
     assert.ok(planIndex >= 0, 'Reviewer must receive the plan-first reading rule');
     assert.ok(evidenceIndex > planIndex, 'Reviewer must read raw evidence after the plan');
     assert.ok(executionIndex > evidenceIndex, 'Reviewer must read execution drafts last');
@@ -92,6 +92,23 @@ describe('Closure 6 local production Pi path', () => {
       }
       assert.ok(!prompt.includes('luowang-role-id: scenario-initialization;'));
     }
+  });
+
+  it('retains a real parser rejection for the isolated Reviewer without executing inline code', async () => {
+    const context = await createContext('review-all', 'rejected-command');
+    const result = await context.orchestrator.run({
+      request: '验证受控命令诊断交接',
+      trigger: 'manual',
+    });
+    assert.equal(result.status, 'completed', JSON.stringify(result));
+    const body = context.evidence.objects.get(`${result.runId}/command-1.json`);
+    assert.ok(body);
+    const captured = JSON.parse(body.toString());
+    assert.match(captured.result.error, /COMMAND_NOT_ALLOWED/);
+    assert.doesNotMatch(captured.result.error, /未生成可信最终结论/);
+    assert.equal(captured.result.exitCode, undefined);
+    assert.ok(context.evidence.reads.includes(`${result.runId}/command-1.json`));
+    assert.ok(!context.model.sessions[1]?.tools.includes('capture_test_data_cleanup_query'));
   });
 
   it.each(['capture', 'upload'] as const)(

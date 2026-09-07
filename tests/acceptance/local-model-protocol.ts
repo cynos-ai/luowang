@@ -18,6 +18,7 @@ export type LocalModelBehavior =
   | 'normal'
   | 'revise-final-patch'
   | 'invalid-tool'
+  | 'rejected-command'
   | 'special-cleanup'
   | 'reuse-existing'
   | 'empty-initialization'
@@ -427,7 +428,9 @@ function nextTool(
       return tool('finish_scenario', { scenarioId: initializationScenarioId });
     }
     if (count('run_fixture_command') === 0) {
-      return tool('run_fixture_command', { command: 'node --version' });
+      return tool('run_fixture_command', {
+        command: behavior === 'rejected-command' ? 'node --eval "1+1"' : 'node --version',
+      });
     }
     if (count('write_execution') === 0) {
       return tool('write_execution', {
