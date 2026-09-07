@@ -1,6 +1,6 @@
 import { strict as assert } from 'node:assert';
 import { execFile } from 'node:child_process';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
@@ -58,27 +58,25 @@ describe('Closure 6 local production Pi path', () => {
     assert.match(result.artifacts['report.md'] ?? '', /Reviewer 已独立确认/);
     const reviewerPrompt =
       context.model.sessions.find((session) => session.role === 'reviewer')?.systemPrompt ?? '';
-    const planIndex = reviewerPrompt.indexOf('先读取计划、唯一执行清单');
-    const evidenceIndex = reviewerPrompt.indexOf('再独立读取原始命令/API/截图/清理证据');
-    const executionIndex = reviewerPrompt.indexOf('最后读取执行记录和 Runner 草稿');
+    const planIndex = reviewerPrompt.indexOf('先读 `plan.md`');
+    const evidenceIndex = reviewerPrompt.indexOf('再读取本次原始命令/API/截图/清理证据');
+    const executionIndex = reviewerPrompt.indexOf('最后才对照 `execution.md`');
     assert.ok(planIndex >= 0, 'Reviewer must receive the plan-first reading rule');
     assert.ok(evidenceIndex > planIndex, 'Reviewer must read raw evidence after the plan');
     assert.ok(executionIndex > evidenceIndex, 'Reviewer must read execution drafts last');
-    // Resource-delivery proof only; semantic decisions require the paired real-model cases.
-    const mainPrompt = context.model.sessions[0]?.systemPrompt ?? '';
-    assert.equal(mainPrompt.split('### 契约变化的直接覆盖核对').length - 1, 1);
-    assert.match(mainPrompt, /旧断言仍有效不等于新契约已验证/);
-    assert.match(mainPrompt, /必要前置和关键验证受阻/);
-    assert.match(mainPrompt, /不要求所有参数变动都新增场景/);
-    assert.match(reviewerPrompt, /若仍保留旧行为也能满足全部断言/);
-    assert.match(reviewerPrompt, /不凭空增加规格未要求的断言/);
-    assert.match(mainPrompt, /复用场景不等于原样复用有歧义的操作/);
-    assert.match(mainPrompt, /读取元数据不等于推进时间或改变状态/);
-    assert.match(mainPrompt, /整体 blocked，其他回归可继续/);
-    assert.match(mainPrompt, /原业务结果的场景保留原意并标记 deprecated/);
-    assert.match(reviewerPrompt, /主体、凭证、状态与操作是否被替换/);
-    assert.match(reviewerPrompt, /只读元数据不能证明状态转换/);
-    assert.doesNotMatch(reviewerPrompt, /### 契约变化的直接覆盖核对/);
+    // Prove complete, single delivery per role, not semantic quality from slogan matching.
+    const resources = ['main-planning', 'runner-execution', 'reviewer-audit', 'main-finalization'];
+    const common = (await readFile('resources/agent-roles/common.md', 'utf8')).trim();
+    for (const [index, resource] of resources.entries()) {
+      const prompt = context.model.sessions[index]?.systemPrompt ?? '';
+      const content = (await readFile(`resources/agent-roles/${resource}.md`, 'utf8')).trim();
+      assert.equal(prompt.split(common).length - 1, 1);
+      assert.equal(prompt.split(content).length - 1, 1);
+      for (const other of resources.filter((id) => id !== resource)) {
+        assert.ok(!prompt.includes(`luowang-role-id: ${other};`));
+      }
+      assert.ok(!prompt.includes('luowang-role-id: scenario-initialization;'));
+    }
   });
 
   it('creates the first scenario branch through FIFO before one six-Session production Pi initialization Run', async () => {
