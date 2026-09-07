@@ -2219,7 +2219,7 @@ ${patchInstruction}
 }
 
 function initializationCandidateUserMessage(context: RunContext): string {
-  return `当前任务：在新的 Main · 规划 Session 中，综合静态证据和低风险运行时侦察，形成少量高价值候选场景；需要历史判断时只通过 query_run_history 查询有限、脱敏的 Run 摘要。
+  return `当前任务：在新的 Main · 规划 Session 中，综合静态理解和低风险运行时侦察，尽可能全面地整理项目所需的候选场景并更新验证计划，不追求绝对穷尽；需要历史判断时只通过 query_run_history 查询有限、脱敏的 Run 摘要。
 
 动态 Run 上下文：
 ${JSON.stringify(mainPlanningContext(context), null, 2)}`;

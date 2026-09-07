@@ -158,7 +158,7 @@ describe('Closure 6 local production Pi path', () => {
   it('runs unfamiliar-project direct initialization through six isolated production Pi Sessions', async () => {
     const context = await createContext('autonomous', 'normal');
     const result = await context.orchestrator.run({
-      request: '初始化陌生项目并直接新增一个高价值场景',
+      request: '初始化陌生项目并整理场景测试集',
       trigger: 'manual',
       initialization: true,
     });
@@ -174,6 +174,10 @@ describe('Closure 6 local production Pi path', () => {
       'main-b',
     ]);
     assert.equal(new Set(context.model.sessions.map((session) => session.id)).size, 6);
+    // Check the actual dynamic task as well as the loaded role resources.
+    const candidateTask = context.model.sessions[2]?.prompts[0] ?? '';
+    assert.match(candidateTask, /尽可能全面地整理项目所需的候选场景并更新验证计划，不追求绝对穷尽/);
+    assert.doesNotMatch(candidateTask, /少量高价值/);
     assert.deepEqual(Object.keys(result.artifacts).sort(), [
       'draft-report.md',
       'execution.md',
