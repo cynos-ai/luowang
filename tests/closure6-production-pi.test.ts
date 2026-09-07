@@ -72,6 +72,12 @@ describe('Closure 6 local production Pi path', () => {
     assert.match(mainPrompt, /不要求所有参数变动都新增场景/);
     assert.match(reviewerPrompt, /若仍保留旧行为也能满足全部断言/);
     assert.match(reviewerPrompt, /不凭空增加规格未要求的断言/);
+    assert.match(mainPrompt, /复用场景不等于原样复用有歧义的操作/);
+    assert.match(mainPrompt, /读取元数据不等于推进时间或改变状态/);
+    assert.match(mainPrompt, /整体 blocked，其他回归可继续/);
+    assert.match(mainPrompt, /原业务结果的场景保留原意并标记 deprecated/);
+    assert.match(reviewerPrompt, /主体、凭证、状态与操作是否被替换/);
+    assert.match(reviewerPrompt, /只读元数据不能证明状态转换/);
     assert.doesNotMatch(reviewerPrompt, /### 契约变化的直接覆盖核对/);
   });
 

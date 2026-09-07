@@ -58,6 +58,14 @@ Qwen 复评在工程回归后冻结新 commit，沿用 `full-manifest.json` 的 
 
 本地专项已通过：修改文件 format/lint、角色资源装载 4 项、反馈/读取边界 8 项、普通四 Session 生产 Pi 1 项（该文件其余 10 项按名称筛选跳过），合计 13 项通过。日志为 `.cynos/acceptance/sdq-evaluation/targeted-audit/local.log`，使用 lockfile 匹配的既有 Docker quality 镜像并只读挂载当前源码/资源/测试。新断言只证明规则进入对应生产 Session，不冒充模型语义质量证明。Qwen 专项待冻结提交后运行；独立人工总评分和完整 Phase 5 验收仍未完成。Reviewer 本轮只有受影响资源交付与权限/顺序的本地专项，不冒称已经重跑其全部真实模型质量对比。为遵守不做全量的要求，本轮提交先保留本地，不推送以触发现有 PR 的全量 CI。
 
+## 专项反馈第二次修订（2026-09-07）
+
+`68aeb6d` 对 `a1bdd68` 的四类专项已完成：24/24 Session、300 次请求、24 份计划结构有效。全部 24 份计划和 8 份 patch 已作助手技术复核，记录在 `.cynos/acceptance/sdq-evaluation/targeted-audit/findings.md`；不是独立人工最终评分。新版有效期仍漏客户端有效期/旧会话语义，废弃案例一次未保留 deprecated 历史，Bug 修复三次将旧会话直接验证降为实现细节，因此专项不能判通过。
+
+用户同意继续修订，仍只做专项：消除 ID 复用与废弃规则的优先级歧义；明确复用不能弱化主体/凭证/状态/操作；按断言分别核对时间控制、元数据读取、即时响应证据和前置能力。只改 Main/Reviewer 内置规则、关联规格及生产 Session 资源交付断言，不新增机器 gate，不把具体夹具答案注入规则。
+
+沿用相同四类、两版各三次和冻结 rubric，新的增量基线为 `68aeb6d`，候选在本地专项后冻结。第二次专项使用独立 `targeted2-output/`，上限仍为 24 Session / 480 请求，单例 24 请求/300 秒；不复用旧结果、不更换 Provider、不切按量接口，不运行全量或额外真实 Reviewer 矩阵，也不推送触发全量 CI。本地验证已通过前次相同的 13 项专项及修改文件格式/lint，证据为 `.cynos/acceptance/sdq-evaluation/targeted2-audit/local.log`（同一文件中其他 10 项按名称筛选跳过）。生产 Session 断言只证明规则正确交付，真实语义效果待第二次专项；完成不等于质量通过。
+
 ## 1. 实施原则与顺序
 
 本计划以 `09dbed0` 为代码检查基线。实现时从最新 `develop` 建立 `feat/scenario-design-quality`，若下列 owner 已有增量修改，先核对调用关系并在原职责边界内集成，不另起一套规划或场景系统。
