@@ -145,6 +145,18 @@ Qwen 复评在工程回归后冻结新 commit，沿用 `full-manifest.json` 的 
 
 本地检查后单独冻结候选，并以 `3b8d56e` 为增量基线复测原三类条件。两版均使用相同的执行传输和已知错误类型约定，原六条链、289 请求及语义发现保留，不追溯改分。新输出进入独立 `.cynos/acceptance/linked-followup/`；真实复测前仍先完整离线串联预检。Qwen 总预算解除，但不无限追加矩阵或切换付费 Provider。
 
+### 小修复测完成：650c84b
+
+已完成并冻结四项修复为 `650c84b`，与增量基线 `3b8d56e` 做完原三类条件的六条完整链；另用旧不可用条件的同一四份工件做两次最终 Main 探针，专门检查审核保留意见，不混作完整链。
+
+- **6/6 完整链、24/24 Session、294 请求**；正常两版 passed，真实 logout 缺陷两版 failed（旧 Cookie 实测 200 !== 401，删除账号场景 passed），不可用服务两版 blocked。单独汇总探针 **2/2 Session、13 请求**，合计 **26 Session / 307 请求**，全部完成/dispose，无请求级模型 error/aborted 或终止失败，无认证/额度异常。
+- 7 次隔离命令容器执行、4 次未启动命令的服务拒绝；11 份原始命令记录全部被 Reviewer 读取并与存储字节匹配。343 个源码/fixture/driver 哈希、固定干净工作树及无 Run 容器残留复核通过。未操作共享账号、远程 Git/Issue/OSS 或发布；汇总探针没有重跑或改写旧 Run。
+- 候选保留了已知受控错误原因；清理误用声明从基线正常例的一次变为候选零次，三次真实 Runner 输入均不暴露未配置查询工具；Reviewer 原始证据先读从基线 2/3 到候选 3/3。同一保留意见探针中，候选明确保留 Reviewer 无法独立确认原因，基线仍省略该保留意见。错误类型交接和工具可用性是工程增量，不把全部效果记为提示词提升。
+- **仍有缺口**：候选汇总探针部分段落仍直接断言环境原因；完整链和探针的共享服务/账号建议未注明需另行授权；缺陷最终报告清理表状态与正文混杂新旧时态；草稿把本地对象传输称作 OSS 上传。无实际越权、远程上传或清理遗留，不将文字问题隐去，也不继续追加调用追求全绿。
+- 助手已读完六链 30 份 Markdown、两次探针的固定输入及两份新报告，并核对全部事件/输入。**177/177 测试、format/lint/typecheck/build/E2E/Phase 9/完整本地 acceptance 通过**，新增测试另做严格 TypeScript 检查通过。首轮两个旧措辞断言失配保留。官方 live/release 仍 blocked；独立人工评分 not_run，总体质量提升未建立，Phase 5 仍不通过。
+
+完整原始记录及完成证明：`.cynos/acceptance/linked-followup/{manifest.json,live-output/summary.json,engineering/report.json,review/checks.json,review/findings.md,completion.json}`。旧轮次原样保留。本轮到此结束，不再有活动模型 Run；仅本地提交，未 push。
+
 ## 1. 实施原则与顺序
 
 本计划以 `09dbed0` 为代码检查基线。实现时从最新 `develop` 建立 `feat/scenario-design-quality`，若下列 owner 已有增量修改，先核对调用关系并在原职责边界内集成，不另起一套规划或场景系统。
