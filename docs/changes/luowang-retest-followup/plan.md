@@ -17,4 +17,18 @@ Main在同一Session实际写计划三次：先纠正三级清单标题，再纠
 
 Runner仍首次漏用测试过滤参数`-t`，一次“No test files found”后在同一Session纠正；Reviewer明确记录。三次原始证据读取逐字节相同且先于execution；九处Markdown证据链接均对应实际对象，没有损坏链接。195个冻结哈希一致，target工作树清洁、无Run容器残留。已阅读四工件及相关事件，独立人工评分仍not_run。
 
-证据：`.cynos/acceptance/retest-followup/model/` 的manifest、live-output、artifacts.txt、audit.py、checks.json。MCP断网启动截图与Qwen API链路是分开验证；Qwen+MCP网站浏览器业务联合验收尚未执行，不能合并两者声称联合通过。正式部署未更改，整体质量/发布不作通过声明。
+证据：`.cynos/acceptance/retest-followup/model/` 的manifest、live-output、artifacts.txt、audit.py、checks.json。MCP断网启动截图与Qwen API链路是分开验证；截至该轮，Qwen+MCP网站浏览器业务联合验收尚未执行，不能合并两者声称联合通过。正式部署未更改，整体质量/发布不作通过声明。
+
+## Qwen＋真实MCP网站只读联合验收
+
+冻结候选`7002f43`（运行代码仍为`75c0756`），固定网站衍生target `dce0db485d2f4c9abf887ba8c6a3598403312d09`，预置`AUTH-FORM-UI-001`，仅验证登录→注册→登录入口和字段，不输入凭据、不提交表单。一个完整链、四个独立且已释放Session、55次qwen3.7-plus请求，Thinking off，无模型请求/认证/配额/终止错误，不重跑追分。
+
+Main两次写计划均自主声明`requiresBrowser=true`，选择正确且无维护patch。Runner经生产Pi和受控MCP扩展真实导航、完成两次有效切换、获取三份snapshot和两张PNG。原始快照依次为登录/注册/登录，实际指定操作符合预期。Reviewer在execution之前读取两张图片；原件、上传对象、工具返回及随后SDK模型上下文中的图像字节一致。八个Markdown证据链接有效，203个冻结哈希一致。
+
+**联合验收仍未通过，最终Run为blocked。** Reviewer用`read_command_evidence`读取浏览器console/log和page/yml，被命令ID成员检查在实际读取前拒绝；本Run没有命令证据。这类工具路由错误却被统一记为证据读取失败，并产生两条永久阻塞。原件没有丢失，不能归因为存储或hash失败。
+
+同时存在真实的审核通道缺口：Reviewer没有受控读取原始浏览器快照的工具，未核对实际返回登录快照，转而用初始截图和Runner文字推断反向切换成立。注册截图下沿的返回入口被裁切，Reviewer的可见性描述也偏满。因此不能仅清空阻塞就宣称通过，也不应以强制每步再截图代替解决原始证据可读性和判断问题。下一步应围绕既有证据owner区分类型/读错工具与真实读取或完整性失败，补齐必要的受控浏览器记录读取，保留权限与归属边界；本轮尚未修改相关生产代码。
+
+模型运行前零请求预检曾因只读浏览器容器默认HOME条件下的crashpad错误失败；仅将HOME置于已配置的/tmp tmpfs后预检成功，失败记录保留。模型启动前还纠正了新fixture PROJECT继承的旧API请求范围，重新固定target，应用代码未变。浏览器和网站均在独立internal网络，无宿主端口；网站日志只有七次GET，无填表/提交/账号写请求。最终Main后Harness销毁预登记基础设施命名空间，工作树清洁、无Run容器或网络残留。
+
+证据：`.cynos/acceptance/browser-joint/`的manifest、evaluation-plan、两次preflight、live-output、mcp-trace、artifacts、findings、audit.py和checks.json。已由助手阅读四工件、截图与相关原始事件，独立人工评分仍not_run。本轮未改生产代码、未重新跑194项工程测试或41项完整验收；现有部署、认证提交及全站验收均未覆盖，整体质量与发布仍不作通过声明。
