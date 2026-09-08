@@ -332,7 +332,7 @@ function nextTool(
     behavior === 'reuse-existing' ? 'CORE-STATE-001' : 'ONBOARD-SMOKE-001';
 
   if (candidateMain) {
-    const unreadArtifact = nextUnreadArtifact(['plan.md', 'execution.md', 'draft-report.md']);
+    const unreadArtifact = nextUnreadArtifact(['plan.md', 'execution.md']);
     if (unreadArtifact) return unreadArtifact;
     if (count('write_plan') === 0) {
       const candidatePlan =
@@ -384,7 +384,7 @@ function nextTool(
     return null;
   }
 
-  if (has('write_execution') && has('write_draft_report')) {
+  if (has('write_execution')) {
     const unreadArtifact = nextUnreadArtifact(['plan.md']);
     if (unreadArtifact) return unreadArtifact;
     if (
@@ -441,15 +441,6 @@ function nextTool(
           : '# 执行记录\n\n固定 target 的受控命令执行成功；无需产品场景。\n',
       });
     }
-    if (count('write_draft_report') === 0) {
-      return tool('write_draft_report', {
-        content: initialization
-          ? behavior === 'empty-initialization'
-            ? '# 草稿报告\n\n无需场景测试：计划有固定 target 依据。\n'
-            : `# 草稿报告\n\n${initializationScenarioId} passed。\n`
-          : '# 草稿报告\n\n无需场景测试，工件流转通过。\n',
-      });
-    }
     return null;
   }
 
@@ -470,7 +461,6 @@ function nextTool(
       'plan.md',
       'scenario-changes.patch',
       'execution.md',
-      'draft-report.md',
     ]);
     if (unreadArtifact) return unreadArtifact;
     if (count('write_review') === 0) {
@@ -486,12 +476,7 @@ function nextTool(
   }
 
   if (finalMain) {
-    const unreadArtifact = nextUnreadArtifact([
-      'plan.md',
-      'execution.md',
-      'draft-report.md',
-      'review.md',
-    ]);
+    const unreadArtifact = nextUnreadArtifact(['plan.md', 'review.md']);
     if (unreadArtifact) return unreadArtifact;
     if (
       initialization &&

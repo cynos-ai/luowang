@@ -164,7 +164,7 @@ it('keeps known command diagnostics redacted and unknown or lookalike errors opa
   }
 });
 
-it('states cleanup ownership and only offers queries when a query adapter is configured', () => {
+it('states Harness cleanup ownership without exposing cleanup claims', () => {
   const managed = createTestDataManager({
     cleanupAdapter: {
       id: 'owned',
@@ -176,28 +176,10 @@ it('states cleanup ownership and only offers queries when a query adapter is con
   const tools = createTestDataTools(managed, '01K00000000000000000000000', undefined);
   assert.match(
     tools.find((t) => t.name === 'get_test_data_prefix')!.description,
-    /Harness 已配置独立清理适配器/,
+    /最终 Main 结束后/,
   );
   assert.ok(!tools.some((t) => t.name === 'capture_test_data_cleanup_query'));
-  assert.ok(tools.some((t) => t.name === 'submit_test_data_cleanup_claim'));
-  const queried = createTestDataManager({
-    queryAdapters: [
-      {
-        id: 'lookup',
-        kind: 'readonly-command',
-        operations: { absent: [] },
-        async query() {
-          return { absent: true, content: 'synthetic boundary only' };
-        },
-      },
-    ],
-  });
-  const queriedTools = createTestDataTools(queried, '01K00000000000000000000000', undefined);
-  assert.ok(queriedTools.some((t) => t.name === 'capture_test_data_cleanup_query'));
-  assert.match(
-    queriedTools.find((t) => t.name === 'get_test_data_prefix')!.description,
-    /没有自动清理适配器/,
-  );
+  assert.ok(!tools.some((t) => t.name === 'submit_test_data_cleanup_claim'));
 });
 
 it('requires plan and existing patch before reading commands, without requiring a proof for every command', async () => {

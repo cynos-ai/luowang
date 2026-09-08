@@ -100,7 +100,7 @@ describe('scenario quality feedback', () => {
     });
     const view = (filename: string) =>
       image.execute('id', { filename }, undefined, undefined, {} as never);
-    await assert.rejects(order.readArtifact('draft-report.md'), /先读取 plan/);
+    await assert.rejects(order.readArtifact('execution.md'), /先读取 plan/);
     await view('a.png');
     assert.equal(imageCalls, 0);
     assert.deepEqual(exposed, []);
@@ -111,9 +111,8 @@ describe('scenario quality feedback', () => {
     assert.throws(order.assertReady, /原始图片/);
     await view('b.png');
     await order.readArtifact('execution.md');
-    await order.readArtifact('draft-report.md');
     order.assertReady();
-    assert.deepEqual(exposed, ['plan.md', 'execution.md', 'draft-report.md']);
+    assert.deepEqual(exposed, ['plan.md', 'execution.md']);
   });
 
   it('keeps failed evidence blocking while allowing an honest review of the failure', async () => {
@@ -158,7 +157,7 @@ describe('scenario quality feedback', () => {
       true,
     );
     await withPatch.readArtifact('plan.md');
-    await assert.rejects(withPatch.readArtifact('draft-report.md'), /scenario-changes.patch/);
+    await assert.rejects(withPatch.readArtifact('execution.md'), /scenario-changes.patch/);
     assert.throws(withPatch.assertReady, /scenario-changes.patch/);
     await withPatch.readArtifact('scenario-changes.patch');
     withPatch.assertReady();

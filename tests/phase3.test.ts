@@ -30,7 +30,92 @@ afterEach(async () => {
 });
 
 describe('Phase 3 agent run', () => {
-  it('runs four independent sessions, fixes target SHA, writes five artifacts, and atomically completes', async () => {
+  it.each(['passed', 'failed'] as const)(
+    'cleans after final Main disposal without changing %s',
+    async (outcome) => {
+      const { createTestDataManager } = await import('../src/server/runs/test-data.js');
+      let calls = 0;
+      const manager = createTestDataManager({
+        cleanupAdapter: {
+          id: 'late-cleanup',
+          async cleanupAndVerify() {
+            calls++;
+            assert.deepEqual(context.sessions.disposed, ['main-a', 'runner', 'reviewer', 'main-b']);
+            return { absent: false, content: 'still present', exitCode: 0 };
+          },
+        },
+      });
+      const fixture = await createGitFixture();
+      const context: TestContext = await createRunContext(
+        fixture,
+        [outcome],
+        async () => {
+          const runner = context.sessions.inputs.find((input) => input.role === 'runner')!;
+          const runId = parsePromptContext(runner.userMessage).runId;
+          await manager.register(runId, { id: `${manager.prefix(runId)}temporary-account` });
+        },
+        undefined,
+        '',
+        '\n',
+        false,
+        false,
+        { testData: manager },
+      );
+      const result = await context.orchestrator.run({
+        request: '验证单向交接与收尾',
+        trigger: 'manual',
+      });
+      assert.equal(result.status, 'completed', JSON.stringify(result));
+      assert.equal(result.result, outcome);
+      assert.equal(calls, 1);
+      assert.match(
+        result.artifacts['report.md']!,
+        /Harness 清理收尾[\s\S]*未完成[\s\S]*temporary-account/,
+      );
+      assert.ok(!result.blockingReasons?.some((reason) => reason.includes('清理')));
+      if (outcome === 'failed') assert.match(result.artifacts['report.md']!, /BUG-LOGIN-001/);
+    },
+  );
+
+  it('cleans registered data after Runner failure and preserves the original error', async () => {
+    const { createTestDataManager } = await import('../src/server/runs/test-data.js');
+    let calls = 0;
+    const manager = createTestDataManager({
+      cleanupAdapter: {
+        id: 'exception-cleanup',
+        async cleanupAndVerify() {
+          calls++;
+          throw new Error('token=private-fixture-secret');
+        },
+      },
+    });
+    const context: TestContext = await createRunContext(
+      await createGitFixture(),
+      ['passed'],
+      async () => {
+        const runId = parsePromptContext(
+          context.sessions.inputs.find((input) => input.role === 'runner')!.userMessage,
+        ).runId;
+        await manager.register(runId, { id: `${manager.prefix(runId)}temporary-account` });
+        throw new Error('Runner stopped');
+      },
+      undefined,
+      '',
+      '\n',
+      false,
+      false,
+      { testData: manager },
+    );
+    const result = await context.orchestrator.run({ request: '异常仍收尾', trigger: 'manual' });
+    assert.equal(result.status, 'failed');
+    assert.equal(result.result, null);
+    assert.equal(calls, 1);
+    assert.deepEqual(context.sessions.created, ['main-a', 'runner']);
+    assert.match(result.artifacts['execution.md']!, /temporary-account/);
+    assert.equal(result.artifacts['report.md'], undefined);
+    assert.doesNotMatch(JSON.stringify(result), /private-fixture-secret/);
+  });
+  it('runs four independent sessions, fixes target SHA, writes four artifacts, and atomically completes', async () => {
     const fixture = await createGitFixture();
     const context = await createRunContext(fixture, ['passed']);
 
@@ -45,7 +130,6 @@ describe('Phase 3 agent run', () => {
     assert.equal(result.targetCommit, fixture.initialHead);
     assert.deepEqual(result.includedCommits, []);
     assert.deepEqual(Object.keys(result.artifacts).sort(), [
-      'draft-report.md',
       'execution.md',
       'plan.md',
       'report.md',
@@ -628,7 +712,8 @@ describe('Phase 3 agent run', () => {
     assert.equal(result.status, 'failed', JSON.stringify(result));
     assert.equal(result.currentScenario, 'AUTH-LOGIN-001 · 登录状态恢复');
     assert.deepEqual(result.scenarioProgress, { completed: 0, total: 1 });
-    assert.ok(result.activities?.at(-1)?.message.includes('执行失败'));
+    assert.ok(result.activities?.some((activity) => activity.message.includes('执行失败')));
+    assert.ok(result.activities?.at(-1)?.message.includes('测试数据清理'));
   });
 
   it('preserves failed and blocked result precedence from the independent report', async () => {
@@ -814,7 +899,11 @@ async function createRunContext(
   reportLineEnding: '\n' | '\r\n' = '\n',
   invalidReportFirst = false,
   invalidScenarioPatchFirst = false,
-  options: { indexer?: RepositoryIndexer; candidate?: CandidateTestOptions } = {},
+  options: {
+    indexer?: RepositoryIndexer;
+    candidate?: CandidateTestOptions;
+    testData?: import('../src/server/runs/test-data.js').TestDataManager;
+  } = {},
 ): Promise<TestContext> {
   const dataDir = await mkdtemp(join(tmpdir(), 'luowang-phase3-data-'));
   const reportDir = join(dataDir, 'report');
@@ -864,6 +953,7 @@ async function createRunContext(
     configuration,
     repository,
     indexer: options.indexer,
+    testData: options.testData,
     reportDir,
     sessions,
     provider: {} as ProviderAdapter,
@@ -906,7 +996,6 @@ class RecordingSessionFactory implements AgentSessionFactory {
         if (candidateMain) {
           await invokeTool(input, 'read_run_artifact', { name: 'plan.md' });
           await invokeTool(input, 'read_run_artifact', { name: 'execution.md' });
-          await invokeTool(input, 'read_run_artifact', { name: 'draft-report.md' });
           if (this.candidateOptions.planWriteFailureOnly) {
             const rejected = await invokeTool(input, 'write_plan', { content: '' });
             assert.equal(rejected.details.error, true);
@@ -950,6 +1039,7 @@ class RecordingSessionFactory implements AgentSessionFactory {
         } else if (input.role === 'main-a') {
           throw new Error('fixture Main received an unexpected tool boundary');
         } else if (input.role === 'runner') {
+          assert.ok(!hasTool(input, 'write_draft_report'));
           await invokeTool(input, 'read_run_artifact', { name: 'plan.md' });
           const progressAvailable = hasTool(input, 'begin_scenario_execution');
           const scenarioIds =
@@ -975,21 +1065,17 @@ class RecordingSessionFactory implements AgentSessionFactory {
             command: 'node --version',
           });
           await invokeTool(input, 'write_execution', {
-            content: `# Execution\n\n固定 target ${extractTarget(input)}\n\n${commandText(command)}\n`,
-          });
-          await invokeTool(input, 'write_draft_report', {
-            content: `# Draft\n\n结果：${outcome}\n`,
+            content: `# Execution\n\n固定 target ${extractTarget(input)}\n\n${commandText(command)}\n观察：${outcome}\n`,
           });
         } else if (input.role === 'reviewer') {
           const premature = await invokeTool(input, 'read_run_artifact', {
-            name: 'draft-report.md',
+            name: 'execution.md',
           });
           assert.equal(premature.details.error, true);
           assert.doesNotMatch(commandText(premature), /# Draft/);
           await invokeTool(input, 'read_run_artifact', { name: 'plan.md' });
           await invokeTool(input, 'read_run_artifact', { name: 'scenario-changes.patch' });
           await invokeTool(input, 'read_run_artifact', { name: 'execution.md' });
-          await invokeTool(input, 'read_run_artifact', { name: 'draft-report.md' });
           await invokeTool(input, 'write_review', {
             content: this.progress
               ? '# Review\n\n独立确认两个场景均按顺序执行并完成。\n'
@@ -997,7 +1083,11 @@ class RecordingSessionFactory implements AgentSessionFactory {
           });
         } else {
           const context = parsePromptContext(input.userMessage);
-          for (const name of ['plan.md', 'execution.md', 'draft-report.md', 'review.md']) {
+          for (const name of ['execution.md', 'draft-report.md']) {
+            const denied = await invokeTool(input, 'read_run_artifact', { name });
+            assert.equal(denied.details.error, true);
+          }
+          for (const name of ['plan.md', 'review.md']) {
             await invokeTool(input, 'read_run_artifact', { name });
           }
           const outcome =

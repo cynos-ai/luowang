@@ -22,13 +22,7 @@ export interface RoleInstructionVersion {
   sha256: string;
 }
 
-export const RUN_ARTIFACT_NAMES = [
-  'plan.md',
-  'execution.md',
-  'draft-report.md',
-  'review.md',
-  'report.md',
-] as const;
+export const RUN_ARTIFACT_NAMES = ['plan.md', 'execution.md', 'review.md', 'report.md'] as const;
 
 export const SCENARIO_PATCH_ARTIFACT_NAME = 'scenario-changes.patch' as const;
 

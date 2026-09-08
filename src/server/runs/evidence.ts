@@ -4,7 +4,7 @@ import type { AgentToolResult, ToolDefinition } from '@earendil-works/pi-coding-
 
 import type { EvidenceReference } from '../../shared/types.js';
 import { createTextResult } from './agent-session.js';
-import { redactSensitiveText, type TestDataVerificationReceipt } from './test-data.js';
+import { redactSensitiveText } from './test-data.js';
 import type { CommandRunResult } from './command-runner.js';
 import type { OssAdapter } from '../storage/oss.js';
 import { contentTypeFor } from '../storage/oss.js';
@@ -38,7 +38,7 @@ export interface RunEvidenceStore {
   readFailureCount?: () => number;
   recordReadFailure?: () => void;
   reviewReadCount?: () => number;
-  recordReviewRead?: (evidenceId?: string) => void;
+  recordReviewRead?: () => void;
   captureCommand(
     command: string,
     targetCommit: string,
@@ -47,13 +47,6 @@ export interface RunEvidenceStore {
   ): Promise<string>;
   commandEvidenceIds(): string[];
   readCommandEvidence(filename: string): Promise<string>;
-  captureCleanupQuery(
-    receipt: TestDataVerificationReceipt,
-    redactedContent: string,
-  ): Promise<string>;
-  isCleanupClaimEvidence(evidenceId: string, runId: string, dataId: string): Promise<boolean>;
-  readCleanupTextEvidence(evidenceId: string, runId: string, dataId: string): Promise<string>;
-  isReviewedCleanupEvidence(evidenceId: string): boolean;
 }
 
 export interface EvidenceReadResult {
@@ -75,9 +68,6 @@ class DefaultRunEvidenceStore implements RunEvidenceStore {
   private readonly references = new Map<string, EvidenceReference>();
   private readFailures = 0;
   private reviewReads = 0;
-  private cleanupSequence = 0;
-  private readonly cleanupEvidence = new Map<string, TestDataVerificationReceipt>();
-  private readonly reviewedEvidence = new Set<string>();
   private readonly commandEvidence = new Map<string, { sha256: string; sizeBytes: number }>();
   private commandSequence = 0;
 
@@ -215,9 +205,8 @@ class DefaultRunEvidenceStore implements RunEvidenceStore {
     return this.reviewReads;
   }
 
-  recordReviewRead(evidenceId?: string): void {
+  recordReviewRead(): void {
     this.reviewReads += 1;
-    if (evidenceId) this.reviewedEvidence.add(evidenceId);
   }
 
   async captureCommand(
@@ -273,53 +262,8 @@ class DefaultRunEvidenceStore implements RunEvidenceStore {
     if (!this.commandEvidence.has(filename)) throw new Error('不是本 Run 的受控命令证据 ID');
     const evidence = await this.read(filename);
     this.assertCommandIntegrity(filename, evidence.body);
-    this.recordReviewRead(filename);
+    this.recordReviewRead();
     return evidence.body.toString('utf8');
-  }
-
-  async captureCleanupQuery(
-    receipt: TestDataVerificationReceipt,
-    redactedContent: string,
-  ): Promise<string> {
-    this.cleanupSequence += 1;
-    const evidenceId = `cleanup-query-${receipt.sha256.slice(0, 16)}-${this.cleanupSequence}.json`;
-    await this.workspace.writeHarnessEvidence(
-      evidenceId,
-      `${JSON.stringify({ provenance: receipt, redactedContent }, null, 2)}\n`,
-    );
-    this.cleanupEvidence.set(evidenceId, { ...receipt });
-    return evidenceId;
-  }
-
-  async isCleanupClaimEvidence(
-    evidenceId: string,
-    runId: string,
-    dataId: string,
-  ): Promise<boolean> {
-    const captured = this.cleanupEvidence.get(evidenceId);
-    if (captured) return captured.runId === runId && captured.dataId === dataId;
-    if (!/\.(?:png|jpe?g|webp)$/i.test(evidenceId)) return false;
-    return (await this.list()).some((file) => file.name === evidenceId);
-  }
-
-  async readCleanupTextEvidence(
-    evidenceId: string,
-    runId: string,
-    dataId: string,
-  ): Promise<string> {
-    const captured = this.cleanupEvidence.get(evidenceId);
-    if (!captured || captured.runId !== runId || captured.dataId !== dataId) {
-      throw new Error('清理证据不属于当前 Run/data ID 或不是受控文本查询证据');
-    }
-    const evidence = await this.readUploaded(evidenceId);
-    if (evidence.body.byteLength > 256 * 1024) throw new Error('清理证据超过审核大小限制');
-    this.recordReviewRead(evidenceId);
-    return evidence.body.toString('utf8');
-  }
-
-  isReviewedCleanupEvidence(evidenceId: string): boolean {
-    const captured = this.cleanupEvidence.get(evidenceId);
-    return this.reviewedEvidence.has(evidenceId) && (captured ? captured.absent : true);
   }
 }
 
@@ -377,7 +321,7 @@ export function createRunnerEvidenceTools(store: RunEvidenceStore): ToolDefiniti
       name: 'upload_evidence',
       label: '上传证据',
       description:
-        '将当前 Run 的证据文件上传到配置的 OSS，并返回不含短期签名的稳定地址。不得把本地绝对路径写入报告。',
+        '将当前 Run 的证据文件保存到配置的证据存储，并返回不含短期签名的稳定地址。成功仅说明该存储已接收，不据此推断远程发布；不得把本地绝对路径写入报告。',
       parameters: filenameParameters,
       execute: async (
         _toolCallId: string,
@@ -449,7 +393,7 @@ export function createReviewerEvidenceTools(store: RunEvidenceStore): ToolDefini
       name: 'read_evidence_image',
       label: '读取截图证据',
       description:
-        '从当前 Run 的 OSS 证据中读取一张截图供独立审核；不能执行命令、读取测试账号或读取其他路径。',
+        '从当前 Run 的证据存储中读取一张截图供独立审核；不能执行命令、读取测试账号或读取其他路径。',
       parameters: filenameParameters,
       execute: async (
         _toolCallId: string,
@@ -469,7 +413,7 @@ export function createReviewerEvidenceTools(store: RunEvidenceStore): ToolDefini
             store.recordReadFailure?.();
             return createTextResult('截图超过审核大小限制', { error: true });
           }
-          store.recordReviewRead?.(params.filename);
+          store.recordReviewRead?.();
           return {
             content: [
               {

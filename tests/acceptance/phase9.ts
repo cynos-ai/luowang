@@ -218,7 +218,7 @@ const AC_DEFINITIONS: Array<{
   },
   {
     id: 'AC-RUN-VIEW-01',
-    title: 'Run 五文件、特殊 blocked 文件、证据和归档错误可查看',
+    title: 'Run 四文件、特殊 blocked 文件、证据和归档错误可查看',
     proof: 'regression',
     evidence: ['tests/phase8.test.ts', 'tests/e2e/phase8-ui-smoke.ts'],
   },
@@ -251,7 +251,7 @@ const AC_DEFINITIONS: Array<{
   },
   {
     id: 'AC-REPORT-01',
-    title: '正式报告只新增当前 Run 的三份 Markdown 文件',
+    title: '正式报告只新增当前 Run 的两份 Markdown 文件',
     proof: 'archive',
     evidence: ['tests/phase5.test.ts', 'tests/acceptance/phase9.ts: report proof'],
   },
@@ -781,7 +781,6 @@ async function runRunProof(context: RepositoryProofContext): Promise<void> {
   assert.equal(result.baseCommit, null);
   assert.deepEqual(result.includedCommits, []);
   assert.deepEqual(Object.keys(result.artifacts).sort(), [
-    'draft-report.md',
     'execution.md',
     'plan.md',
     'report.md',
@@ -818,7 +817,7 @@ async function runRunProof(context: RepositoryProofContext): Promise<void> {
     reportTree.filter((entry) =>
       entry.path.startsWith(`docs/scenario-testing/reports/${result.runId}/`),
     ).length,
-    3,
+    2,
   );
 }
 
@@ -1389,19 +1388,17 @@ class FixtureSessionFactory implements AgentSessionFactory {
           await invokeTool(input, 'write_execution', {
             content: `# 执行记录\n\n固定 target：${target}\n\n${toolText(command)}\n`,
           });
-          await invokeTool(input, 'write_draft_report', { content: '# Draft\n\n无需场景测试。\n' });
           return;
         }
         if (input.role === 'reviewer') {
           await invokeTool(input, 'read_run_artifact', { name: 'plan.md' });
           await invokeTool(input, 'read_run_artifact', { name: 'execution.md' });
-          await invokeTool(input, 'read_run_artifact', { name: 'draft-report.md' });
           await invokeTool(input, 'write_review', {
             content: '# Review\n\n独立确认无需场景测试。\n',
           });
           return;
         }
-        for (const name of ['plan.md', 'execution.md', 'draft-report.md', 'review.md']) {
+        for (const name of ['plan.md', 'review.md']) {
           await invokeTool(input, 'read_run_artifact', { name });
         }
         await invokeTool(input, 'write_report', {
@@ -1596,7 +1593,6 @@ async function writeCompletedRun(reportDir: string, runId: string, report: strin
     'utf8',
   );
   await writeFile(join(directory, 'execution.md'), '# Execution\nfixture execution\n', 'utf8');
-  await writeFile(join(directory, 'draft-report.md'), '# Draft\nfixture draft\n', 'utf8');
   await writeFile(join(directory, 'review.md'), '# Review\nfixture review\n', 'utf8');
   await writeFile(join(directory, 'report.md'), report, 'utf8');
 }
@@ -1618,14 +1614,7 @@ async function readCompletedArtifacts(
   runId: string,
 ): Promise<Record<string, string>> {
   const directory = join(reportDir, 'completed', runId);
-  const names = [
-    'plan.md',
-    'execution.md',
-    'draft-report.md',
-    'review.md',
-    'report.md',
-    'scenario-changes.patch',
-  ];
+  const names = ['plan.md', 'execution.md', 'review.md', 'report.md', 'scenario-changes.patch'];
   const artifacts: Record<string, string> = {};
   for (const name of names) {
     try {

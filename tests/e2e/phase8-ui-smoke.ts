@@ -274,7 +274,7 @@ try {
     await page.getByRole('heading', { name: RUN_IDS.blocked }).waitFor();
     await page
       .locator('details.artifact-card summary')
-      .filter({ hasText: /^draft-report\.md$/ })
+      .filter({ hasText: /^execution\.md$/ })
       .click();
     await page.locator('p.muted:visible').filter({ hasText: '不适用或尚未产生' }).first().waitFor();
     await page.getByText('scenario-changes.patch', { exact: true }).waitFor();
@@ -715,7 +715,7 @@ function makePassedRun(): OperationsRunSummary {
     ...baseRun(RUN_IDS.passed, 'passed', 'completed', 'completed'),
     request: '验证登录状态恢复',
     includedCommits: [HASHES.target],
-    artifactNames: ['plan.md', 'execution.md', 'draft-report.md', 'review.md', 'report.md'],
+    artifactNames: ['plan.md', 'execution.md', 'review.md', 'report.md'],
     scenarioResults: [{ id: SCENARIO_ID, result: 'passed' }],
     confirmedBugs: [],
     issues: [],
@@ -728,7 +728,7 @@ function makeFailedRun(): OperationsRunSummary {
     ...baseRun(RUN_IDS.failed, 'failed', 'completed', 'completed'),
     request: '验证登录后的会话保持',
     includedCommits: [HASHES.target],
-    artifactNames: ['plan.md', 'execution.md', 'draft-report.md', 'review.md', 'report.md'],
+    artifactNames: ['plan.md', 'execution.md', 'review.md', 'report.md'],
     scenarioResults: [{ id: SCENARIO_ID, result: 'failed' }],
     confirmedBugs: [
       {
@@ -868,7 +868,6 @@ function makeDetail(run: OperationsRunSummary): OperationsRunDetail {
     artifacts: {
       'plan.md': 'safe plan',
       'execution.md': 'safe execution',
-      'draft-report.md': 'safe draft report',
       'review.md': 'safe review',
       'report.md': run.runId === RUN_IDS.failed ? 'safe final report' : 'safe passed report',
       ...(run.runId === RUN_IDS.failed

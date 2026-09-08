@@ -417,7 +417,6 @@ async function writeCompletedRun(
   await mkdir(directory, { recursive: true });
   await writeFile(join(directory, 'plan.md'), '# Plan\n');
   await writeFile(join(directory, 'execution.md'), '# Execution\n');
-  await writeFile(join(directory, 'draft-report.md'), '# Draft\n');
   await writeFile(join(directory, 'review.md'), '# Review\n');
   await writeFile(join(directory, 'report.md'), report);
   await writeFile(join(directory, 'scenario-changes.patch'), patch);
@@ -439,7 +438,6 @@ function completedArtifacts(report: string, patch: string): Record<string, strin
   return {
     'plan.md': '# Plan\n',
     'execution.md': '# Execution\n',
-    'draft-report.md': '# Draft\n',
     'review.md': '# Review\n',
     'report.md': report,
     'scenario-changes.patch': patch,

@@ -19,14 +19,14 @@ export function createReviewReadOrder(
       );
     if (requiredImages.some((name) => !attemptedImages.has(name))) {
       throw new Error(
-        'Reviewer 必须先通过 read_evidence_image 逐一核对本次原始图片，再读 execution.md/draft-report.md 或提交审核',
+        'Reviewer 必须先通过 read_evidence_image 逐一核对本次原始图片，再读 execution.md 或提交审核',
       );
     }
   };
   return {
     assertReady,
     async readArtifact(name: string): Promise<string> {
-      if (name === 'execution.md' || name === 'draft-report.md') assertReady();
+      if (name === 'execution.md') assertReady();
       const content = await read(name);
       if (name === 'plan.md') planRead = true;
       if (name === 'scenario-changes.patch') patchRead = true;

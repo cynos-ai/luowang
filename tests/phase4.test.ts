@@ -19,11 +19,7 @@ import {
   createReviewerEvidenceTools,
   createRunEvidenceStore,
 } from '../src/server/runs/evidence.js';
-import {
-  createReviewerTestDataTools,
-  createTestDataManager,
-  createTestDataTools,
-} from '../src/server/runs/test-data.js';
+import { createTestDataManager, createTestDataTools } from '../src/server/runs/test-data.js';
 import { RunWorkspace } from '../src/server/runs/workspace.js';
 import { createOssAdapter, type OssAdapter, type S3ClientLike } from '../src/server/storage/oss.js';
 import type { SecretStore } from '../src/server/security/secret-store.js';
@@ -189,29 +185,11 @@ describe('Phase 4 browser and evidence boundaries', () => {
     const manager = createTestDataManager();
     const dataId = `${manager.prefix(workspace.runId)}screenshot-user`;
     await manager.register(workspace.runId, { id: dataId });
-    const claimTool = createTestDataTools(manager, workspace.runId, store).find(
-      (candidate) => candidate.name === 'submit_test_data_cleanup_claim',
+    assert.ok(
+      !createTestDataTools(manager, workspace.runId).some((t) =>
+        /claim|verify|capture/.test(t.name),
+      ),
     );
-    assert.ok(claimTool);
-    await claimTool.execute(
-      'claim',
-      { dataId, evidenceIds: ['login.png'] } as never,
-      undefined,
-      undefined,
-      {} as never,
-    );
-    const verifyTool = createReviewerTestDataTools(manager, workspace.runId, store).find(
-      (candidate) => candidate.name === 'verify_test_data_cleanup',
-    );
-    assert.ok(verifyTool);
-    const unread = (await verifyTool.execute(
-      'verify-before-read',
-      { dataId, decision: 'confirm' } as never,
-      undefined,
-      undefined,
-      {} as never,
-    )) as AgentToolResult<Record<string, unknown>>;
-    assert.equal(unread.details.error, true);
 
     const tool = createReviewerEvidenceTools(store).find(
       (candidate) => candidate.name === 'read_evidence_image',
@@ -232,15 +210,8 @@ describe('Phase 4 browser and evidence boundaries', () => {
       createReviewerEvidenceTools(store).some((item) => item.name === 'run_fixture_command'),
       false,
     );
-    const verified = (await verifyTool.execute(
-      'verify-after-read',
-      { dataId, decision: 'confirm' } as never,
-      undefined,
-      undefined,
-      {} as never,
-    )) as AgentToolResult<Record<string, unknown>>;
-    assert.equal(verified.details.error, undefined);
-    assert.equal(manager.finalize(workspace.runId).ok, true);
+    // Reading a screenshot cannot independently change data cleanup status.
+    assert.equal(manager.finalize(workspace.runId).ok, false);
     await store.cleanupLocal();
     assert.deepEqual(
       (await store.list()).map((file) => file.name),

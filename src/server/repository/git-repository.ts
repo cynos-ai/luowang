@@ -17,7 +17,7 @@ import {
 const execFileAsync = promisify(execFile);
 const SHA_PATTERN = /^[0-9a-f]{40}$/i;
 const REF_PATTERN = /^[^\s~^:?*\\[\]]{1,255}$/;
-const REPORT_FILE_NAMES = ['draft-report.md', 'review.md', 'report.md'] as const;
+const REPORT_FILE_NAMES = ['review.md', 'report.md'] as const;
 const MAX_TARGET_FILE_BYTES = 512 * 1024;
 
 export type ReportFileName = (typeof REPORT_FILE_NAMES)[number];

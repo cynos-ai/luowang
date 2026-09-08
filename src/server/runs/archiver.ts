@@ -398,11 +398,10 @@ class DefaultRunArchiver implements RunArchiver {
 }
 
 function pickReportFiles(artifacts: StoredRun['artifacts']): Record<ReportFileName, string> | null {
-  const draft = artifacts['draft-report.md'];
   const review = artifacts['review.md'];
   const report = artifacts['report.md'];
-  if (draft === undefined || review === undefined || report === undefined) return null;
-  return { 'draft-report.md': draft, 'review.md': review, 'report.md': report };
+  if (review === undefined || report === undefined) return null;
+  return { 'review.md': review, 'report.md': report };
 }
 
 function isSpecialScenarioReviewRun(artifacts: Record<string, string>): boolean {

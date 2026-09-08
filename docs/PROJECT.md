@@ -40,7 +40,8 @@
 - 测试选择由 AI 综合需求、累计 diff、历史 Run/Issue 和场景语义完成，不维护手工 suite。
 - Runner 的结论必须经过独立 Reviewer 审核；角色通过落盘工件交接，不共享完整对话。
 - 运行期间不持续把每次工具调用结构化写入数据库；完成后再批量、幂等归档。
-- `blocked`、`interrupted`、证据缺失、清理失败和归档失败不能伪装为通过，也不能错误推进测试目标。
+- `blocked`、`interrupted`、验证证据缺失和归档失败不能伪装为通过或错误推进；测试后临时数据清理单独告警，不改变已验证的功能结论。
+- 角色单向交接：plan → execution → review → report；最终 Main 只读 plan/review，不存在 Runner 报告草稿。Harness 在最后统一清理并追加真实收尾记录，按 `docs/changes/luowang-single-handoff/spec.md` 执行。
 - 场景变更需要人工确认时通过短生命周期 Run 产生 PR，不让 Agent 进程跨小时等待审批。
 - Main 只产生场景目录内的 patch；Archiver 只原样发布已验证场景 patch，并只为当前 Run 新增正式报告，不能改写产品、需求或历史报告。
 - 管理员初始密码只从 `LUOWANG_ADMIN_PASSWORD` 建立 Argon2id 哈希，不提供匿名初始化或默认密码，已有哈希不被环境变量覆盖。

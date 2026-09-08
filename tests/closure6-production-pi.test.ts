@@ -47,7 +47,6 @@ describe('Closure 6 local production Pi path', () => {
     assert.equal(result.status, 'completed', JSON.stringify(result));
     assert.equal(result.result, 'passed');
     assert.deepEqual(Object.keys(result.artifacts).sort(), [
-      'draft-report.md',
       'execution.md',
       'plan.md',
       'report.md',
@@ -242,7 +241,6 @@ describe('Closure 6 local production Pi path', () => {
     assert.match(candidateTask, /尽可能全面地整理项目所需的候选场景并更新验证计划，不追求绝对穷尽/);
     assert.doesNotMatch(candidateTask, /少量高价值/);
     assert.deepEqual(Object.keys(result.artifacts).sort(), [
-      'draft-report.md',
       'execution.md',
       'plan.md',
       'report.md',
@@ -369,7 +367,7 @@ describe('Closure 6 local production Pi path', () => {
       false,
     );
     assert.equal(context.specialCleanupCalls(), 1);
-    assert.match(result.artifacts['report.md'] ?? '', /测试数据：全部登记测试数据均已独立核验清理/);
+    assert.match(result.artifacts['report.md'] ?? '', /测试数据：测试数据清理完成/);
     assert.match(result.artifacts['report.md'] ?? '', /特殊归档仅保留/);
     assert.doesNotMatch(result.artifacts['report.md'] ?? '', /测试数据残留|清理失败/);
 

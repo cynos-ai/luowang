@@ -166,7 +166,7 @@ export function createReadArtifactTool(read: (name: string) => Promise<string>):
     name: 'read_run_artifact',
     label: '读取 Run 工件',
     description:
-      '读取本次 Run 已落盘的 plan.md、execution.md、draft-report.md、review.md 或 scenario-changes.patch；不能读取其他路径。',
+      '读取当前角色允许的本次 Run 工件；最终汇总只允许 plan.md、review.md 及初始化 patch，不能读取运行记录或其他路径。',
     parameters,
     execute: async (_toolCallId, params: Static<typeof parameters>) => {
       try {

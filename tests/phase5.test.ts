@@ -108,7 +108,6 @@ describe('Phase 5 archive and progress', () => {
     const directory = join(context.reportDir, 'completed', runId);
     await rm(join(directory, 'plan.md'));
     await rm(join(directory, 'execution.md'));
-    await rm(join(directory, 'draft-report.md'));
     await rm(join(directory, 'review.md'));
     await writeFile(join(directory, 'scenario-changes.patch'), 'fixture patch\n');
 
@@ -457,7 +456,6 @@ async function writeCompletedRun(reportDir: string, runId: string, report: strin
   await mkdir(directory, { recursive: true });
   await writeFile(join(directory, 'plan.md'), '# Plan\n');
   await writeFile(join(directory, 'execution.md'), '# Execution\n');
-  await writeFile(join(directory, 'draft-report.md'), '# Draft\n');
   await writeFile(join(directory, 'review.md'), '# Review\n');
   await writeFile(join(directory, 'report.md'), report);
 }
@@ -503,7 +501,6 @@ Phase 5 fixture report.
 
 function reportFiles(body: string): Record<ReportFileName, string> {
   return {
-    'draft-report.md': `# Draft\n\n${body}\n`,
     'review.md': `# Review\n\n${body}\n`,
     'report.md': `# Report\n\n${body}\n`,
   };
