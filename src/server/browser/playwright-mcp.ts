@@ -306,26 +306,6 @@ async function loadPiMcpAdapter(): Promise<PiMcpAdapterModule> {
   return (await import(packageName)) as PiMcpAdapterModule;
 }
 
-export function browserNeedsVision(plan: string): boolean {
-  return /(?:视觉|图像|图片)\s*(?:差异|对比|一致性|核对|判断|断言|回归)|截图\s*(?:差异|对比|一致性|核对|判断|断言|回归)|(?:核对|比较|对比|验证).{0,20}(?:截图|图像|图片)|布局|canvas|pixel|visual(?:\s+(?:check|comparison|assertion|regression))?/i.test(
-    plan,
-  );
-}
-
-export function browserScenarioRequested(plan: string): boolean {
-  // Authentication and source/package names do not imply browser interaction.
-  // Ignore explicit scope exclusions, but retain unavailable required capabilities.
-  const scope = plan
-    .replace(
-      /(?:无需|不需要|不要求|不使用|不依赖|不涉及|不包含|不执行|不覆盖|不验证|不做|排除|非)\s*(?:浏览器|页面|网页|UI\b|Playwright\b|browser\b)/gi,
-      '',
-    )
-    .replace(/\b(?:no|without)\s+(?:browser|UI)\b/gi, '');
-  return /浏览器|页面|网页|点击|填充|导航|\b(?:UI|Playwright|browser|webpage|snapshot|screenshot)\b/i.test(
-    scope,
-  );
-}
-
 export function supportsVision(model: { input?: readonly string[] }): boolean {
   return model.input?.some((value) => value.toLowerCase() === 'image') ?? false;
 }

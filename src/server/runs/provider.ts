@@ -350,14 +350,17 @@ function result(
 }
 
 function classifyProviderRequestError(error: unknown, startedAt: number): ConnectivityResult {
-  const possible = error as { status?: unknown; code?: unknown; name?: unknown; message?: unknown };
+  const possible = (error !== null && typeof error === 'object' ? error : {}) as {
+    status?: unknown;
+    code?: unknown;
+    name?: unknown;
+  };
   const status = typeof possible.status === 'number' ? possible.status : undefined;
-  const message = typeof possible.message === 'string' ? possible.message.toLowerCase() : '';
   if (
     status === 401 ||
     status === 403 ||
     possible.code === 'auth' ||
-    /auth|api key|credential|unauthori[sz]ed|forbidden|invalid key/.test(message)
+    possible.code === 'invalid_api_key'
   ) {
     return result(
       'failed',
@@ -366,21 +369,10 @@ function classifyProviderRequestError(error: unknown, startedAt: number): Connec
       'AUTHENTICATION_FAILED',
     );
   }
-  if (
-    status === 404 ||
-    /model.{0,20}(not found|does not exist|unknown)|unknown.{0,20}model/.test(message)
-  ) {
+  if (possible.code === 'model_not_found') {
     return result('failed', '模型不存在或 Provider 不支持该模型', startedAt, 'MODEL_NOT_FOUND');
   }
-  if (/thinking|reasoning|unsupported/.test(message)) {
-    return result(
-      'failed',
-      'Provider 不支持所选 thinking level',
-      startedAt,
-      'THINKING_UNSUPPORTED',
-    );
-  }
-  if (possible.name === 'AbortError' || /timeout|timed out/.test(message)) {
+  if (possible.name === 'TimeoutError' || possible.code === 'ETIMEDOUT') {
     return result('timeout', '模型 Provider 请求超时', startedAt);
   }
   return result('failed', '模型 Provider 请求失败', startedAt, 'REQUEST_FAILED');

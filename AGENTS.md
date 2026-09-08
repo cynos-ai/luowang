@@ -9,6 +9,8 @@
 - 当前增量变更是 `docs/changes/luowang-v07-production-closure/`，用于补齐 v0.7 Built-in Role Instructions（内置角色指令）、固定分支请求、数据清理、实时进度、历史 Run 和真实联合验收；罗网不使用 Pi Skills，并保持 Main/Runner/Reviewer 三组 Agent 配置、正常 Run 四个隔离 Session。处理这些主题时先读该目录，冲突处以其 Spec 为准。
 - 技术栈、产品边界和验收要求以对应需求 `spec.md` 为准，不在本文件重复维护。
 
+- 语义判断与客观事实的最新规则以 `docs/changes/luowang-model-semantic-decisions/spec.md` 为准：Main 显式声明浏览器执行需要，不用正则判断计划含义；安全和格式校验保留。
+
 ## 仓库与分支
 
 - 正式仓库是公开的 `cynos-ai/luowang`；许可证为 GNU Affero General Public License v3.0（`AGPL-3.0`）。它允许商业使用，但分发衍生作品或通过网络提供修改版时必须按 AGPL 提供对应源码。

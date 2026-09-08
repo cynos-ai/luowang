@@ -33,6 +33,7 @@ describe('Phase 4 Run blocking boundaries', () => {
     ['OSS 上传失败', 'upload-failure', /证据上传失败/],
     ['UI 缺少 MCP 或截图', 'browser-missing', /Playwright MCP 未启用|可审核的 evidence/],
     ['Reviewer 无法读取截图', 'review-read-failure', /Reviewer 无法读取/],
+    ['Reviewer 缺少图像能力', 'vision-unavailable', /图像输入/],
   ] as const)('%s 会形成 completed blocked Run', async (_label, mode, expectedReason) => {
     const fixture = await createGitFixture();
     const context = await createRunContext(fixture, mode);
@@ -118,6 +119,7 @@ type FailureMode =
   | 'browser-missing'
   | 'review-read-failure'
   | 'vision-reviewer'
+  | 'vision-unavailable'
   | 'malformed-report';
 
 interface Fixture {
@@ -142,12 +144,13 @@ class FailureBoundarySessionFactory implements AgentSessionFactory {
         if (input.role === 'main-a') {
           await invokeTool(input, 'get_run_context', {});
           await invokeTool(input, 'write_plan', {
+            requiresBrowser: this.mode !== 'cleanup-failure' && this.mode !== 'cleanup-review',
             content:
               this.mode === 'cleanup-failure' || this.mode === 'cleanup-review'
-                ? '# Plan\n\n## execution_scenarios\n\n无需场景测试：本次只验证非 UI 的清理边界。\n'
+                ? '# Plan\n\n## execution_scenarios\n\n本次只验证 Harness 清理边界，不涉及产品验证。无浏览器服务，不执行端到端 UI 测试，本次不做截图对比。\n'
                 : this.mode === 'vision-reviewer'
                   ? '# Plan\n\nUI 登录场景：打开登录页面并核对截图差异。\n\n## execution_scenarios\n\n- PHASE4-FIXTURE\n'
-                  : '# Plan\n\nUI 登录场景：打开登录页面并保存 screenshot 证据。\n\n## execution_scenarios\n\n- PHASE4-FIXTURE\n',
+                  : '# Plan\n\n打开首页，检查按钮是否被其他元素挡住。\n\n## execution_scenarios\n\n- PHASE4-FIXTURE\n',
           });
           return;
         }
@@ -188,10 +191,20 @@ class FailureBoundarySessionFactory implements AgentSessionFactory {
           if (
             this.mode === 'review-read-failure' ||
             this.mode === 'vision-reviewer' ||
+            this.mode === 'vision-unavailable' ||
             this.mode === 'malformed-report'
           ) {
             await invokeTool(input, 'list_evidence_files', {});
-            await invokeTool(input, 'read_evidence_image', { filename: 'login.png' });
+            const image = (await invokeTool(input, 'read_evidence_image', {
+              filename: 'login.png',
+            })) as {
+              details: Record<string, unknown>;
+              content: Array<{ type: string }>;
+            };
+            if (this.mode === 'vision-unavailable') {
+              assert.equal(image.details.error, true);
+              assert.ok(image.content.every((part) => part.type !== 'image'));
+            }
           }
           await invokeTool(input, 'write_review', {
             content:
@@ -259,7 +272,7 @@ async function createRunContext(fixture: Fixture, mode: FailureMode): Promise<Ru
     configuration,
     repository,
     reportDir,
-    provider: mode === 'vision-reviewer' ? visualReviewerProvider() : ({} as ProviderAdapter),
+    provider: mode === 'vision-unavailable' ? ({} as ProviderAdapter) : visualReviewerProvider(),
     browser: fakeBrowser(mode !== 'browser-missing'),
     oss: mode === 'cleanup-failure' || mode === 'browser-missing' ? undefined : fakeOss(mode),
     testData: createTestDataManager(

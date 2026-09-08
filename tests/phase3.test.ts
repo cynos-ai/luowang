@@ -997,7 +997,10 @@ class RecordingSessionFactory implements AgentSessionFactory {
           await invokeTool(input, 'read_run_artifact', { name: 'plan.md' });
           await invokeTool(input, 'read_run_artifact', { name: 'execution.md' });
           if (this.candidateOptions.planWriteFailureOnly) {
-            const rejected = await invokeTool(input, 'write_plan', { content: '' });
+            const rejected = await invokeTool(input, 'write_plan', {
+              content: '',
+              requiresBrowser: false,
+            });
             assert.equal(rejected.details.error, true);
             return;
           }
@@ -1006,6 +1009,7 @@ class RecordingSessionFactory implements AgentSessionFactory {
               ? 'INIT-MISSING-001'
               : (this.candidateOptions.planScenarioId ?? 'INIT-HOME-001');
           await invokeTool(input, 'write_plan', {
+            requiresBrowser: false,
             content: `# Initialization candidate plan\n\n侦察发现首页入口需要正式验证。\n\n## execution_scenarios\n\n- ${planScenarioId}\n`,
           });
           if (this.candidateOptions.patchValidationFailureOnly) {
@@ -1032,6 +1036,7 @@ class RecordingSessionFactory implements AgentSessionFactory {
         } else if (input.role === 'main-a' && hasTool(input, 'write_plan')) {
           await invokeTool(input, 'get_run_context', {});
           await invokeTool(input, 'write_plan', {
+            requiresBrowser: false,
             content: this.progress
               ? `# Plan\n\n按顺序执行场景。\n\n## execution_scenarios\n\n${this.progress.scenarioIds.map((id) => `- ${id}`).join('\n')}\n`
               : '# Plan\n\n## execution_scenarios\n\n无需场景测试：本次请求只验证文档事实，不影响产品行为。\n',

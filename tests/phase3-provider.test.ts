@@ -22,6 +22,41 @@ afterEach(async () => {
 });
 
 describe('Phase 3 Provider connectivity', () => {
+  it.each([
+    [
+      { message: 'unsupported response_format secret=private-fixture-value' },
+      'REQUEST_FAILED',
+      'failed',
+    ],
+    [{ message: 'not an auth or timeout problem' }, 'REQUEST_FAILED', 'failed'],
+    [{ status: 404, message: 'endpoint missing' }, 'REQUEST_FAILED', 'failed'],
+    [{ status: 401 }, 'AUTHENTICATION_FAILED', 'failed'],
+    [{ status: 403 }, 'AUTHENTICATION_FAILED', 'failed'],
+    [{ code: 'invalid_api_key' }, 'AUTHENTICATION_FAILED', 'failed'],
+    [{ code: 'model_not_found' }, 'MODEL_NOT_FOUND', 'failed'],
+    [{ name: 'TimeoutError' }, undefined, 'timeout'],
+    [{ code: 'ETIMEDOUT' }, undefined, 'timeout'],
+    [{ name: 'AbortError' }, 'REQUEST_FAILED', 'failed'],
+    [null, 'REQUEST_FAILED', 'failed'],
+    ['unsupported response_format', 'REQUEST_FAILED', 'failed'],
+  ] as const)(
+    'classifies explicit Provider facts without guessing from message: %j',
+    async (error, code, status) => {
+      const adapter = await makeAdapter({
+        provider: 'openai',
+        model: 'gpt-4o',
+        key: 'synthetic-key',
+      });
+      const runtime = await adapter.getRuntime();
+      runtime.completeSimple = async () => {
+        throw error;
+      };
+      const result = await adapter.checkConnectivity();
+      assert.equal(result.code, code);
+      assert.equal(result.status, status);
+      assert.doesNotMatch(JSON.stringify(result), /private-fixture-value|response_format/);
+    },
+  );
   it('distinguishes missing configuration, unknown Provider, missing model, and unsupported thinking', async () => {
     const notConfigured = await makeAdapter({ provider: '' });
     const notConfiguredResult = await notConfigured.checkConnectivity();

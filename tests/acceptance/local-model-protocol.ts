@@ -342,6 +342,7 @@ function nextTool(
             ? '# 初始化候选计划\n\n复用 target 中已有的 approved 状态场景。\n\n## execution_scenarios\n\n- CORE-STATE-001\n'
             : '# 初始化候选计划\n\n侦察发现核心入口需要验证。\n\n## execution_scenarios\n\n- ONBOARD-SMOKE-001\n';
       return tool('write_plan', {
+        requiresBrowser: false,
         content:
           candidatePlan +
           '\n## scenario_review_summary\n\n候选范围：核心入口验证。\n\n覆盖缺口：退款权限风险尚未覆盖。\n' +
@@ -376,6 +377,7 @@ function nextTool(
     if (count('list_target_files') === 0) return tool('list_target_files');
     if (count('write_plan') === 0) {
       return tool('write_plan', {
+        requiresBrowser: false,
         content: initialization
           ? '# 初始化静态计划\n\n待运行时侦察确认主要入口和能力。\n'
           : '# 测试计划\n\n## execution_scenarios\n\n无需场景测试：本次仅验证固定 target 的生产 Pi 工件流转。\n',

@@ -43,6 +43,7 @@
 - `blocked`、`interrupted`、验证证据缺失和归档失败不能伪装为通过或错误推进；测试后临时数据清理单独告警，不改变已验证的功能结论。
 - 角色单向交接：plan → execution → review → report；最终 Main 只读 plan/review，不存在 Runner 报告草稿。Harness 在最后统一清理并追加真实收尾记录，按 `docs/changes/luowang-single-handoff/spec.md` 执行。
 - 场景变更需要人工确认时通过短生命周期 Run 产生 PR，不让 Agent 进程跨小时等待审批。
+- 浏览器执行需求由 Main 随计划显式声明；零场景理由由 Reviewer 独立判断。Harness 不用计划关键词决定业务含义，只核验真实能力、结构和安全边界，按 `docs/changes/luowang-model-semantic-decisions/spec.md` 执行。
 - Main 只产生场景目录内的 patch；Archiver 只原样发布已验证场景 patch，并只为当前 Run 新增正式报告，不能改写产品、需求或历史报告。
 - 管理员初始密码只从 `LUOWANG_ADMIN_PASSWORD` 建立 Argon2id 哈希，不提供匿名初始化或默认密码，已有哈希不被环境变量覆盖。
 - 不引入完整 Gitflow 的 release/hotfix 分支；正式版本紧急修复仍使用 `fix/*`，合入 `main` 后同步回 `develop`。

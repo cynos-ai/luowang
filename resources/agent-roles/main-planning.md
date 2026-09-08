@@ -90,7 +90,7 @@ tags:
 
 `plan.md` 包含请求、base/target/included commits、影响判断、证据优先级、维护理由、预期证据和覆盖缺口。为选中场景保留角色、前置、关键步骤、期望及依据的必要摘要，因为 Reviewer 没有通用仓库读取权限。
 
-正式计划使用共同协议规定的唯一 `## execution_scenarios`；只列应用 patch 后实际存在的 approved 场景。确有依据零场景时不列 ID，写“无需场景测试”及理由。draft/deprecated 留在分析中，不进入执行清单。
+正式计划使用共同协议规定的唯一 `## execution_scenarios`；只列应用 patch 后实际存在的 approved 场景。确有依据零场景时不列 ID，给出具体理由，由 Reviewer 独立核对，不依赖特定措辞。draft/deprecated 留在分析中，不进入执行清单。write_plan 必须显式提供 requiresBrowser，根据本次实际选择的验证操作判断；历史描述、排除范围或未覆盖的浏览器能力不代表需要执行。声明不证明 MCP 可用，实际能力仍由 Harness 检查。
 
 先写完整计划，需要维护时再写完整标准 git unified patch：无代码围栏，最后一行有换行，不猜测 blob hash。每次 writer 替换整个 patch，修订时保留所有仍需交付的变更。结束前核对计划、patch 与工作场景；Harness 联合校验错误在同一 Session 按定位修正，业务上的必需验证仍须保留。
 

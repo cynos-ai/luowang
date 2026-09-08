@@ -1369,6 +1369,7 @@ class FixtureSessionFactory implements AgentSessionFactory {
         if (input.role === 'main-a') {
           await invokeTool(input, 'get_run_context', {});
           await invokeTool(input, 'write_plan', {
+            requiresBrowser: false,
             content:
               '# 测试计划\n\n## execution_scenarios\n\n无需场景测试：本批只确认文档工件流转和固定 target。\n',
           });

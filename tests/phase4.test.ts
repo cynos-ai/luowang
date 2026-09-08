@@ -10,8 +10,6 @@ import { createConfigurationStore } from '../src/server/configuration.js';
 import { loadConfig } from '../src/server/config.js';
 import { initializeDatabase } from '../src/server/db/migrate.js';
 import {
-  browserNeedsVision,
-  browserScenarioRequested,
   createPlaywrightMcpAdapter,
   PLAYWRIGHT_MCP_VERSION,
 } from '../src/server/browser/playwright-mcp.js';
@@ -101,23 +99,6 @@ describe('Phase 4 browser and evidence boundaries', () => {
     assert.ok(definition.excludeTools.includes('browser_evaluate'));
     assert.ok(definition.excludeTools.includes('browser_run_code_unsafe'));
     assert.equal((await adapter.checkConnectivity()).status, 'ok');
-    assert.equal(browserScenarioRequested('登录页面点击提交按钮'), true);
-    assert.equal(
-      browserScenarioRequested('API 登录；运行 npm run build；cynos-website 测试'),
-      false,
-    );
-    assert.equal(
-      browserScenarioRequested('本次仅通过 API 验证，非 UI；无需浏览器，不执行页面测试'),
-      false,
-    );
-    assert.equal(browserScenarioRequested('API checks without browser; no UI required'), false);
-    assert.equal(browserScenarioRequested('浏览器不可用，但需要点击按钮验证页面刷新'), true);
-    assert.equal(browserScenarioRequested('无需浏览器；另一个场景需要页面导航'), true);
-    assert.equal(browserScenarioRequested('需要 Playwright 执行 UI 场景'), true);
-    assert.equal(browserNeedsVision('核对截图差异'), true);
-    assert.equal(browserNeedsVision('登录成功后保存 screenshot 证据'), false);
-    assert.equal(browserNeedsVision('Reviewer 从 OSS 读取截图完成视觉审核'), false);
-    assert.equal(browserNeedsVision('比较两张截图的一致性'), true);
   });
 
   it('blocks cleanup when data was registered without a real cleanup adapter', async () => {

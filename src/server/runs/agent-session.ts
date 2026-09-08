@@ -160,6 +160,42 @@ export function createArtifactWriterTool(
   };
 }
 
+export function createPlanWriterTool(
+  label: string,
+  description: string,
+  write: (content: string, requiresBrowser: boolean) => Promise<void>,
+): ToolDefinition {
+  const parameters = Type.Object({
+    content: Type.String({
+      description: '完整计划 Markdown，包含选择理由和执行安排',
+      maxLength: 4 * 1024 * 1024,
+    }),
+    requiresBrowser: Type.Boolean({
+      description:
+        'Main 判断所选验证操作是否需要浏览器；提及范围排除、历史描述或能力缺口本身不代表需要。确有需求时即使能力缺失仍为 true，声明不证明 MCP 已可用。',
+    }),
+  });
+  return {
+    name: 'write_plan',
+    label,
+    description,
+    parameters,
+    execute: async (_id, params: Static<typeof parameters>) => {
+      if (typeof params.requiresBrowser !== 'boolean')
+        return createTextResult(
+          'requiresBrowser 必须显式提供 boolean，由 Main 根据本次执行范围判断',
+          { error: true },
+        );
+      try {
+        await write(params.content, params.requiresBrowser);
+        return createTextResult('write_plan 已写入');
+      } catch (error) {
+        return createTextResult(errorMessage(error), { error: true });
+      }
+    },
+  };
+}
+
 export function createReadArtifactTool(read: (name: string) => Promise<string>): ToolDefinition {
   const parameters = Type.Object({ name: Type.String({ description: '工件文件名' }) });
   return {
