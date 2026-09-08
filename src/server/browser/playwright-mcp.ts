@@ -1,5 +1,6 @@
 import { mkdtemp, rm } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { dirname, resolve } from 'node:path';
@@ -95,12 +96,13 @@ class DefaultPlaywrightMcpAdapter implements BrowserMcpAdapter {
 
   serverDefinition(evidenceDirectory: string): PlaywrightMcpServerDefinition {
     const mcp = this.configuration.getHarness().mcp;
-    const command = process.platform === 'win32' ? 'npx.cmd' : 'npx';
+    // Resolve from the Harness module, never the target or evidence cwd.
+    const require = createRequire(import.meta.url);
+    const cli = join(dirname(require.resolve('@playwright/mcp/package.json')), 'cli.js');
     return {
-      command,
+      command: process.execPath,
       args: [
-        '--yes',
-        `@playwright/mcp@${PLAYWRIGHT_MCP_VERSION}`,
+        cli,
         // Phase 4 never allows a headed or persistent browser session. Keep
         // this invariant here instead of trusting the mutable console value.
         '--headless',

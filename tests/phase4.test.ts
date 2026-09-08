@@ -89,7 +89,11 @@ describe('Phase 4 browser and evidence boundaries', () => {
     });
     const definition = adapter.serverDefinition('C:/runs/evidence');
     assert.equal(definition.cwd, 'C:/runs/evidence');
-    assert.ok(definition.args.includes(`@playwright/mcp@${PLAYWRIGHT_MCP_VERSION}`));
+    assert.equal(definition.command, process.execPath);
+    assert.match(definition.args[0] ?? '', /[/\\]@playwright[/\\]mcp[/\\]cli\.js$/);
+    assert.ok(!definition.args.includes('--yes'));
+    assert.ok(!definition.args[0]?.startsWith('C:/runs/evidence'));
+    assert.equal(PLAYWRIGHT_MCP_VERSION, '0.0.79');
     assert.ok(definition.args.includes('--headless'));
     assert.ok(definition.args.includes('--isolated'));
     assert.ok(definition.args.includes('--browser=chromium'));

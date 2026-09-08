@@ -167,7 +167,8 @@ export function createPlanWriterTool(
 ): ToolDefinition {
   const parameters = Type.Object({
     content: Type.String({
-      description: '完整计划 Markdown，包含选择理由和执行安排',
+      description:
+        '完整计划 Markdown，包含选择理由和执行安排；本 Session 可重复调用以覆盖更新同一计划，发现错误须修正落盘内容',
       maxLength: 4 * 1024 * 1024,
     }),
     requiresBrowser: Type.Boolean({
