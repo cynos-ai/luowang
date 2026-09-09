@@ -81,3 +81,11 @@ Reviewer实际用新工具读取三份页面快照和一个控制台记录，包
 新增六次实际请求的图片均与原件逐字节一致，messages与对应Qwen off请求一致；每模型两组仅snapshot差异。前批十三个、思考批七个冻结哈希及body/图像核对通过；初次思考批后验审计误假定统一max_tokens，修正对Qwen实际max_completion_tokens的读取后通过，原失败保留且未补调用。凭据原文扫描通过，思考正文未记录或展示。
 
 证据在`.cynos/acceptance/reviewer-vision-model-comparison/`与`.cynos/acceptance/reviewer-vision-thinking/`。单图每条件一次、不相同的思考/预算和默认采样不能形成总体排名或严格因果结论；当前Qwen接入的误判也不能单归因于基础模型内部某个模块。建议优先验证DeepSeek的完整Reviewer审核质量，GLM备选，不继续仅为本图调提示词或追分。独立人工评分仍not_run；未换正式配置、改生产代码/角色指令、重跑工程全套或完整四Session联合Run、操作网站/账号/现有服务、发布或回写历史结果。
+
+## Coding Plan Kimi固定图补充
+
+按用户要求调用Coding Plan中的kimi-k2.5，不走Moonshot原生或其它计费通道。原图/图加snapshot各一次，4096输出上限、90秒、重试0；两次HTTP200/stop、无截断，共5,128 tokens。实际请求携带reasoning_effort=high，沿用已有Pi元数据，未额外注入思考开关；两次均有思考块及非零reasoning用量，但不宣称已校准通道内部high语义。
+
+两组均误判返回入口“完整可见”。七个冻结哈希、两份body和原图字节、跨模型messages一致性及两组唯一snapshot差异均校验通过；凭据原文扫描通过，不保存思考正文。证据在`.cynos/acceptance/reviewer-vision-kimi/`。
+
+当前单图中Coding Plan的Qwen/Kimi均误判，原生DeepSeek/GLM识别裁切；因未做同模型跨通道的交叉对照，不能单归于基础模型或断言Coding Plan服务端处理有故障。仍优先验证DeepSeek完整Reviewer、GLM备选，不扩为总体排名。独立人工评分not_run；未改正式配置/生产代码，未重跑工程全套或真实联合Run、操作网站/账号/现有服务、发布或回写旧结果。
