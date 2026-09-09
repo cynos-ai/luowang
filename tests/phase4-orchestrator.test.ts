@@ -88,6 +88,20 @@ describe('Phase 4 Run blocking boundaries', () => {
     assert.equal(result.result, 'passed', JSON.stringify(result));
   });
 
+  it('repairs an invalid Issue action in the owning Session without losing the Bug', async () => {
+    const fixture = await createGitFixture();
+    const context = await createRunContext(fixture, 'report-correction');
+    const result = await context.orchestrator.run({
+      request: '验证报告字段纠错',
+      trigger: 'manual',
+    });
+    assert.equal(result.status, 'completed', JSON.stringify(result));
+    assert.equal(result.result, 'failed');
+    assert.match(result.artifacts['report.md'] ?? '', /issue_action: create/);
+    assert.match(result.artifacts['report.md'] ?? '', /BUG-FIXTURE/);
+    assert.match(result.artifacts['report.md'] ?? '', /Issue 查询覆盖缺口/);
+  });
+
   it('does not complete a Run when Main finalization writes a non-schema scenario result', async () => {
     const fixture = await createGitFixture();
     const context = await createRunContext(fixture, 'malformed-report');
@@ -120,7 +134,8 @@ type FailureMode =
   | 'review-read-failure'
   | 'vision-reviewer'
   | 'vision-unavailable'
-  | 'malformed-report';
+  | 'malformed-report'
+  | 'report-correction';
 
 interface Fixture {
   rootDir: string;
@@ -198,7 +213,8 @@ class FailureBoundarySessionFactory implements AgentSessionFactory {
             this.mode === 'review-read-failure' ||
             this.mode === 'vision-reviewer' ||
             this.mode === 'vision-unavailable' ||
-            this.mode === 'malformed-report'
+            this.mode === 'malformed-report' ||
+            this.mode === 'report-correction'
           ) {
             await invokeTool(input, 'list_evidence_files', {});
             const image = (await invokeTool(input, 'read_evidence_image', {
@@ -227,6 +243,31 @@ class FailureBoundarySessionFactory implements AgentSessionFactory {
           await invokeTool(input, 'read_run_artifact', { name });
         }
         const context = parsePromptContext(input.userMessage);
+        assert.match(input.systemPrompt, /unavailable 是查询状态，不是 issue_action 的第三个值/);
+        if (this.mode === 'report-correction') {
+          await invokeTool(input, 'query_issue_candidates', { bug_key: 'BUG-FIXTURE' });
+          const report =
+            passedReport(context, true)
+              .replaceAll('result: passed', 'result: failed')
+              .replace(
+                'confirmed_bugs: []',
+                'confirmed_bugs:\n  - key: BUG-FIXTURE\n    title: fixture bug\n    scenario_ids: [PHASE4-FIXTURE]\n    issue_action: unavailable',
+              ) + '\n## Issue 查询覆盖缺口\n\nBUG-FIXTURE：查询不可用，不能确认是否重复。\n';
+          const rejected = (await invokeTool(input, 'write_report', { content: report })) as {
+            details: { error?: boolean };
+            content: Array<{ text: string }>;
+          };
+          assert.equal(rejected.details.error, true);
+          assert.match(
+            rejected.content[0]!.text,
+            /confirmed_bugs\[0\]\.issue_action 必须是 create 或 link/,
+          );
+          assert.ok(!rejected.content[0]!.text.includes(context.runDirectory));
+          await invokeTool(input, 'write_report', {
+            content: report.replace('issue_action: unavailable', 'issue_action: create'),
+          });
+          return;
+        }
         await invokeTool(input, 'write_report', {
           content:
             this.mode === 'malformed-report'

@@ -107,3 +107,17 @@ Reviewer实际用新工具读取三份页面快照和一个控制台记录，包
 零模型工具/格式重放通过；真实复验仅两个独立已释放Session、9请求（Reviewer 6 / 最终Main 3），原生DeepSeek Vision low→Flash off，HTTP200，无模型或工具错误，不重跑。Reviewer读4文本/3原PNG后再读execution，最终Main只读plan/新review；原件、工具返回、SDK及HTTP图像字节一致，255个冻结/来源hash通过，旧Run未修改，未操作网站/账号或追加清理成功印章。
 
 本样本三项目标改善：不再为非空清单写零场景通过说明，不再冒称人工，明确指出注册图返回入口下沿裁切且最终Main保留限制；功能判断仍passed，不把截图局限当产品缺陷。仍有来源归因和措辞问题：Reviewer把自身卡片高度观察写成Runner报告已有说明，将内容相同快照称为重复上传，“无需处理清理”未充分限定主体。未修改模型输出或追分补跑；单样本改善不代表总体质量/发布通过，独立人工评分not_run。下一步建议冻结候选，复用正常/已知缺陷样本验证正负判断，而非持续围绕本图微调；扩大执行范围另行授权。
+
+## API成对验收与最终Main恢复
+
+成对验收固定候选17d6f6f，两个网站API目标各一次完整链，共8个独立已释放Session/59请求。正常target两场景passed且生成正式报告；缺陷target真实注销断言200≠401、删除passed，Runner/Reviewer正确确认，但最终Main将查询unavailable写入issue_action，格式被拒后最后输出length=4096，未写出report.md。缺陷Run是status=failed/result=null，不是已完成的业务failed报告。原始材料在`.cynos/acceptance/deepseek-api-pair/`；四条实际命令、证据与独立清理核验通过，未补跑或发布。
+
+用户授权后，本次仅修改解析器安全诊断与最终Main异常分支说明：保留RepositoryError兼容与既有schema，增加解析器拥有的安全诊断，隐藏路径、未知字段名、输入值及YAML原始异常；writer传回具体字段/约束，同Session可纠错。查询unavailable保留Bug与去重缺口，有可靠地址才link，否则create，不能冒充empty或已发布。Archiver原实现未改；其Run/Bug marker幂等不保证跨Run去重，create可能在后续授权归档中新建Issue，不能虚称重复问题已排除。
+
+工程验证：quality容器中归档源码hash验证后lint/typecheck、209测试/30文件、build和相关测试严格编译通过。新增回归覆盖原Session非法action→合法报告且不丢Bug，以及未知字段/值/路径/YAML原始内容不出现在安全诊断。首次Vite临时目录ENOENT失败保留，补充对应tmpfs挂载后通过，没有误跑镜像旧源码。
+
+冻结原缺陷plan/review、动态输入、工具schema与模型配置后，先零模型预检，再一次原生DeepSeek Flash off最终Main重放：1个独立释放Session、5次HTTP200请求、31,712 tokens、正常stop，无工具错误或截断。依旧没有RunStore，查询两次unavailable（原样重试一次），随后首个report合法：注销failed、删除passed、confirmed Bug保留、issue_action=create，并明确去重未知与未实际发布。生产runMainB和最终报告校验均通过。实际模型未再次触发格式拒绝，不能把此次改善单归于错误反馈；纠错反馈由工程回归覆盖。
+
+229个冻结/来源hash通过；实际模型参数、原始输入/前置工件、工具顺序与授权Key扫描核验通过。原失败Run与缺少report.md的状态保持原样；新文件只在独立重放目录，保留历史ID/timestamps，不是新Run或完整链验收，不执行API/Reviewer/清理/归档，不追加清理成功印章。模型仍复制review中的“稳定复现”等不够严谨措辞，未修改输出或扩大预算追分；人工评分not_run。
+
+证据在`.cynos/acceptance/finalization-recovery/`。验证后整理为本地修复提交，不push；未改正式配置或发布，完整两条链路未重新运行。

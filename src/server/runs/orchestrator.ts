@@ -13,6 +13,7 @@ import type {
   RunSummary,
 } from '../../shared/types.js';
 import {
+  MarkdownValidationError,
   parseReportMarkdown,
   parseScenarioMarkdown,
   type ParsedReport,
@@ -2189,6 +2190,7 @@ function normalizeFinalReportFrontmatter(content: string): string {
 }
 
 function safeMessage(error: unknown): string {
+  if (error instanceof MarkdownValidationError) return error.safeDiagnostic;
   if (
     error instanceof RunOrchestratorError ||
     error instanceof RunWorkspaceError ||
