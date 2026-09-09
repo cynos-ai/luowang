@@ -218,7 +218,6 @@ async function makeFixture(options: { repositoryStatus?: Partial<RepositoryStatu
     artifacts: {
       'plan.md': 'safe plan',
       'execution.md': 'safe execution',
-      'draft-report.md': 'safe draft',
       'review.md': 'safe review',
       'report.md': 'safe report',
     },

@@ -1,12 +1,14 @@
 import { strict as assert } from 'node:assert';
 import { execFile } from 'node:child_process';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { localEvidenceTransport } from './acceptance/local-evidence.js';
+import { RunWorkspace } from '../src/server/runs/workspace.js';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
 
 import pino from 'pino';
-import { afterEach, describe, it } from 'vitest';
+import { afterEach, describe, it, vi } from 'vitest';
 
 import { createAutomationService } from '../src/server/automation/service.js';
 import { loadConfig } from '../src/server/config.js';
@@ -45,7 +47,6 @@ describe('Closure 6 local production Pi path', () => {
     assert.equal(result.status, 'completed', JSON.stringify(result));
     assert.equal(result.result, 'passed');
     assert.deepEqual(Object.keys(result.artifacts).sort(), [
-      'draft-report.md',
       'execution.md',
       'plan.md',
       'report.md',
@@ -53,18 +54,92 @@ describe('Closure 6 local production Pi path', () => {
     ]);
     assertSessionSequence(context.model, ['main-a', 'runner', 'reviewer', 'main-b']);
     assert.ok(context.model.requestCount > context.model.sessions.length);
+    const commandKey = `${result.runId}/command-1.json`;
+    assert.ok(
+      context.evidence.reads.includes(commandKey),
+      'production Pi Reviewer must read the captured command object',
+    );
+    const command = JSON.parse(context.evidence.objects.get(commandKey)!.toString());
+    assert.equal(command.runId, result.runId);
+    assert.equal(command.targetCommit, result.targetCommit);
+    assert.equal(command.command, 'node --version');
+    assert.equal(command.result.exitCode, 0);
+    assert.match(command.result.stdout, /^v\d+\.\d+\.\d+/);
+    assert.ok(context.model.sessions[2]?.tools.includes('read_command_evidence'));
+    assert.ok(!context.model.sessions[2]?.tools.includes('run_fixture_command'));
     assert.equal(context.model.sessions[0]?.model, context.model.sessions[3]?.model);
     assert.notDeepEqual(context.model.sessions[0]?.tools, context.model.sessions[3]?.tools);
     assert.match(result.artifacts['report.md'] ?? '', /Reviewer 已独立确认/);
     const reviewerPrompt =
       context.model.sessions.find((session) => session.role === 'reviewer')?.systemPrompt ?? '';
-    const planIndex = reviewerPrompt.indexOf('先读取计划、唯一执行清单');
-    const evidenceIndex = reviewerPrompt.indexOf('再独立读取原始命令/API/截图/清理证据');
-    const executionIndex = reviewerPrompt.indexOf('最后读取执行记录和 Runner 草稿');
+    const planIndex = reviewerPrompt.indexOf('先读 `plan.md`');
+    const evidenceIndex = reviewerPrompt.indexOf('接着通过 `list_evidence_files`');
+    const executionIndex = reviewerPrompt.indexOf('再打开 `execution.md`');
     assert.ok(planIndex >= 0, 'Reviewer must receive the plan-first reading rule');
     assert.ok(evidenceIndex > planIndex, 'Reviewer must read raw evidence after the plan');
     assert.ok(executionIndex > evidenceIndex, 'Reviewer must read execution drafts last');
+    // Prove complete, single delivery per role, not semantic quality from slogan matching.
+    const resources = ['main-planning', 'runner-execution', 'reviewer-audit', 'main-finalization'];
+    const common = (await readFile('resources/agent-roles/common.md', 'utf8')).trim();
+    for (const [index, resource] of resources.entries()) {
+      const prompt = context.model.sessions[index]?.systemPrompt ?? '';
+      const content = (await readFile(`resources/agent-roles/${resource}.md`, 'utf8')).trim();
+      assert.equal(prompt.split(common).length - 1, 1);
+      assert.equal(prompt.split(content).length - 1, 1);
+      for (const other of resources.filter((id) => id !== resource)) {
+        assert.ok(!prompt.includes(`luowang-role-id: ${other};`));
+      }
+      assert.ok(!prompt.includes('luowang-role-id: scenario-initialization;'));
+    }
   });
+
+  it('retains a real parser rejection for the isolated Reviewer without executing inline code', async () => {
+    const context = await createContext('review-all', 'rejected-command');
+    const result = await context.orchestrator.run({
+      request: '验证受控命令诊断交接',
+      trigger: 'manual',
+    });
+    assert.equal(result.status, 'completed', JSON.stringify(result));
+    const body = context.evidence.objects.get(`${result.runId}/command-1.json`);
+    assert.ok(body);
+    const captured = JSON.parse(body.toString());
+    assert.match(captured.result.error, /COMMAND_NOT_ALLOWED/);
+    assert.doesNotMatch(captured.result.error, /未生成可信最终结论/);
+    assert.equal(captured.result.exitCode, undefined);
+    assert.ok(context.evidence.reads.includes(`${result.runId}/command-1.json`));
+    assert.ok(!context.model.sessions[1]?.tools.includes('capture_test_data_cleanup_query'));
+  });
+
+  it.each(['capture', 'upload'] as const)(
+    'keeps command evidence %s failures blocked through production Pi',
+    async (failure) => {
+      const context = await createContext('review-all', 'normal');
+      const capture =
+        failure === 'capture'
+          ? vi
+              .spyOn(RunWorkspace.prototype, 'writeHarnessEvidence')
+              .mockRejectedValueOnce(new Error('fixture write failure'))
+          : undefined;
+      if (failure === 'upload')
+        context.evidence.oss.uploadFile = async () => {
+          throw new Error('fixture upload failure');
+        };
+      try {
+        const result = await context.orchestrator.run({
+          request: '验证命令证据失败不能被草稿通过掩盖',
+          trigger: 'manual',
+        });
+        assert.equal(result.status, 'completed', JSON.stringify(result));
+        assert.equal(result.result, 'blocked');
+        assert.match(
+          result.artifacts['report.md'] ?? '',
+          failure === 'capture' ? /受控命令结果保存失败/ : /证据上传失败/,
+        );
+      } finally {
+        capture?.mockRestore();
+      }
+    },
+  );
 
   it('creates the first scenario branch through FIFO before one six-Session production Pi initialization Run', async () => {
     const context = await createContext('autonomous', 'normal', false);
@@ -145,7 +220,7 @@ describe('Closure 6 local production Pi path', () => {
   it('runs unfamiliar-project direct initialization through six isolated production Pi Sessions', async () => {
     const context = await createContext('autonomous', 'normal');
     const result = await context.orchestrator.run({
-      request: '初始化陌生项目并直接新增一个高价值场景',
+      request: '初始化陌生项目并整理场景测试集',
       trigger: 'manual',
       initialization: true,
     });
@@ -161,8 +236,11 @@ describe('Closure 6 local production Pi path', () => {
       'main-b',
     ]);
     assert.equal(new Set(context.model.sessions.map((session) => session.id)).size, 6);
+    // Check the actual dynamic task as well as the loaded role resources.
+    const candidateTask = context.model.sessions[2]?.prompts[0] ?? '';
+    assert.match(candidateTask, /尽可能全面地整理项目所需的候选场景并更新验证计划，不追求绝对穷尽/);
+    assert.doesNotMatch(candidateTask, /少量高价值/);
     assert.deepEqual(Object.keys(result.artifacts).sort(), [
-      'draft-report.md',
       'execution.md',
       'plan.md',
       'report.md',
@@ -184,7 +262,7 @@ describe('Closure 6 local production Pi path', () => {
     assert.equal(result.status, 'failed');
     assert.equal(result.result, null);
     assert.match(result.errorMessage ?? '', /approved 场景未纳入执行清单：ONBOARD-OMITTED-002/);
-    assertSessionSequence(context.model, ['main-a', 'runner', 'main-a']);
+    assertSessionSequence(context.model, ['main-a', 'runner', 'main-a'], [1, 1, 3]);
   });
 
   it('rejects initialization when a modified approved scene is omitted', async () => {
@@ -197,7 +275,7 @@ describe('Closure 6 local production Pi path', () => {
     assert.equal(result.status, 'failed');
     assert.equal(result.result, null);
     assert.match(result.errorMessage ?? '', /approved 场景未纳入执行清单：CORE-STATE-001/);
-    assertSessionSequence(context.model, ['main-a', 'runner', 'main-a']);
+    assertSessionSequence(context.model, ['main-a', 'runner', 'main-a'], [1, 1, 3]);
   });
 
   it('allows unselected draft candidates without treating them as passed', async () => {
@@ -289,14 +367,14 @@ describe('Closure 6 local production Pi path', () => {
       false,
     );
     assert.equal(context.specialCleanupCalls(), 1);
-    assert.match(result.artifacts['report.md'] ?? '', /测试数据：全部登记测试数据均已独立核验清理/);
+    assert.match(result.artifacts['report.md'] ?? '', /测试数据：测试数据清理完成/);
     assert.match(result.artifacts['report.md'] ?? '', /特殊归档仅保留/);
     assert.doesNotMatch(result.artifacts['report.md'] ?? '', /测试数据残留|清理失败/);
 
     const publicationModes: string[] = [];
     const archiveRepository = {
       validateScenarioPatch: (target: string, patch: string) =>
-        context.repository.validateScenarioPatch(target, patch),
+        context.repository.validateScenarioPatch!(target, patch),
       publishScenarioChanges: async (
         _runId: string,
         _patch: string,
@@ -372,6 +450,7 @@ interface ProductionContext {
   configuration: ReturnType<typeof createConfigurationStore>;
   runStore: RunStore;
   specialCleanupCalls(): number;
+  evidence: ReturnType<typeof localEvidenceTransport>;
 }
 
 async function createContext(
@@ -465,6 +544,7 @@ tags:
   const runStore = createRunStore(database.sqlite);
   const model = await startLocalModelProtocol(behavior);
   cleanup.push(() => model.close());
+  const evidence = localEvidenceTransport();
   let specialCleanupCalls = 0;
   const testData = createTestDataManager({
     cleanupAdapter: {
@@ -483,6 +563,7 @@ tags:
     provider: {} as ProviderAdapter,
     sessions: model.sessionFactory,
     commandRunner: createControlledCommandRunner(process.env),
+    oss: evidence.oss,
     testData,
     runStore,
     logger: pino({ level: 'silent' }),
@@ -497,10 +578,15 @@ tags:
     configuration,
     runStore,
     specialCleanupCalls: () => specialCleanupCalls,
+    evidence,
   };
 }
 
-function assertSessionSequence(model: LocalModelProtocol, expected: string[]): void {
+function assertSessionSequence(
+  model: LocalModelProtocol,
+  expected: string[],
+  promptCounts = expected.map(() => 1),
+): void {
   assert.deepEqual(
     model.sessions.map((session) => session.role),
     expected,
@@ -509,9 +595,9 @@ function assertSessionSequence(model: LocalModelProtocol, expected: string[]): v
     model.sessions.every((session) => session.disposed),
     true,
   );
-  assert.equal(
-    model.sessions.every((session) => session.prompts.length === 1),
-    true,
+  assert.deepEqual(
+    model.sessions.map((session) => session.prompts.length),
+    promptCounts,
   );
   assert.equal(new Set(model.sessions.map((session) => session.id)).size, expected.length);
   if (model.sessions.some((session) => session.roleInstructionVersions.length > 0)) {

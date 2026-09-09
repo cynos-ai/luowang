@@ -1,8 +1,6 @@
 export const EXECUTION_SCENARIOS_HEADING = '## execution_scenarios';
 
 const SCENARIO_ID_PATTERN = /^[A-Z0-9]+(?:-[A-Z0-9]+)+$/;
-const NO_SCENARIO_EVIDENCE =
-  /(?:无需\s*场景(?:测试)?|零场景|no\s+scenario(?:s)?(?:\s+testing)?|does\s+not\s+require\s+(?:a\s+)?scenario)/i;
 
 export interface ExecutionScenarioPlan {
   scenarioIds: string[];
@@ -63,13 +61,12 @@ export function parseExecutionScenarioPlan(content: string): ExecutionScenarioPl
     throw new ExecutionPlanError('execution_scenarios 不能包含重复场景 ID');
   }
   const reason = prose.join('\n').trim() || null;
-  const noScenarioTesting =
-    scenarioIds.length === 0 && reason !== null && NO_SCENARIO_EVIDENCE.test(reason);
-  if (scenarioIds.length === 0 && !noScenarioTesting) {
-    throw new ExecutionPlanError('空 execution_scenarios 必须明确写出“无需场景测试”及其依据');
-  }
-  if (scenarioIds.length > 0 && NO_SCENARIO_EVIDENCE.test(reason ?? '')) {
-    throw new ExecutionPlanError('execution_scenarios 不能同时列出场景并声明无需场景测试');
+  // This is the explicit selection, not a judgment that its rationale is sound.
+  const noScenarioTesting = scenarioIds.length === 0;
+  if (noScenarioTesting && reason === null) {
+    throw new ExecutionPlanError(
+      '空 execution_scenarios 必须提供非空理由，由 Reviewer 独立审核是否合理',
+    );
   }
   return { scenarioIds, noScenarioTesting, reason };
 }

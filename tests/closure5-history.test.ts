@@ -352,7 +352,6 @@ function importRun(
     artifacts: {
       'plan.md': 'full secret artifact',
       'execution.md': 'fixture execution',
-      'draft-report.md': 'fixture draft',
       'review.md': 'fixture review',
       'report.md': 'fixture report',
       ...(input.specialRun ? { 'scenario-changes.patch': 'fixture patch' } : {}),

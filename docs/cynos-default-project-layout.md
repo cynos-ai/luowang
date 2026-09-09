@@ -1,6 +1,6 @@
 # Cynos 默认项目文件架构约定
 
-- 状态：MVP Baseline v0.6
+- 状态：MVP Baseline v0.6；角色交接与收尾按 `changes/luowang-single-handoff/spec.md` 更新
 - 日期：2026-08-29
 - 适用范围：Cynos 系列项目，以及接入 Cynos 测试 Harness 的项目
 - 当前 Harness MVP：一个罗网部署只连接一个目标仓库，并只跟踪一个场景测试分支（默认 `scenario-testing`），不支持多仓库或多租户
@@ -56,7 +56,6 @@ docs/
     │   └── ...
     └── reports/
         └── <run-id>/
-            ├── draft-report.md
             ├── review.md
             └── report.md
 ```
@@ -243,18 +242,18 @@ MVP 仅约定少量特殊标签：
 
 ## 7. 测试报告
 
-每次正式测试在场景测试分支中只保存长期可读的三个 Markdown 工件：
+每次正式测试在场景测试分支中只保存长期可读的两个 Markdown 工件：
 
 ```text
 docs/scenario-testing/reports/<run-id>/
-├── draft-report.md
 ├── review.md
 └── report.md
 ```
 
-- `draft-report.md`：Runner 产生的未审核报告；
-- `review.md`：独立 Reviewer 的审核发现和修正意见；
-- `report.md`：基于审核结果形成的最终报告。
+- `review.md`：Reviewer 依据计划、运行记录及真实证据形成的完整审核结论；
+- `report.md`：最终 Main 根据计划与审核整理的正式报告，Harness 在其结束后追加真实清理收尾。
+
+Runner 只写本地 `execution.md`，不再生成报告草稿，不提供旧格式兼容。清理失败单独告警，不改变已经成立的测试结论。
 
 详细执行日志、临时计划、模型会话和中间证据不进入项目 Git，由测试 Harness 本地运行目录和 Run Store 管理。
 

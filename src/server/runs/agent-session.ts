@@ -137,7 +137,10 @@ export function createArtifactWriterTool(
 ): ToolDefinition {
   const parameters = Type.Object({
     content: Type.String({
-      description: '要写入的完整 Markdown 文本',
+      description:
+        name === 'write_scenario_patch'
+          ? '要原样保存的完整标准 git unified diff（不是 Markdown 围栏），最后一行必须以换行符结束；本次内容替换整个 patch'
+          : '要写入的完整 Markdown 文本',
       maxLength: 4 * 1024 * 1024,
     }),
   });
@@ -157,13 +160,50 @@ export function createArtifactWriterTool(
   };
 }
 
+export function createPlanWriterTool(
+  label: string,
+  description: string,
+  write: (content: string, requiresBrowser: boolean) => Promise<void>,
+): ToolDefinition {
+  const parameters = Type.Object({
+    content: Type.String({
+      description:
+        '完整计划 Markdown，包含选择理由和执行安排；本 Session 可重复调用以覆盖更新同一计划，发现错误须修正落盘内容',
+      maxLength: 4 * 1024 * 1024,
+    }),
+    requiresBrowser: Type.Boolean({
+      description:
+        'Main 判断所选验证操作是否需要浏览器；提及范围排除、历史描述或能力缺口本身不代表需要。确有需求时即使能力缺失仍为 true，声明不证明 MCP 已可用。',
+    }),
+  });
+  return {
+    name: 'write_plan',
+    label,
+    description,
+    parameters,
+    execute: async (_id, params: Static<typeof parameters>) => {
+      if (typeof params.requiresBrowser !== 'boolean')
+        return createTextResult(
+          'requiresBrowser 必须显式提供 boolean，由 Main 根据本次执行范围判断',
+          { error: true },
+        );
+      try {
+        await write(params.content, params.requiresBrowser);
+        return createTextResult('write_plan 已写入');
+      } catch (error) {
+        return createTextResult(errorMessage(error), { error: true });
+      }
+    },
+  };
+}
+
 export function createReadArtifactTool(read: (name: string) => Promise<string>): ToolDefinition {
   const parameters = Type.Object({ name: Type.String({ description: '工件文件名' }) });
   return {
     name: 'read_run_artifact',
     label: '读取 Run 工件',
     description:
-      '读取本次 Run 已落盘的 plan.md、execution.md、draft-report.md、review.md 或 scenario-changes.patch；不能读取其他路径。',
+      '读取当前角色允许的本次 Run 工件；最终汇总只允许 plan.md、review.md 及初始化 patch，不能读取运行记录或其他路径。',
     parameters,
     execute: async (_toolCallId, params: Static<typeof parameters>) => {
       try {
@@ -288,6 +328,7 @@ export function createRunnerCommandTool(
     stderr: string;
     exitCode: number | null;
     environmentKeys: string[];
+    evidenceId?: string;
   }>,
 ): ToolDefinition {
   const parameters = Type.Object({
@@ -308,6 +349,7 @@ export function createRunnerCommandTool(
             stdout: result.stdout,
             stderr: result.stderr,
             environmentKeys: result.environmentKeys,
+            evidenceId: result.evidenceId,
           }),
           { exitCode: result.exitCode },
         );

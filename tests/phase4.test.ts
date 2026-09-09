@@ -10,8 +10,6 @@ import { createConfigurationStore } from '../src/server/configuration.js';
 import { loadConfig } from '../src/server/config.js';
 import { initializeDatabase } from '../src/server/db/migrate.js';
 import {
-  browserNeedsVision,
-  browserScenarioRequested,
   createPlaywrightMcpAdapter,
   PLAYWRIGHT_MCP_VERSION,
 } from '../src/server/browser/playwright-mcp.js';
@@ -19,11 +17,7 @@ import {
   createReviewerEvidenceTools,
   createRunEvidenceStore,
 } from '../src/server/runs/evidence.js';
-import {
-  createReviewerTestDataTools,
-  createTestDataManager,
-  createTestDataTools,
-} from '../src/server/runs/test-data.js';
+import { createTestDataManager, createTestDataTools } from '../src/server/runs/test-data.js';
 import { RunWorkspace } from '../src/server/runs/workspace.js';
 import { createOssAdapter, type OssAdapter, type S3ClientLike } from '../src/server/storage/oss.js';
 import type { SecretStore } from '../src/server/security/secret-store.js';
@@ -95,7 +89,11 @@ describe('Phase 4 browser and evidence boundaries', () => {
     });
     const definition = adapter.serverDefinition('C:/runs/evidence');
     assert.equal(definition.cwd, 'C:/runs/evidence');
-    assert.ok(definition.args.includes(`@playwright/mcp@${PLAYWRIGHT_MCP_VERSION}`));
+    assert.equal(definition.command, process.execPath);
+    assert.match(definition.args[0] ?? '', /[/\\]@playwright[/\\]mcp[/\\]cli\.js$/);
+    assert.ok(!definition.args.includes('--yes'));
+    assert.ok(!definition.args[0]?.startsWith('C:/runs/evidence'));
+    assert.equal(PLAYWRIGHT_MCP_VERSION, '0.0.79');
     assert.ok(definition.args.includes('--headless'));
     assert.ok(definition.args.includes('--isolated'));
     assert.ok(definition.args.includes('--browser=chromium'));
@@ -105,11 +103,6 @@ describe('Phase 4 browser and evidence boundaries', () => {
     assert.ok(definition.excludeTools.includes('browser_evaluate'));
     assert.ok(definition.excludeTools.includes('browser_run_code_unsafe'));
     assert.equal((await adapter.checkConnectivity()).status, 'ok');
-    assert.equal(browserScenarioRequested('登录页面点击提交按钮'), true);
-    assert.equal(browserNeedsVision('核对截图差异'), true);
-    assert.equal(browserNeedsVision('登录成功后保存 screenshot 证据'), false);
-    assert.equal(browserNeedsVision('Reviewer 从 OSS 读取截图完成视觉审核'), false);
-    assert.equal(browserNeedsVision('比较两张截图的一致性'), true);
   });
 
   it('blocks cleanup when data was registered without a real cleanup adapter', async () => {
@@ -173,33 +166,17 @@ describe('Phase 4 browser and evidence boundaries', () => {
     )) as AgentToolResult<Record<string, unknown>>;
     const listedText = listed.content.find((item) => item.type === 'text');
     assert.ok(listedText && listedText.type === 'text');
-    assert.deepEqual(JSON.parse(listedText.text), [{ name: 'login.png', sizeBytes: 9 }]);
+    assert.deepEqual(JSON.parse(listedText.text), [
+      { name: 'login.png', sizeBytes: 9, kind: 'image', readTool: 'read_evidence_image' },
+    ]);
     const manager = createTestDataManager();
     const dataId = `${manager.prefix(workspace.runId)}screenshot-user`;
     await manager.register(workspace.runId, { id: dataId });
-    const claimTool = createTestDataTools(manager, workspace.runId, store).find(
-      (candidate) => candidate.name === 'submit_test_data_cleanup_claim',
+    assert.ok(
+      !createTestDataTools(manager, workspace.runId).some((t) =>
+        /claim|verify|capture/.test(t.name),
+      ),
     );
-    assert.ok(claimTool);
-    await claimTool.execute(
-      'claim',
-      { dataId, evidenceIds: ['login.png'] } as never,
-      undefined,
-      undefined,
-      {} as never,
-    );
-    const verifyTool = createReviewerTestDataTools(manager, workspace.runId, store).find(
-      (candidate) => candidate.name === 'verify_test_data_cleanup',
-    );
-    assert.ok(verifyTool);
-    const unread = (await verifyTool.execute(
-      'verify-before-read',
-      { dataId, decision: 'confirm' } as never,
-      undefined,
-      undefined,
-      {} as never,
-    )) as AgentToolResult<Record<string, unknown>>;
-    assert.equal(unread.details.error, true);
 
     const tool = createReviewerEvidenceTools(store).find(
       (candidate) => candidate.name === 'read_evidence_image',
@@ -220,15 +197,8 @@ describe('Phase 4 browser and evidence boundaries', () => {
       createReviewerEvidenceTools(store).some((item) => item.name === 'run_fixture_command'),
       false,
     );
-    const verified = (await verifyTool.execute(
-      'verify-after-read',
-      { dataId, decision: 'confirm' } as never,
-      undefined,
-      undefined,
-      {} as never,
-    )) as AgentToolResult<Record<string, unknown>>;
-    assert.equal(verified.details.error, undefined);
-    assert.equal(manager.finalize(workspace.runId).ok, true);
+    // Reading a screenshot cannot independently change data cleanup status.
+    assert.equal(manager.finalize(workspace.runId).ok, false);
     await store.cleanupLocal();
     assert.deepEqual(
       (await store.list()).map((file) => file.name),

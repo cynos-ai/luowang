@@ -13,6 +13,7 @@ import type {
   RunSummary,
 } from '../../shared/types.js';
 import {
+  MarkdownValidationError,
   parseReportMarkdown,
   parseScenarioMarkdown,
   type ParsedReport,
@@ -22,18 +23,17 @@ import { RepositoryError } from '../repository/errors.js';
 import type { RepositoryIndexer } from '../repository/indexer.js';
 import type { RepositoryService } from '../repository/service.js';
 import type { ConfigurationStore } from '../configuration.js';
-import type { SecretStore } from '../security/secret-store.js';
+import { SECRET_KEYS, type SecretStore } from '../security/secret-store.js';
 import {
-  browserNeedsVision,
-  browserScenarioRequested,
   createPlaywrightMcpAdapter,
   supportsVision,
   type BrowserMcpAdapter,
 } from '../browser/playwright-mcp.js';
-import { createOssAdapter, type OssAdapter } from '../storage/oss.js';
+import { contentTypeFor, createOssAdapter, type OssAdapter } from '../storage/oss.js';
 import {
   buildSessionInput,
   createArtifactWriterTool,
+  createPlanWriterTool,
   createPiAgentSessionFactory,
   createReadArtifactTool,
   createRunnerCommandTool,
@@ -41,10 +41,15 @@ import {
   createTextResult,
   createWorkingScenarioTools,
 } from './agent-session.js';
-import { createControlledCommandRunner, type ControlledCommandRunner } from './command-runner.js';
+import {
+  commandFailureMessage,
+  createControlledCommandRunner,
+  type ControlledCommandRunner,
+} from './command-runner.js';
 import {
   createReviewerEvidenceTools,
   createRunEvidenceStore,
+  redactCommandText,
   createRunnerEvidenceTools,
   type RunEvidenceStore,
 } from './evidence.js';
@@ -52,6 +57,7 @@ import { createProviderAdapter, type ProviderAdapter } from './provider.js';
 import { createIssueCandidateController, createRunHistoryTool } from './run-history.js';
 import { createScenarioProgressController, type ProgressScenario } from './scenario-progress.js';
 import { scenarioReviewSummary } from './scenario-review-summary.js';
+import { createReviewReadOrder } from './review-order.js';
 import {
   assertScenarioResultsMatchPlan,
   ExecutionPlanError,
@@ -60,12 +66,7 @@ import {
   type ExecutionScenarioCandidate,
 } from './execution-plan.js';
 import type { TargetChangeDescriptor, TargetChangeEvidenceOptions } from './change-evidence.js';
-import {
-  createReviewerTestDataTools,
-  createTestDataManager,
-  createTestDataTools,
-  type TestDataManager,
-} from './test-data.js';
+import { createTestDataManager, createTestDataTools, type TestDataManager } from './test-data.js';
 import {
   createRoleInstructionLoader,
   RoleInstructionError,
@@ -325,6 +326,12 @@ class DefaultRunOrchestrator implements RunOrchestrator {
   }
 
   private async execute(state: RunState, workspace: RunWorkspace, input: RunInput): Promise<void> {
+    let cleanupDone = false;
+    const finishCleanup = async () => {
+      if (cleanupDone) return;
+      cleanupDone = true;
+      return this.finishTestData(state, workspace);
+    };
     try {
       state.status = 'running';
       this.setPhase(state, 'preparing', '正在固定 base、target 和提交范围');
@@ -349,14 +356,17 @@ class DefaultRunOrchestrator implements RunOrchestrator {
         scenarioMode: this.options.configuration.getRepository().scenarioMode,
         initialization: input.initialization === true,
       };
-      const evidenceStore = this.options.oss
-        ? createRunEvidenceStore(workspace, this.options.oss)
-        : undefined;
+      const evidenceStore = createRunEvidenceStore(workspace, this.options.oss, {
+        reviewSecrets: () =>
+          SECRET_KEYS.map((key) => this.options.secretStore?.get(key)).filter(
+            (value): value is string => Boolean(value),
+          ),
+      });
 
       if (context.initialization)
         await this.assessInitializationPreflight(context, prepared.repository);
       await this.runMainA(state, workspace, prepared.repository, context);
-      await this.assessBrowserRequirements(workspace, context);
+      await this.assessBrowserRequirements(context);
       let scenarioDecision: ScenarioPatchDecision = 'none';
       if (context.initialization) {
         await this.runRunner(
@@ -368,7 +378,7 @@ class DefaultRunOrchestrator implements RunOrchestrator {
           'initialization-reconnaissance',
         );
         await this.runInitializationCandidateMain(state, workspace, prepared.repository, context);
-        await this.assessBrowserRequirements(workspace, context, true);
+        await this.assessBrowserRequirements(context, true);
       }
       scenarioDecision = await this.prepareScenarioPatch(workspace, prepared.repository, context);
       if (scenarioDecision === 'review') {
@@ -378,6 +388,7 @@ class DefaultRunOrchestrator implements RunOrchestrator {
           context,
           evidenceStore,
         );
+        closure.testDataMessage = (await finishCleanup()) ?? closure.testDataMessage;
         await this.finishScenarioReviewRun(state, workspace, context, closure);
         return;
       }
@@ -432,7 +443,6 @@ class DefaultRunOrchestrator implements RunOrchestrator {
           'Reviewer 未读取截图 evidence，无法完成独立视觉审核。',
         ]);
       }
-      await this.finalizeTestData(workspace, context);
       if (runnerCleanup.uploaded && !runnerCleanup.uploadFailed) {
         await this.cleanupRetainedEvidence(workspace, context, evidenceStore);
       }
@@ -449,6 +459,7 @@ class DefaultRunOrchestrator implements RunOrchestrator {
       await this.forceInfrastructureBlockedReport(workspace, context);
 
       this.setPhase(state, 'finalizing', '正在校验最终报告并准备归档');
+      await finishCleanup();
       const report = await this.validateFinalReport(state, workspace, context);
       await workspace.finalize();
       state.result = report.result;
@@ -475,6 +486,7 @@ class DefaultRunOrchestrator implements RunOrchestrator {
     } catch (error) {
       this.markExecutionFailure(state, error);
     } finally {
+      await finishCleanup();
       await this.options.repository.cleanWorkspace().catch(() => undefined);
       if (this.activeRun === state) this.activeRun = undefined;
     }
@@ -550,11 +562,13 @@ class DefaultRunOrchestrator implements RunOrchestrator {
         runStore: this.options.runStore,
         recoveryStore: this.options.recoveryStore,
       }),
-      createArtifactWriterTool(
-        'write_plan',
+      createPlanWriterTool(
         '写入测试计划',
         '写入本次 Run 唯一的 plan.md。必须写完整 Markdown，不得写其他文件。',
-        (content) => workspace.writer('main-a').writePlan(content),
+        async (content, requiresBrowser) => {
+          await workspace.writer('main-a').writePlan(content);
+          context.browserRequired = requiresBrowser;
+        },
       ),
       ...(context.initialization
         ? []
@@ -563,7 +577,10 @@ class DefaultRunOrchestrator implements RunOrchestrator {
               'write_scenario_patch',
               '写入场景变更 patch',
               '只写入 docs/scenario-testing/scenarios/** 范围内的标准 git unified patch；不能直接修改目标仓库或其他目录。',
-              (content) => workspace.writer('main-a').writeScenarioPatch(content),
+              async (content) => {
+                await repository.validateScenarioPatch(context.targetCommit, content);
+                await workspace.writer('main-a').writeScenarioPatch(content);
+              },
             ),
           ]),
     ];
@@ -576,6 +593,10 @@ class DefaultRunOrchestrator implements RunOrchestrator {
       mainAUserMessage(context),
       mainAOutputContract(context),
       context.initialization,
+      [],
+      context.initialization
+        ? undefined
+        : () => this.validatePlanningOutput(workspace, repository, context),
     );
     await assertArtifact(workspace, 'plan.md');
     if (!context.initialization) await parseExecutionScenarioPlan(await workspace.read('plan.md'));
@@ -623,14 +644,14 @@ class DefaultRunOrchestrator implements RunOrchestrator {
         recoveryStore: this.options.recoveryStore,
       }),
       createReadArtifactTool((name) =>
-        readAllowedArtifact(workspace, name, ['plan.md', 'execution.md', 'draft-report.md']),
+        readAllowedArtifact(workspace, name, ['plan.md', 'execution.md']),
       ),
-      createArtifactWriterTool(
-        'write_plan',
+      createPlanWriterTool(
         '更新候选测试计划',
         '更新本次 Run 同一个 plan.md；必须保留静态依据和侦察事实，只能写计划 Markdown。',
-        async (content) => {
+        async (content, requiresBrowser) => {
           await workspace.writer('main-a').writePlan(content);
+          context.browserRequired = requiresBrowser;
           planWriteSucceeded = true;
         },
       ),
@@ -640,6 +661,7 @@ class DefaultRunOrchestrator implements RunOrchestrator {
         '只写入 docs/scenario-testing/scenarios/** 范围内的标准 git unified patch；不能直接修改目标仓库或创建 suite、catalog、journey 或能力图文件。',
         async (content) => {
           patchWriteAttempted = true;
+          patchWriteSucceeded = false;
           try {
             await repository.validateScenarioPatch(context.targetCommit, content);
           } catch (error) {
@@ -662,6 +684,14 @@ class DefaultRunOrchestrator implements RunOrchestrator {
       initializationCandidateUserMessage(context),
       initializationCandidateOutputContract(),
       true,
+      [],
+      async () => {
+        if (!planWriteSucceeded)
+          throw new ExecutionPlanError('候选 Main 未成功更新 plan.md，不能使用旧静态计划');
+        if (patchWriteAttempted && !patchWriteSucceeded)
+          throw new ExecutionPlanError('最后一次候选 patch 未成功写入，必须修正后重新提交');
+        await this.validatePlanningOutput(workspace, repository, context);
+      },
     );
     if (!planWriteSucceeded) {
       throw new RunOrchestratorError(
@@ -677,6 +707,24 @@ class DefaultRunOrchestrator implements RunOrchestrator {
     }
     await assertArtifact(workspace, 'plan.md');
     parseExecutionScenarioPlan(await workspace.read('plan.md'));
+  }
+
+  private async validatePlanningOutput(
+    workspace: RunWorkspace,
+    repository: GitRepository,
+    context: RunContext,
+  ): Promise<void> {
+    const patch = await readOptionalScenarioPatch(workspace);
+    try {
+      await repository.checkoutTarget(context.targetCommit);
+      const scenarioChanges =
+        patch === undefined
+          ? undefined
+          : await repository.applyScenarioPatch(context.targetCommit, patch);
+      await this.progressScenarios(workspace, repository, { ...context, scenarioChanges });
+    } finally {
+      await repository.cleanWorkspace();
+    }
   }
 
   private async prepareScenarioPatch(
@@ -753,7 +801,7 @@ class DefaultRunOrchestrator implements RunOrchestrator {
         `Runner 收尾失败，特殊场景审核 Run 已阻塞：${safeMessage(error)}`,
       ]).catch(() => undefined);
     }
-    const testData = await this.finalizeTestData(workspace, context);
+    const testData = { message: '测试数据由 Harness 统一收尾' };
     if (!evidenceStore) {
       return { testDataMessage: testData.message, evidenceDeleted: 0, evidenceDeleteFailures: 0 };
     }
@@ -885,23 +933,52 @@ class DefaultRunOrchestrator implements RunOrchestrator {
         read: (path) => repository.readWorkingScenarioFile(path),
       }),
       createReadArtifactTool((name) => readAllowedArtifact(workspace, name, ['plan.md'])),
-      createRunnerCommandTool((command, signal) =>
-        this.commandRunner.run(command, {
-          cwd: context.repositoryDirectory,
-          runId: context.runId,
-          targetCommit: context.targetCommit,
-          signal,
-        }),
-      ),
+      createRunnerCommandTool(async (command, signal) => {
+        // Obtain redaction values before execution; failure must not persist raw output.
+        let secrets: string[];
+        try {
+          if (!evidenceStore) throw new Error('evidence store unavailable');
+          secrets = SECRET_KEYS.map((key) => this.options.secretStore?.get(key)).filter(
+            (value): value is string => Boolean(value),
+          );
+        } catch {
+          this.addBlockingReason(context, '受控命令证据存储或脱敏条件不可用');
+          throw new Error('受控命令证据存储或脱敏条件不可用，未执行命令');
+        }
+        const capture = async (result: Parameters<RunEvidenceStore['captureCommand']>[2]) => {
+          try {
+            return await evidenceStore.captureCommand(
+              command,
+              context.targetCommit,
+              result,
+              secrets,
+            );
+          } catch {
+            this.addBlockingReason(context, '受控命令结果保存失败，不能确认执行结果');
+            throw new Error('受控命令结果保存失败，不能确认执行结果');
+          }
+        };
+        let result;
+        try {
+          result = await this.commandRunner.run(command, {
+            cwd: context.repositoryDirectory,
+            runId: context.runId,
+            targetCommit: context.targetCommit,
+            signal,
+          });
+        } catch (error) {
+          const diagnostic = redactCommandText(commandFailureMessage(error), secrets);
+          const evidenceId = await capture({ error: diagnostic });
+          throw new Error(`${diagnostic}（命令证据 ${evidenceId}）`);
+        }
+        const evidenceId = await capture(result);
+        return { ...result, evidenceId };
+      }),
       createRunnerEnvironmentTool(
         this.options.configuration.getRepository(),
         this.options.secretStore,
       ),
-      ...createTestDataTools(
-        this.options.testData ?? createTestDataManager(),
-        context.runId,
-        evidenceStore,
-      ),
+      ...createTestDataTools(this.options.testData ?? createTestDataManager(), context.runId),
       ...(progress?.tools ?? []),
       ...(evidenceStore ? createRunnerEvidenceTools(evidenceStore) : []),
       createArtifactWriterTool(
@@ -910,13 +987,12 @@ class DefaultRunOrchestrator implements RunOrchestrator {
         '写入本次 Run 的完整 execution.md，记录命令、观察、失败和清理情况。',
         (content) => workspace.writer('runner').writeExecution(content),
       ),
-      createArtifactWriterTool(
-        'write_draft_report',
-        '写入草稿报告',
-        '写入 Runner 的完整 draft-report.md；不要把未经证据支持的结论写成通过。',
-        (content) => workspace.writer('runner').writeDraftReport(content),
-      ),
     ];
+    const browserExtension =
+      context.browserRequired && this.options.browser?.isEnabled()
+        ? this.options.browser.extension(workspace.evidenceDirectory)
+        : undefined;
+    if (browserExtension) evidenceStore?.allowBrowserRecords?.();
     await this.invoke(
       'runner-execution',
       'runner',
@@ -926,16 +1002,13 @@ class DefaultRunOrchestrator implements RunOrchestrator {
       runnerUserMessage(context, purpose),
       runnerOutputContract(),
       false,
-      context.browserRequired && this.options.browser?.isEnabled()
-        ? [this.options.browser.extension(workspace.evidenceDirectory)]
-        : [],
+      browserExtension ? [browserExtension] : [],
     );
     const progressError = progress?.completionError();
     if (progressError) {
       throw new RunOrchestratorError('RUN_ARTIFACT_INVALID', progressError);
     }
     await assertArtifact(workspace, 'execution.md');
-    await assertArtifact(workspace, 'draft-report.md');
   }
 
   private async progressScenarios(
@@ -979,20 +1052,15 @@ class DefaultRunOrchestrator implements RunOrchestrator {
   }
 
   private async assessBrowserRequirements(
-    workspace: RunWorkspace,
     context: RunContext,
     resetExisting = false,
   ): Promise<void> {
     if (resetExisting) {
       context.blockingReasons = context.blockingReasons.filter(
         (reason) =>
-          !reason.startsWith('计划包含 UI 场景') &&
-          !reason.startsWith('Playwright MCP 连通性检查') &&
-          !reason.startsWith('计划需要视觉判断'),
+          !reason.startsWith('计划包含 UI 场景') && !reason.startsWith('Playwright MCP 连通性检查'),
       );
     }
-    const plan = await workspace.read('plan.md');
-    context.browserRequired = browserScenarioRequested(plan);
     if (!context.browserRequired) return;
 
     const browser = this.options.browser;
@@ -1018,21 +1086,6 @@ class DefaultRunOrchestrator implements RunOrchestrator {
         this.addBlockingReason(context, 'Playwright MCP 连通性检查失败');
       }
     }
-    if (browserNeedsVision(plan)) {
-      let visionAvailable = false;
-      try {
-        // Runner only captures and describes evidence. Visual assertions are
-        // owned by the independent Reviewer, so check the Reviewer model
-        // rather than requiring image input from the text-only Runner.
-        const model = await this.options.provider?.resolveModel('reviewer');
-        visionAvailable = model ? supportsVision(model) : false;
-      } catch {
-        visionAvailable = false;
-      }
-      if (!visionAvailable) {
-        this.addBlockingReason(context, '计划需要视觉判断，但 Reviewer 模型不支持图像输入');
-      }
-    }
   }
 
   private async finishRunner(
@@ -1054,7 +1107,7 @@ class DefaultRunOrchestrator implements RunOrchestrator {
       files = [];
     }
 
-    if (files.length > 0) {
+    if (files.length > 0 || (evidenceStore?.commandEvidenceIds().length ?? 0) > 0) {
       if (!evidenceStore) {
         uploadFailed = true;
         this.addBlockingReason(context, 'Run 产生了证据文件，但 OSS Adapter 不可用');
@@ -1100,28 +1153,6 @@ class DefaultRunOrchestrator implements RunOrchestrator {
       notes.push('UI 场景没有产生可审核的 evidence。');
     }
 
-    let cleanup: Awaited<ReturnType<TestDataManager['cleanup']>>;
-    try {
-      cleanup = await this.options.testData!.cleanup(context.runId);
-    } catch {
-      cleanup = {
-        ok: false,
-        attempted: 0,
-        failed: [],
-        message: '测试数据清理适配器执行失败',
-        receipts: [],
-      };
-    }
-    notes.push(`测试数据清理适配器：${cleanup.message}`);
-    notes.push(
-      ...cleanup.receipts.map(
-        (receipt) =>
-          `清理核验 receipt：${receipt.dataId} · ${receipt.sourceId} · ${receipt.queriedAt} · ${receipt.statusCode === undefined ? `exit ${receipt.exitCode ?? 'n/a'}` : `HTTP ${receipt.statusCode}`} · summary ${receipt.summary} · sha256 ${receipt.sha256}`,
-      ),
-    );
-    if (cleanup.failed.length > 0) {
-      notes.push(`测试数据清理失败项数量：${cleanup.failed.length}`);
-    }
     if (context.blockingReasons.length > 0) {
       notes.push(...context.blockingReasons.map((reason) => `Harness 阻塞：${reason}`));
     }
@@ -1129,26 +1160,64 @@ class DefaultRunOrchestrator implements RunOrchestrator {
     return { uploaded, uploadFailed };
   }
 
-  private async finalizeTestData(
-    workspace: RunWorkspace,
-    context: RunContext,
-  ): Promise<ReturnType<TestDataManager['finalize']>> {
-    const result = (this.options.testData ?? createTestDataManager()).finalize(context.runId);
-    const notes = [`测试数据最终核验：${result.message}`];
-    if (!result.ok) {
-      this.addBlockingReason(context, `测试数据清理失败：${result.message}`);
-      notes.push(
-        ...result.pending.map(
+  private async finishTestData(state: RunState, workspace: RunWorkspace): Promise<string> {
+    const manager = this.options.testData ?? createTestDataManager();
+    let ok = false;
+    let hasData = false;
+    let detail = '清理或独立核验异常，未确认完成；需要人工处理。';
+    try {
+      hasData = manager.pending(state.runId).length > 0;
+      const cleanup = await manager.cleanup(state.runId);
+      const final = manager.finalize(state.runId);
+      ok = cleanup.ok && final.ok;
+      detail = [
+        cleanup.message,
+        final.message,
+        ...final.pending.map(
           (entry) =>
-            `测试数据残留：${entry.id}（${entry.status}${entry.rejectionReason ? `：${entry.rejectionReason}` : ''}）`,
+            `待处理：${entry.id}（${entry.status}${entry.rejectionReason ? `：${entry.rejectionReason}` : ''}）`,
         ),
+        ...cleanup.receipts.map(
+          (receipt) =>
+            `独立核验：${receipt.dataId} · ${receipt.sourceId} · ${receipt.queriedAt} · absent=${receipt.absent} · sha256 ${receipt.sha256}`,
+        ),
+      ].join('\n\n');
+    } catch {
+      // Do not let a teardown exception replace the execution error or result.
+    }
+    try {
+      const secrets = SECRET_KEYS.map((key) => this.options.secretStore?.get(key)).filter(
+        (value): value is string => Boolean(value),
+      );
+      detail = redactCommandText(detail, secrets);
+    } catch {
+      detail = '清理详情的脱敏条件不可用，未展示原始信息；请检查 Harness。';
+    }
+    const message = `测试数据清理${ok ? '完成' : '未完成，需要处理'}；不改变本次功能验证结果。`;
+    this.setPhase(state, state.phase, message, ok ? 'info' : 'warning');
+    const section = `\n\n## Harness 清理收尾\n\n${message}\n\n${detail}\n`;
+    try {
+      if (await workspace.exists('report.md')) {
+        const report = await workspace.read('report.md');
+        await workspace
+          .writer('main-b')
+          .writeReport(
+            report.trimEnd() + section.replace(/\n/g, report.includes('\r\n') ? '\r\n' : '\n'),
+          );
+      } else if (await workspace.exists('execution.md')) {
+        await this.appendExecutionNotes(workspace, [message, detail]);
+      } else if (hasData || !ok) {
+        await workspace.writer('runner').writeExecution(`# Harness 异常收尾记录${section}`);
+      }
+    } catch {
+      this.setPhase(
+        state,
+        state.phase,
+        '清理收尾记录保存失败，请检查 Harness；不改变功能验证结论',
+        'warning',
       );
     }
-    if (context.blockingReasons.length > 0) {
-      notes.push(...context.blockingReasons.map((reason) => `Harness 阻塞：${reason}`));
-    }
-    await this.appendExecutionNotes(workspace, notes);
-    return result;
+    return `${message}\n\n${detail}`;
   }
 
   private async cleanupRetainedEvidence(
@@ -1199,26 +1268,45 @@ class DefaultRunOrchestrator implements RunOrchestrator {
     evidenceStore: RunEvidenceStore | undefined,
   ): Promise<void> {
     this.setPhase(state, 'reviewer', 'Reviewer 正在独立审核执行结果');
+    const readOrder = createReviewReadOrder(
+      (name) =>
+        readAllowedArtifact(workspace, name, ['plan.md', 'execution.md', 'scenario-changes.patch']),
+      context.evidence
+        .filter((item) => contentTypeFor(item.filename).startsWith('image/'))
+        .map((item) => item.filename),
+      () => this.addBlockingReason(context, 'Reviewer 原始图片读取失败，不能确认通过'),
+      await workspace.exists('scenario-changes.patch'),
+      () => this.addBlockingReason(context, 'Reviewer 无法读取受控命令证据，不能确认相关结果'),
+      () => this.addBlockingReason(context, 'Reviewer 无法读取浏览器原始记录，不能确认相关结果'),
+    );
     const tools = [
-      createReadArtifactTool((name) =>
-        readAllowedArtifact(workspace, name, [
-          'plan.md',
-          'execution.md',
-          'draft-report.md',
-          'scenario-changes.patch',
-        ]),
-      ),
-      ...(evidenceStore ? createReviewerEvidenceTools(evidenceStore) : []),
-      ...createReviewerTestDataTools(
-        this.options.testData ?? createTestDataManager(),
-        context.runId,
-        evidenceStore,
-      ),
+      createReadArtifactTool(readOrder.readArtifact),
+      ...(evidenceStore
+        ? createReviewerEvidenceTools(evidenceStore, async () => {
+            let visionAvailable = false;
+            try {
+              const model = await this.options.provider?.resolveModel('reviewer');
+              visionAvailable = model ? supportsVision(model) : false;
+            } catch {
+              /* Unknown capability is not permission to deliver images. */
+            }
+            if (!visionAvailable) {
+              this.addBlockingReason(
+                context,
+                'Reviewer 模型不支持或无法确认图像输入，不能审核图片证据',
+              );
+            }
+            return visionAvailable;
+          }).map(readOrder.wrap)
+        : []),
       createArtifactWriterTool(
         'write_review',
         '写入独立审核',
-        '写入本次 Run 的完整 review.md。必须独立核对执行证据和零场景判断。',
-        (content) => workspace.writer('reviewer').writeReview(content),
+        '写入本次 Run 的完整 review.md。必须独立核对执行证据；仅当 execution_scenarios 为空时审核零执行场景的理由。',
+        (content) => {
+          readOrder.assertReady();
+          return workspace.writer('reviewer').writeReview(content);
+        },
       ),
     ];
     await this.invoke(
@@ -1261,14 +1349,12 @@ class DefaultRunOrchestrator implements RunOrchestrator {
     const artifactsRead = new Set<string>();
     const issueCandidates = createIssueCandidateController(
       { runStore: this.options.runStore, repository: this.options.repository },
-      () => artifactsRead.has('draft-report.md') && artifactsRead.has('review.md'),
+      () => artifactsRead.has('plan.md') && artifactsRead.has('review.md'),
     );
     const tools = [
       createReadArtifactTool(async (name) => {
         const content = await readAllowedArtifact(workspace, name, [
           'plan.md',
-          'execution.md',
-          'draft-report.md',
           'review.md',
           ...(context.initialization ? ['scenario-changes.patch' as const] : []),
         ]);
@@ -1281,6 +1367,12 @@ class DefaultRunOrchestrator implements RunOrchestrator {
         '写入最终报告',
         '写入本次 Run 唯一的 report.md。必须使用指定最小 frontmatter，不得写其他文件。',
         async (content) => {
+          if (/^## Harness 清理收尾\s*$/m.test(content)) {
+            throw new RunOrchestratorError(
+              'RUN_ARTIFACT_INVALID',
+              'Harness 清理收尾由系统在 Session 结束后写入',
+            );
+          }
           const normalized = normalizeFinalReportFrontmatter(content);
           try {
             parseReportMarkdown(normalized, 'report.md', state.runId);
@@ -1348,6 +1440,7 @@ class DefaultRunOrchestrator implements RunOrchestrator {
     outputContract: string,
     initialization: boolean,
     extensionFactories: InlineExtension[] = [],
+    validateOutput?: () => Promise<void>,
   ): Promise<void> {
     let session: AgentSession | undefined;
     try {
@@ -1366,6 +1459,20 @@ class DefaultRunOrchestrator implements RunOrchestrator {
       );
       session = await this.sessions.create(input);
       await session.prompt(input.userMessage);
+      if (validateOutput) {
+        // Keep correction in the same isolated Session; never launch extra roles or loop unboundedly.
+        for (let attempt = 0; ; attempt += 1) {
+          try {
+            await validateOutput();
+            break;
+          } catch (error) {
+            if (attempt >= 2) throw error;
+            await session.prompt(
+              `规划工件联合校验失败：${safeMessage(error)}\n请在当前 Session 修正完整 plan.md/场景 patch 后结束。execution_scenarios 只能引用应用后实际存在的 approved 场景；draft/deprecated 不可执行。不要通过删去必需覆盖来掩盖问题，也不要重复发送未修正工件。`,
+            );
+          }
+        }
+      }
     } finally {
       if (session) await session.dispose();
     }
@@ -1620,21 +1727,6 @@ class DefaultRunOrchestrator implements RunOrchestrator {
         'RUN_ARTIFACT_INVALID',
         'failed 报告必须至少包含一个 confirmed bug',
       );
-    }
-    if (parsed.scenarioResults.length === 0 && parsed.result === 'passed') {
-      const plan = await workspace.read('plan.md');
-      const review = await workspace.read('review.md');
-      const report = await workspace.read('report.md');
-      if (
-        !hasZeroScenarioEvidence(plan) ||
-        !hasZeroScenarioEvidence(review) ||
-        !hasZeroScenarioEvidence(report)
-      ) {
-        throw new RunOrchestratorError(
-          'RUN_ARTIFACT_INVALID',
-          '零场景 passed 必须在 plan、review 和最终报告中说明无需场景测试的依据',
-        );
-      }
     }
     return parsed;
   }
@@ -2012,7 +2104,7 @@ function assertReadableTargetPath(path: string): void {
 
 async function assertArtifact(
   workspace: RunWorkspace,
-  name: 'plan.md' | 'execution.md' | 'draft-report.md' | 'review.md' | 'report.md',
+  name: 'plan.md' | 'execution.md' | 'review.md' | 'report.md',
 ): Promise<void> {
   if (!(await workspace.exists(name))) {
     throw new RunOrchestratorError('RUN_ARTIFACT_INVALID', `角色没有写入必需工件：${name}`);
@@ -2042,12 +2134,6 @@ function hasIssueCoverageGap(content: string, bugKey: string): boolean {
     .slice(2)
     .join('\n---\n');
   return body.includes('## Issue 查询覆盖缺口') && body.includes(bugKey);
-}
-
-function hasZeroScenarioEvidence(content: string): boolean {
-  return /无需\s*场景|零场景|no\s+scenarios?|no\s+scenario\s+testing|does\s+not\s+require\s+(?:a\s+)?scenario/i.test(
-    content,
-  );
 }
 
 function sameStringArray(left: string[], right: string[]): boolean {
@@ -2104,6 +2190,7 @@ function normalizeFinalReportFrontmatter(content: string): string {
 }
 
 function safeMessage(error: unknown): string {
+  if (error instanceof MarkdownValidationError) return error.safeDiagnostic;
   if (
     error instanceof RunOrchestratorError ||
     error instanceof RunWorkspaceError ||
@@ -2152,22 +2239,22 @@ function mainAOutputContract(context: RunContext): string {
   const patchInstruction = context.initialization
     ? '本阶段只写 plan.md，不写 scenario-changes.patch；运行时侦察后由新的 Main · 规划 Session 生成候选 patch。'
     : '如需维护长期场景，只能通过 write_scenario_patch 写场景目录内的标准 git unified patch。';
-  return `必须先调用 get_run_context、list_target_files，并按需调用 list_target_changes、read_target_diff、read_target_file_version、read_target_file/search_target_files；变化证据不完整时必须记录未读范围，不能声称已审阅全部变化。需要历史判断时只通过 query_run_history 查询有限、脱敏的 Run 摘要。必须在结束前通过 write_plan 写入完整 plan.md；historyIssuesAvailable=false 时在覆盖缺口中说明。正式验证计划必须包含唯一的 ## execution_scenarios 区域：无序列表逐行列稳定 ID，正文其他区域的 ID 不构成选择；若无需测试则写出“无需场景测试”及依据。${context.initialization ? '静态初始化计划可暂不声明正式执行清单，候选 Main 必须补齐。' : ''}
+  return `必须先调用 get_run_context、list_target_files，并按需调用 list_target_changes、read_target_diff、read_target_file_version、read_target_file/search_target_files；变化证据不完整时必须记录未读范围，不能声称已审阅全部变化。需要历史判断时只通过 query_run_history 查询有限、脱敏的 Run 摘要。必须在结束前通过 write_plan 写入完整 plan.md；historyIssuesAvailable=false 时在覆盖缺口中说明。正式验证计划必须包含唯一的 ## execution_scenarios 区域：无序列表逐行列稳定 ID，正文其他区域的 ID 不构成选择；空清单须给出具体理由，由 Reviewer 独立判断是否成立，不要求特定措辞。write_plan 的 requiresBrowser 必须根据实际执行范围显式决定，未覆盖/排除的浏览器能力不算执行需求。${context.initialization ? '静态初始化计划可暂不声明正式执行清单，候选 Main 必须补齐。' : ''}
 ${patchInstruction}
 有场景变更时，在 plan.md 的 ## scenario_review_summary 下写必要的候选范围、依据和覆盖缺口摘要；不含代码块、原始 diff、Secret 或临时证据地址，供人工审核特殊报告保留。
-如果确有依据判断无需测试，明确写出“无需场景测试”的理由；否则保留场景缺失、影响不明或证据不足的覆盖缺口。`;
+如果确有依据判断无需测试，明确说明理由；否则保留场景缺失、影响不明或证据不足的覆盖缺口。`;
 }
 
 function initializationCandidateUserMessage(context: RunContext): string {
-  return `当前任务：在新的 Main · 规划 Session 中，综合静态证据和低风险运行时侦察，形成少量高价值候选场景；需要历史判断时只通过 query_run_history 查询有限、脱敏的 Run 摘要。
+  return `当前任务：在新的 Main · 规划 Session 中，综合静态理解和低风险运行时侦察，尽可能全面地整理项目所需的候选场景并更新验证计划，不追求绝对穷尽；需要历史判断时只通过 query_run_history 查询有限、脱敏的 Run 摘要。
 
 动态 Run 上下文：
 ${JSON.stringify(mainPlanningContext(context), null, 2)}`;
 }
 
 function initializationCandidateOutputContract(): string {
-  return `先读取 plan.md、execution.md 和 draft-report.md，再核对固定 target 的必要事实和变更证据。临时能力图只能写在本次 plan.md 正文中；保留静态依据和必要侦察事实，把业务结果相近的步骤合并，覆盖主要用户、入口、核心成功路径、权限/校验/持久化风险和明确外部依赖。每个 approved 场景必须有可追溯依据，不确定期望保持 draft。
-结束前必须通过 write_plan 成功更新同一个 plan.md，补齐唯一 ## execution_scenarios 区域、候选/复用理由、期望依据、执行安排和覆盖缺口。无 patch 时也必须列出复用的 approved 场景或有依据的空清单；没有可信候选时记录 blocked/draft 原因，不伪造 patch。有 patch 时将必要候选范围、依据和覆盖缺口写在 ## scenario_review_summary 下，不含代码块、原始 diff、Secret 或临时证据地址；人工审核特殊报告只保留此安全摘要。
+  return `先读取 plan.md 和 execution.md，再核对固定 target 的必要事实和变更证据。临时能力图只能写在本次 plan.md 正文中；保留静态依据和必要侦察事实，把业务结果相近的步骤合并，覆盖主要用户、入口、核心成功路径、权限/校验/持久化风险和明确外部依赖。每个 approved 场景必须有可追溯依据，不确定期望保持 draft。
+结束前必须通过 write_plan 成功更新同一个 plan.md，并根据更新后的实际执行范围重新声明 requiresBrowser；不要把范围缺口当成执行需求。补齐唯一 ## execution_scenarios 区域、候选/复用理由、期望依据、执行安排和覆盖缺口。无 patch 时也必须列出复用的 approved 场景或有依据的空清单；没有可信候选时记录 blocked/draft 原因，不伪造 patch。有 patch 时将必要候选范围、依据和覆盖缺口写在 ## scenario_review_summary 下，不含代码块、原始 diff、Secret 或临时证据地址；人工审核特殊报告只保留此安全摘要。
 候选资产只能通过 write_scenario_patch 写标准 git unified patch，且只能新增、修改或目录内 rename docs/scenario-testing/scenarios/** 的 Markdown。`;
 }
 
@@ -2187,6 +2274,7 @@ function runnerUserMessage(
       : '正式场景执行前必须调用 begin_scenario_execution 按实际顺序声明稳定场景 ID；每个场景依次调用 start_scenario 和 finish_scenario，零场景也必须显式声明空列表。';
   return `当前任务：${task}
 
+browserRequired 是 Main 的执行意图，不是能力可用或已执行的证明。若与计划所需操作矛盾，记录缺口，不绕过受控工具和权限。
 场景进度要求：${progressInstruction}
 
 动态 Run 上下文：
@@ -2195,19 +2283,19 @@ ${JSON.stringify(runnerContext(context), null, 2)}`;
 
 function runnerOutputContract(): string {
   return `先读取 plan.md，再按计划使用受控 target、工作场景、命令、环境、测试数据和 evidence 工具。正式场景必须通过场景进度工具按计划顺序声明、开始和完成；初始化侦察不得伪造正式场景进度。UI 场景只能使用受控的 headless、isolated Playwright MCP，优先使用 accessibility snapshot/ref；截图使用相对文件名并通过 list_evidence_files 确认存在。
-测试账号只用于当前操作，绝不能写入日志、命令输出、Markdown 或证据。使用 get_test_data_prefix 标记临时数据；创建后立即登记，删除后只能提交 Harness 捕获的受控查询证据或 Playwright 截图声明，并检查待核验列表。不能自填 evidence 正文、状态码、摘要或 hash。每个场景记录实际观察、命令退出码、决定性/辅助证据、偏差和清理结果。结束前分别通过 write_execution 和 write_draft_report 写完整工件；不可用条件记录为 blocked。`;
+测试账号只用于当前操作，绝不能写入日志、命令输出、Markdown 或证据。使用 get_test_data_prefix 标记临时数据，创建后立即登记；最终 Main 结束后由 Harness 统一清理，当前不声明收尾结果。场景本身要求删除时仍实际执行并验证业务行为。不能自填原始 evidence 正文、状态码、摘要或 hash。命令工具返回的 evidenceId 对应 Harness 捕获的脱敏原始结果，按需引用，不自行重造证据。每个场景记录实际观察、命令退出码、证据及偏差。结束前仅通过 write_execution 写完整运行记录，不写报告草稿；验证条件不可用时如实记录。`;
 }
 
 function reviewerUserMessage(context: RunContext): string {
-  return `当前任务：独立核对计划、原始执行证据、场景变更、场景结果、confirmed Bugs、截图事实、清理和 Harness 阻塞原因。
+  return `当前任务：先读计划及存在的 patch，再列出并核对相关原始证据，形成初步判断后才打开 execution.md，避免被 Runner 的结论带偏。browserRequired 是 Main 声明的执行意图，须结合计划和真实执行核对，不能当作能力或结果证明。完成独立审核，完整交付逐场景结果、已确认产品问题、依据和稳定证据引用、覆盖缺口及无法确认的事项；测试数据收尾由 Harness 在最终 Main 后处理。
 
 动态 Run 上下文：
 ${JSON.stringify(reviewerContext(context), null, 2)}`;
 }
 
 function reviewerOutputContract(): string {
-  return `先读取 plan.md 和唯一 ## execution_scenarios 清单、存在的 scenario-changes.patch 及 Harness 阻塞事实；再读取原始命令/API/截图/清理证据；最后才读取 execution.md 和 draft-report.md。原始证据优先于 Runner 草稿。必须先调用 list_pending_test_data 获取精确 data ID 和清理声明 evidence IDs；每项清理声明再通过 read_test_data_cleanup_evidence 读取 Harness 捕获的受控文本证据，或通过 read_evidence_image 实际查看全部删除后截图，随后调用 verify_test_data_cleanup 确认或拒绝；纯 Runner 声明不构成已清理。查看截图只能使用 list_evidence_files 和 read_evidence_image，不能执行命令、读取测试账号或任意路径。
-截图不可访问、上传失败、视觉能力不足、清理未确认、场景缺失或影响不明时维持 blocked。零场景只有在 Main · 规划的计划确有依据时才能确认。结束前通过 write_review 写完整 review.md，并明确是否同意最终结果。`;
+  return `先读取 plan.md 和唯一 ## execution_scenarios 清单、存在的 scenario-changes.patch 及 Harness 阻塞事实；核对相关原始命令/API/截图证据，再对照 execution.md 的操作与观察。需要核对命令时通过 list_evidence_files 和 read_command_evidence 只读查看本 Run 捕获结果；截图使用 read_evidence_image，不能执行命令、读取账号或任意路径。截断或执行错误不等于产品通过。
+写入完整 review.md，按计划逐场景交付独立判断、依据及稳定证据引用、已确认 Bug 的预期/实际差异和复现条件、未完成项及原因不确定性，供最终 Main 直接整理，不只写同意 Runner。必要证据、视觉能力不足、场景缺失或影响不明时维持 blocked；仅当 execution_scenarios 为空时审核零执行场景的计划依据。测试后临时数据清理由 Harness 在最终 Main 后处理，不属于本次审核或测试阻塞；场景本身验证删除行为时仍按实际行为判断。`;
 }
 
 function finalizationPromptContext(context: RunContext): Record<string, unknown> {
@@ -2237,7 +2325,7 @@ function finalizationPromptContext(context: RunContext): Record<string, unknown>
 function mainBUserMessage(context: RunContext): string {
   const task = context.initialization
     ? '汇总初始化 Run；可在 Reviewer 意见支持下用受限 writer 修订尚未发布的候选场景 patch，但修订后未重新执行必须保持 blocked。'
-    : '汇总日常测试 Run，不修改场景 patch。';
+    : '汇总日常测试 Run，不修改场景 patch。保留 Reviewer 的疑问和限制，不把“原因未确认”写成“审核已确认”。';
   return `当前任务：${task}
 
 动态 Run 上下文：
@@ -2245,8 +2333,8 @@ ${JSON.stringify(finalizationPromptContext(context), null, 2)}`;
 }
 
 function mainBOutputContract(): string {
-  return `必须先读取 plan.md、execution.md、draft-report.md、review.md；初始化且存在 scenario-changes.patch 时也读取它。scenario_results 必须按 plan.md 的 ## execution_scenarios 清单完整且有序对应；不得用正文其他 ID 补齐。读取草稿和审核后，必须为每个本次 confirmed Bug 按 title、keywords 或 bug_key 调用 query_issue_candidates；严格区分 ok、empty、unavailable，unavailable 最多原样重试一次。查询 unavailable、重试或预算耗尽时必须在正文写“## Issue 查询覆盖缺口”并列出对应 Bug key，不得伪装成 empty。最终 report.md frontmatter 只能包含 run_id、trigger、base_commit、target_commit、included_commits、result、started_at、finished_at、scenario_results、confirmed_bugs；started_at 和 finished_at 必须逐字使用动态 Run 上下文提供的值，其他字段值也必须与固定 Run 一致。result 优先级为 blocked > failed > passed；blockingReasons 非空时必须 blocked。
-scenario_results 必须是 YAML 数组，每项只能有 id 和 result。confirmed_bugs 每项只能有 key、title、scenario_ids、issue_action，以及 link 时必需的 issue_url；failed 至少有一个 confirmed bug，issue_action 只能 create 或 link。零场景 passed 必须在计划、审核和最终报告中都有“无需场景测试”依据。
+  return `必须先读取 plan.md、review.md；初始化且存在 scenario-changes.patch 时也读取它。scenario_results 必须按 plan.md 的 ## execution_scenarios 清单完整且有序对应；不得用正文其他 ID 补齐。根据计划与审核结论，必须为每个本次 confirmed Bug 按 title、keywords 或 bug_key 调用 query_issue_candidates；严格区分 ok、empty、unavailable，unavailable 最多原样重试一次。查询 unavailable、重试或预算耗尽时必须在正文写“## Issue 查询覆盖缺口”并列出对应 Bug key，不得伪装成 empty。最终 report.md frontmatter 只能包含 run_id、trigger、base_commit、target_commit、included_commits、result、started_at、finished_at、scenario_results、confirmed_bugs；started_at 和 finished_at 必须逐字使用动态 Run 上下文提供的值，其他字段值也必须与固定 Run 一致。result 优先级为 blocked > failed > passed；blockingReasons 非空时必须 blocked。
+scenario_results 必须是 YAML 数组，每项只能有 id 和 result。confirmed_bugs 每项只能有 key、title、scenario_ids、issue_action，以及 link 时必需的 issue_url；failed 至少有一个 confirmed bug，issue_action 只能 create 或 link。仅当 execution_scenarios 为空时，零执行场景 passed 才需要计划的具体理由和 Reviewer 独立认可，最终报告忠实保留依据；没有新增或修改场景不等于没有执行场景，清单非空时不写零场景通过说明。
 证据只写在正文并引用稳定 URL。不得复述任何测试账号字段、Secret、隐藏推理、短期签名 URL 或绝对路径。结束前通过 write_report 写完整 report.md。`;
 }
 
@@ -2276,6 +2364,7 @@ function runnerContext(context: RunContext) {
     targetCommit: context.targetCommit,
     includedCommits: context.includedCommits,
     runDirectory: context.runDirectory,
+    browserRequired: context.browserRequired,
     scenarioMode: context.scenarioMode,
     initialization: context.initialization,
     blockingReasons: context.blockingReasons,
@@ -2291,6 +2380,7 @@ function reviewerContext(context: RunContext) {
     initialization: context.initialization,
     scenarioChanges: context.scenarioChanges ?? null,
     evidence: context.evidence,
+    browserRequired: context.browserRequired,
     blockingReasons: context.blockingReasons,
   };
 }

@@ -980,13 +980,13 @@ async function runLocal(artifactDirectory: string): Promise<AcceptanceReport> {
       key: 'data01',
       label: 'AC-CLOSURE-DATA-01 controlled cleanup verification',
       file: 'tests/closure3-test-data.test.ts',
-      pattern: 'captures a real|trusted cleanup adapter|zero-data Run',
+      pattern: 'only exposes|requires current|only invokes|empty scope|partial failures',
     },
     {
       key: 'data02',
-      label: 'AC-CLOSURE-DATA-02 rejected and pending cleanup boundaries',
-      file: 'tests/closure3-test-data.test.ts',
-      pattern: 'still exists|rejects operations|pending and Reviewer-rejected',
+      label: 'AC-CLOSURE-DATA-02 late cleanup warnings preserve results and execution failures',
+      file: 'tests/phase3.test.ts',
+      pattern: 'cleans after final Main|cleans registered data',
     },
     {
       key: 'active01',

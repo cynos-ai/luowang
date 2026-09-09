@@ -18,6 +18,7 @@ export type LocalModelBehavior =
   | 'normal'
   | 'revise-final-patch'
   | 'invalid-tool'
+  | 'rejected-command'
   | 'special-cleanup'
   | 'reuse-existing'
   | 'empty-initialization'
@@ -331,7 +332,7 @@ function nextTool(
     behavior === 'reuse-existing' ? 'CORE-STATE-001' : 'ONBOARD-SMOKE-001';
 
   if (candidateMain) {
-    const unreadArtifact = nextUnreadArtifact(['plan.md', 'execution.md', 'draft-report.md']);
+    const unreadArtifact = nextUnreadArtifact(['plan.md', 'execution.md']);
     if (unreadArtifact) return unreadArtifact;
     if (count('write_plan') === 0) {
       const candidatePlan =
@@ -341,6 +342,7 @@ function nextTool(
             ? '# 初始化候选计划\n\n复用 target 中已有的 approved 状态场景。\n\n## execution_scenarios\n\n- CORE-STATE-001\n'
             : '# 初始化候选计划\n\n侦察发现核心入口需要验证。\n\n## execution_scenarios\n\n- ONBOARD-SMOKE-001\n';
       return tool('write_plan', {
+        requiresBrowser: false,
         content:
           candidatePlan +
           '\n## scenario_review_summary\n\n候选范围：核心入口验证。\n\n覆盖缺口：退款权限风险尚未覆盖。\n' +
@@ -375,6 +377,7 @@ function nextTool(
     if (count('list_target_files') === 0) return tool('list_target_files');
     if (count('write_plan') === 0) {
       return tool('write_plan', {
+        requiresBrowser: false,
         content: initialization
           ? '# 初始化静态计划\n\n待运行时侦察确认主要入口和能力。\n'
           : '# 测试计划\n\n## execution_scenarios\n\n无需场景测试：本次仅验证固定 target 的生产 Pi 工件流转。\n',
@@ -383,7 +386,7 @@ function nextTool(
     return null;
   }
 
-  if (has('write_execution') && has('write_draft_report')) {
+  if (has('write_execution')) {
     const unreadArtifact = nextUnreadArtifact(['plan.md']);
     if (unreadArtifact) return unreadArtifact;
     if (
@@ -427,7 +430,9 @@ function nextTool(
       return tool('finish_scenario', { scenarioId: initializationScenarioId });
     }
     if (count('run_fixture_command') === 0) {
-      return tool('run_fixture_command', { command: 'node --version' });
+      return tool('run_fixture_command', {
+        command: behavior === 'rejected-command' ? 'node --eval "1+1"' : 'node --version',
+      });
     }
     if (count('write_execution') === 0) {
       return tool('write_execution', {
@@ -438,20 +443,27 @@ function nextTool(
           : '# 执行记录\n\n固定 target 的受控命令执行成功；无需产品场景。\n',
       });
     }
-    if (count('write_draft_report') === 0) {
-      return tool('write_draft_report', {
-        content: initialization
-          ? behavior === 'empty-initialization'
-            ? '# 草稿报告\n\n无需场景测试：计划有固定 target 依据。\n'
-            : `# 草稿报告\n\n${initializationScenarioId} passed。\n`
-          : '# 草稿报告\n\n无需场景测试，工件流转通过。\n',
-      });
-    }
     return null;
   }
 
   if (has('write_review')) {
-    const unreadArtifact = nextUnreadArtifact(['plan.md', 'execution.md', 'draft-report.md']);
+    const prerequisite = nextUnreadArtifact(['plan.md', 'scenario-changes.patch']);
+    if (prerequisite) return prerequisite;
+    if (has('read_command_evidence')) {
+      if (count('list_evidence_files') === 0) return tool('list_evidence_files', {});
+      const commandIds = [
+        ...new Set(
+          [...prompt.matchAll(/"filename":\s*"(command-\d+\.json)"/g)].map((match) => match[1]),
+        ),
+      ];
+      const filename = commandIds[count('read_command_evidence')];
+      if (filename) return tool('read_command_evidence', { filename });
+    }
+    const unreadArtifact = nextUnreadArtifact([
+      'plan.md',
+      'scenario-changes.patch',
+      'execution.md',
+    ]);
     if (unreadArtifact) return unreadArtifact;
     if (count('write_review') === 0) {
       return tool('write_review', {
@@ -466,12 +478,7 @@ function nextTool(
   }
 
   if (finalMain) {
-    const unreadArtifact = nextUnreadArtifact([
-      'plan.md',
-      'execution.md',
-      'draft-report.md',
-      'review.md',
-    ]);
+    const unreadArtifact = nextUnreadArtifact(['plan.md', 'review.md']);
     if (unreadArtifact) return unreadArtifact;
     if (
       initialization &&
@@ -573,7 +580,7 @@ ${lines.map((line) => `+${line}`).join('\n')}
 `;
 }
 
-function messageText(message: ChatRequest['messages'] extends Array<infer T> ? T : never): string {
+function messageText(message: NonNullable<ChatRequest['messages']>[number] | undefined): string {
   if (!message) return '';
   if (typeof message.content === 'string') return message.content;
   if (Array.isArray(message.content)) {

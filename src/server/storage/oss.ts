@@ -92,6 +92,32 @@ export class OssError extends Error {
   }
 }
 
+/** Upload a fixed byte snapshot; never reopen a producer's mutable file after sanitization. */
+export async function uploadEvidenceBody(
+  oss: Pick<OssAdapter, 'objectKey' | 'putObject' | 'stableUrlForKey'>,
+  runId: string,
+  filename: string,
+  body: Buffer,
+  uploadedAt = new Date(),
+): Promise<EvidenceReference> {
+  assertEvidenceName(filename);
+  if (body.byteLength > MAX_EVIDENCE_BYTES)
+    throw new OssError('OSS_OBJECT_INVALID', '证据超出大小限制');
+  const key = oss.objectKey(runId, filename);
+  const contentType = contentTypeFor(filename);
+  await oss.putObject(key, body, contentType);
+  return {
+    id: encodeObjectKey(key),
+    filename,
+    objectKey: key,
+    url: oss.stableUrlForKey(key),
+    contentType,
+    sizeBytes: body.byteLength,
+    sha256: createHash('sha256').update(body).digest('hex'),
+    uploadedAt: uploadedAt.toISOString(),
+  };
+}
+
 export function createOssAdapter(
   configuration: ConfigurationStore,
   secretStore: SecretStore,
@@ -146,19 +172,13 @@ class S3OssAdapter implements OssAdapter {
       throw new OssError('OSS_OBJECT_INVALID', `证据文件无效：${filename}`);
     }
     const body = await readFile(filePath);
-    const key = this.objectKey(runId, filename);
-    const contentType = contentTypeFor(filename);
-    await this.putObject(key, body, contentType);
-    return {
-      id: encodeObjectKey(key),
+    return uploadEvidenceBody(
+      this,
+      runId,
       filename,
-      objectKey: key,
-      url: this.stableUrlForKey(key),
-      contentType,
-      sizeBytes: body.byteLength,
-      sha256: createHash('sha256').update(body).digest('hex'),
-      uploadedAt: (this.options.now ?? (() => new Date()))().toISOString(),
-    };
+      body,
+      (this.options.now ?? (() => new Date()))(),
+    );
   }
 
   async putObject(

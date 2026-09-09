@@ -17,7 +17,7 @@ import {
 const execFileAsync = promisify(execFile);
 const SHA_PATTERN = /^[0-9a-f]{40}$/i;
 const REF_PATTERN = /^[^\s~^:?*\\[\]]{1,255}$/;
-const REPORT_FILE_NAMES = ['draft-report.md', 'review.md', 'report.md'] as const;
+const REPORT_FILE_NAMES = ['review.md', 'report.md'] as const;
 const MAX_TARGET_FILE_BYTES = 512 * 1024;
 
 export type ReportFileName = (typeof REPORT_FILE_NAMES)[number];
@@ -882,6 +882,11 @@ export class GitRepository {
     patch: string,
   ): Promise<ScenarioPatchValidation> {
     const metadata = validateScenarioPatchText(patch);
+    if (!patch.endsWith('\n')) {
+      throw new ScenarioPatchError(
+        'patch 缺少末尾换行：请在完整 unified diff 最后一行后添加换行再提交；Harness 不自动改写待发布内容',
+      );
+    }
     const baseFiles = await this.readScenarioFilesAtCommit(baseCommit);
     const patchDirectory = await mkdtemp(join(tmpdir(), 'luowang-scenario-patch-'));
     const patchPath = join(patchDirectory, 'changes.patch');
@@ -892,7 +897,13 @@ export class GitRepository {
         await this.run(['apply', '--recount', '--whitespace=nowarn', patchPath]);
       } catch (error) {
         if (error instanceof GitCommandError) {
-          throw new ScenarioPatchError('patch 无法干净地应用到固定 target，未发布任何部分变更');
+          // Never expose raw Git stderr: it can contain patch text, secrets or local paths.
+          const line = error.stderr.match(
+            /(?:corrupt patch at line |patch fragment without header at line )(\d{1,8})\b/,
+          )?.[1];
+          throw new ScenarioPatchError(
+            `patch 无法干净地应用到固定 target，未发布任何部分变更；${line ? `diff 第 ${line} 行格式错误，` : ''}请核对完整 hunk、上下文及末尾换行；不要猜测 blob hash 或目录权限`,
+          );
         }
         throw error;
       }

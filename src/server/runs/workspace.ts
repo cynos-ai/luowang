@@ -10,6 +10,14 @@ import {
 } from './types.js';
 
 const RUN_ID_PATTERN = /^[0-9A-HJKMNP-TV-Z]{26}$/;
+export function isBrowserRecordName(name: string): boolean {
+  const match = /^(page|console)-\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z\.(yml|log)$/.exec(name);
+  return Boolean(
+    match &&
+    ((match[1] === 'page' && match[2] === 'yml') || (match[1] === 'console' && match[2] === 'log')),
+  );
+}
+
 const MAX_ARTIFACT_BYTES = 4 * 1024 * 1024;
 const MAX_EVIDENCE_BYTES = 32 * 1024 * 1024;
 
@@ -33,7 +41,6 @@ export class RunWorkspaceError extends Error {
 export interface RunArtifactWriter {
   writePlan(content: string): Promise<void>;
   writeExecution(content: string): Promise<void>;
-  writeDraftReport(content: string): Promise<void>;
   writeReview(content: string): Promise<void>;
   writeReport(content: string): Promise<void>;
   writeScenarioPatch(content: string): Promise<void>;
@@ -99,7 +106,6 @@ export class RunWorkspace implements RunArtifactReader {
     return {
       writePlan: (content) => this.writeForRole(role, 'plan.md', content, allowed),
       writeExecution: (content) => this.writeForRole(role, 'execution.md', content, allowed),
-      writeDraftReport: (content) => this.writeForRole(role, 'draft-report.md', content, allowed),
       writeReview: (content) => this.writeForRole(role, 'review.md', content, allowed),
       writeReport: (content) => this.writeForRole(role, 'report.md', content, allowed),
       writeScenarioPatch: (content) =>
@@ -190,20 +196,39 @@ export class RunWorkspace implements RunArtifactReader {
   }
 
   async writeHarnessEvidence(name: string, content: string): Promise<void> {
-    if (!/^cleanup-query-[a-f0-9]{16}-[0-9]+\.json$/.test(name)) {
-      throw new RunWorkspaceError('ARTIFACT_NOT_ALLOWED', 'Harness 清理证据文件名无效');
+    if (!/^command-[1-9][0-9]*\.json$/.test(name)) {
+      throw new RunWorkspaceError('ARTIFACT_NOT_ALLOWED', 'Harness 证据文件名无效');
     }
     if (typeof content !== 'string' || content.includes('\u0000')) {
-      throw new RunWorkspaceError('ARTIFACT_INVALID', 'Harness 清理证据内容无效');
+      throw new RunWorkspaceError('ARTIFACT_INVALID', 'Harness 证据内容无效');
     }
-    if (Buffer.byteLength(content, 'utf8') > 256 * 1024) {
-      throw new RunWorkspaceError('ARTIFACT_INVALID', 'Harness 清理证据超出大小限制');
+    if (Buffer.byteLength(content, 'utf8') > 1024 * 1024) {
+      throw new RunWorkspaceError('ARTIFACT_INVALID', 'Harness 证据超出大小限制');
     }
     await writeFile(this.evidencePath(name), content, {
       encoding: 'utf8',
       flag: 'wx',
       mode: 0o600,
     });
+  }
+
+  /** Harness-only sanitization of the pinned MCP's automatic text files. */
+  async replaceBrowserEvidence(name: string, content: string): Promise<void> {
+    if (
+      !isBrowserRecordName(name) ||
+      content.includes('\u0000') ||
+      Buffer.byteLength(content) > 1024 * 1024
+    ) {
+      throw new RunWorkspaceError('ARTIFACT_INVALID', '浏览器记录格式或大小无效');
+    }
+    await this.readEvidence(name); // Refuse missing files and symlinks before replacement.
+    const temporary = resolve(this.directory, `.browser-${randomBytes(16).toString('hex')}.tmp`);
+    try {
+      await writeFile(temporary, content, { flag: 'wx', mode: 0o600 });
+      await rename(temporary, this.evidencePath(name));
+    } finally {
+      await rm(temporary, { force: true });
+    }
   }
 
   async readEvidence(name: string): Promise<Buffer> {
@@ -384,7 +409,7 @@ export function createRunId(now = Date.now(), random = cryptoRandomBytes(10)): s
 
 const ROLE_ARTIFACTS: Record<AgentRole, readonly RunArtifactName[]> = {
   'main-a': ['plan.md', SCENARIO_PATCH_ARTIFACT_NAME],
-  runner: ['execution.md', 'draft-report.md'],
+  runner: ['execution.md'],
   reviewer: ['review.md'],
   'main-b': ['report.md', SCENARIO_PATCH_ARTIFACT_NAME],
 };

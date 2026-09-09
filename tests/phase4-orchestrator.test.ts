@@ -8,7 +8,7 @@ import { promisify } from 'node:util';
 import pino from 'pino';
 import { afterEach, describe, it } from 'vitest';
 
-import type { AgentToolResult, InlineExtension } from '@earendil-works/pi-coding-agent';
+import type { InlineExtension } from '@earendil-works/pi-coding-agent';
 import { createConfigurationStore } from '../src/server/configuration.js';
 import { loadConfig } from '../src/server/config.js';
 import { initializeDatabase } from '../src/server/db/migrate.js';
@@ -31,9 +31,9 @@ afterEach(async () => {
 describe('Phase 4 Run blocking boundaries', () => {
   it.each([
     ['OSS 上传失败', 'upload-failure', /证据上传失败/],
-    ['测试数据清理失败', 'cleanup-failure', /测试数据清理失败/],
     ['UI 缺少 MCP 或截图', 'browser-missing', /Playwright MCP 未启用|可审核的 evidence/],
     ['Reviewer 无法读取截图', 'review-read-failure', /Reviewer 无法读取/],
+    ['Reviewer 缺少图像能力', 'vision-unavailable', /图像输入/],
   ] as const)('%s 会形成 completed blocked Run', async (_label, mode, expectedReason) => {
     const fixture = await createGitFixture();
     const context = await createRunContext(fixture, mode);
@@ -57,19 +57,23 @@ describe('Phase 4 Run blocking boundaries', () => {
     }
   });
 
-  it('lets a production Run finish without a cleanup adapter after Reviewer reads controlled query evidence', async () => {
-    const fixture = await createGitFixture();
-    const context = await createRunContext(fixture, 'cleanup-review');
+  it.each(['cleanup-review', 'cleanup-failure'] as const)(
+    'preserves passed with visible teardown warnings: %s',
+    async (mode) => {
+      const fixture = await createGitFixture();
+      const context = await createRunContext(fixture, mode);
 
-    const result = await context.orchestrator.run({
-      request: '验证 Reviewer 独立确认测试数据清理',
-      trigger: 'manual',
-    });
+      const result = await context.orchestrator.run({
+        request: '验证 Reviewer 独立确认测试数据清理',
+        trigger: 'manual',
+      });
 
-    assert.equal(result.status, 'completed', JSON.stringify(result));
-    assert.equal(result.result, 'passed', JSON.stringify(result));
-    assert.match(result.artifacts['execution.md'] ?? '', /全部登记测试数据均已独立核验清理/);
-  });
+      assert.equal(result.status, 'completed', JSON.stringify(result));
+      assert.equal(result.result, 'passed', JSON.stringify(result));
+      assert.match(result.artifacts['report.md'] ?? '', /Harness 清理收尾[\s\S]*未完成/);
+      assert.ok(!result.blockingReasons?.some((reason) => /清理/.test(reason)));
+    },
+  );
 
   it('checks visual capability on the Reviewer instead of the text-only Runner', async () => {
     const fixture = await createGitFixture();
@@ -82,6 +86,20 @@ describe('Phase 4 Run blocking boundaries', () => {
 
     assert.equal(result.status, 'completed', JSON.stringify(result));
     assert.equal(result.result, 'passed', JSON.stringify(result));
+  });
+
+  it('repairs an invalid Issue action in the owning Session without losing the Bug', async () => {
+    const fixture = await createGitFixture();
+    const context = await createRunContext(fixture, 'report-correction');
+    const result = await context.orchestrator.run({
+      request: '验证报告字段纠错',
+      trigger: 'manual',
+    });
+    assert.equal(result.status, 'completed', JSON.stringify(result));
+    assert.equal(result.result, 'failed');
+    assert.match(result.artifacts['report.md'] ?? '', /issue_action: create/);
+    assert.match(result.artifacts['report.md'] ?? '', /BUG-FIXTURE/);
+    assert.match(result.artifacts['report.md'] ?? '', /Issue 查询覆盖缺口/);
   });
 
   it('does not complete a Run when Main finalization writes a non-schema scenario result', async () => {
@@ -115,7 +133,9 @@ type FailureMode =
   | 'browser-missing'
   | 'review-read-failure'
   | 'vision-reviewer'
-  | 'malformed-report';
+  | 'vision-unavailable'
+  | 'malformed-report'
+  | 'report-correction';
 
 interface Fixture {
   rootDir: string;
@@ -129,7 +149,6 @@ interface RunContextFixture {
 }
 
 class FailureBoundarySessionFactory implements AgentSessionFactory {
-  private cleanupEvidenceId: string | undefined;
   private cleanupDataId: string | undefined;
 
   constructor(private readonly mode: FailureMode) {}
@@ -140,12 +159,13 @@ class FailureBoundarySessionFactory implements AgentSessionFactory {
         if (input.role === 'main-a') {
           await invokeTool(input, 'get_run_context', {});
           await invokeTool(input, 'write_plan', {
+            requiresBrowser: this.mode !== 'cleanup-failure' && this.mode !== 'cleanup-review',
             content:
               this.mode === 'cleanup-failure' || this.mode === 'cleanup-review'
-                ? '# Plan\n\n## execution_scenarios\n\n无需场景测试：本次只验证非 UI 的清理边界。\n'
+                ? '# Plan\n\n## execution_scenarios\n\n本次只验证 Harness 清理边界，不涉及产品验证。无浏览器服务，不执行端到端 UI 测试，本次不做截图对比。\n'
                 : this.mode === 'vision-reviewer'
                   ? '# Plan\n\nUI 登录场景：打开登录页面并核对截图差异。\n\n## execution_scenarios\n\n- PHASE4-FIXTURE\n'
-                  : '# Plan\n\nUI 登录场景：打开登录页面并保存 screenshot 证据。\n\n## execution_scenarios\n\n- PHASE4-FIXTURE\n',
+                  : '# Plan\n\n打开首页，检查按钮是否被其他元素挡住。\n\n## execution_scenarios\n\n- PHASE4-FIXTURE\n',
           });
           return;
         }
@@ -168,21 +188,6 @@ class FailureBoundarySessionFactory implements AgentSessionFactory {
               id: this.cleanupDataId,
               description: 'fixture user',
             });
-            if (this.mode === 'cleanup-review') {
-              const capture = await invokeTool(input, 'capture_test_data_cleanup_query', {
-                dataId: this.cleanupDataId,
-                adapterId: 'fixture-api',
-                operation: 'lookup-by-id',
-                parameters: {},
-                content: 'Agent 不得覆盖 adapter 响应',
-                statusCode: 200,
-              });
-              this.cleanupEvidenceId = toolJson(capture).evidenceId as string;
-              await invokeTool(input, 'submit_test_data_cleanup_claim', {
-                dataId: this.cleanupDataId,
-                evidenceIds: [this.cleanupEvidenceId],
-              });
-            }
           } else if (this.mode !== 'browser-missing') {
             await mkdir(join(context.runDirectory, 'evidence'), { recursive: true });
             await writeFile(join(context.runDirectory, 'evidence', 'login.png'), 'fixture image');
@@ -190,49 +195,79 @@ class FailureBoundarySessionFactory implements AgentSessionFactory {
           await invokeTool(input, 'write_execution', {
             content: '# Execution\n\nRunner 已按计划执行。\n',
           });
-          await invokeTool(input, 'write_draft_report', {
-            content: '# Draft\n\n等待 Reviewer 独立审核。\n',
-          });
           return;
         }
 
         if (input.role === 'reviewer') {
-          for (const name of ['plan.md', 'execution.md', 'draft-report.md']) {
+          const writer = input.customTools.find((tool) => tool.name === 'write_review');
+          assert.match(writer?.description ?? '', /仅当 execution_scenarios 为空时/);
+          assert.match(input.systemPrompt, /仅当 execution_scenarios 为空时/);
+          assert.match(input.systemPrompt, /没有新增或修改场景不等于没有执行场景/);
+          assert.match(input.systemPrompt, /模型看图或人工触发 Run 不代表人工复核/);
+          assert.match(input.systemPrompt, /操作成功也不能反证截图完整/);
+          for (const name of ['plan.md', 'execution.md']) {
             await invokeTool(input, 'read_run_artifact', { name });
           }
-          if (this.mode === 'cleanup-review') {
-            assert.ok(this.cleanupEvidenceId);
-            assert.ok(this.cleanupDataId);
-            await invokeTool(input, 'read_test_data_cleanup_evidence', {
-              dataId: this.cleanupDataId,
-              evidenceId: this.cleanupEvidenceId,
-            });
-            await invokeTool(input, 'verify_test_data_cleanup', {
-              dataId: this.cleanupDataId,
-              decision: 'confirm',
-            });
-          }
+          assert.ok(!input.customTools.some((t) => t.name === 'verify_test_data_cleanup'));
           if (
             this.mode === 'review-read-failure' ||
             this.mode === 'vision-reviewer' ||
-            this.mode === 'malformed-report'
+            this.mode === 'vision-unavailable' ||
+            this.mode === 'malformed-report' ||
+            this.mode === 'report-correction'
           ) {
             await invokeTool(input, 'list_evidence_files', {});
-            await invokeTool(input, 'read_evidence_image', { filename: 'login.png' });
+            const image = (await invokeTool(input, 'read_evidence_image', {
+              filename: 'login.png',
+            })) as {
+              details: Record<string, unknown>;
+              content: Array<{ type: string }>;
+            };
+            if (this.mode === 'vision-unavailable') {
+              assert.equal(image.details.error, true);
+              assert.ok(image.content.every((part) => part.type !== 'image'));
+            }
           }
           await invokeTool(input, 'write_review', {
             content:
-              this.mode === 'cleanup-review'
-                ? '# Review\n\n已读取受控查询证据并确认清理。无需场景测试。\n'
+              this.mode === 'cleanup-review' || this.mode === 'cleanup-failure'
+                ? '# Review\n\n无需场景测试：计划仅验证 Harness 生命周期，不影响产品行为。\n'
                 : '# Review\n\n独立审核完成。\n',
           });
           return;
         }
 
-        for (const name of ['plan.md', 'execution.md', 'draft-report.md', 'review.md']) {
+        assert.match(input.systemPrompt, /清单非空时不写零场景通过说明/);
+        assert.match(input.systemPrompt, /模型看图或人工触发 Run 不代表人工复核/);
+        for (const name of ['plan.md', 'review.md']) {
           await invokeTool(input, 'read_run_artifact', { name });
         }
         const context = parsePromptContext(input.userMessage);
+        assert.match(input.systemPrompt, /unavailable 是查询状态，不是 issue_action 的第三个值/);
+        if (this.mode === 'report-correction') {
+          await invokeTool(input, 'query_issue_candidates', { bug_key: 'BUG-FIXTURE' });
+          const report =
+            passedReport(context, true)
+              .replaceAll('result: passed', 'result: failed')
+              .replace(
+                'confirmed_bugs: []',
+                'confirmed_bugs:\n  - key: BUG-FIXTURE\n    title: fixture bug\n    scenario_ids: [PHASE4-FIXTURE]\n    issue_action: unavailable',
+              ) + '\n## Issue 查询覆盖缺口\n\nBUG-FIXTURE：查询不可用，不能确认是否重复。\n';
+          const rejected = (await invokeTool(input, 'write_report', { content: report })) as {
+            details: { error?: boolean };
+            content: Array<{ text: string }>;
+          };
+          assert.equal(rejected.details.error, true);
+          assert.match(
+            rejected.content[0]!.text,
+            /confirmed_bugs\[0\]\.issue_action 必须是 create 或 link/,
+          );
+          assert.ok(!rejected.content[0]!.text.includes(context.runDirectory));
+          await invokeTool(input, 'write_report', {
+            content: report.replace('issue_action: unavailable', 'issue_action: create'),
+          });
+          return;
+        }
         await invokeTool(input, 'write_report', {
           content:
             this.mode === 'malformed-report'
@@ -286,7 +321,7 @@ async function createRunContext(fixture: Fixture, mode: FailureMode): Promise<Ru
     configuration,
     repository,
     reportDir,
-    provider: mode === 'vision-reviewer' ? visualReviewerProvider() : ({} as ProviderAdapter),
+    provider: mode === 'vision-unavailable' ? ({} as ProviderAdapter) : visualReviewerProvider(),
     browser: fakeBrowser(mode !== 'browser-missing'),
     oss: mode === 'cleanup-failure' || mode === 'browser-missing' ? undefined : fakeOss(mode),
     testData: createTestDataManager(
@@ -301,22 +336,7 @@ async function createRunContext(fixture: Fixture, mode: FailureMode): Promise<Ru
               }),
             },
           }
-        : mode === 'cleanup-review'
-          ? {
-              queryAdapters: [
-                {
-                  id: 'fixture-api',
-                  kind: 'api-query',
-                  operations: { 'lookup-by-id': [] },
-                  query: async () => ({
-                    absent: true,
-                    content: 'not found; token=must-not-appear',
-                    statusCode: 404,
-                  }),
-                },
-              ],
-            }
-          : undefined,
+        : undefined,
     ),
     sessions: new FailureBoundarySessionFactory(mode),
     logger: pino({ level: 'silent' }),
@@ -480,13 +500,6 @@ async function invokeTool(
   const tool = input.customTools.find((candidate) => candidate.name === name);
   assert.ok(tool, `missing tool ${name}`);
   return tool.execute('phase4-fixture', params as never, undefined, undefined, {} as never);
-}
-
-function toolJson(result: unknown): Record<string, unknown> {
-  const toolResult = result as AgentToolResult<Record<string, unknown>>;
-  const text = toolResult.content.find((item) => item.type === 'text');
-  assert.ok(text && text.type === 'text');
-  return JSON.parse(text.text) as Record<string, unknown>;
 }
 
 function parsePromptContext(prompt: string): {

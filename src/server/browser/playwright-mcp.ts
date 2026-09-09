@@ -1,5 +1,6 @@
 import { mkdtemp, rm } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { dirname, resolve } from 'node:path';
@@ -95,12 +96,13 @@ class DefaultPlaywrightMcpAdapter implements BrowserMcpAdapter {
 
   serverDefinition(evidenceDirectory: string): PlaywrightMcpServerDefinition {
     const mcp = this.configuration.getHarness().mcp;
-    const command = process.platform === 'win32' ? 'npx.cmd' : 'npx';
+    // Resolve from the Harness module, never the target or evidence cwd.
+    const require = createRequire(import.meta.url);
+    const cli = join(dirname(require.resolve('@playwright/mcp/package.json')), 'cli.js');
     return {
-      command,
+      command: process.execPath,
       args: [
-        '--yes',
-        `@playwright/mcp@${PLAYWRIGHT_MCP_VERSION}`,
+        cli,
         // Phase 4 never allows a headed or persistent browser session. Keep
         // this invariant here instead of trusting the mutable console value.
         '--headless',
@@ -304,18 +306,6 @@ async function loadPiMcpAdapter(): Promise<PiMcpAdapterModule> {
   // strip TypeScript files under node_modules.
   const packageName = 'pi-mcp-adapter';
   return (await import(packageName)) as PiMcpAdapterModule;
-}
-
-export function browserNeedsVision(plan: string): boolean {
-  return /(?:视觉|图像|图片)\s*(?:差异|对比|一致性|核对|判断|断言|回归)|截图\s*(?:差异|对比|一致性|核对|判断|断言|回归)|(?:核对|比较|对比|验证).{0,20}(?:截图|图像|图片)|布局|canvas|pixel|visual(?:\s+(?:check|comparison|assertion|regression))?/i.test(
-    plan,
-  );
-}
-
-export function browserScenarioRequested(plan: string): boolean {
-  return /浏览器|页面|网页|UI|登录|点击|填充|导航|Playwright|browser|web|snapshot|screenshot/i.test(
-    plan,
-  );
 }
 
 export function supportsVision(model: { input?: readonly string[] }): boolean {

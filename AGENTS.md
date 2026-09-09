@@ -5,8 +5,12 @@
 - 开始任何实质性修改前，先阅读 `docs/cynos-default-project-layout.md`。
 - 理解项目时读取 `docs/PROJECT.md`（存在时）；处理需求时读取对应的 `docs/changes/<change-id>/intent.md`、`spec.md` 和 `plan.md`（存在时）。
 - 已发布 MVP 基线工件位于 `docs/changes/luowang-harness-mvp/`。
+- 当前角色交接与收尾调整位于 `docs/changes/luowang-single-handoff/`：取消 Runner 草稿，最终 Main 只读计划/审核；最终 Main 后由 Harness 清理，收尾失败不改测试结论。涉及这些主题时，以该目录 Spec 覆盖下述旧基线，不做旧草稿格式兼容。
 - 当前增量变更是 `docs/changes/luowang-v07-production-closure/`，用于补齐 v0.7 Built-in Role Instructions（内置角色指令）、固定分支请求、数据清理、实时进度、历史 Run 和真实联合验收；罗网不使用 Pi Skills，并保持 Main/Runner/Reviewer 三组 Agent 配置、正常 Run 四个隔离 Session。处理这些主题时先读该目录，冲突处以其 Spec 为准。
 - 技术栈、产品边界和验收要求以对应需求 `spec.md` 为准，不在本文件重复维护。
+
+- 语义判断与客观事实的最新规则以 `docs/changes/luowang-model-semantic-decisions/spec.md` 为准：Main 显式声明浏览器执行需要，不用正则判断计划含义；安全和格式校验保留。
+- MCP启动、工件可重写和审核证据读取的最新规则以 `docs/changes/luowang-retest-followup/spec.md` 为准：Reviewer可受控读取本Run的浏览器快照/日志，不开放任意文本；工具路由错误不冒充证据损坏，真实读取或完整性失败仍阻塞。
 
 ## 仓库与分支
 

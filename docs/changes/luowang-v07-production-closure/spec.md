@@ -1,5 +1,7 @@
 # 罗网 v0.7 生产闭环补齐 Spec
 
+> 后续已确认调整：角色草稿、最终汇总输入和测试数据收尾以 [单向交接 Spec](../luowang-single-handoff/spec.md) 为准；本文件保留原基线及验收历史。
+
 - 状态：Implementation Baseline v0.4
 - 关联 Intent：[intent.md](./intent.md)
 - 实现计划：[plan.md](./plan.md)
