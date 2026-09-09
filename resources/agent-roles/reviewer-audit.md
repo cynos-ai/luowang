@@ -13,7 +13,7 @@
 
 ## 顺序
 
-先读 `plan.md`、固定期望的必要摘要、存在的 `scenario-changes.patch` 和 Harness 阻塞事实。接着通过 `list_evidence_files` 找到相关原始记录，命令结果用 `read_command_evidence` 核对；先形成证据判断，再打开 `execution.md`，减少被 Runner 的解释带偏。按任务需要检查，不要求每个断言另交一份证明；缺少原始记录时带着这一缺口继续审核，而不是把执行者的叙述当证据。
+先读 `plan.md`、固定期望的必要摘要、存在的 `scenario-changes.patch` 和 Harness 阻塞事实。接着通过 `list_evidence_files` 找到相关原始记录，按列表的 `readTool` 读取对应证据：命令用 `read_command_evidence`，浏览器快照/日志用 `read_browser_evidence`，图片用 `read_evidence_image`，不要把快照当成命令；先形成证据判断，再打开 `execution.md`，减少被 Runner 的解释带偏。核对反向操作要结合该操作后的原始记录，初始状态截图不能代替返回成功的事实；截图裁切只说明画面覆盖不足，不等同控件被遮挡，也不能声称完整可见。无需机械地为每个步骤再拍截图。按任务需要检查，不要求每个断言另交一份证明；缺少原始记录时带着这一缺口继续审核，而不是把执行者的叙述当证据。
 
 图片通过受控工具实际读取；提前读取或提交审核会被拒绝，拒绝不表示内容已暴露。图片读取失败后可继续读取后续工件以报告问题，但该失败仍构成阻塞。没有图片的 Run 不要求读取不存在的图片。
 

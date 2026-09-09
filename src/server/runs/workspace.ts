@@ -10,6 +10,14 @@ import {
 } from './types.js';
 
 const RUN_ID_PATTERN = /^[0-9A-HJKMNP-TV-Z]{26}$/;
+export function isBrowserRecordName(name: string): boolean {
+  const match = /^(page|console)-\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z\.(yml|log)$/.exec(name);
+  return Boolean(
+    match &&
+    ((match[1] === 'page' && match[2] === 'yml') || (match[1] === 'console' && match[2] === 'log')),
+  );
+}
+
 const MAX_ARTIFACT_BYTES = 4 * 1024 * 1024;
 const MAX_EVIDENCE_BYTES = 32 * 1024 * 1024;
 
@@ -202,6 +210,25 @@ export class RunWorkspace implements RunArtifactReader {
       flag: 'wx',
       mode: 0o600,
     });
+  }
+
+  /** Harness-only sanitization of the pinned MCP's automatic text files. */
+  async replaceBrowserEvidence(name: string, content: string): Promise<void> {
+    if (
+      !isBrowserRecordName(name) ||
+      content.includes('\u0000') ||
+      Buffer.byteLength(content) > 1024 * 1024
+    ) {
+      throw new RunWorkspaceError('ARTIFACT_INVALID', '浏览器记录格式或大小无效');
+    }
+    await this.readEvidence(name); // Refuse missing files and symlinks before replacement.
+    const temporary = resolve(this.directory, `.browser-${randomBytes(16).toString('hex')}.tmp`);
+    try {
+      await writeFile(temporary, content, { flag: 'wx', mode: 0o600 });
+      await rename(temporary, this.evidencePath(name));
+    } finally {
+      await rm(temporary, { force: true });
+    }
   }
 
   async readEvidence(name: string): Promise<Buffer> {

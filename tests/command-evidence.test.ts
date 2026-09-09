@@ -183,7 +183,7 @@ it('states Harness cleanup ownership without exposing cleanup claims', () => {
 });
 
 it('requires plan and existing patch before reading commands, without requiring a proof for every command', async () => {
-  const { store } = await fixture();
+  const { store, workspace } = await fixture();
   const id = await store.captureCommand('npm test', 'fixed', output(), []);
   let failures = 0;
   const order = createReviewReadOrder(
@@ -210,6 +210,9 @@ it('requires plan and existing patch before reading commands, without requiring 
   assert.doesNotThrow(() => order.assertReady());
   assert.equal((await read(id))?.error, undefined);
   assert.equal((await read('../plan.md'))?.error, true);
+  assert.equal(failures, 0);
+  await writeFile(join(workspace.evidenceDirectory, id), 'changed');
+  assert.equal((await read(id))?.error, true);
   assert.equal(failures, 1);
   assert.doesNotThrow(() => order.assertReady());
 });

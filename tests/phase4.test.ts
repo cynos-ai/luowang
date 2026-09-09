@@ -166,7 +166,9 @@ describe('Phase 4 browser and evidence boundaries', () => {
     )) as AgentToolResult<Record<string, unknown>>;
     const listedText = listed.content.find((item) => item.type === 'text');
     assert.ok(listedText && listedText.type === 'text');
-    assert.deepEqual(JSON.parse(listedText.text), [{ name: 'login.png', sizeBytes: 9 }]);
+    assert.deepEqual(JSON.parse(listedText.text), [
+      { name: 'login.png', sizeBytes: 9, kind: 'image', readTool: 'read_evidence_image' },
+    ]);
     const manager = createTestDataManager();
     const dataId = `${manager.prefix(workspace.runId)}screenshot-user`;
     await manager.register(workspace.runId, { id: dataId });

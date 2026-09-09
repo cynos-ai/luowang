@@ -32,3 +32,13 @@ Main两次写计划均自主声明`requiresBrowser=true`，选择正确且无维
 模型运行前零请求预检曾因只读浏览器容器默认HOME条件下的crashpad错误失败；仅将HOME置于已配置的/tmp tmpfs后预检成功，失败记录保留。模型启动前还纠正了新fixture PROJECT继承的旧API请求范围，重新固定target，应用代码未变。浏览器和网站均在独立internal网络，无宿主端口；网站日志只有七次GET，无填表/提交/账号写请求。最终Main后Harness销毁预登记基础设施命名空间，工作树清洁、无Run容器或网络残留。
 
 证据：`.cynos/acceptance/browser-joint/`的manifest、evaluation-plan、两次preflight、live-output、mcp-trace、artifacts、findings、audit.py和checks.json。已由助手阅读四工件、截图与相关原始事件，独立人工评分仍not_run。本轮未改生产代码、未重新跑194项工程测试或41项完整验收；现有部署、认证提交及全站验收均未覆盖，整体质量与发布仍不作通过声明。
+
+## 浏览器证据通道修复
+
+已实现：沿用RunEvidenceStore上传引用，对真正获准安装受控MCP扩展的Run开放固定CLI自动命名快照/日志读取；不另建正文提交或注册事实源。列表增加kind/readTool，错误ID和读错工具不读取正文、不计入证据失败，也不满足图片读取顺序；已知记录丢失、篡改或格式失败仍阻塞。图像能力检查在合法图片ID检查之后、图像读取之前执行。
+
+文本在Runner结束后统一脱敏上传，上传使用固定字节而不重新打开可能变化的生产者文件；读取校验已上传hash、UTF-8与大小，再次脱敏并明示截断。Reviewer指令明确按读取工具取证、不能用初始状态截图替代反向操作事实，不把视口裁切误称为完整可见或遮挡，也不要求每步截图。
+
+工程验证：205项测试/29文件、lint、应用typecheck、相关测试严格编译、build通过，记录在`.cynos/acceptance/browser-evidence-fix/verified.log`和`verified.exit`。新增11项测试覆盖正常读取、脱敏/固定上传字节、类型与ID拒绝、真缺失/篡改、阅读顺序、图像能力边界、未授权Run、截断/二进制/大小/路径与symlink。未重新运行41项聚合验收，真实Qwen复测须另列。
+
+保留中间验证记录：最初1项旧列表断言失败；之后高负载下并行测试超时及连带清理错误，改为单worker而非延长超时；一次整目录lint扫描到被忽略的`.cynos`评估驱动，随后在容器内用tmpfs遮蔽该非产品目录；测试严格编译的details类型/私有路径访问已修正。没有隐藏失败或修改历史模型评估。

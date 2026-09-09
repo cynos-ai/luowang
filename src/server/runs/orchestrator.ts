@@ -355,7 +355,12 @@ class DefaultRunOrchestrator implements RunOrchestrator {
         scenarioMode: this.options.configuration.getRepository().scenarioMode,
         initialization: input.initialization === true,
       };
-      const evidenceStore = createRunEvidenceStore(workspace, this.options.oss);
+      const evidenceStore = createRunEvidenceStore(workspace, this.options.oss, {
+        reviewSecrets: () =>
+          SECRET_KEYS.map((key) => this.options.secretStore?.get(key)).filter(
+            (value): value is string => Boolean(value),
+          ),
+      });
 
       if (context.initialization)
         await this.assessInitializationPreflight(context, prepared.repository);
@@ -982,6 +987,11 @@ class DefaultRunOrchestrator implements RunOrchestrator {
         (content) => workspace.writer('runner').writeExecution(content),
       ),
     ];
+    const browserExtension =
+      context.browserRequired && this.options.browser?.isEnabled()
+        ? this.options.browser.extension(workspace.evidenceDirectory)
+        : undefined;
+    if (browserExtension) evidenceStore?.allowBrowserRecords?.();
     await this.invoke(
       'runner-execution',
       'runner',
@@ -991,9 +1001,7 @@ class DefaultRunOrchestrator implements RunOrchestrator {
       runnerUserMessage(context, purpose),
       runnerOutputContract(),
       false,
-      context.browserRequired && this.options.browser?.isEnabled()
-        ? [this.options.browser.extension(workspace.evidenceDirectory)]
-        : [],
+      browserExtension ? [browserExtension] : [],
     );
     const progressError = progress?.completionError();
     if (progressError) {
@@ -1268,38 +1276,27 @@ class DefaultRunOrchestrator implements RunOrchestrator {
       () => this.addBlockingReason(context, 'Reviewer 原始图片读取失败，不能确认通过'),
       await workspace.exists('scenario-changes.patch'),
       () => this.addBlockingReason(context, 'Reviewer 无法读取受控命令证据，不能确认相关结果'),
+      () => this.addBlockingReason(context, 'Reviewer 无法读取浏览器原始记录，不能确认相关结果'),
     );
     const tools = [
       createReadArtifactTool(readOrder.readArtifact),
       ...(evidenceStore
-        ? createReviewerEvidenceTools(evidenceStore)
-            .map((tool) => {
-              if (tool.name !== 'read_evidence_image') return tool;
-              return {
-                ...tool,
-                execute: async (...args: Parameters<typeof tool.execute>) => {
-                  let visionAvailable = false;
-                  try {
-                    const model = await this.options.provider?.resolveModel('reviewer');
-                    visionAvailable = model ? supportsVision(model) : false;
-                  } catch {
-                    /* Unknown capability is not permission to deliver images. */
-                  }
-                  if (!visionAvailable) {
-                    this.addBlockingReason(
-                      context,
-                      'Reviewer 模型不支持或无法确认图像输入，不能审核图片证据',
-                    );
-                    return createTextResult(
-                      'Reviewer 图像输入能力不可用，未读取图片；不能确认相关视觉结果',
-                      { error: true },
-                    );
-                  }
-                  return tool.execute(...args);
-                },
-              };
-            })
-            .map(readOrder.wrap)
+        ? createReviewerEvidenceTools(evidenceStore, async () => {
+            let visionAvailable = false;
+            try {
+              const model = await this.options.provider?.resolveModel('reviewer');
+              visionAvailable = model ? supportsVision(model) : false;
+            } catch {
+              /* Unknown capability is not permission to deliver images. */
+            }
+            if (!visionAvailable) {
+              this.addBlockingReason(
+                context,
+                'Reviewer 模型不支持或无法确认图像输入，不能审核图片证据',
+              );
+            }
+            return visionAvailable;
+          }).map(readOrder.wrap)
         : []),
       createArtifactWriterTool(
         'write_review',

@@ -8,6 +8,7 @@ export function createReviewReadOrder(
   onImageFailure: () => void,
   requirePatch = false,
   onCommandFailure: () => void = onImageFailure,
+  onBrowserFailure: () => void = onCommandFailure,
 ) {
   let planRead = false;
   let patchRead = false;
@@ -33,7 +34,12 @@ export function createReviewReadOrder(
       return content;
     },
     wrap(tool: ToolDefinition): ToolDefinition {
-      if (tool.name !== 'read_evidence_image' && tool.name !== 'read_command_evidence') return tool;
+      if (
+        !['read_evidence_image', 'read_command_evidence', 'read_browser_evidence'].includes(
+          tool.name,
+        )
+      )
+        return tool;
       return {
         ...tool,
         async execute(...args) {
@@ -44,6 +50,12 @@ export function createReviewReadOrder(
             );
           const filename = (args[1] as { filename: string }).filename;
           const result = await tool.execute(...args);
+          const details = result.details as { error?: boolean; errorKind?: string } | undefined;
+          if (details?.errorKind === 'invalid_evidence_request') return result;
+          if (tool.name === 'read_browser_evidence') {
+            if (details?.error) onBrowserFailure();
+            return result;
+          }
           if (tool.name === 'read_command_evidence') {
             if ((result.details as { error?: boolean } | undefined)?.error) onCommandFailure();
             return result;

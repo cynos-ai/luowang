@@ -7,8 +7,8 @@ import { createTextResult } from './agent-session.js';
 import { redactSensitiveText } from './test-data.js';
 import type { CommandRunResult } from './command-runner.js';
 import type { OssAdapter } from '../storage/oss.js';
-import { contentTypeFor } from '../storage/oss.js';
-import { RunWorkspace, type RunEvidenceFile } from './workspace.js';
+import { contentTypeFor, uploadEvidenceBody } from '../storage/oss.js';
+import { RunWorkspace, isBrowserRecordName, type RunEvidenceFile } from './workspace.js';
 
 const MAX_REVIEW_IMAGE_BYTES = 16 * 1024 * 1024;
 
@@ -47,6 +47,9 @@ export interface RunEvidenceStore {
   ): Promise<string>;
   commandEvidenceIds(): string[];
   readCommandEvidence(filename: string): Promise<string>;
+  allowBrowserRecords?(): void;
+  browserEvidenceIds?(): string[];
+  readBrowserEvidence?(filename: string): Promise<string>;
 }
 
 export interface EvidenceReadResult {
@@ -60,8 +63,9 @@ export interface EvidenceReadResult {
 export function createRunEvidenceStore(
   workspace: RunWorkspace,
   oss?: OssAdapter,
+  options: { reviewSecrets?: () => readonly string[] } = {},
 ): RunEvidenceStore {
-  return new DefaultRunEvidenceStore(workspace, oss);
+  return new DefaultRunEvidenceStore(workspace, oss, options.reviewSecrets);
 }
 
 class DefaultRunEvidenceStore implements RunEvidenceStore {
@@ -70,10 +74,12 @@ class DefaultRunEvidenceStore implements RunEvidenceStore {
   private reviewReads = 0;
   private readonly commandEvidence = new Map<string, { sha256: string; sizeBytes: number }>();
   private commandSequence = 0;
+  private browserRecordsAllowed = false;
 
   constructor(
     private readonly workspace: RunWorkspace,
     private readonly configuredOss?: OssAdapter,
+    private readonly reviewSecrets: () => readonly string[] = () => [],
   ) {}
 
   private get oss(): OssAdapter {
@@ -105,10 +111,21 @@ class DefaultRunEvidenceStore implements RunEvidenceStore {
     const files = await this.workspace.listEvidence();
     const file = files.find((item) => item.name === filename);
     if (!file) throw new Error(`证据文件不存在：${filename}`);
+    let browserBody: Buffer | undefined;
+    if (isBrowserRecordName(filename)) {
+      const original = await this.workspace.readEvidence(filename);
+      const text = decodeBrowserRecord(original);
+      const clean = redactCommandText(text, this.reviewSecrets(), Number.MAX_SAFE_INTEGER);
+      if (Buffer.byteLength(clean) > 1024 * 1024) throw new Error('脱敏浏览器记录超过大小限制');
+      if (clean !== text) await this.workspace.replaceBrowserEvidence(filename, clean);
+      browserBody = Buffer.from(clean);
+    }
     if (this.commandEvidence.has(filename)) {
       this.assertCommandIntegrity(filename, await this.workspace.readEvidence(filename));
     }
-    const reference = await this.oss.uploadFile(this.workspace.runId, filename, file.path);
+    const reference = browserBody
+      ? await uploadEvidenceBody(this.oss, this.workspace.runId, filename, browserBody)
+      : await this.oss.uploadFile(this.workspace.runId, filename, file.path);
     this.references.set(filename, reference);
     return reference;
   }
@@ -242,6 +259,38 @@ class DefaultRunEvidenceStore implements RunEvidenceStore {
     return filename;
   }
 
+  allowBrowserRecords(): void {
+    this.browserRecordsAllowed = true;
+  }
+
+  browserEvidenceIds(): string[] {
+    return this.browserRecordsAllowed
+      ? [...this.references.keys()].filter(isBrowserRecordName)
+      : [];
+  }
+
+  async readBrowserEvidence(filename: string): Promise<string> {
+    const reference = this.references.get(filename);
+    if (!reference || !this.browserRecordsAllowed || !isBrowserRecordName(filename))
+      throw new Error('不是本 Run 已上传的浏览器记录');
+    const evidence = await this.readUploaded(filename);
+    if (createHash('sha256').update(evidence.body).digest('hex') !== reference.sha256) {
+      throw new Error('浏览器记录内容已改变');
+    }
+    const text = decodeBrowserRecord(evidence.body);
+    const clean = redactCommandText(text, this.reviewSecrets(), Number.MAX_SAFE_INTEGER);
+    const bytes = Buffer.from(clean);
+    const content =
+      bytes.length <= 64 * 1024
+        ? clean
+        : `${bytes
+            .subarray(0, 64 * 1024)
+            .toString('utf8')
+            .replace(/\uFFFD$/, '')}\n[browser evidence truncated]`;
+    this.recordReviewRead();
+    return JSON.stringify({ filename, url: reference.url, content });
+  }
+
   commandEvidenceIds(): string[] {
     return [...this.commandEvidence.keys()];
   }
@@ -265,6 +314,23 @@ class DefaultRunEvidenceStore implements RunEvidenceStore {
     this.recordReviewRead();
     return evidence.body.toString('utf8');
   }
+}
+
+function decodeBrowserRecord(body: Buffer): string {
+  if (body.length > 1024 * 1024) throw new Error('浏览器记录超过读取大小限制');
+  const text = new TextDecoder('utf-8', { fatal: true }).decode(body);
+  if (text.includes('\u0000')) throw new Error('浏览器记录不是有效文本');
+  return text;
+}
+
+function invalidEvidenceRequest() {
+  return createTextResult(
+    '证据 ID 或读取工具不匹配；请使用 list_evidence_files 返回的 readTool 和 name。未读取证据正文。',
+    {
+      error: true,
+      errorKind: 'invalid_evidence_request',
+    },
+  );
 }
 
 export function redactCommandText(
@@ -321,13 +387,19 @@ export function createRunnerEvidenceTools(store: RunEvidenceStore): ToolDefiniti
       name: 'upload_evidence',
       label: '上传证据',
       description:
-        '将当前 Run 的证据文件保存到配置的证据存储，并返回不含短期签名的稳定地址。成功仅说明该存储已接收，不据此推断远程发布；不得把本地绝对路径写入报告。',
+        '将当前 Run 的证据文件保存到配置的证据存储，并返回不含短期签名的稳定地址。MCP自动命名快照/日志由Harness在Runner结束后统一脱敏上传，当前只引用文件名。成功仅说明该存储已接收，不据此推断远程发布；不得把本地绝对路径写入报告。',
       parameters: filenameParameters,
       execute: async (
         _toolCallId: string,
         params: Static<typeof filenameParameters>,
       ): Promise<AgentToolResult<Record<string, unknown>>> => {
         try {
+          if (isBrowserRecordName(params.filename)) {
+            return createTextResult(
+              '浏览器文本记录由 Harness 在 Runner 结束后统一脱敏上传；尚未确认保存成功，当前只引用已有文件名，不构造地址。',
+              { status: 'deferred' },
+            );
+          }
           const reference = await store.upload(params.filename);
           return createTextResult(
             JSON.stringify({
@@ -345,7 +417,10 @@ export function createRunnerEvidenceTools(store: RunEvidenceStore): ToolDefiniti
   ];
 }
 
-export function createReviewerEvidenceTools(store: RunEvidenceStore): ToolDefinition[] {
+export function createReviewerEvidenceTools(
+  store: RunEvidenceStore,
+  canReadImage: () => Promise<boolean> = async () => true,
+): ToolDefinition[] {
   const filenameParameters = Type.Object({
     filename: Type.String({ description: '已上传截图的相对文件名' }),
   });
@@ -353,17 +428,31 @@ export function createReviewerEvidenceTools(store: RunEvidenceStore): ToolDefini
     {
       name: 'list_evidence_files',
       label: '列出审核证据',
-      description: '列出本次 Run 的图片及 Harness 捕获的脱敏命令结果；其他文本与任意路径不可读。',
+      description:
+        '列出本 Run 图片、命令及已上传的MCP命名快照/日志，包含类型和对应读取工具；不读取任意文本或路径。',
       parameters: Type.Object({}),
       execute: async (): Promise<AgentToolResult<Record<string, unknown>>> => {
         try {
           const commandIds = store.commandEvidenceIds();
-          const files = (await store.list()).filter(
-            ({ name }) => contentTypeFor(name).startsWith('image/') || commandIds.includes(name),
-          );
-          return createTextResult(
-            JSON.stringify(files.map(({ name, sizeBytes }) => ({ name, sizeBytes }))),
-          );
+          const browserIds = store.browserEvidenceIds?.() ?? [];
+          const files = (await store.list()).flatMap(({ name, sizeBytes }) => {
+            const kind = commandIds.includes(name)
+              ? 'command'
+              : browserIds.includes(name)
+                ? 'browser'
+                : contentTypeFor(name).startsWith('image/')
+                  ? 'image'
+                  : null;
+            if (!kind) return [];
+            const readTool =
+              kind === 'command'
+                ? 'read_command_evidence'
+                : kind === 'browser'
+                  ? 'read_browser_evidence'
+                  : 'read_evidence_image';
+            return [{ name, sizeBytes, kind, readTool }];
+          });
+          return createTextResult(JSON.stringify(files));
         } catch (error) {
           return createTextResult(safeMessage(error), { error: true });
         }
@@ -378,6 +467,7 @@ export function createReviewerEvidenceTools(store: RunEvidenceStore): ToolDefini
         filename: Type.String({ description: 'list_evidence_files 返回的 command 证据 ID' }),
       }),
       execute: async (_toolCallId: string, params: { filename: string }) => {
+        if (!store.commandEvidenceIds().includes(params.filename)) return invalidEvidenceRequest();
         try {
           return createTextResult(await store.readCommandEvidence(params.filename));
         } catch {
@@ -386,6 +476,29 @@ export function createReviewerEvidenceTools(store: RunEvidenceStore): ToolDefini
             '受控命令证据不可用或校验失败；请核对本 Run 的证据 ID，不能确认相关结果',
             { error: true },
           );
+        }
+      },
+    },
+    {
+      name: 'read_browser_evidence',
+      label: '读取浏览器原始记录',
+      description:
+        '只读本 Run 已上传的MCP自动命名快照/控制台记录；校验上传内容、脱敏并明示截断。不执行浏览器操作，不接受自填正文或任意文本路径。结合实际操作核对前后状态，不以文件名判定业务成功。',
+      parameters: Type.Object({
+        filename: Type.String({
+          description: 'list_evidence_files 中 readTool 为 read_browser_evidence 的 name',
+        }),
+      }),
+      execute: async (_toolCallId: string, params: { filename: string }) => {
+        if (!store.readBrowserEvidence || !store.browserEvidenceIds?.().includes(params.filename))
+          return invalidEvidenceRequest();
+        try {
+          return createTextResult(await store.readBrowserEvidence(params.filename));
+        } catch {
+          store.recordReadFailure?.();
+          return createTextResult('浏览器原始记录不可用、内容无效或校验失败，不能确认相关结果', {
+            error: true,
+          });
         }
       },
     },
@@ -400,6 +513,19 @@ export function createReviewerEvidenceTools(store: RunEvidenceStore): ToolDefini
         params: Static<typeof filenameParameters>,
       ): Promise<AgentToolResult<Record<string, unknown>>> => {
         try {
+          const files = await store.list();
+          if (
+            !files.some(
+              ({ name }) => name === params.filename && contentTypeFor(name).startsWith('image/'),
+            )
+          )
+            return invalidEvidenceRequest();
+          if (!(await canReadImage())) {
+            return createTextResult(
+              'Reviewer 图像输入能力不可用，未读取图片；不能确认相关视觉结果',
+              { error: true },
+            );
+          }
           const evidence = store.readUploaded
             ? await store.readUploaded(params.filename)
             : await store.read(params.filename);
