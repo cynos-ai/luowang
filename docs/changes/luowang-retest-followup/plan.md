@@ -89,3 +89,21 @@ Reviewer实际用新工具读取三份页面快照和一个控制台记录，包
 两组均误判返回入口“完整可见”。七个冻结哈希、两份body和原图字节、跨模型messages一致性及两组唯一snapshot差异均校验通过；凭据原文扫描通过，不保存思考正文。证据在`.cynos/acceptance/reviewer-vision-kimi/`。
 
 当前单图中Coding Plan的Qwen/Kimi均误判，原生DeepSeek/GLM识别裁切；因未做同模型跨通道的交叉对照，不能单归于基础模型或断言Coding Plan服务端处理有故障。仍优先验证DeepSeek完整Reviewer、GLM备选，不扩为总体排名。独立人工评分not_run；未改正式配置/生产代码，未重跑工程全套或真实联合Run、操作网站/账号/现有服务、发布或回写旧结果。
+
+## DeepSeek报告可信度收尾
+
+前置联合Run `01M22MQF5ZN46Y1P270BYFDX06` 使用Flash规划low、Runner off、Flash Vision审核low、最终Flash off（仅驱动覆盖）。四Session/40请求，真实入口双向切换成立，Run completed/passed，原始证据与清理核验通过；报告仍有截图覆盖偏满、模型冒称人工、非空清单套用零场景说明。原始材料保留在`.cynos/acceptance/deepseek-joint/`，不回写结果，不宣称完整质量或部署验收通过。
+
+本次范围：
+1. 在既有tool描述/输出契约中将零执行场景规则限定为空清单；角色指令明确真实审阅主体、只输出适用结论和实际画面覆盖。保留格式/证据安全规则，不增加语义拒绝门禁。
+2. 运行角色装载、orchestrator、语义边界和证据相关工程回归，检查实际组装输入，而不是只验证资源文件文字。
+3. 冻结本次候选与上一轮plan/execution/八份原始证据，沿用原生DeepSeek Vision low→Flash off，仅一次Reviewer→最终Main重放。保留错误与旧结果，不操作浏览器或账号、不重新执行场景、不发布、不改变正式模型/思考配置。
+4. 审阅新工件、实际模型参数、证据字节和读序，区分工程通过、报告改善及未解决问题；独立人工评分not_run。
+
+已完成本轮实现与一次定向复验，材料在`.cynos/acceptance/report-truthfulness/`。候选为冻结的本地工作树及差异，不是未修改的316c36c。
+
+有效工程检查在quality容器的临时工作副本、断网条件下完成：lint/typecheck、205测试/29文件、build、受影响测试严格编译通过；归档源码逐文件匹配冻结候选，关键文件hash与工作目录在日志中核验。前三次包装尝试不计为候选通过：一次只读根目录造成Vite临时文件EROFS；两次/work权限失败且漏fail-fast，误跑镜像旧137项测试，其中一次外层exit仍为0、另一次管道141。随后改为/tmp目录、set -eu及源hash检查，`engineering-4.exit=0`才是有效验证。候选工程验证实际完成晚于模型启动，不把旧镜像测试冒称先行通过。
+
+零模型工具/格式重放通过；真实复验仅两个独立已释放Session、9请求（Reviewer 6 / 最终Main 3），原生DeepSeek Vision low→Flash off，HTTP200，无模型或工具错误，不重跑。Reviewer读4文本/3原PNG后再读execution，最终Main只读plan/新review；原件、工具返回、SDK及HTTP图像字节一致，255个冻结/来源hash通过，旧Run未修改，未操作网站/账号或追加清理成功印章。
+
+本样本三项目标改善：不再为非空清单写零场景通过说明，不再冒称人工，明确指出注册图返回入口下沿裁切且最终Main保留限制；功能判断仍passed，不把截图局限当产品缺陷。仍有来源归因和措辞问题：Reviewer把自身卡片高度观察写成Runner报告已有说明，将内容相同快照称为重复上传，“无需处理清理”未充分限定主体。未修改模型输出或追分补跑；单样本改善不代表总体质量/发布通过，独立人工评分not_run。下一步建议冻结候选，复用正常/已知缺陷样本验证正负判断，而非持续围绕本图微调；扩大执行范围另行授权。

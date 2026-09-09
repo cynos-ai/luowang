@@ -184,6 +184,12 @@ class FailureBoundarySessionFactory implements AgentSessionFactory {
         }
 
         if (input.role === 'reviewer') {
+          const writer = input.customTools.find((tool) => tool.name === 'write_review');
+          assert.match(writer?.description ?? '', /仅当 execution_scenarios 为空时/);
+          assert.match(input.systemPrompt, /仅当 execution_scenarios 为空时/);
+          assert.match(input.systemPrompt, /没有新增或修改场景不等于没有执行场景/);
+          assert.match(input.systemPrompt, /模型看图或人工触发 Run 不代表人工复核/);
+          assert.match(input.systemPrompt, /操作成功也不能反证截图完整/);
           for (const name of ['plan.md', 'execution.md']) {
             await invokeTool(input, 'read_run_artifact', { name });
           }
@@ -215,6 +221,8 @@ class FailureBoundarySessionFactory implements AgentSessionFactory {
           return;
         }
 
+        assert.match(input.systemPrompt, /清单非空时不写零场景通过说明/);
+        assert.match(input.systemPrompt, /模型看图或人工触发 Run 不代表人工复核/);
         for (const name of ['plan.md', 'review.md']) {
           await invokeTool(input, 'read_run_artifact', { name });
         }

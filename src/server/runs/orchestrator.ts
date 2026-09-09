@@ -1301,7 +1301,7 @@ class DefaultRunOrchestrator implements RunOrchestrator {
       createArtifactWriterTool(
         'write_review',
         '写入独立审核',
-        '写入本次 Run 的完整 review.md。必须独立核对执行证据和零场景判断。',
+        '写入本次 Run 的完整 review.md。必须独立核对执行证据；仅当 execution_scenarios 为空时审核零执行场景的理由。',
         (content) => {
           readOrder.assertReady();
           return workspace.writer('reviewer').writeReview(content);
@@ -2293,7 +2293,7 @@ ${JSON.stringify(reviewerContext(context), null, 2)}`;
 
 function reviewerOutputContract(): string {
   return `先读取 plan.md 和唯一 ## execution_scenarios 清单、存在的 scenario-changes.patch 及 Harness 阻塞事实；核对相关原始命令/API/截图证据，再对照 execution.md 的操作与观察。需要核对命令时通过 list_evidence_files 和 read_command_evidence 只读查看本 Run 捕获结果；截图使用 read_evidence_image，不能执行命令、读取账号或任意路径。截断或执行错误不等于产品通过。
-写入完整 review.md，按计划逐场景交付独立判断、依据及稳定证据引用、已确认 Bug 的预期/实际差异和复现条件、未完成项及原因不确定性，供最终 Main 直接整理，不只写同意 Runner。必要证据、视觉能力不足、场景缺失或影响不明时维持 blocked；零场景必须有计划依据。测试后临时数据清理由 Harness 在最终 Main 后处理，不属于本次审核或测试阻塞；场景本身验证删除行为时仍按实际行为判断。`;
+写入完整 review.md，按计划逐场景交付独立判断、依据及稳定证据引用、已确认 Bug 的预期/实际差异和复现条件、未完成项及原因不确定性，供最终 Main 直接整理，不只写同意 Runner。必要证据、视觉能力不足、场景缺失或影响不明时维持 blocked；仅当 execution_scenarios 为空时审核零执行场景的计划依据。测试后临时数据清理由 Harness 在最终 Main 后处理，不属于本次审核或测试阻塞；场景本身验证删除行为时仍按实际行为判断。`;
 }
 
 function finalizationPromptContext(context: RunContext): Record<string, unknown> {
@@ -2332,7 +2332,7 @@ ${JSON.stringify(finalizationPromptContext(context), null, 2)}`;
 
 function mainBOutputContract(): string {
   return `必须先读取 plan.md、review.md；初始化且存在 scenario-changes.patch 时也读取它。scenario_results 必须按 plan.md 的 ## execution_scenarios 清单完整且有序对应；不得用正文其他 ID 补齐。根据计划与审核结论，必须为每个本次 confirmed Bug 按 title、keywords 或 bug_key 调用 query_issue_candidates；严格区分 ok、empty、unavailable，unavailable 最多原样重试一次。查询 unavailable、重试或预算耗尽时必须在正文写“## Issue 查询覆盖缺口”并列出对应 Bug key，不得伪装成 empty。最终 report.md frontmatter 只能包含 run_id、trigger、base_commit、target_commit、included_commits、result、started_at、finished_at、scenario_results、confirmed_bugs；started_at 和 finished_at 必须逐字使用动态 Run 上下文提供的值，其他字段值也必须与固定 Run 一致。result 优先级为 blocked > failed > passed；blockingReasons 非空时必须 blocked。
-scenario_results 必须是 YAML 数组，每项只能有 id 和 result。confirmed_bugs 每项只能有 key、title、scenario_ids、issue_action，以及 link 时必需的 issue_url；failed 至少有一个 confirmed bug，issue_action 只能 create 或 link。零场景 passed 必须由计划提供具体理由、Reviewer 独立认可，最终报告忠实保留依据；不存在凭特定词语就能通过的证明。
+scenario_results 必须是 YAML 数组，每项只能有 id 和 result。confirmed_bugs 每项只能有 key、title、scenario_ids、issue_action，以及 link 时必需的 issue_url；failed 至少有一个 confirmed bug，issue_action 只能 create 或 link。仅当 execution_scenarios 为空时，零执行场景 passed 才需要计划的具体理由和 Reviewer 独立认可，最终报告忠实保留依据；没有新增或修改场景不等于没有执行场景，清单非空时不写零场景通过说明。
 证据只写在正文并引用稳定 URL。不得复述任何测试账号字段、Secret、隐藏推理、短期签名 URL 或绝对路径。结束前通过 write_report 写完整 report.md。`;
 }
 
