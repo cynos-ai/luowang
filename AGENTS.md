@@ -10,6 +10,7 @@
 - 技术栈、产品边界和验收要求以对应需求 `spec.md` 为准，不在本文件重复维护。
 
 - 语义判断与客观事实的最新规则以 `docs/changes/luowang-model-semantic-decisions/spec.md` 为准：Main 显式声明浏览器执行需要，不用正则判断计划含义；安全和格式校验保留。
+- MCP启动、工件可重写和审核证据读取的最新规则以 `docs/changes/luowang-retest-followup/spec.md` 为准：Reviewer可受控读取本Run的浏览器快照/日志，不开放任意文本；工具路由错误不冒充证据损坏，真实读取或完整性失败仍阻塞。
 
 ## 仓库与分支
 

@@ -42,3 +42,15 @@ Main两次写计划均自主声明`requiresBrowser=true`，选择正确且无维
 工程验证：205项测试/29文件、lint、应用typecheck、相关测试严格编译、build通过，记录在`.cynos/acceptance/browser-evidence-fix/verified.log`和`verified.exit`。新增11项测试覆盖正常读取、脱敏/固定上传字节、类型与ID拒绝、真缺失/篡改、阅读顺序、图像能力边界、未授权Run、截断/二进制/大小/路径与symlink。未重新运行41项聚合验收，真实Qwen复测须另列。
 
 保留中间验证记录：最初1项旧列表断言失败；之后高负载下并行测试超时及连带清理错误，改为单worker而非延长超时；一次整目录lint扫描到被忽略的`.cynos`评估驱动，随后在容器内用tmpfs遮蔽该非产品目录；测试严格编译的details类型/私有路径访问已修正。没有隐藏失败或修改历史模型评估。
+
+## 修复后的Qwen单链复验
+
+候选`432a3aa`，复用上一轮同一固定target、请求、只读场景、容器及本地证据披露，只跑一次候选链。四个独立已释放Session/60请求（13/30/13/4），qwen3.7-plus、Thinking off，无模型请求/认证/配额/终止错误。最终completed/passed、阻塞列表为空；旧blocked记录保持不变。
+
+Reviewer实际用新工具读取三份页面快照和一个控制台记录，包括真正的返回登录快照；未调用命令证据工具。四文本与保存字节一致，三张原始PNG及SDK模型上下文图像字节一致，七项原始读取均早于execution，最终Main只读plan/review。203个冻结哈希一致，六个Markdown证据链接有效；七次网站请求全为GET，无输入/提交/账号创建，工作树及Run容器/网络清理核验通过。
+
+本轮Runner自主多拍一张返回登录截图，非新增程序门禁；反向操作判断同时获得新通道的快照和额外截图支持，不将全部改善单归因于一个改动。本轮没有错走命令工具，错误路由恢复与真损坏仍阻塞由工程回归证明，不冒称现场已复现恢复过程。
+
+仍保留质量缺口：注册图下沿的返回入口被裁切，Reviewer仍写成“均清晰可见”；console没有API记录不能证明网络没有调用，实际有GET /api/auth/status。历史Issue空列表属于离线驱动替代，不证明真实GitHub无历史问题。Runner修正了场景路径及MCP ref/target参数错误，原始事件保留。只读业务Run passed及原始记录通道打通成立，不代表视觉审核措辞或整体模型质量已完全收敛。
+
+证据在`.cynos/acceptance/browser-evidence-fix/model/`的manifest、live-output、mcp-trace、artifacts、findings、audit.py和checks.json。四工件、三图及原始事件已由助手审阅，独立人工评分仍not_run；不扩展为认证提交、全站或正式部署验收，不push或发布。
