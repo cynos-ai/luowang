@@ -846,6 +846,7 @@ class DefaultRunOrchestrator implements RunOrchestrator {
       'gitToken',
       'testUsername',
       'testPassword',
+      'testDataCleanupToken',
       'ossAccessKeyId',
       'ossAccessKeySecret',
     ] as const) {
@@ -2038,6 +2039,7 @@ function assertSafeReportContent(
     'gitToken',
     'testUsername',
     'testPassword',
+    'testDataCleanupToken',
     'ossAccessKeyId',
     'ossAccessKeySecret',
   ] as const;

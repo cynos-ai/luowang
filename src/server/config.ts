@@ -34,6 +34,7 @@ export interface AppConfig {
   initialAdminPassword?: string;
   masterKey?: string;
   allowedOrigin?: string;
+  testDataCleanupUrl?: string;
 }
 
 export class ConfigError extends Error {
@@ -122,6 +123,7 @@ export function loadConfig(environment: NodeJS.ProcessEnv = process.env): AppCon
     webRoot,
     logLevel: readLogLevel(environment.LUOWANG_LOG_LEVEL ?? environment.LOG_LEVEL),
     version: environment.LUOWANG_VERSION ?? DEFAULT_VERSION,
+    testDataCleanupUrl: environment.LUOWANG_TEST_DATA_CLEANUP_URL?.trim() || undefined,
     initialAdminPassword: readSecret(
       environment,
       'LUOWANG_ADMIN_PASSWORD',

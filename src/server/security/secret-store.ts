@@ -14,6 +14,7 @@ export const SECRET_KEYS: readonly SecretKey[] = [
   'gitToken',
   'testUsername',
   'testPassword',
+  'testDataCleanupToken',
   'ossAccessKeyId',
   'ossAccessKeySecret',
 ];
