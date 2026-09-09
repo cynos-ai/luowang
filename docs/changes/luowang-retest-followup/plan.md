@@ -64,3 +64,20 @@ Reviewer实际用新工具读取三份页面快照和一个控制台记录，包
 **两组均错误地把下沿被裁切的返回登录入口判成“完整可见”，并称依据来自截图。** 误判在不提供snapshot时同样出现，不能仅归因为文字证据干扰。当前样本显示局部可见程度判断不可靠，不等于模型完全不能看图；单图各一次亦不能推出总体准确率或确定服务端/模型内部机制。
 
 九个冻结哈希、发送body及图像字节、两组唯一输入差异均校验通过。材料及输出由助手核对，独立人工评分仍not_run。证据在`.cynos/acceptance/reviewer-vision-diagnostic/`的plan、manifest、output、audit、checks和findings。下一步建议小范围核验视觉Reviewer候选能力，而非继续修改传输或追加提示词；模型更换须另行授权。未重跑工程全套、操作网站/账号/现有服务、发布或改写历史结果。
+
+## 已授权多模型及思考模式对照
+
+用户随后授权glm-5.3-flash、deepseek-v4-flash-vision-exp及从Pi临时取用相关凭据。GLM off首先被本地参数保护拦住，实际外部请求为零；SDK包装的Connection error不是服务端连接或认证错误。零网络回放与官方文档确认：该模型不支持关闭思考，Pi将off转为low。保留此设置失败，再单列执行原先已授权的DeepSeek off两组：两次HTTP200/stop，共1,794 tokens，均正确识别返回入口下沿裁切；带snapshot组明确区分DOM存在与截图不完整。
+
+用户进一步明确允许开启思考且不限最低档，包括Qwen。按运行前固定计划新增四次请求：GLM high两组、Qwen开启思考两组，输出上限4096、90秒、重试0，不改图或问题。四次均HTTP200/stop、无截断，共8,453 tokens。实际body分别包含GLM thinking.enabled/high和Qwen enable_thinking=true/high；四次均返回非零思考用量。Qwen接口内部high档位语义未独立校准，结论仅称开启思考。
+
+| 固定原图的返回入口判断 | 仅图片 | 图片＋snapshot |
+| --- | --- | --- |
+| Qwen off / 1024（既存） | 误判完整可见 | 误判完整可见 |
+| DeepSeek vision off / 1024 | 正确识别裁切 | 正确识别裁切 |
+| GLM high / 4096 | 正确识别裁切 | 正确识别裁切 |
+| Qwen开启思考 / 4096 | 仍误判完整可见 | 仍误判完整可见 |
+
+新增六次实际请求的图片均与原件逐字节一致，messages与对应Qwen off请求一致；每模型两组仅snapshot差异。前批十三个、思考批七个冻结哈希及body/图像核对通过；初次思考批后验审计误假定统一max_tokens，修正对Qwen实际max_completion_tokens的读取后通过，原失败保留且未补调用。凭据原文扫描通过，思考正文未记录或展示。
+
+证据在`.cynos/acceptance/reviewer-vision-model-comparison/`与`.cynos/acceptance/reviewer-vision-thinking/`。单图每条件一次、不相同的思考/预算和默认采样不能形成总体排名或严格因果结论；当前Qwen接入的误判也不能单归因于基础模型内部某个模块。建议优先验证DeepSeek的完整Reviewer审核质量，GLM备选，不继续仅为本图调提示词或追分。独立人工评分仍not_run；未换正式配置、改生产代码/角色指令、重跑工程全套或完整四Session联合Run、操作网站/账号/现有服务、发布或回写历史结果。
