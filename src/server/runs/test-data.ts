@@ -58,6 +58,8 @@ export interface TestDataFinalResult {
 }
 
 export interface TestDataManager {
+  /** Adapter configuration, not proof of successful cleanup; omitted means unknown. */
+  readonly cleanupAvailable?: boolean;
   prefix(runId: string): string;
   register(runId: string, entry: TestDataEntry): Promise<void>;
   pending(runId: string): TestDataRecord[];
@@ -83,6 +85,10 @@ class DefaultTestDataManager implements TestDataManager {
     if (options.cleanupAdapter && !/^[a-z][a-z0-9-]{0,63}$/.test(options.cleanupAdapter.id)) {
       throw new Error('测试数据适配器 ID 无效');
     }
+  }
+
+  get cleanupAvailable(): boolean {
+    return this.options.cleanupAdapter !== undefined;
   }
 
   prefix(runId: string): string {
@@ -217,6 +223,12 @@ export function createTestDataTools(
   runId: string,
   scenarioId?: string,
 ): ToolDefinition[] {
+  const cleanupNote =
+    manager.cleanupAvailable === true
+      ? '已配置受控清理适配器；是否清理成功以最终收尾核验为准，登记不代表已清理。'
+      : manager.cleanupAvailable === false
+        ? '未配置清理适配器；Harness 无法自动删除登记数据，只会保留未完成告警，不要假定数据会被自动清理。'
+        : '清理适配器能力未确认；不要假定数据会被自动清理，以最终收尾核验为准。';
   const parameters = Type.Object(
     {
       id: Type.String({ description: '当前 Run 创建的测试数据标识，不含凭据' }),
@@ -228,20 +240,19 @@ export function createTestDataTools(
     {
       name: 'get_test_data_prefix',
       label: '获取测试数据标记',
-      description:
-        '获取当前 Run 前缀。创建后立即登记；Harness 在最终 Main 结束后统一清理并独立核验，Runner 不提交清理声明或提前确认收尾。',
+      description: `获取当前 Run 前缀。创建后立即登记；Harness 在最终 Main 结束后统一收尾，Runner 不提交清理声明或提前确认结果。${cleanupNote}`,
       parameters: Type.Object({}, { additionalProperties: false }),
       execute: async () => createTextResult(manager.prefix(runId)),
     },
     {
       name: 'register_test_data',
       label: '登记测试数据',
-      description: '登记已创建的当前 Run 数据，供 Harness 收尾；登记不代表已清理。',
+      description: `登记已创建的当前 Run 数据，供 Harness 收尾；登记不代表已清理。${cleanupNote}`,
       parameters,
       execute: async (_id: string, params: Static<typeof parameters>) => {
         try {
           await manager.register(runId, { ...params, ...(scenarioId ? { scenarioId } : {}) });
-          return createTextResult('测试数据已登记');
+          return createTextResult(`测试数据已登记；${cleanupNote}`);
         } catch {
           return createTextResult('测试数据登记失败，请检查当前 Run 前缀及字段格式', {
             error: true,

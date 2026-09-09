@@ -14,6 +14,39 @@ describe('Harness-owned test data teardown', () => {
     );
     assert.match(tools[0]!.description, /最终 Main 结束后/);
   });
+  it('discloses unavailable, configured and unknown cleanup without attempting deletion', async () => {
+    let cleanupCalls = 0;
+    const configured = createTestDataManager({
+      cleanupAdapter: {
+        id: 'configured-only',
+        async cleanupAndVerify() {
+          cleanupCalls += 1;
+          return { absent: true, content: 'absent' };
+        },
+      },
+    });
+    const unknown = createTestDataManager();
+    Object.defineProperty(unknown, 'cleanupAvailable', { value: undefined });
+    for (const [manager, expected] of [
+      [createTestDataManager(), '未配置清理适配器'],
+      [configured, '已配置受控清理适配器'],
+      [unknown, '能力未确认'],
+    ] as const) {
+      const tools = createTestDataTools(manager, RUN);
+      assert.ok(tools[0]!.description.includes(expected));
+      assert.ok(tools[1]!.description.includes(expected));
+      const result = await tools[1]!.execute(
+        'register',
+        { id: ID },
+        undefined,
+        undefined,
+        {} as never,
+      );
+      assert.ok(JSON.stringify(result.content).includes(expected));
+      assert.equal(manager.pending(RUN)[0]!.status, 'registered');
+    }
+    assert.equal(cleanupCalls, 0);
+  });
   it('requires current Run ownership and makes registration idempotent without trusting status', async () => {
     const manager = createTestDataManager();
     await assert.rejects(manager.register(RUN, { id: 'other-account' }));

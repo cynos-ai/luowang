@@ -34,3 +34,11 @@
 - candidate 服务不可用报告第二处 command-1 链接拼接错误（第一处及真实证据正确）；缺陷报告正文仍把模型结束时待 Harness 处理的清理列在“未完成事项”下，虽然随后系统已确认完成，存在阅读歧义。没有发现最终报告声称真实 OSS 发布或直接要求未授权共享账号；两边的共同输入改进亦影响此观察。
 - 完整证据：`.cynos/acceptance/single-handoff-model/{manifest.json,preflight.json,live-output/summary.json,review/findings.md,review/checks.json,review/handoff-checks.json,review/browser-attribution.json}`；live.exit=0 仅表示执行完整。总体质量 not_established、独立人工评分 not_run、官方 live/release 仍 blocked。
 - 下一步建议先修浏览器需求误判，其次确保报告原样复用稳定证据地址；本轮只复测与归因，不中途修改产品代码、不追溯改写评测结论。
+
+## 合并后清理能力告知修复
+
+从 develop@5e32d82 创建 fix/cleanup-capability-disclosure。只修复默认未配置 adapter 时工具仍承诺自动清理的问题：manager 暴露只读、可缺省的配置能力；默认 manager 明确 true/false，自定义旧 manager 未提供能力时为未知。Run 前缀工具及登记工具描述、登记回执明确能力限制，不在登记时调用清理，不增加删除工具、账号查询权限、配置组或结果门禁。现有返回前缀和清理时序保持不变。
+
+先核查官网公共 scenario-testing 固定46f971a：已有 DELETE /api/me 只删除当前登录用户，不是按Run清理接口。断网只读临时容器中使用真实loopback HTTP验证：本次创建账号归属核对后可删除，旧Cookie/凭据401，归属行归零，另一合成账号仍可访问。模拟最终Session未结束、Run不匹配、账号不匹配三种条件均拒绝删除；这是本地探针守卫，不是生产实现或真实模型Session。首次源commit不在派生fixture中，改读公共固定archive；首次探针输出目录权限失败保留，独立可写输出目录重跑通过，两次容器均已销毁。
+
+默认生产入口仍未接入adapter，现有登记只有非敏感ID/描述，没有Harness持有的Run临时账号凭据绑定；不得把预置共享测试账号交给自助删除接口。此修复只保证能力告知真实，不宣称生产自动清理已经接通；接入前仍需明确可信的临时账号凭据生命周期，不以ID前缀替代身份核验。HTTP验证和修复证据在 `.cynos/acceptance/production-cleanup-discovery/`。工程验证通过：固定源码归档hash核验后，quality容器中210测试/30文件、lint/typecheck/build及受影响测试严格编译均成功。新增回归验证未配置/已配置/未知三种工具告知，登记仍为pending且不会调用删除。此轮未调用付费模型、未部署、未写远程测试数据；实现通过独立修复PR提交develop，不自动合并或发布。
