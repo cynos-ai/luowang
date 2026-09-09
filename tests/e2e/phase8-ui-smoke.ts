@@ -516,6 +516,7 @@ function makeConfig(): ConfigResponse {
       testPassword: { configured: true, masked: '••••••••' },
       ossAccessKeyId: { configured: true, masked: '••••••••' },
       ossAccessKeySecret: { configured: true, masked: '••••••••' },
+      testDataCleanupToken: { configured: false, masked: null },
     },
     secretStore: { available: true },
   };

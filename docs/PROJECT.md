@@ -42,6 +42,7 @@
 - 运行期间不持续把每次工具调用结构化写入数据库；完成后再批量、幂等归档。
 - `blocked`、`interrupted`、验证证据缺失和归档失败不能伪装为通过或错误推进；测试后临时数据清理单独告警，不改变已验证的功能结论。
 - 角色单向交接：plan → execution → review → report；最终 Main 只读 plan/review，不存在 Runner 报告草稿。Harness 在最后统一清理并追加真实收尾记录，按 `docs/changes/luowang-single-handoff/spec.md` 执行。
+- 专用非生产目标可显式配置按 Run 的 HTTP 清理地址，配合 Secret Store 内独立 Token；默认不启用，不把 Token 交给 Agent，也不向 Agent 提供任意 URL/SQL 删除能力。先删除再独立查询，失败只告警。契约和已验证边界见 `changes/luowang-run-scoped-cleanup/spec.md` 与 `changes/luowang-run-scoped-cleanup/plan.md`。
 - 场景变更需要人工确认时通过短生命周期 Run 产生 PR，不让 Agent 进程跨小时等待审批。
 - 浏览器执行需求由 Main 随计划显式声明；零场景理由由 Reviewer 独立判断。Harness 不用计划关键词决定业务含义，只核验真实能力、结构和安全边界，按 `docs/changes/luowang-model-semantic-decisions/spec.md` 执行。
 - Main 只产生场景目录内的 patch；Archiver 只原样发布已验证场景 patch，并只为当前 Run 新增正式报告，不能改写产品、需求或历史报告。
