@@ -54,3 +54,13 @@ Reviewer实际用新工具读取三份页面快照和一个控制台记录，包
 仍保留质量缺口：注册图下沿的返回入口被裁切，Reviewer仍写成“均清晰可见”；console没有API记录不能证明网络没有调用，实际有GET /api/auth/status。历史Issue空列表属于离线驱动替代，不证明真实GitHub无历史问题。Runner修正了场景路径及MCP ref/target参数错误，原始事件保留。只读业务Run passed及原始记录通道打通成立，不代表视觉审核措辞或整体模型质量已完全收敛。
 
 证据在`.cynos/acceptance/browser-evidence-fix/model/`的manifest、live-output、mcp-trace、artifacts、findings、audit.py和checks.json。四工件、三图及原始事件已由助手审阅，独立人工评分仍not_run；不扩展为认证提交、全站或正式部署验收，不push或发布。
+
+## 固定图片的Reviewer视觉诊断
+
+未改生产代码或角色指令，复用同一注册PNG与对应snapshot，执行一次零网络SDK工具消息序列化回放和两次独立Qwen请求：仅图 / 图加snapshot。qwen3.7-plus、Thinking off、输出1024、超时90秒、重试0；两次HTTP200/stop，共3,137 tokens，不额外采样或切换模型。
+
+真实HTTP body仅相差snapshot文本块，两份发送图片均为原始1280×720、71,587字节且sha256一致；离线回放的三张历史工具图片也无客户端改动。历史HTTP body未保存，回放未重建全部工具schema/SDK元信息，不能作为历史wire包原封重放；服务端内部缩放、视觉编码和路由仍不可观测。
+
+**两组均错误地把下沿被裁切的返回登录入口判成“完整可见”，并称依据来自截图。** 误判在不提供snapshot时同样出现，不能仅归因为文字证据干扰。当前样本显示局部可见程度判断不可靠，不等于模型完全不能看图；单图各一次亦不能推出总体准确率或确定服务端/模型内部机制。
+
+九个冻结哈希、发送body及图像字节、两组唯一输入差异均校验通过。材料及输出由助手核对，独立人工评分仍not_run。证据在`.cynos/acceptance/reviewer-vision-diagnostic/`的plan、manifest、output、audit、checks和findings。下一步建议小范围核验视觉Reviewer候选能力，而非继续修改传输或追加提示词；模型更换须另行授权。未重跑工程全套、操作网站/账号/现有服务、发布或改写历史结果。
