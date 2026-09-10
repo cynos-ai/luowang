@@ -13,3 +13,17 @@
 失败保留：官网首次Fastify logger泛型编译不匹配，修复后通过；前两次联通在禁用CHOWN能力的容器内tar恢复属主失败，服务未就绪，改用--no-same-owner后通过。未降低容器权限隔离或扩大删除范围。
 
 上述是脚本化全链清理接线，不是新增原生模型或部署实例验收；既有共享服务和模型配置未改，未归档发布测试报告、创建产品Bug Issue或写入真实OSS。源码hash、工程日志、集成报告和清理记录保存在 `.cynos/acceptance/run-scoped-cleanup/`。主要剩余风险：未实际应用Run标记的数据不在范围、部署Token不一致及网络故障；按清理告警处理。
+
+## 后续授权的独立实例与原生 Run
+
+两端PR经CI通过后合入develop：罗网PR #60为 `fb1ee6dcea14824af16905dd715bd72c5029a906`，官网PR #9为 `5ae2f2dee59a32ff16d67c2b1c4849470ce5bf8f`。官网在专用 `chore/run-cleanup-validation` 分支整合原scenario-testing历史及账号删除功能，固定执行提交为 `cfe23fd3e59256e7188b22027d030389542aed31`；未改默认测试分支。整合后官网7测试、typecheck/build通过，两个真实runtime镜像在独立数据卷和回环端口启动。真实设置UI保存与清空秘密草稿通过。首次构建中断、internal网络未发布端口及客户端无正文DELETE错误声明JSON的启动失败均保留；最终使用允许外联的独立桥接网络，不宣称断网隔离。
+
+按用户授权从受控env解析引用并配置加密Secret Store，未照搬旧服务地址、分支或较旧的Runner思考级别。GitHub读取、专用OSS子前缀临时对象读写删除、测试环境和MCP检查通过。随后只提交一次原生Run `01M24MC989M0EPP8N89AP71TC2`，真实应用入口、RunStore、浏览器、Reviewer、最终Main、HTTP清理及Archiver共同执行，结果为completed/passed。执行已批准的AUTH-REGISTRATION-001，保留场景内自助删除，另外登记一个不计为场景的收尾探针账户供Harness删除。
+
+四阶段配置是Main Flash low、Runner Flash off、Reviewer Vision low、最终Main沿用正式Main low；没有Session factory或指令覆写。临时HTTP relay仅限制固定原生端点的预算：每system-prompt hash组最多64次、总计256次、max_tokens上限4096、单HTTP90秒及一小时接入窗口。实际69次均HTTP200，四组各有正常stop，合计API用量1,060,313 tokens；这些组不是声称已采集到的SDK Session ID，也不宣称关闭了产品SDK内置重试。没有整链重试或补写失败报告。结束后恢复原生直连地址并停用relay，自动触发仍关闭。
+
+独立观察与验收：执行/审核期间Run范围有1个残留探针；最终模型流结束后，官网实际收到Harness的DELETE→GET→DELETE→GET，均200，两项登记均核验不存在。外部查询和只读SQLite检查确认Run账户/会话为0且无孤立会话，预置账号创建时间早于Run且仍能登录。16份真实OSS证据下载的长度/hash吻合；[正式报告](https://github.com/cynos-ai/cynos-website/blob/61f487bbd4956b908ed29764ecffcb23d3243ced/docs/scenario-testing/reports/01M24MC989M0EPP8N89AP71TC2/report.md)和review与本地原文逐字一致，归档commit `61f487bbd4956b908ed29764ecffcb23d3243ced` 仅新增当前Run的这两份文件。既有报告未改，未创建产品Bug Issue，未验证新的场景PR或Issue发布路径。当前清理Token、模型/Git/OSS凭据及测试密码扫描无命中。
+
+限制必须保留：模型报告虽判passed，但DB密码存储形式和Cookie属性未验证；Runner将“不在响应中泄露密码”作为DB存储期望的可观察替代，不能当作数据库期望已成立。Reviewer/最终Main保留了该缺口，并指出部分HTTP状态码缺少其可回读原始捕获、三张截图底部裁切。后验服务器/数据库检查不补塞给模型，不追改已发布报告。本次只证明单场景及真实清理闭环，不是全站、安全完整性或总体模型准确率验收。原有共享实例未替换，向默认scenario-testing的官网PR #10仍保留Draft，推广前须协调目标部署与已有触发设置。
+
+原始证据分别保存在 `.cynos/acceptance/cleanup-deployment/` 和 `.cynos/acceptance/cleanup-native-run/`，包含失败记录、镜像/源码、逐轮元数据、Run工件、独立查询、字节核验和凭据扫描；不存原生模型隐藏思考或明文凭据。
