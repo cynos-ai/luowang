@@ -47,3 +47,15 @@ Spec已补齐，新增selected-scenarios内存视图构造，正式Runner通过p
 **截至本次，语义目标仍未达到。** Reviewer明确承认固定正文中的DB不存明文期望未验证、执行以较弱命题替代，却仍将其作为不阻塞的证据可得性限制，标记passed；最终Main沿用passed。因此不能再把这个样本的误判仅归因于摘要缺失或输出截断，也不能把成功交付当修复成功。原输出保存于budget-live-output，输入/源身份和Secret扫描检查通过；没有部署、发布报告或改写历史。
 
 后续应先审查判定规则中“必要”“主要功能”“辅助记录”的界限：明列且适用的期望应是通过条件，适用性与验证能力不能混同；未发现产品失败不等于所有期望已得到支持。不能用关键词门禁代替这项语义判断，也不继续扩仓库/数据库权限。若调整准则，需独立、有限地验证一般性，而不是不断抽样直到本题通过。PR #63保持Draft；以上为AI自审，不是独立人类验收。
+
+## 第三阶段：明确适用期望的通过条件
+
+只修改common、Reviewer、最终Main现有资源：已选场景明列且适用的期望默认都是通过条件；原文条件未触发或明确授权排除才可不纳入，工具/证据不可得不是不适用。未发现失败不等于确认通过，主要流程正常不能替代其他适用期望。最终Main依据review明确交付的未验证事实纠正passed，不扩权补审。仍由模型判断适用性及证据充分性，无关键词门禁或新工件/协议。
+
+工程230测试/32文件、format/lint/typecheck/build通过后冻结。原计划/执行、固定原文、16份证据、模型/thinking、初始userMessage/config/工具schema不变；只改变角色规则。预算保持16384输出/响应、8请求/Session、11总请求，先零模型预检，再唯一一次双Session回放。
+
+**该例核心回归得到纠正。** 10次HTTP200（Reviewer7、最终Main3），两个实际SDK Session正常stop/dispose，API total202601/output15549。Reviewer明确将原数据库期望未验证判为blocked，保留其余有证据的成功，不将未知当Bug；Cookie属性/请求级状态码等辅助记录不足不自动升级为失败。最终Main同样blocked，confirmedBugs为空，前置Harness blockingReasons为空，原始证据与旧工件未改。
+
+再做独立最终Main检查：原字节输入上一候选仍passed的矛盾review，只启动新最终Main一个Session（16384输出/响应、4请求上限）。零模型预检后实际3次HTTP200，正常stop/dispose，API total36756/output4940；只读plan/review，没有读取原始证据，初始消息/config/规则/工具与新双Session中的Main一致。它按review已有的未验证事实输出blocked，并说明旧passed标签矛盾。这验证了该例中的独立纠错，不只是照抄正确Reviewer标签。
+
+残余限制原样保留：新review把复合期望拆开计数却未说明口径，且把console文件名加相对偏移当作确定时序，时钟原点尚未建立；最终Main控制仍继承旧review“快照脱敏⇒密码未落盘”的过强措辞。单例纠正不代表全面质量通过；独立正常/真实缺陷、不适用条件对照与新规则对规划/Runner实际执行的影响仍待验证。不为修饰这些结果改写输出或反复抽样，不部署、不归档正式报告；PR #63继续Draft，人类评分not_run。记录位于`.cynos/acceptance/applicable-expectations/`。
