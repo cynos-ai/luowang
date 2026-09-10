@@ -27,3 +27,11 @@
 限制必须保留：模型报告虽判passed，但DB密码存储形式和Cookie属性未验证；Runner将“不在响应中泄露密码”作为DB存储期望的可观察替代，不能当作数据库期望已成立。Reviewer/最终Main保留了该缺口，并指出部分HTTP状态码缺少其可回读原始捕获、三张截图底部裁切。后验服务器/数据库检查不补塞给模型，不追改已发布报告。本次只证明单场景及真实清理闭环，不是全站、安全完整性或总体模型准确率验收。原有共享实例未替换，向默认scenario-testing的官网PR #10仍保留Draft，推广前须协调目标部署与已有触发设置。
 
 原始证据分别保存在 `.cynos/acceptance/cleanup-deployment/` 和 `.cynos/acceptance/cleanup-native-run/`，包含失败记录、镜像/源码、逐轮元数据、Run工件、独立查询、字节核验和凭据扫描；不存原生模型隐藏思考或明文凭据。
+
+## 日常实例切换
+
+后续经用户授权，罗网证明PR #61已合入develop；官网PR #10在完整检查后合入默认scenario-testing，提交 `3e67fc4bfb4acc4465ba75a937fe2808982aeab5`。切换检查发现Prettier拒绝31份历史/当次报告，故官网PR #11仅排除不可重排的reports目录，并为指向scenario-testing的PR启用现有CI；源码和场景格式检查不跳过，历史报告原文不变。修正后本地format/lint/typecheck、7测试及E2E、两个PR的GitHub Quality均通过。
+
+官网按合入提交重建runtime镜像并验证revision，产品源码/测试/lockfile/Dockerfile与原生验收target cfe23fd一致。新实例复用原数据卷及Token，健康检查、预置账号登录、原Run残留为0、准确commit的索引同步及浏览器入口通过。官网项目日常入口为服务器本机罗网3778、官网3101，默认分支已切为scenario-testing，两个服务使用unless-stopped；测试自动触发和cron仍关闭，本次不新增模型Run、不改变旧Run target。
+
+旧官网与两个官网Harness停止并关闭自动重启，保留容器/原卷及前一新版官网容器用于回退。旧两个Harness的只读临时快照各确认13条Run且ID集合一致；没有迁入新实例，新实例仍为1条Run。3777上的罗网属于另一项目，未改动。旧SQLite只读卷检查首次因WAL辅助文件失败，改复制DB/WAL/SHM到断网容器tmpfs后只读检查，不写旧卷；辅助脚本重名导致前态观察文件被覆盖的事故亦记录，未影响产品数据或回退清单。切换清单、失败与完成证明见 `.cynos/acceptance/cleanup-cutover/`。最终扫描另发现三份旧review/draft-report含预置测试用户名，已对照切换前46f971a确认原文字节相同；密码/Token/密钥未命中，不宣称完全零命中，不打印用户名或擅自重写历史，留作账号标识治理项。模型遗漏明确期望却仍判passed的问题保留为后续目标，不在切换中追改报告。
