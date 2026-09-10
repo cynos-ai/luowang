@@ -37,3 +37,13 @@ Spec已补齐，新增selected-scenarios内存视图构造，正式Runner通过p
 唯一一次新输入回放前，冻结源代码和原工件/16份证据，从原target的Git对象导出场景正文并记录blob/hash；生产选择/冻结函数重建只含AUTH-REGISTRATION-001的快照。零模型双阶段预检通过。原生Reviewer Vision low实际5次HTTP200，API total tokens合计88643；第5次输出8192 Token、reasoning计数6190，stopReason为length。Reviewer已dispose，但没有review.md，最终Main没有启动；未提高预算、重跑或保存隐藏思考。
 
 独立程序检查确认原文已进入Reviewer初始上下文，字节/hash与固定Git对象一致，前置Harness阻塞为空；旧工件、16份证据及此前失败均未修改，无事后DB证据。工程输入保真已验证，模型语义效果仍未验证，不能从截断推断模型已正确判断。保持PR #63为Draft，未部署；人类评分not_run。详细记录在`.cynos/acceptance/selected-scenario-source/`。
+
+### 再次授权后的16384预算对照
+
+用户再次授权继续后，保持实现、原文、计划/执行、证据、指令、模型和thinking不变，仅改为16384输出Token/响应、每Session最多8请求、总11请求；初始消息/config/工具schema逐项一致。原8192轮实际输出9644，加本轮理论最大180224，共189868，小于原24×8192的196608输出额度；这不是输入Token或费用上限。旧失败不覆盖。
+
+零模型预检通过。本次10次HTTP200（Reviewer 7、最终Main 3），两个SDK Session均stop/dispose，结构验证通过；API total tokens为210899，output合计21062。Reviewer最长响应输出11013，其中reasoning8584；只记录计数，没有保存隐藏思考。
+
+**截至本次，语义目标仍未达到。** Reviewer明确承认固定正文中的DB不存明文期望未验证、执行以较弱命题替代，却仍将其作为不阻塞的证据可得性限制，标记passed；最终Main沿用passed。因此不能再把这个样本的误判仅归因于摘要缺失或输出截断，也不能把成功交付当修复成功。原输出保存于budget-live-output，输入/源身份和Secret扫描检查通过；没有部署、发布报告或改写历史。
+
+后续应先审查判定规则中“必要”“主要功能”“辅助记录”的界限：明列且适用的期望应是通过条件，适用性与验证能力不能混同；未发现产品失败不等于所有期望已得到支持。不能用关键词门禁代替这项语义判断，也不继续扩仓库/数据库权限。若调整准则，需独立、有限地验证一般性，而不是不断抽样直到本题通过。PR #63保持Draft；以上为AI自审，不是独立人类验收。
