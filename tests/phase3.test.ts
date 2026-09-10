@@ -1,7 +1,8 @@
 import { strict as assert } from 'node:assert';
 import { localEvidenceTransport } from './acceptance/local-evidence.js';
 import { execFile } from 'node:child_process';
-import { lstat, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { lstat, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
@@ -18,6 +19,9 @@ import { createControlledCommandRunner } from '../src/server/runs/command-runner
 import type { ProviderAdapter } from '../src/server/runs/provider.js';
 import type { AgentSessionFactory, AgentSessionInput } from '../src/server/runs/types.js';
 import { RunWorkspace } from '../src/server/runs/workspace.js';
+import { parseExecutionScenarioPlan } from '../src/server/runs/execution-plan.js';
+import { parseScenarioMarkdown } from '../src/server/repository/markdown.js';
+import type { SelectedScenarioSnapshot } from '../src/server/runs/selected-scenarios.js';
 import { createRepositoryService } from '../src/server/repository/service.js';
 import type { RepositoryIndexer } from '../src/server/repository/indexer.js';
 import type { SecretStore } from '../src/server/security/secret-store.js';
@@ -30,6 +34,84 @@ afterEach(async () => {
 });
 
 describe('Phase 3 agent run', () => {
+  it('delivers only selected original definitions to Reviewer, not final Main', async () => {
+    const fixture = await createGitFixture(true);
+    const context = await createRunContext(fixture, ['passed'], undefined, {
+      scenarioIds: ['AUTH-LOGIN-001'],
+      checkpoint: async () => undefined,
+    });
+    const result = await context.orchestrator.run({
+      request: '验证选中场景原文',
+      trigger: 'manual',
+    });
+    assert.equal(result.status, 'completed', JSON.stringify(result));
+    assert.equal(result.result, 'passed');
+    const reviewer = context.sessions.inputs.find((input) => input.role === 'reviewer')!;
+    assert.match(reviewer.userMessage, /登录状态恢复/);
+    assert.ok(!reviewer.userMessage.includes('安全退出'));
+    assert.ok(!reviewer.customTools.some((tool) => tool.name === 'read_working_scenario'));
+    assert.deepEqual(context.sessions.created, ['main-a', 'runner', 'reviewer', 'main-b']);
+    assert.deepEqual(context.sessions.disposed, context.sessions.created);
+  });
+
+  it.each(['oversize', 'secret-failure'] as const)(
+    'keeps a normal Run blocked when original input is unavailable: %s',
+    async (failure) => {
+      const fixture = await createGitFixture(true);
+      if (failure === 'oversize') {
+        await writeFile(
+          join(fixture.sourceDir, 'docs/scenario-testing/scenarios/AUTH-LOGIN-001.md'),
+          scenarioMarkdown('AUTH-LOGIN-001', '登录状态恢复') + 'x'.repeat(256 * 1024),
+        );
+        await commitAndPush(fixture.sourceDir, 'oversized scenario fixture', 'scenario-testing');
+      }
+      const context = await createRunContext(
+        fixture,
+        ['passed'],
+        undefined,
+        { scenarioIds: ['AUTH-LOGIN-001'], checkpoint: async () => undefined },
+        '',
+        '\n',
+        false,
+        false,
+        failure === 'secret-failure'
+          ? {
+              secretStore: {
+                get: () => {
+                  throw new Error('private-secret-store-diagnostic');
+                },
+              } as unknown as SecretStore,
+            }
+          : {},
+      );
+      const create = context.sessions.create.bind(context.sessions);
+      context.sessions.create = async (input) => {
+        const session = await create(input);
+        if (input.role !== 'reviewer') return session;
+        return {
+          ...session,
+          prompt: async () => {
+            const data = JSON.parse(input.userMessage.slice(input.userMessage.indexOf('{')));
+            assert.equal(data.selectedScenarioSnapshot, null);
+            assert.ok(!input.userMessage.includes('private-secret-store-diagnostic'));
+            for (const name of ['plan.md', 'execution.md'])
+              await invokeTool(input, 'read_run_artifact', { name });
+            await invokeTool(input, 'write_review', {
+              content: '# Review\n必要原文不可用，blocked。\n',
+            });
+          },
+        };
+      };
+      const result = await context.orchestrator.run({
+        request: '验证输入失败边界',
+        trigger: 'manual',
+      });
+      assert.equal(result.status, 'completed', JSON.stringify(result));
+      assert.equal(result.result, 'blocked', JSON.stringify(result));
+      assert.ok(result.blockingReasons?.some((reason) => reason.includes('选定场景原文')));
+    },
+  );
+
   it.each(['passed', 'failed'] as const)(
     'cleans after final Main disposal without changing %s',
     async (outcome) => {
@@ -903,6 +985,7 @@ async function createRunContext(
     indexer?: RepositoryIndexer;
     candidate?: CandidateTestOptions;
     testData?: import('../src/server/runs/test-data.js').TestDataManager;
+    secretStore?: SecretStore;
   } = {},
 ): Promise<TestContext> {
   const dataDir = await mkdtemp(join(tmpdir(), 'luowang-phase3-data-'));
@@ -954,6 +1037,7 @@ async function createRunContext(
     repository,
     indexer: options.indexer,
     testData: options.testData,
+    secretStore: options.secretStore,
     reportDir,
     sessions,
     provider: {} as ProviderAdapter,
@@ -970,6 +1054,7 @@ class RecordingSessionFactory implements AgentSessionFactory {
   readonly messages: string[] = [];
   readonly sessionObjects: object[] = [];
   private outcomeIndex = 0;
+  private readonly executedSources = new Map<string, string>();
 
   constructor(
     private readonly outcomes: Array<'passed' | 'failed' | 'blocked'>,
@@ -1051,8 +1136,18 @@ class RecordingSessionFactory implements AgentSessionFactory {
             this.progress?.scenarioIds ??
             (progressAvailable && /候选场景顺序/.test(input.userMessage) ? ['INIT-HOME-001'] : []);
           if (progressAvailable) {
+            const files = commandText(await invokeTool(input, 'list_working_scenarios', {}));
+            this.executedSources.clear();
+            for (const path of files.split('\n').filter(Boolean)) {
+              const content = commandText(
+                await invokeTool(input, 'read_working_scenario', { path }),
+              );
+              const parsed = parseScenarioMarkdown(content, path);
+              if (scenarioIds.includes(parsed.id)) this.executedSources.set(parsed.id, content);
+            }
             await invokeTool(input, 'begin_scenario_execution', { scenarioIds });
           }
+          assert.ok(!input.userMessage.includes('selectedScenarioSnapshot'));
           await this.progress?.checkpoint('declared');
           for (const [index, scenarioId] of scenarioIds.entries()) {
             await invokeTool(input, 'start_scenario', { scenarioId });
@@ -1073,6 +1168,35 @@ class RecordingSessionFactory implements AgentSessionFactory {
             content: `# Execution\n\n固定 target ${extractTarget(input)}\n\n${commandText(command)}\n观察：${outcome}\n`,
           });
         } else if (input.role === 'reviewer') {
+          const data = JSON.parse(input.userMessage.slice(input.userMessage.indexOf('{'))) as {
+            targetCommit: string;
+            selectedScenarioSnapshot: SelectedScenarioSnapshot;
+          };
+          const snapshot = data.selectedScenarioSnapshot;
+          assert.ok(snapshot);
+          assert.equal(snapshot.targetCommit, data.targetCommit);
+          const selected = parseExecutionScenarioPlan(
+            await readFile(join(input.cwd, 'plan.md'), 'utf8'),
+          );
+          assert.deepEqual(
+            snapshot.scenarios.map((s) => s.id),
+            selected.scenarioIds,
+          );
+          for (const source of snapshot.scenarios) {
+            assert.equal(source.content, this.executedSources.get(source.id));
+            assert.equal(
+              source.sourceSha256,
+              createHash('sha256').update(source.content).digest('hex'),
+            );
+            assert.equal(source.redacted, false);
+          }
+          const patch = await readFile(join(input.cwd, 'scenario-changes.patch'), 'utf8').catch(
+            () => undefined,
+          );
+          assert.equal(
+            snapshot.patchSha256,
+            patch === undefined ? null : createHash('sha256').update(patch).digest('hex'),
+          );
           const premature = await invokeTool(input, 'read_run_artifact', {
             name: 'execution.md',
           });
@@ -1087,6 +1211,7 @@ class RecordingSessionFactory implements AgentSessionFactory {
               : '# Review\n\n独立确认无需场景测试：计划中的影响判断有依据。\n',
           });
         } else {
+          assert.ok(!input.userMessage.includes('selectedScenarioSnapshot'));
           const context = parsePromptContext(input.userMessage);
           for (const name of ['execution.md', 'draft-report.md']) {
             const denied = await invokeTool(input, 'read_run_artifact', { name });

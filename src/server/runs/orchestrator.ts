@@ -57,6 +57,7 @@ import { createProviderAdapter, type ProviderAdapter } from './provider.js';
 import { createIssueCandidateController, createRunHistoryTool } from './run-history.js';
 import { createScenarioProgressController, type ProgressScenario } from './scenario-progress.js';
 import { scenarioReviewSummary } from './scenario-review-summary.js';
+import { snapshotSelectedScenarios, type SelectedScenarioSource } from './selected-scenarios.js';
 import { createReviewReadOrder } from './review-order.js';
 import {
   assertScenarioResultsMatchPlan,
@@ -924,7 +925,7 @@ class DefaultRunOrchestrator implements RunOrchestrator {
         ? undefined
         : createScenarioProgressController({
             state,
-            allowedScenarios: await this.progressScenarios(workspace, repository, context),
+            allowedScenarios: await this.progressScenarios(workspace, repository, context, true),
             now: this.now,
           });
     const tools = [
@@ -1016,10 +1017,12 @@ class DefaultRunOrchestrator implements RunOrchestrator {
     workspace: RunWorkspace,
     repository: GitRepository,
     context: RunContext,
+    freezeForReview = false,
   ): Promise<ProgressScenario[]> {
     const plan = await workspace.read('plan.md');
     const executionPlan = parseExecutionScenarioPlan(plan);
     const candidates: ExecutionScenarioCandidate[] = [];
+    const sources = new Map<string, SelectedScenarioSource>();
     const changes = new Map(
       context.scenarioChanges?.changes.map((change) => [change.newPath, change]),
     );
@@ -1028,6 +1031,9 @@ class DefaultRunOrchestrator implements RunOrchestrator {
       const content = await repository.readWorkingScenarioFile(path);
       const parsed = parseScenarioMarkdown(content, path);
       candidates.push({ id: parsed.id, name: parsed.name, status: parsed.status });
+      if (freezeForReview && executionPlan.scenarioIds.includes(parsed.id)) {
+        sources.set(parsed.id, { id: parsed.id, path, content });
+      }
       const change = changes.get(path);
       if (context.initialization && change && parsed.status === 'approved') {
         // A byte-identical rename is asset maintenance, not a new assertion.
@@ -1042,6 +1048,31 @@ class DefaultRunOrchestrator implements RunOrchestrator {
     for (const id of requiredIds) {
       if (!executionPlan.scenarioIds.includes(id)) {
         throw new ExecutionPlanError(`初始化变更的 approved 场景未纳入执行清单：${id}`);
+      }
+    }
+    // Freeze the validated, effective definitions before Runner can execute. Later
+    // patch validation cleans the worktree, so Reviewer must not reread it then.
+    if (freezeForReview) {
+      delete context.selectedScenarioSnapshot;
+      try {
+        const selected = executionPlan.scenarioIds.map((id) => {
+          const source = sources.get(id);
+          if (!source) throw new Error('选定场景原文缺失');
+          return source;
+        });
+        const secrets = selected.length
+          ? SECRET_KEYS.map((key) => this.options.secretStore?.get(key)).filter(
+              (value): value is string => Boolean(value),
+            )
+          : [];
+        context.selectedScenarioSnapshot = snapshotSelectedScenarios(
+          context.targetCommit,
+          await readOptionalScenarioPatch(workspace),
+          selected,
+          secrets,
+        );
+      } catch {
+        this.addBlockingReason(context, '选定场景原文无法完整、安全地提供给 Reviewer');
       }
     }
     const byId = new Map(candidates.map((candidate) => [candidate.id, candidate]));
@@ -1269,6 +1300,9 @@ class DefaultRunOrchestrator implements RunOrchestrator {
     evidenceStore: RunEvidenceStore | undefined,
   ): Promise<void> {
     this.setPhase(state, 'reviewer', 'Reviewer 正在独立审核执行结果');
+    if (!context.selectedScenarioSnapshot) {
+      this.addBlockingReason(context, '选定场景原文快照不可用，不能仅依据 Main 摘要确认通过');
+    }
     const readOrder = createReviewReadOrder(
       (name) =>
         readAllowedArtifact(workspace, name, ['plan.md', 'execution.md', 'scenario-changes.patch']),
@@ -2381,6 +2415,7 @@ function reviewerContext(context: RunContext) {
     scenarioMode: context.scenarioMode,
     initialization: context.initialization,
     scenarioChanges: context.scenarioChanges ?? null,
+    selectedScenarioSnapshot: context.selectedScenarioSnapshot ?? null,
     evidence: context.evidence,
     browserRequired: context.browserRequired,
     blockingReasons: context.blockingReasons,

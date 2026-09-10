@@ -24,10 +24,16 @@
 
 语义目标仍未达到：Reviewer仍把DB存储要求当不可控但不阻塞的限制，称必要期望全部满足；最终Main继承passed。故PR保持Draft，不能以工程通过或完整交付冒充修复有效。凭据扫描零命中，冻结输入和旧失败均保留；不再抽样重跑这份候选。独立人类评分仍not_run。
 
-## 下一实施范围：固定期望输入保真（尚未实现）
+## 第二阶段：固定期望输入保真
 
 代码检查确认：Runner通过progressScenarios读取已应用合法patch的场景并验证唯一执行清单；Reviewer前validateScenarioPatchForReview会调用GitRepository.validateScenarioPatch，其finally清理工作树。因此不能在审核时直接读取当前工作树并冒称是Runner执行的版本。
 
-推荐复用progressScenarios已有的读取与校验，在正式Runner开始前，冻结仅选中场景的完整正文及target/patch身份，作为Reviewer专属动态上下文的只读视图。它是Git与已验证patch的派生输入，不新建交接文件、报告字段、注册表或通用仓库/数据库工具；最终Main仍只读plan/review。不要用关键词抽取期望段落，以免再次删失语义。正文按不授予权限的测试数据处理，沿用受控脱敏；必要输入缺失、过大或无法安全提供时明确阻塞，不静默退化为Main摘要。
+本阶段按以下方案实施：复用progressScenarios已有的读取与校验，在正式Runner开始前，冻结仅选中场景的完整正文及target/patch身份，作为Reviewer专属动态上下文的只读视图。它是Git与已验证patch的派生输入，不新建交接文件、报告字段、注册表或通用仓库/数据库工具；最终Main仍只读plan/review。不要用关键词抽取期望段落，以免再次删失语义。正文按不授予权限的测试数据处理，沿用受控脱敏；必要输入缺失、过大或无法安全提供时明确阻塞，不静默退化为Main摘要。
 
-实施前补齐Spec；回归需覆盖清单子集、空清单、初始化与合法patch、Reviewer前工作树清理/变化不影响快照、输入大小和Secret边界、正常四Session及特殊审批流程。随后单独冻结新输入做预算受控验证；这一新条件不能被说成当前指令候选已通过。
+Spec已补齐，新增selected-scenarios内存视图构造，正式Runner通过progressScenarios的freezeForReview路径冻结；候选规划阶段只校验，不冻结也不因快照构造留下旧阻塞。原文脱敏保留redacted标识及原始/交付双hash，必要判断仍由模型负责；身份无法安全交付、超限等不提供部分快照。Reviewer前缺失快照会明确阻塞。无新增工具、报告字段或长期工件。
+
+工程验证通过230测试/32文件、format/lint/typecheck/build和受影响测试的严格编译。新增测试覆盖只给Reviewer选中原文、与Runner实际读到的合法patch正文一致、空清单、不可变对象、脱敏与双hash、身份/文本/大小拒绝；Secret读取失败及超限保持正常四Session但结果blocked。既有初始化/特殊审批和真实本地Pi路径回归通过。保留失败：首次tmpfs工作目录权限、重复Vitest超时参数、旧文案读取顺序断言；修正为固定原文→计划→原证据→execution的检查后通过。严格测试编译首次继承exclude tests，补正临时配置后通过。
+
+唯一一次新输入回放前，冻结源代码和原工件/16份证据，从原target的Git对象导出场景正文并记录blob/hash；生产选择/冻结函数重建只含AUTH-REGISTRATION-001的快照。零模型双阶段预检通过。原生Reviewer Vision low实际5次HTTP200，API total tokens合计88643；第5次输出8192 Token、reasoning计数6190，stopReason为length。Reviewer已dispose，但没有review.md，最终Main没有启动；未提高预算、重跑或保存隐藏思考。
+
+独立程序检查确认原文已进入Reviewer初始上下文，字节/hash与固定Git对象一致，前置Harness阻塞为空；旧工件、16份证据及此前失败均未修改，无事后DB证据。工程输入保真已验证，模型语义效果仍未验证，不能从截断推断模型已正确判断。保持PR #63为Draft，未部署；人类评分not_run。详细记录在`.cynos/acceptance/selected-scenario-source/`。

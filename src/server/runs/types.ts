@@ -9,6 +9,7 @@ import type {
 } from '../../shared/types.js';
 import type { InlineExtension, ToolDefinition } from '@earendil-works/pi-coding-agent';
 import type { ScenarioPatchValidation } from '../repository/scenario-patch.js';
+import type { SelectedScenarioSnapshot } from './selected-scenarios.js';
 
 export type AgentRole = 'main-a' | 'runner' | 'reviewer' | 'main-b';
 
@@ -57,6 +58,7 @@ export interface RunContext {
   scenarioMode: ScenarioMode;
   initialization: boolean;
   scenarioChanges?: ScenarioPatchValidation;
+  selectedScenarioSnapshot?: SelectedScenarioSnapshot;
 }
 
 export interface AgentSessionInput {

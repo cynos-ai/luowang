@@ -72,10 +72,12 @@ describe('Closure 6 local production Pi path', () => {
     assert.match(result.artifacts['report.md'] ?? '', /Reviewer 已独立确认/);
     const reviewerPrompt =
       context.model.sessions.find((session) => session.role === 'reviewer')?.systemPrompt ?? '';
-    const planIndex = reviewerPrompt.indexOf('先读 `plan.md`');
+    const sourceIndex = reviewerPrompt.indexOf('先读动态上下文 `selectedScenarioSnapshot`');
+    const planIndex = reviewerPrompt.indexOf('再对照 `plan.md`');
     const evidenceIndex = reviewerPrompt.indexOf('接着通过 `list_evidence_files`');
     const executionIndex = reviewerPrompt.indexOf('再打开 `execution.md`');
-    assert.ok(planIndex >= 0, 'Reviewer must receive the plan-first reading rule');
+    assert.ok(sourceIndex >= 0, 'Reviewer must receive the frozen-original reading rule');
+    assert.ok(planIndex > sourceIndex, 'Reviewer must compare the plan with frozen originals');
     assert.ok(evidenceIndex > planIndex, 'Reviewer must read raw evidence after the plan');
     assert.ok(executionIndex > evidenceIndex, 'Reviewer must read execution drafts last');
     // Prove complete, single delivery per role, not semantic quality from slogan matching.

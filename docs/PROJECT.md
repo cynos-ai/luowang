@@ -41,6 +41,7 @@
 - Runner 的结论必须经过独立 Reviewer 审核；角色通过落盘工件交接，不共享完整对话。
 - 运行期间不持续把每次工具调用结构化写入数据库；完成后再批量、幂等归档。
 - `blocked`、`interrupted`、验证证据缺失和归档失败不能伪装为通过或错误推进；测试后临时数据清理单独告警，不改变已验证的功能结论。
+- 选定场景的固定原文在正式 Runner 开始前从已验证工作场景冻结，作为 Reviewer 专属动态上下文，避免 Main 摘要删弱期望；不是另一份长期工件或通用仓库读取能力。输入保真规则见 `changes/luowang-expectation-integrity/spec.md`，模型效果验证状态另见其 plan。
 - 角色单向交接：plan → execution → review → report；最终 Main 只读 plan/review，不存在 Runner 报告草稿。Harness 在最后统一清理并追加真实收尾记录，按 `docs/changes/luowang-single-handoff/spec.md` 执行。
 - 专用非生产目标可显式配置按 Run 的 HTTP 清理地址，配合 Secret Store 内独立 Token；默认不启用，不把 Token 交给 Agent，也不向 Agent 提供任意 URL/SQL 删除能力。先删除再独立查询，失败只告警。契约和已验证边界见 `changes/luowang-run-scoped-cleanup/spec.md` 与 `changes/luowang-run-scoped-cleanup/plan.md`。
 - 场景变更需要人工确认时通过短生命周期 Run 产生 PR，不让 Agent 进程跨小时等待审批。
