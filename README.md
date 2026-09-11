@@ -92,6 +92,14 @@ docker run --rm --init --ipc=host luowang:quality npm run test:e2e
 
 阿里云镜像地址需要替换为你在容器镜像服务控制台获得的加速地址。Compose 的 `NPM_REGISTRY`、`NODE_IMAGE` 和 `PLAYWRIGHT_DOWNLOAD_HOST` 默认使用上述镜像，也支持通过本地 `.env` 或命令行覆盖；本地 `.env` 必须保持未提交。不要在宿主机单独执行 Playwright 浏览器安装来代替镜像构建，避免再次出现 Node 包与 Chromium 不匹配。
 
+原生浏览器零模型预检使用已构建的 runtime 镜像：
+
+```bash
+bash scripts/run-browser-sandbox.sh --network none --entrypoint node luowang:runtime dist/server/browser/preflight-cli.js
+```
+
+该脚本为独立验证容器挂载 Pi 状态、临时目录、npm 及 Chromium 配置/缓存 tmpfs，保留非 root、只读根目录。预检实际创建/写读目录，检查文件系统和余量，通过产品 Pi factory 绑定真实 MCP 并完成导航、snapshot、PNG 校验及释放；失败返回非零。没有模型 prompt，也不操作日常实例或表示业务场景通过。真实验收应在同一容器、相同挂载下调用预检，并核对目标页面就绪后才启动 Run；不能复用另一个容器的绿灯。
+
 ## 安全边界
 
 罗网会逐步获得读取目标仓库、执行测试命令和访问测试环境的高权限。当前单容器不是恶意代码沙箱，只应连接操作者信任的仓库和非生产环境；不要挂载 Docker socket、生产数据或无关宿主目录。密码、Token 和其他 Secret 不应写入 Git、日志或报告；本地 `.env` 仅作为被 `.gitignore` 忽略的开发/Compose 输入，正式部署应通过 Secret Store 或 Docker Secret 提供。正式部署还应由可信反向代理提供 TLS，并限制网络暴露范围。

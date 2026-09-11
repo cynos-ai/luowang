@@ -50,3 +50,13 @@ Limits：工程检查不等于真实业务验收通过。存储的 thinking 保�
 - 仅措辞 backlog：报告混用步骤/期望数量，缺陷报告 command-1 引入原证据不存在的 api.example.com 描述；真实命令是被策略拒绝的沙箱 health 请求。保留原报告，不追改、不单独以这些措辞阻塞发布；本轮未达到业务验收目标的原因是实际场景没有执行。
 
 两个日常服务仍为原镜像且 healthy；未替换旧容器、卷、配置或历史。保留剩余225请求未使用，不创建额外样本。PR #66 未合并；没有发布 PR、部署、release 或 tag。本轮正常通过/缺陷检出的验收目标未达成，不能据机制审计通过声称已满足发布条件。
+
+## 追加授权：零模型预检与合并后的新一轮
+
+以上是首轮结束时的历史状态，不覆盖。负责人随后批准补预检随 PR #66 合入 develop；合并后另开正常/缺陷各一次、独立300请求预算，全绿预检为放行条件，不重跑、不追分。
+
+实现使用 `src/server/browser/preflight.ts` 和 runtime CLI，复用产品 Pi Session factory、MCP 扩展注册与释放，经真实 gateway 完成连接、工具清单、导航、snapshot、PNG文件校验；不调用 prompt。`scripts/run-browser-sandbox.sh` 统一只读根目录、非root和可写 tmpfs。每个要求的 tmpfs 均检查实际文件系统、余量、创建/写读/清除自己所有的探针目录；不得仅靠配置存在判通过。可选目标检查必须看见指定的已知就绪文本，不冒充场景断言。
+
+本次发现只修 Pi 目录仍不足：真实 Chromium 启动暴露只读 HOME 下 crashpad 配置失败，故补齐 Chromium `.config/.cache/.pki` 的专用 tmpfs，未放开任意脚本工具或容器权限。原生失败 `native-1/2.log`、成功 `native-3.log` 及最终正例 `native-final.json`、只读状态目录负例 `native-denied.json` 位于 `.cynos/acceptance/production-config-preflight/`。两类最终检查均零模型；正例全部检查通过并完成释放，负例明确在 state-directory 阶段失败。CI 将在 compiled runtime 镜像运行相同正负例，而非仅启动 Chromium。
+
+quality 容器最终 format/typecheck/lint、238测试/34文件及 build 通过（`engineering-3.log/.exit`）；初始工具定义泛型不兼容的 typecheck 失败及修复记录保留。没有触碰旧 Run、日常实例或新轮模型预算。合并后需冻结新候选，并在实际验收容器对两个目标做全绿放行检查；工具清单也必须与所选 AUTH-LOGIN-001 的原 Session 重放需要相符，不能为了通过而偷偷启用新的 MCP 能力。
