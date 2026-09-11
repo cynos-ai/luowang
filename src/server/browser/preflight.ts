@@ -173,6 +173,11 @@ export async function runBrowserPreflight(
       tool: 'browser_navigate',
       args: { url: `http://127.0.0.1:${address.port}` },
     });
+    await call('local-ready', {
+      server: 'playwright',
+      tool: 'browser_wait_for',
+      args: { text: MARKER },
+    });
     const snapshot = await call('snapshot', {
       server: 'playwright',
       tool: 'browser_snapshot',
@@ -196,6 +201,11 @@ export async function runBrowserPreflight(
         server: 'playwright',
         tool: 'browser_navigate',
         args: { url },
+      });
+      await call('target-ready', {
+        server: 'playwright',
+        tool: 'browser_wait_for',
+        args: { text: expectedText },
       });
       const targetSnapshot = await call('snapshot-target', {
         server: 'playwright',
