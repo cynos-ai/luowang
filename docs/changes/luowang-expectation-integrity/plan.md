@@ -71,3 +71,15 @@ Reviewer在两例中明确接受场景正文认可的现有测试等价操作：
 审计发现并保留限制：SDK自动追加工作目录，本次路径含normal/defect标签，可能给模型结果提示，因此这些是非盲的已知案例回归，不作为无提示识别率证明，也不为了改善证明重跑。后续新评估使用中性目录并在发送前检查最终system内容，不能把工厂收到的systemPrompt当作完整wire。缺陷报告称查询“原样重试”，但两次序列化参数hash不同，仅凭记录无法区分参数值与键顺序变化；只确认两次查询及unavailable披露。
 
 原场景/计划/执行/历史报告和失败记录不变，凭据扫描零命中，无业务、清理、归档或部署执行。记录在`.cynos/acceptance/expectation-controls/`，人类评分not_run，PR #63继续Draft。下一步按匹配提交复核代码/CI及剩余候选端到端验证范围，不把这些有限回放包装成全面闭环。
+
+## 第五阶段：新规划/执行与四Session链路
+
+匹配baa8ba6的Quality CI成功；AI自审复核了正式Runner前冻结、初始化/审批分支、patch清理时点、选择校验、脱敏/容量/失败边界及Reviewer专属交付，未发现新增的合并阻塞代码缺陷。不是独立人类review。
+
+采用中性chain-01/case-01目录，冻结该候选与既有官网派生样例target d4a415bd66facd4d944779fdc91b86ec57a3910d；先一个零模型接线Run（实际执行隔离测试），再唯一新模型Run 01M2780H7J6M4J80SN5N8DRBGJ。生产orchestrator重新规划、实际执行、冻结、审核、汇总、清理；不是再次回放旧execution。四个实际SDK Session的Main/Runner/Reviewer/最终Main分别7/16/6/3请求，合计32次HTTP200、API total296357，均正常stop/dispose。Main/Reviewer low、Runner off、最终Main low，无覆盖；每响应16384输出、16请求/Session、48总请求，未加预算或复抽。
+
+Main摘要保留原Cookie撤销和账号/会话/原凭据失效期望；Runner核对现成测试断言后执行两条定向测试和一条辅助全文件测试，均退出0。Reviewer原文与固定Git对象、Runner实际读取正文一致，全部3条原始命令证据被读取；最终Main只读plan/review，两个场景passed，无Bug或场景patch。报告保留命名等价测试与断言级独立留痕的区别，未扩大为全站验收。受控凭据扫描零命中；全部请求的最终system中性cwd检查通过，不保存隐藏思考或完整wire。临时容器按Run标签独立核验不存在，系统清理附录与观察一致，目标HEAD/工作树不变。
+
+额外发现原样保留：Runner尝试读取review.md，被权限边界拒绝；不能把HTTP clean说成无工具拒绝。两个定向命令及全文件命令均发生在第一项active期间，删除场景的start事件晚于实际命令，实时进度准确性不能验收通过。execution复述公开单测口令常量，却称未记录密码；不是受控Secret泄漏，但表述不一致。两者不抹去有原始证据的功能成功，也不通过修改历史输出掩盖。
+
+本次只验证四Session API源码执行与清理链路，Git/配置/Secret接口/命令后端/证据采用既有本地适配；无浏览器、新实例或真实GitHub/OSS/Issue归档，不称部署级完整验收。记录在`.cynos/acceptance/chain-01/`。当前增量已有工程、三类结果定向回归和新规划/Runner执行证据；实时进度与记录措辞等剩余质量问题保留，不扩张权限或加入语义正则。日常实例/数据卷不变，PR继续Draft，人类评分not_run。
