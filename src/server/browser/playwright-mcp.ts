@@ -24,12 +24,37 @@ const REQUIRED_TOOL_NAMES = [
   'browser_snapshot',
   'browser_take_screenshot',
 ] as const;
-const EXCLUDED_TOOL_NAMES = [
+// Controlled session evidence: read the current cookies and restore an already
+// captured value after logout so a Run can prove the original Session was
+// revoked. This is the only approved storage surface. Arbitrary script
+// execution, storage-state export/import and local/session storage mutation
+// stay outside the boundary.
+export const SESSION_REPLAY_TOOL_NAMES = [
+  'browser_cookie_list',
+  'browser_cookie_get',
+  'browser_cookie_set',
+] as const;
+// Playwright MCP only ships these under --caps=storage; enable the group and
+// hide everything except the approved cookie surface above.
+export const EXCLUDED_TOOL_NAMES = [
   'browser_evaluate',
   'browser_run_code',
   'browser_run_code_unsafe',
+  'browser_cookie_delete',
+  'browser_cookie_clear',
+  'browser_storage_state',
+  'browser_set_storage_state',
+  'browser_localstorage_clear',
+  'browser_localstorage_delete',
+  'browser_localstorage_get',
+  'browser_localstorage_list',
+  'browser_localstorage_set',
+  'browser_sessionstorage_clear',
+  'browser_sessionstorage_delete',
+  'browser_sessionstorage_get',
+  'browser_sessionstorage_list',
+  'browser_sessionstorage_set',
 ] as const;
-const FORBIDDEN_TOOL_NAMES = ['browser_run_code_unsafe'] as const;
 const SAFE_ENVIRONMENT_KEYS = [
   'CI',
   'ComSpec',
@@ -111,6 +136,9 @@ class DefaultPlaywrightMcpAdapter implements BrowserMcpAdapter {
         `--browser=${mcp.browser}`,
         '--snapshot-mode=full',
         '--codegen=none',
+        // Cookie read/restore for session-revocation evidence. The adapter
+        // hides every other storage tool through excludeTools below.
+        '--caps=storage',
       ],
       env: safeBrowserEnvironment(),
       // Playwright MCP resolves explicit screenshot filenames relative to its
@@ -186,22 +214,25 @@ class DefaultPlaywrightMcpAdapter implements BrowserMcpAdapter {
         Math.max(definition.requestTimeoutMs, this.options.timeoutMs ?? 15_000),
       );
       const names = new Set(result.toolNames);
-      const missing = REQUIRED_TOOL_NAMES.filter((name) => !names.has(name));
+      const missing = [...REQUIRED_TOOL_NAMES, ...SESSION_REPLAY_TOOL_NAMES].filter(
+        (name) => !names.has(name),
+      );
       if (missing.length > 0) {
         return {
           status: 'failed',
-          message: 'Playwright MCP 工具发现不完整，缺少 snapshot/ref 或 screenshot 能力',
+          message:
+            'Playwright MCP 工具发现不完整，缺少 snapshot/ref、screenshot 或 Cookie 会话重放能力',
           checkedAt: this.now().toISOString(),
           latencyMs: Date.now() - startedAt,
         };
       }
-      const missingExclusions = FORBIDDEN_TOOL_NAMES.filter(
+      const missingExclusions = EXCLUDED_TOOL_NAMES.filter(
         (name) => !definition.excludeTools.includes(name),
       );
       if (missingExclusions.length > 0) {
         return {
           status: 'failed',
-          message: 'Playwright MCP 接入层未排除被禁止的任意代码工具',
+          message: 'Playwright MCP 接入层未排除未获授权的工具',
           checkedAt: this.now().toISOString(),
           latencyMs: Date.now() - startedAt,
         };

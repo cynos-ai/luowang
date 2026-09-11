@@ -12,7 +12,12 @@ import {
 } from '@earendil-works/pi-coding-agent';
 
 import { buildSessionInput, createPiAgentSessionFactory } from '../runs/agent-session.js';
-import type { BrowserMcpAdapter } from './playwright-mcp.js';
+import {
+  EXCLUDED_TOOL_NAMES,
+  PLAYWRIGHT_MCP_SERVER_NAME,
+  SESSION_REPLAY_TOOL_NAMES,
+  type BrowserMcpAdapter,
+} from './playwright-mcp.js';
 
 const TMPFS_MAGIC = 0x01021994;
 const MARKER = 'LuoWang native MCP preflight';
@@ -161,6 +166,16 @@ export async function runBrowserPreflight(
     )
       throw new Error('MCP_TOOL_INVENTORY_MISSING');
     tools = inventory.details.tools;
+    // Verify the real adapter surface, not only the configured definition: the
+    // approved cookie read/restore tools must exist and every excluded tool
+    // must stay hidden from the model.
+    const prefixed = (name: string) => `${PLAYWRIGHT_MCP_SERVER_NAME}_${name}`;
+    if (SESSION_REPLAY_TOOL_NAMES.some((name) => !tools.includes(prefixed(name))))
+      throw new Error('SESSION_REPLAY_TOOLS_MISSING');
+    if (EXCLUDED_TOOL_NAMES.some((name) => tools.includes(prefixed(name))))
+      throw new Error('UNAUTHORIZED_TOOLS_VISIBLE');
+    checks.sessionReplayTools = true;
+    checks.excludedToolsHidden = true;
     checks.nativeMcpBound = true;
     await new Promise<void>((resolve, reject) => {
       server.once('error', reject);
