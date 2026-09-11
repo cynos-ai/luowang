@@ -199,9 +199,9 @@ function normalizeHarness(
     provider: '',
     providerBaseUrl: '',
     agents: {
-      main: { model: '', thinking: 'medium' },
-      runner: { model: '', thinking: 'medium' },
-      reviewer: { model: '', thinking: 'medium' },
+      main: { model: '', thinking: 'low' },
+      runner: { model: '', thinking: 'off' },
+      reviewer: { model: '', thinking: 'low' },
     },
     local: { repoDir: paths.repoDir, reportDir: paths.reportDir, retentionDays: 1 },
     mcp: { enabled: false, browser: 'chromium', headless: true, timeoutMs: 30_000 },

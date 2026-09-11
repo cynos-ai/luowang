@@ -50,6 +50,8 @@ npm run test:acceptance:release
 
 打开 <http://127.0.0.1:3000/> 后使用管理员密码登录。配置页按配置文件、模型服务、Agent、Playwright MCP、S3-compatible OSS、GitHub 仓库、测试环境和自动触发分区；每个外部依赖都能在所属区域保存并检查。模型服务支持覆盖已知 Provider 的 Base URL，模型选择器只列出当前 Provider 的模型并标注视觉/推理能力；Reviewer 明确要求视觉模型以审核截图。Provider Key、Git Token、测试账号和 OSS Access Key 等 Secret 只能覆盖或显式删除，页面仅显示固定掩码。普通配置可以导出为版本化 YAML 并原子导入，Secret 始终排除且不会被导入覆盖。GitHub 区域通过一个按钮执行仓库读取、分支写入前提、PR 和 Issue 四项无副作用检查；底部总览也可一次测试全部已保存配置，并逐项显示问题原因。启用 MCP 后，Runner 使用 headless、isolated 浏览器上下文和 accessibility snapshot/ref；截图等证据上传到 OSS，私有 bucket 使用登录后的 `/api/evidence/<id>` 稳定地址。自动测试默认关闭；启用新 commit 自动测试后，默认每 5 分钟检查一次是否存在可测试提交，只有发现变化才进入队列，不会每 5 分钟无条件执行测试。Cron 留空时同样不启用。归档每 10 秒扫描，索引和保留清理每 5 分钟执行；队列、调度游标和恢复状态保存在 SQLite。
 
+Agent 仍只有 Main、Runner、Reviewer 三组，出厂 thinking 为 low/off/low。运行时由产品按阶段覆盖有效思考策略为 **策划低—Runner关—Reviewer低—最终汇总关**（low/off/low/off），不是评测驱动覆盖；模型选择沿用三组配置。已有实例保存的 thinking 不迁移、不覆盖，但实际 Session 使用上述阶段策略，详见 [生产配置就绪 Spec](docs/changes/luowang-production-config-readiness/spec.md)。官网 HTTP 清理只处理显式登记 `cleanupScope: website-accounts` 的本 Run 沙箱账号及关联会话；未绑定或不支持的数据保留人工处理告警，不能把账号查询为空当作容器/文件已清理。
+
 配置 GitHub 仓库后，先在“仓库事实与场景”区域准备 `scenario-testing` 分支，再点击“同步索引”。Git Token 只由 Repository Service 使用，不会写入 Git URL、命令参数、子进程环境、日志或测试 Agent。
 
 真实 GitHub smoke 需要操作者临时通过环境变量提供独立测试仓库和最小权限 Token；命令不会把 Token 写入文件或提交：

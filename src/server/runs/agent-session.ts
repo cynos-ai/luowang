@@ -15,7 +15,7 @@ import {
   createTargetChangeEvidenceTools,
   type TargetChangeEvidenceOptions,
 } from './change-evidence.js';
-import type { ProviderAdapter } from './provider.js';
+import { effectiveStageThinking, type ProviderAdapter } from './provider.js';
 import type {
   AgentRole,
   AgentSession,
@@ -374,7 +374,11 @@ export function buildSessionInput(
   return {
     role,
     sessionKind,
-    config,
+    // Stage policy is product-owned; never mutate persisted three-agent settings.
+    config: {
+      ...config,
+      thinking: effectiveStageThinking(role),
+    },
     cwd,
     toolNames: [],
     customTools,

@@ -7,7 +7,10 @@ export interface TestDataEntry {
   id: string;
   scenarioId?: string;
   description?: string;
+  cleanupScope?: 'website-accounts';
 }
+
+export class UnsupportedCleanupScopeError extends Error {}
 
 export interface TestDataVerificationReceipt {
   sourceId: string;
@@ -100,10 +103,14 @@ class DefaultTestDataManager implements TestDataManager {
     if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/.test(id) || !id.startsWith(this.prefix(runId))) {
       throw new Error('测试数据标识必须有效且使用当前 Run 前缀');
     }
+    if (entry.cleanupScope !== undefined && entry.cleanupScope !== 'website-accounts') {
+      throw new Error('测试数据清理资源域无效');
+    }
     const entries = this.entries.get(runId) ?? new Map<string, TestDataRecord>();
     if (!entries.has(id)) {
       entries.set(id, {
         id,
+        ...(entry.cleanupScope ? { cleanupScope: entry.cleanupScope } : {}),
         ...(entry.scenarioId ? { scenarioId: normalizeShortText(entry.scenarioId, 200) } : {}),
         ...(entry.description
           ? { description: redactSensitiveText(normalizeShortText(entry.description, 500)) }
@@ -148,6 +155,7 @@ class DefaultTestDataManager implements TestDataManager {
           runId,
           entry: {
             id: entry.id,
+            ...(entry.cleanupScope ? { cleanupScope: entry.cleanupScope } : {}),
             ...(entry.scenarioId ? { scenarioId: entry.scenarioId } : {}),
             ...(entry.description ? { description: entry.description } : {}),
           },
@@ -184,9 +192,12 @@ class DefaultTestDataManager implements TestDataManager {
           entry.rejectionReason = '清理适配器独立查询确认数据仍存在';
           failed.push(entry.id);
         }
-      } catch {
+      } catch (error) {
         entry.status = 'rejected';
-        entry.rejectionReason = '清理适配器执行或独立查询失败';
+        entry.rejectionReason =
+          error instanceof UnsupportedCleanupScopeError
+            ? '登记数据未绑定受支持的清理资源域；残留待人工处理'
+            : '清理适配器执行或独立查询失败';
         failed.push(entry.id);
       }
     }
@@ -233,6 +244,12 @@ export function createTestDataTools(
     {
       id: Type.String({ description: '当前 Run 创建的测试数据标识，不含凭据' }),
       description: Type.Optional(Type.String()),
+      cleanupScope: Type.Optional(
+        Type.Literal('website-accounts', {
+          description:
+            '仅用于本 Run 在配置的非生产官网中创建的 Run 前缀账号及关联会话；容器、文件及其他资源不得选择此域。未绑定数据保留人工处理告警。',
+        }),
+      ),
     },
     { additionalProperties: false },
   );

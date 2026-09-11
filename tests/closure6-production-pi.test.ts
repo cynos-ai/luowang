@@ -53,6 +53,10 @@ describe('Closure 6 local production Pi path', () => {
       'review.md',
     ]);
     assertSessionSequence(context.model, ['main-a', 'runner', 'reviewer', 'main-b']);
+    assert.deepEqual(
+      context.model.sessions.map((session) => session.thinking),
+      ['low', 'off', 'low', 'off'],
+    );
     assert.ok(context.model.requestCount > context.model.sessions.length);
     const commandKey = `${result.runId}/command-1.json`;
     assert.ok(

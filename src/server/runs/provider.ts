@@ -246,7 +246,11 @@ class PiProviderAdapter implements ProviderAdapter {
         `${role} 模型不存在：${provider}/${agent.model.trim()}`,
       );
     }
-    assertThinkingSupported(model, agent.thinking, role);
+    assertThinkingSupported(model, effectiveStageThinking(role), role);
+    if (role === 'main-a') {
+      // Validate both uses of the one Main model without adding a fourth agent/check.
+      assertThinkingSupported(model, effectiveStageThinking('main-b'), 'main-b');
+    }
     return model;
   }
 
@@ -310,6 +314,11 @@ class MemoryCredentialStore {
     await this.modify(providerId, async () => undefined);
     this.values.delete(providerId);
   }
+}
+
+/** Product stage policy; persisted three-agent preferences are not rewritten. */
+export function effectiveStageThinking(role: AgentRole): ThinkingLevel {
+  return role === 'main-a' || role === 'reviewer' ? 'low' : 'off';
 }
 
 export function supportedThinkingLevels(model: PiModel): ThinkingLevel[] {

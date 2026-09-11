@@ -16,7 +16,7 @@ import { createTestDataManager } from '../src/server/runs/test-data.js';
 const RUN = '01K00000000000000000000000';
 const TOKEN = 'synthetic-cleanup-token-12345678901234567890';
 const secrets = { get: () => TOKEN };
-const entry = { id: `luowang-${RUN}-account` };
+const entry = { id: `luowang-${RUN}-account`, cleanupScope: 'website-accounts' as const };
 const endpoint = 'http://website:3100/api/luowang/test-data';
 
 afterEach(() => {
@@ -84,6 +84,41 @@ describe('Run-scoped HTTP cleanup adapter', () => {
     assert.deepEqual(calls, ['DELETE', 'GET']);
     assert.equal(result.absent, true);
     assert.ok(!JSON.stringify(result).includes(TOKEN));
+  });
+
+  it('leaves unbound registrations pending and does not upgrade their domain by duplicate registration', async () => {
+    let calls = 0;
+    const request = (async () => {
+      calls++;
+      return Response.json({ runId: RUN, remaining: 0 });
+    }) as typeof fetch;
+    const adapter = createHttpTestDataCleanupAdapter(endpoint, secrets, request);
+    const manager = createTestDataManager({ cleanupAdapter: adapter });
+    await manager.register(RUN, { id: entry.id });
+    await manager.register(RUN, entry);
+    assert.equal((await manager.cleanup(RUN)).ok, false);
+    assert.match(manager.finalize(RUN).pending[0]!.rejectionReason!, /残留待人工处理/);
+    await assert.rejects(
+      adapter.cleanupAndVerify({
+        runId: RUN,
+        entry: { ...entry, cleanupScope: 'other' as 'website-accounts' },
+      }),
+    );
+    assert.equal(calls, 0);
+  });
+
+  it('does not repeat verified cleanup and independently verifies an already empty namespace', async () => {
+    let calls = 0;
+    const adapter = createHttpTestDataCleanupAdapter(endpoint, secrets, (async () => {
+      calls++;
+      return Response.json({ runId: RUN, remaining: 0 });
+    }) as typeof fetch);
+    const manager = createTestDataManager({ cleanupAdapter: adapter });
+    await manager.register(RUN, entry);
+    assert.equal((await manager.cleanup(RUN)).ok, true);
+    assert.equal((await manager.cleanup(RUN)).attempted, 0);
+    assert.equal((await adapter.cleanupAndVerify({ runId: RUN, entry })).absent, true);
+    assert.equal(calls, 4);
   });
 
   it('rejects invalid URLs, scope and absent credentials before sending a request', async () => {
