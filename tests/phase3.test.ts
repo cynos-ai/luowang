@@ -112,7 +112,7 @@ describe('Phase 3 agent run', () => {
     },
   );
 
-  it.each(['passed', 'failed'] as const)(
+  it.each(['passed', 'failed', 'blocked'] as const)(
     'cleans after final Main disposal without changing %s',
     async (outcome) => {
       const { createTestDataManager } = await import('../src/server/runs/test-data.js');
@@ -127,7 +127,7 @@ describe('Phase 3 agent run', () => {
           },
         },
       });
-      const fixture = await createGitFixture();
+      const fixture = await createGitFixture(outcome === 'blocked');
       const context: TestContext = await createRunContext(
         fixture,
         [outcome],
@@ -136,7 +136,9 @@ describe('Phase 3 agent run', () => {
           const runId = parsePromptContext(runner.userMessage).runId;
           await manager.register(runId, { id: `${manager.prefix(runId)}temporary-account` });
         },
-        undefined,
+        outcome === 'blocked'
+          ? { scenarioIds: ['AUTH-LOGIN-001'], checkpoint: async () => undefined }
+          : undefined,
         '',
         '\n',
         false,
@@ -241,7 +243,14 @@ describe('Phase 3 agent run', () => {
       context.sessions.messages,
       context.sessions.inputs.map((input) => input.userMessage),
     );
-    assert.deepEqual(context.sessions.inputs[0]?.config, context.sessions.inputs[3]?.config);
+    assert.equal(
+      context.sessions.inputs[0]?.config.model,
+      context.sessions.inputs[3]?.config.model,
+    );
+    assert.deepEqual(
+      context.sessions.inputs.map((input) => input.config.thinking),
+      ['low', 'off', 'low', 'off'],
+    );
     for (const input of context.sessions.inputs) {
       assert.match(input.systemPrompt, /luowang-role-id: common/);
       assert.doesNotMatch(input.userMessage, /luowang-role-id:/);
@@ -539,7 +548,11 @@ describe('Phase 3 agent run', () => {
         ),
         true,
       );
-      assert.deepEqual(context.sessions.inputs[index]?.config, context.sessions.inputs[0]?.config);
+      assert.equal(
+        context.sessions.inputs[index]?.config.model,
+        context.sessions.inputs[0]?.config.model,
+      );
+      assert.equal(context.sessions.inputs[index]?.config.thinking, index === 5 ? 'off' : 'low');
     }
     for (const index of [1, 3, 4]) {
       assert.equal(

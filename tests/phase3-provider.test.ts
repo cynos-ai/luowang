@@ -44,7 +44,7 @@ describe('Phase 3 Provider connectivity', () => {
     async (error, code, status) => {
       const adapter = await makeAdapter({
         provider: 'openai',
-        model: 'gpt-4o',
+        model: 'gpt-5.6-terra',
         key: 'synthetic-key',
       });
       const runtime = await adapter.getRuntime();
@@ -93,7 +93,8 @@ describe('Phase 3 Provider connectivity', () => {
     const unsupportedVision = await makeAdapter({
       provider: 'openai',
       key: 'synthetic-key',
-      model: 'gpt-4',
+      model: 'gpt-5.6-terra',
+      reviewerModel: 'o3-mini',
     });
     const unsupportedVisionResult = await unsupportedVision.checkConnectivity();
     assert.equal(unsupportedVisionResult.status, 'failed');
@@ -102,10 +103,23 @@ describe('Phase 3 Provider connectivity', () => {
   });
 
   it('reports an unconfigured API key before attempting a model request', async () => {
-    const adapter = await makeAdapter({ provider: 'openai', model: 'gpt-4' });
+    const adapter = await makeAdapter({ provider: 'openai', model: 'gpt-5.6-terra' });
     const result = await adapter.checkConnectivity();
     assert.equal(result.status, 'not_configured');
     assert.equal(result.code, 'AUTH_NOT_CONFIGURED');
+  });
+
+  it('validates effective stage thinking rather than stored preferences', async () => {
+    const adapter = await makeAdapter({
+      provider: 'openai',
+      model: 'gpt-4',
+      key: 'synthetic-key',
+      thinking: 'medium',
+    });
+    assert.equal((await adapter.resolveModel('main-b')).id, 'gpt-4');
+    assert.equal((await adapter.resolveModel('runner')).id, 'gpt-4');
+    await assert.rejects(adapter.resolveModel('main-a'), /thinking level：low/);
+    await assert.rejects(adapter.resolveModel('reviewer'), /thinking level：low/);
   });
 
   it('lists the static Provider catalog, filters models, and applies a configured base URL', async () => {
@@ -142,6 +156,7 @@ async function makeAdapter(options: {
   provider: string;
   key?: string;
   model?: string;
+  reviewerModel?: string;
   baseUrl?: string;
   thinking?: 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max';
 }) {
@@ -162,7 +177,7 @@ async function makeAdapter(options: {
     agents: {
       main: { model, thinking },
       runner: { model, thinking },
-      reviewer: { model, thinking },
+      reviewer: { model: options.reviewerModel ?? model, thinking },
     },
   });
   return createProviderAdapter(configuration, fakeSecretStore(options.key));

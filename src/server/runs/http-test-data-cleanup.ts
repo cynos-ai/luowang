@@ -1,5 +1,5 @@
 import type { SecretStore } from '../security/secret-store.js';
-import type { TestDataCleanupAdapter } from './test-data.js';
+import { UnsupportedCleanupScopeError, type TestDataCleanupAdapter } from './test-data.js';
 
 const RUN_ID = /^[0-9A-HJKMNP-TV-Z]{26}$/;
 
@@ -29,6 +29,9 @@ export function createHttpTestDataCleanupAdapter(
     async cleanupAndVerify({ runId, entry }) {
       if (!RUN_ID.test(runId) || !entry.id.startsWith(`luowang-${runId}-`)) {
         throw new Error('测试数据清理范围无效');
+      }
+      if (entry.cleanupScope !== 'website-accounts') {
+        throw new UnsupportedCleanupScopeError('未绑定官网账号清理资源域');
       }
       const token = secrets.get('testDataCleanupToken');
       if (!token || token.length < 32) throw new Error('测试数据清理凭据未配置或无效');

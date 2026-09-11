@@ -72,8 +72,16 @@ jobs:
             type=gha,scope=luowang-runtime
           cache-to: type=gha,mode=max,scope=luowang-runtime,ignore-error=true
 
-      - name: Verify production browser runtime
-        run: >-
-          docker run --rm --init --ipc=host --entrypoint node luowang:ci
-          --input-type=module -e
-          "import { chromium } from 'playwright'; const browser = await chromium.launch({ headless: true }); console.log('production Chromium ' + browser.version() + ' passed'); await browser.close();"
+      - name: Verify production native MCP and writable tmpfs (zero model requests)
+        run: |
+          bash scripts/run-browser-sandbox.sh --network none --entrypoint node luowang:ci dist/server/browser/preflight-cli.js
+          # Original read-only-home failure must not be reported as ready.
+          if bash scripts/run-browser-sandbox.sh --network none -e PI_CODING_AGENT_DIR=/home/node/.pi/agent --entrypoint node luowang:ci dist/server/browser/preflight-cli.js > preflight-denied.json; then
+            echo 'Missing writable state directory was incorrectly accepted'
+            exit 1
+          fi
+          docker run --rm --network none -v "$PWD/preflight-denied.json:/proof.json:ro" --entrypoint node luowang:ci -e '
+            const r = require("/proof.json");
+            if (r.status !== "failed" || r.modelRequests !== 0 || r.failure?.stage !== "state-directory") process.exit(1);
+            console.log("Read-only state directory correctly rejected with zero model requests");
+          '
