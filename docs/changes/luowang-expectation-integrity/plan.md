@@ -59,3 +59,15 @@ Spec已补齐，新增selected-scenarios内存视图构造，正式Runner通过p
 再做独立最终Main检查：原字节输入上一候选仍passed的矛盾review，只启动新最终Main一个Session（16384输出/响应、4请求上限）。零模型预检后实际3次HTTP200，正常stop/dispose，API total36756/output4940；只读plan/review，没有读取原始证据，初始消息/config/规则/工具与新双Session中的Main一致。它按review已有的未验证事实输出blocked，并说明旧passed标签矛盾。这验证了该例中的独立纠错，不只是照抄正确Reviewer标签。
 
 残余限制原样保留：新review把复合期望拆开计数却未说明口径，且把console文件名加相对偏移当作确定时序，时钟原点尚未建立；最终Main控制仍继承旧review“快照脱敏⇒密码未落盘”的过强措辞。单例纠正不代表全面质量通过；独立正常/真实缺陷、不适用条件对照与新规则对规划/Runner实际执行的影响仍待验证。不为修饰这些结果改写输出或反复抽样，不部署、不归档正式报告；PR #63继续Draft，人类评分not_run。记录位于`.cynos/acceptance/applicable-expectations/`。
+
+## 第四阶段：既有正常与缺陷记录对照
+
+候选保持77d8fd3对应源码/资源不变，不改场景或新增证据。选择官网46f971a派生非生产样例的两组既有真实命令记录：正常Run 01M22VV48VTM9MXEZ5RV5VHCA4（target d4a415bd66facd4d944779fdc91b86ec57a3910d）与已注入退出缺陷Run 01M233BSM50C9AC8XYENQHMQHR（target f8aee0dc65bc1543d02276291b1178b8e00434ee）。从各自Git对象导出两条已批准场景原文，从原交接重建context；通过captureCommand重建内存索引并要求生成字节/hash等同原始命令记录，不执行新命令，不新建被测项目。
+
+两例先零模型预检，再各一次双Session回放；预算仍16384输出/响应、8请求/Session、11请求/例，固定正常→缺陷顺序，无加预算/换档/复抽。正常组8次HTTP200（5+3）、API total61402，两个场景passed。缺陷组10次HTTP200（5+5）、API total84846，会话撤销failed、删除passed，保留原Cookie重放200而非401的Bug；Issue查询unavailable覆盖缺口可见，决策create而非声称已发布。四个SDK Session均正常stop/dispose，所有原始命令证据被读取，前置Harness阻塞均为空。
+
+Reviewer在两例中明确接受场景正文认可的现有测试等价操作：定向命令真实运行通过，不因未逐条展开内部断言、无图片或过滤其他测试而机械blocked。错误由实际失败断言支撑，不因整体失败抹去删除成功。当前规则下未验证/通过/已确认失败三类定向回归已有符合预期的观察；不代表模型总体准确率或新规划/Runner完整执行已验收。
+
+审计发现并保留限制：SDK自动追加工作目录，本次路径含normal/defect标签，可能给模型结果提示，因此这些是非盲的已知案例回归，不作为无提示识别率证明，也不为了改善证明重跑。后续新评估使用中性目录并在发送前检查最终system内容，不能把工厂收到的systemPrompt当作完整wire。缺陷报告称查询“原样重试”，但两次序列化参数hash不同，仅凭记录无法区分参数值与键顺序变化；只确认两次查询及unavailable披露。
+
+原场景/计划/执行/历史报告和失败记录不变，凭据扫描零命中，无业务、清理、归档或部署执行。记录在`.cynos/acceptance/expectation-controls/`，人类评分not_run，PR #63继续Draft。下一步按匹配提交复核代码/CI及剩余候选端到端验证范围，不把这些有限回放包装成全面闭环。
