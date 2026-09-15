@@ -102,7 +102,16 @@ describe('Closure 1 built-in role instructions', () => {
       if (mode === 'marker') await writeFile(target, '# wrong role\n');
       if (mode === 'symlink') {
         await rm(target);
-        await symlink(join(sourceDirectory, 'runner-execution.md'), target);
+        // Windows file symlinks require Developer Mode or elevation. A directory
+        // junction exercises the same lstat fail-closed boundary without either
+        // requirement; POSIX keeps the narrower file-symlink fixture.
+        await symlink(
+          process.platform === 'win32'
+            ? sourceDirectory
+            : join(sourceDirectory, 'runner-execution.md'),
+          target,
+          process.platform === 'win32' ? 'junction' : 'file',
+        );
       }
 
       await assert.rejects(

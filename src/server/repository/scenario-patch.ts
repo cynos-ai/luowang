@@ -128,7 +128,9 @@ export function validateScenarioContents(
       scenario = parseScenarioMarkdown(content, path);
     } catch (error) {
       if (error instanceof RepositoryError) {
-        throw new ScenarioPatchError(error.message);
+        throw new ScenarioPatchError(
+          `${error.message.slice(0, 1000)}；场景 frontmatter 必须且只能包含 id、name、description、status、tags：前三项非空，id 为大写字母/数字和连字符组成的稳定 ID，status 为 draft/approved/deprecated，tags 为字符串数组（可为空）；不要把 name 当作文件名`,
+        );
       }
       throw error;
     }

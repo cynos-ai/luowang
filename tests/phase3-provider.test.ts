@@ -22,6 +22,41 @@ afterEach(async () => {
 });
 
 describe('Phase 3 Provider connectivity', () => {
+  it.each([
+    [
+      { message: 'unsupported response_format secret=private-fixture-value' },
+      'REQUEST_FAILED',
+      'failed',
+    ],
+    [{ message: 'not an auth or timeout problem' }, 'REQUEST_FAILED', 'failed'],
+    [{ status: 404, message: 'endpoint missing' }, 'REQUEST_FAILED', 'failed'],
+    [{ status: 401 }, 'AUTHENTICATION_FAILED', 'failed'],
+    [{ status: 403 }, 'AUTHENTICATION_FAILED', 'failed'],
+    [{ code: 'invalid_api_key' }, 'AUTHENTICATION_FAILED', 'failed'],
+    [{ code: 'model_not_found' }, 'MODEL_NOT_FOUND', 'failed'],
+    [{ name: 'TimeoutError' }, undefined, 'timeout'],
+    [{ code: 'ETIMEDOUT' }, undefined, 'timeout'],
+    [{ name: 'AbortError' }, 'REQUEST_FAILED', 'failed'],
+    [null, 'REQUEST_FAILED', 'failed'],
+    ['unsupported response_format', 'REQUEST_FAILED', 'failed'],
+  ] as const)(
+    'classifies explicit Provider facts without guessing from message: %j',
+    async (error, code, status) => {
+      const adapter = await makeAdapter({
+        provider: 'openai',
+        model: 'gpt-5.6-terra',
+        key: 'synthetic-key',
+      });
+      const runtime = await adapter.getRuntime();
+      runtime.completeSimple = async () => {
+        throw error;
+      };
+      const result = await adapter.checkConnectivity();
+      assert.equal(result.code, code);
+      assert.equal(result.status, status);
+      assert.doesNotMatch(JSON.stringify(result), /private-fixture-value|response_format/);
+    },
+  );
   it('distinguishes missing configuration, unknown Provider, missing model, and unsupported thinking', async () => {
     const notConfigured = await makeAdapter({ provider: '' });
     const notConfiguredResult = await notConfigured.checkConnectivity();
@@ -58,7 +93,8 @@ describe('Phase 3 Provider connectivity', () => {
     const unsupportedVision = await makeAdapter({
       provider: 'openai',
       key: 'synthetic-key',
-      model: 'gpt-4',
+      model: 'gpt-5.6-terra',
+      reviewerModel: 'o3-mini',
     });
     const unsupportedVisionResult = await unsupportedVision.checkConnectivity();
     assert.equal(unsupportedVisionResult.status, 'failed');
@@ -67,10 +103,23 @@ describe('Phase 3 Provider connectivity', () => {
   });
 
   it('reports an unconfigured API key before attempting a model request', async () => {
-    const adapter = await makeAdapter({ provider: 'openai', model: 'gpt-4' });
+    const adapter = await makeAdapter({ provider: 'openai', model: 'gpt-5.6-terra' });
     const result = await adapter.checkConnectivity();
     assert.equal(result.status, 'not_configured');
     assert.equal(result.code, 'AUTH_NOT_CONFIGURED');
+  });
+
+  it('validates effective stage thinking rather than stored preferences', async () => {
+    const adapter = await makeAdapter({
+      provider: 'openai',
+      model: 'gpt-4',
+      key: 'synthetic-key',
+      thinking: 'medium',
+    });
+    assert.equal((await adapter.resolveModel('main-b')).id, 'gpt-4');
+    assert.equal((await adapter.resolveModel('runner')).id, 'gpt-4');
+    await assert.rejects(adapter.resolveModel('main-a'), /thinking level：low/);
+    await assert.rejects(adapter.resolveModel('reviewer'), /thinking level：low/);
   });
 
   it('lists the static Provider catalog, filters models, and applies a configured base URL', async () => {
@@ -107,6 +156,7 @@ async function makeAdapter(options: {
   provider: string;
   key?: string;
   model?: string;
+  reviewerModel?: string;
   baseUrl?: string;
   thinking?: 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max';
 }) {
@@ -127,7 +177,7 @@ async function makeAdapter(options: {
     agents: {
       main: { model, thinking },
       runner: { model, thinking },
-      reviewer: { model, thinking },
+      reviewer: { model: options.reviewerModel ?? model, thinking },
     },
   });
   return createProviderAdapter(configuration, fakeSecretStore(options.key));

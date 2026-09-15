@@ -1,5 +1,6 @@
 import { strict as assert } from 'node:assert';
 import { readFile } from 'node:fs/promises';
+import { join } from 'node:path';
 
 import { describe, it } from 'vitest';
 
@@ -64,7 +65,7 @@ describe('Closure 6 acceptance status layering', () => {
       assert.equal(environment.AWS_SECRET_ACCESS_KEY, undefined);
       assert.equal(environment.LUOWANG_MASTER_KEY, undefined);
       assert.equal(environment.NODE_ENV, 'test');
-      assert.equal(environment.HOME, '/tmp/luowang-closure6-environment/isolated-home');
+      assert.equal(environment.HOME, join('/tmp/luowang-closure6-environment', 'isolated-home'));
       assert.doesNotMatch(JSON.stringify(environment), /canary-(?:github|aws|master)-value/);
     } finally {
       restoreEnvironment('GITHUB_TOKEN', original.github);
@@ -96,8 +97,8 @@ describe('Closure 6 acceptance status layering', () => {
     assert.equal(report.local.status, 'passed');
     assert.equal(report.live.status, 'blocked');
     assert.equal(report.release.status, 'blocked');
-    assert.equal(report.acEvidence.length, 18);
-    assert.equal(new Set(report.acEvidence.map((item) => item.ac)).size, 18);
+    assert.equal(report.acEvidence.length, 30);
+    assert.equal(new Set(report.acEvidence.map((item) => item.ac)).size, 30);
     assert.equal(
       report.resourceChecks.every((item) => item.evidence.length > 0),
       true,
@@ -319,8 +320,8 @@ describe('Closure 6 acceptance status layering', () => {
     const all = contents.join('\n');
     assert.match(all, /不得用当前实现反推正确期望/);
     assert.match(all, /证据优先级/);
-    assert.match(all, /Runner 报告是待审核假设/);
-    assert.match(all, /清理声明不是独立核验事实/);
+    assert.match(all, /Main 的计划和 Runner 的报告都可能出错/);
+    assert.match(all, /测试后的数据清理是 Harness 收尾事项/);
     assert.match(all, /不影响验证目标的偏差可以记录后继续/);
     assert.match(all, /blocked > failed > passed/);
   });
@@ -358,6 +359,11 @@ describe('Closure 6 acceptance status layering', () => {
     assert.match(packageJson.scripts['test:acceptance:release'] ?? '', /closure\.ts release/);
     const workflow = await readFile('.github/workflows/quality.yml', 'utf8');
     assert.match(workflow, /timeout-minutes:\s*60/);
+    assert.match(workflow, /cancel-in-progress:\s*true/);
+    assert.match(workflow, /docker\/setup-buildx-action@v3/);
+    assert.match(workflow, /docker\/build-push-action@v6/);
+    assert.match(workflow, /cache-from:\s*(?:\||type=gha)/);
+    assert.match(workflow, /cache-to:\s*type=gha,mode=max/);
     assert.match(workflow, /npm run test:acceptance:local/);
     assert.doesNotMatch(workflow, /npm run test:acceptance:(?:live|release)/);
     const dockerignore = await readFile('.dockerignore', 'utf8');
@@ -391,6 +397,18 @@ function proofStatuses(overrides: Partial<ClosureProofStatuses> = {}): ClosurePr
     publicQuality: 'passed',
     acceptanceLayering: 'passed',
     acMapping: 'passed',
+    sdq01: 'passed',
+    sdq02: 'passed',
+    sdq03: 'passed',
+    sdq04: 'passed',
+    sdq05: 'passed',
+    sdq06: 'passed',
+    sdq07: 'passed',
+    sdq08: 'passed',
+    sdq09: 'passed',
+    sdq10: 'passed',
+    sdq11: 'passed',
+    sdq12: 'not_run',
     ...overrides,
   };
 }

@@ -15,7 +15,16 @@ import type {
 } from '../../src/server/runs/types.js';
 
 export type LocalModelBehavior =
-  'normal' | 'revise-final-patch' | 'invalid-tool' | 'special-cleanup';
+  | 'normal'
+  | 'revise-final-patch'
+  | 'invalid-tool'
+  | 'rejected-command'
+  | 'special-cleanup'
+  | 'reuse-existing'
+  | 'empty-initialization'
+  | 'omit-approved'
+  | 'omit-modified'
+  | 'unselected-draft';
 
 export interface LocalPiSessionRecord {
   id: string;
@@ -316,33 +325,68 @@ function nextTool(
   const candidateMain =
     has('write_scenario_patch') &&
     has('read_run_artifact') &&
-    !has('write_plan') &&
+    has('write_plan') &&
     !has('write_report');
   const finalMain = has('write_report');
+  const initializationScenarioId =
+    behavior === 'reuse-existing' ? 'CORE-STATE-001' : 'ONBOARD-SMOKE-001';
+
+  if (candidateMain) {
+    const unreadArtifact = nextUnreadArtifact(['plan.md', 'execution.md']);
+    if (unreadArtifact) return unreadArtifact;
+    if (count('write_plan') === 0) {
+      const candidatePlan =
+        behavior === 'empty-initialization'
+          ? '# 初始化候选计划\n\n侦察与固定 target 证据表明当前没有需要正式验证的产品能力。\n\n## execution_scenarios\n\n无需场景测试：当前 target 没有可信的可执行场景，且本批证据不要求场景验证。\n'
+          : behavior === 'reuse-existing'
+            ? '# 初始化候选计划\n\n复用 target 中已有的 approved 状态场景。\n\n## execution_scenarios\n\n- CORE-STATE-001\n'
+            : '# 初始化候选计划\n\n侦察发现核心入口需要验证。\n\n## execution_scenarios\n\n- ONBOARD-SMOKE-001\n';
+      return tool('write_plan', {
+        requiresBrowser: false,
+        content:
+          candidatePlan +
+          '\n## scenario_review_summary\n\n候选范围：核心入口验证。\n\n覆盖缺口：退款权限风险尚未覆盖。\n' +
+          (behavior === 'special-cleanup'
+            ? '\npassword: local-synthetic-password\nhttps://example.test/evidence?token=synthetic-only\n'
+            : ''),
+      });
+    }
+    if (
+      behavior !== 'reuse-existing' &&
+      behavior !== 'empty-initialization' &&
+      count('write_scenario_patch') === 0
+    ) {
+      const extra =
+        behavior === 'omit-approved' || behavior === 'unselected-draft'
+          ? scenarioAddPatch('ONBOARD-OMITTED-002').replace(
+              'status: approved',
+              `status: ${behavior === 'unselected-draft' ? 'draft' : 'approved'}`,
+            )
+          : behavior === 'omit-modified'
+            ? 'diff --git a/docs/scenario-testing/scenarios/CORE-STATE-001.md b/docs/scenario-testing/scenarios/CORE-STATE-001.md\n--- a/docs/scenario-testing/scenarios/CORE-STATE-001.md\n+++ b/docs/scenario-testing/scenarios/CORE-STATE-001.md\n@@ -1,7 +1,7 @@\n ---\n id: CORE-STATE-001\n name: 状态保持\n-description: 验证状态保持的业务结果\n+description: 验证权限隔离后的状态保持结果\n status: approved\n tags:\n   - core\n'
+            : '';
+      return tool('write_scenario_patch', {
+        content: scenarioAddPatch('ONBOARD-SMOKE-001').trimEnd() + '\n' + extra,
+      });
+    }
+    return null;
+  }
 
   if (has('write_plan')) {
     if (count('get_run_context') === 0) return tool('get_run_context');
     if (count('list_target_files') === 0) return tool('list_target_files');
     if (count('write_plan') === 0) {
       return tool('write_plan', {
+        requiresBrowser: false,
         content: initialization
-          ? '# 初始化计划\n\n候选场景 `ONBOARD-SMOKE-001`：验证陌生项目核心入口。\n'
-          : '# 测试计划\n\n无需场景测试：本次仅验证固定 target 的生产 Pi 工件流转。\n',
+          ? '# 初始化静态计划\n\n待运行时侦察确认主要入口和能力。\n'
+          : '# 测试计划\n\n## execution_scenarios\n\n无需场景测试：本次仅验证固定 target 的生产 Pi 工件流转。\n',
       });
     }
     return null;
   }
 
-  if (candidateMain) {
-    const unreadArtifact = nextUnreadArtifact(['plan.md', 'execution.md', 'draft-report.md']);
-    if (unreadArtifact) return unreadArtifact;
-    if (count('write_scenario_patch') === 0) {
-      return tool('write_scenario_patch', { content: scenarioAddPatch('ONBOARD-SMOKE-001') });
-    }
-    return null;
-  }
-
-  if (has('write_execution') && has('write_draft_report')) {
+  if (has('write_execution')) {
     const unreadArtifact = nextUnreadArtifact(['plan.md']);
     if (unreadArtifact) return unreadArtifact;
     if (
@@ -360,42 +404,73 @@ function nextTool(
     if (count('list_working_scenarios') === 0) return tool('list_working_scenarios');
     if (has('begin_scenario_execution') && count('begin_scenario_execution') === 0) {
       return tool('begin_scenario_execution', {
-        scenarioIds: initialization ? ['ONBOARD-SMOKE-001'] : [],
+        scenarioIds: initialization
+          ? behavior === 'reuse-existing'
+            ? ['CORE-STATE-001']
+            : behavior === 'empty-initialization'
+              ? []
+              : ['ONBOARD-SMOKE-001']
+          : [],
       });
     }
-    if (initialization && has('start_scenario') && count('start_scenario') === 0) {
-      return tool('start_scenario', { scenarioId: 'ONBOARD-SMOKE-001' });
+    if (
+      initialization &&
+      behavior !== 'empty-initialization' &&
+      has('start_scenario') &&
+      count('start_scenario') === 0
+    ) {
+      return tool('start_scenario', { scenarioId: initializationScenarioId });
     }
-    if (initialization && has('finish_scenario') && count('finish_scenario') === 0) {
-      return tool('finish_scenario', { scenarioId: 'ONBOARD-SMOKE-001' });
+    if (
+      initialization &&
+      behavior !== 'empty-initialization' &&
+      has('finish_scenario') &&
+      count('finish_scenario') === 0
+    ) {
+      return tool('finish_scenario', { scenarioId: initializationScenarioId });
     }
     if (count('run_fixture_command') === 0) {
-      return tool('run_fixture_command', { command: 'node --version' });
+      return tool('run_fixture_command', {
+        command: behavior === 'rejected-command' ? 'node --eval "1+1"' : 'node --version',
+      });
     }
     if (count('write_execution') === 0) {
       return tool('write_execution', {
         content: initialization
-          ? '# 执行记录\n\n候选场景 ONBOARD-SMOKE-001 已通过受控命令验证。\n'
+          ? behavior === 'empty-initialization'
+            ? '# 执行记录\n\n本次候选计划声明无需执行场景，已完成正式 0/0 交接。\n'
+            : `# 执行记录\n\n候选场景 ${initializationScenarioId} 已通过受控命令验证。\n`
           : '# 执行记录\n\n固定 target 的受控命令执行成功；无需产品场景。\n',
-      });
-    }
-    if (count('write_draft_report') === 0) {
-      return tool('write_draft_report', {
-        content: initialization
-          ? '# 草稿报告\n\nONBOARD-SMOKE-001 passed。\n'
-          : '# 草稿报告\n\n无需场景测试，工件流转通过。\n',
       });
     }
     return null;
   }
 
   if (has('write_review')) {
-    const unreadArtifact = nextUnreadArtifact(['plan.md', 'execution.md', 'draft-report.md']);
+    const prerequisite = nextUnreadArtifact(['plan.md', 'scenario-changes.patch']);
+    if (prerequisite) return prerequisite;
+    if (has('read_command_evidence')) {
+      if (count('list_evidence_files') === 0) return tool('list_evidence_files', {});
+      const commandIds = [
+        ...new Set(
+          [...prompt.matchAll(/"filename":\s*"(command-\d+\.json)"/g)].map((match) => match[1]),
+        ),
+      ];
+      const filename = commandIds[count('read_command_evidence')];
+      if (filename) return tool('read_command_evidence', { filename });
+    }
+    const unreadArtifact = nextUnreadArtifact([
+      'plan.md',
+      'scenario-changes.patch',
+      'execution.md',
+    ]);
     if (unreadArtifact) return unreadArtifact;
     if (count('write_review') === 0) {
       return tool('write_review', {
         content: initialization
-          ? '# 独立审核\n\n已独立确认候选场景 ONBOARD-SMOKE-001 的执行证据。\n'
+          ? behavior === 'empty-initialization'
+            ? '# 独立审核\n\n已独立确认计划中无需场景测试的固定依据。\n'
+            : `# 独立审核\n\n已独立确认候选场景 ${initializationScenarioId} 的执行证据。\n`
           : '# 独立审核\n\n已独立确认无需场景测试的依据和执行工件。\n',
       });
     }
@@ -403,12 +478,7 @@ function nextTool(
   }
 
   if (finalMain) {
-    const unreadArtifact = nextUnreadArtifact([
-      'plan.md',
-      'execution.md',
-      'draft-report.md',
-      'review.md',
-    ]);
+    const unreadArtifact = nextUnreadArtifact(['plan.md', 'review.md']);
     if (unreadArtifact) return unreadArtifact;
     if (
       initialization &&
@@ -419,7 +489,7 @@ function nextTool(
       return tool('write_scenario_patch', { content: scenarioAddPatch('ONBOARD-REVISED-001') });
     }
     if (count('write_report') === 0) {
-      return tool('write_report', { content: reportFromPrompt(prompt, initialization) });
+      return tool('write_report', { content: reportFromPrompt(prompt, initialization, behavior) });
     }
     return null;
   }
@@ -435,13 +505,19 @@ function readArtifact(name: string): NextTool {
   return { name: 'read_run_artifact', arguments: { name } };
 }
 
-function reportFromPrompt(prompt: string, initialization: boolean): string {
+function reportFromPrompt(
+  prompt: string,
+  initialization: boolean,
+  behavior: LocalModelBehavior,
+): string {
   const context = parseRunContext(prompt);
   const included = context.includedCommits.length
     ? `\n${context.includedCommits.map((commit) => `  - ${commit}`).join('\n')}`
     : ' []';
   const scenarioResults = initialization
-    ? '\n  - id: ONBOARD-SMOKE-001\n    result: passed'
+    ? behavior === 'empty-initialization'
+      ? ' []'
+      : `\n  - id: ${behavior === 'reuse-existing' ? 'CORE-STATE-001' : 'ONBOARD-SMOKE-001'}\n    result: passed`
     : ' []';
   return `---
 run_id: ${context.runId}
@@ -458,7 +534,7 @@ confirmed_bugs: []
 
 # 最终报告
 
-${initialization ? '候选场景 ONBOARD-SMOKE-001 已执行并经 Reviewer 审核。' : '无需场景测试：Reviewer 已独立确认。'}
+${initialization ? (behavior === 'empty-initialization' ? '无需场景测试：Reviewer 已独立确认。' : `候选场景 ${behavior === 'reuse-existing' ? 'CORE-STATE-001' : 'ONBOARD-SMOKE-001'} 已执行并经 Reviewer 审核。`) : '无需场景测试：Reviewer 已独立确认。'}
 `;
 }
 
@@ -504,7 +580,7 @@ ${lines.map((line) => `+${line}`).join('\n')}
 `;
 }
 
-function messageText(message: ChatRequest['messages'] extends Array<infer T> ? T : never): string {
+function messageText(message: NonNullable<ChatRequest['messages']>[number] | undefined): string {
   if (!message) return '';
   if (typeof message.content === 'string') return message.content;
   if (Array.isArray(message.content)) {

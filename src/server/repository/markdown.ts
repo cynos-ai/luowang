@@ -8,6 +8,17 @@ import type {
 } from '../../shared/types.js';
 import { RepositoryError } from './errors.js';
 
+/** Parser-owned diagnostics exclude input values, unknown keys and filesystem paths. */
+export class MarkdownValidationError extends RepositoryError {
+  constructor(
+    path: string,
+    message: string,
+    readonly safeDiagnostic: string,
+  ) {
+    super('INDEX_UNAVAILABLE', `${path}：${message}`, 422);
+  }
+}
+
 const SCENARIO_ID_PATTERN = /^[A-Z0-9]+(?:-[A-Z0-9]+)+$/;
 const RUN_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
 const SHA_PATTERN = /^[0-9a-f]{40}$/i;
@@ -156,7 +167,7 @@ function readConfirmedBugs(value: unknown, path: string): ConfirmedBugSummary[] 
       path,
     );
     if (issueAction !== 'create' && issueAction !== 'link') {
-      throw invalid(path, `confirmed_bugs[${index}].issue_action 无效`);
+      throw invalid(path, `confirmed_bugs[${index}].issue_action 必须是 create 或 link`);
     }
     const issueUrl =
       item.issue_url === undefined
@@ -215,13 +226,18 @@ function readNonEmptyString(
 function assertKnownKeys(value: Record<string, unknown>, keys: string[], path: string): void {
   const allowed = new Set(keys);
   const unknown = Object.keys(value).filter((key) => !allowed.has(key));
-  if (unknown.length > 0) throw invalid(path, `frontmatter 包含未知字段：${unknown.join(', ')}`);
+  if (unknown.length > 0)
+    throw invalid(
+      path,
+      `frontmatter 包含未知字段：${unknown.join(', ')}`,
+      'frontmatter 包含未知字段，请只使用输出契约列出的字段',
+    );
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-function invalid(path: string, message: string): RepositoryError {
-  return new RepositoryError('INDEX_UNAVAILABLE', `${path}：${message}`, 422);
+function invalid(path: string, message: string, safeDiagnostic = message): RepositoryError {
+  return new MarkdownValidationError(path, message, safeDiagnostic);
 }

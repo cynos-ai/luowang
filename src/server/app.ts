@@ -63,6 +63,8 @@ import {
 } from './runs/orchestrator.js';
 import { createRunArchiver, type RunArchiver } from './runs/archiver.js';
 import { createRunStore, type RunStore } from './runs/store.js';
+import { createTestDataManager } from './runs/test-data.js';
+import { createHttpTestDataCleanupAdapter } from './runs/http-test-data-cleanup.js';
 import { createOperationsService, type OperationsService } from './operations/service.js';
 
 export interface AppOptions {
@@ -141,6 +143,11 @@ export async function createApp(options: AppOptions) {
       repository,
       indexer,
       reportDir: configuration.getHarness().local.reportDir,
+      testData: createTestDataManager({
+        cleanupAdapter: options.config.testDataCleanupUrl
+          ? createHttpTestDataCleanupAdapter(options.config.testDataCleanupUrl, secretStore)
+          : undefined,
+      }),
       secretStore,
       provider,
       browser,

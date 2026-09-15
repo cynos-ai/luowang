@@ -9,6 +9,7 @@ import type {
 } from '../../shared/types.js';
 import type { InlineExtension, ToolDefinition } from '@earendil-works/pi-coding-agent';
 import type { ScenarioPatchValidation } from '../repository/scenario-patch.js';
+import type { SelectedScenarioSnapshot } from './selected-scenarios.js';
 
 export type AgentRole = 'main-a' | 'runner' | 'reviewer' | 'main-b';
 
@@ -22,13 +23,7 @@ export interface RoleInstructionVersion {
   sha256: string;
 }
 
-export const RUN_ARTIFACT_NAMES = [
-  'plan.md',
-  'execution.md',
-  'draft-report.md',
-  'review.md',
-  'report.md',
-] as const;
+export const RUN_ARTIFACT_NAMES = ['plan.md', 'execution.md', 'review.md', 'report.md'] as const;
 
 export const SCENARIO_PATCH_ARTIFACT_NAME = 'scenario-changes.patch' as const;
 
@@ -63,6 +58,7 @@ export interface RunContext {
   scenarioMode: ScenarioMode;
   initialization: boolean;
   scenarioChanges?: ScenarioPatchValidation;
+  selectedScenarioSnapshot?: SelectedScenarioSnapshot;
 }
 
 export interface AgentSessionInput {

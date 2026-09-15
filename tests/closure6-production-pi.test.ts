@@ -1,12 +1,14 @@
 import { strict as assert } from 'node:assert';
 import { execFile } from 'node:child_process';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { localEvidenceTransport } from './acceptance/local-evidence.js';
+import { RunWorkspace } from '../src/server/runs/workspace.js';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
 
 import pino from 'pino';
-import { afterEach, describe, it } from 'vitest';
+import { afterEach, describe, it, vi } from 'vitest';
 
 import { createAutomationService } from '../src/server/automation/service.js';
 import { loadConfig } from '../src/server/config.js';
@@ -45,18 +47,105 @@ describe('Closure 6 local production Pi path', () => {
     assert.equal(result.status, 'completed', JSON.stringify(result));
     assert.equal(result.result, 'passed');
     assert.deepEqual(Object.keys(result.artifacts).sort(), [
-      'draft-report.md',
       'execution.md',
       'plan.md',
       'report.md',
       'review.md',
     ]);
     assertSessionSequence(context.model, ['main-a', 'runner', 'reviewer', 'main-b']);
+    assert.deepEqual(
+      context.model.sessions.map((session) => session.thinking),
+      ['low', 'off', 'low', 'off'],
+    );
     assert.ok(context.model.requestCount > context.model.sessions.length);
+    const commandKey = `${result.runId}/command-1.json`;
+    assert.ok(
+      context.evidence.reads.includes(commandKey),
+      'production Pi Reviewer must read the captured command object',
+    );
+    const command = JSON.parse(context.evidence.objects.get(commandKey)!.toString());
+    assert.equal(command.runId, result.runId);
+    assert.equal(command.targetCommit, result.targetCommit);
+    assert.equal(command.command, 'node --version');
+    assert.equal(command.result.exitCode, 0);
+    assert.match(command.result.stdout, /^v\d+\.\d+\.\d+/);
+    assert.ok(context.model.sessions[2]?.tools.includes('read_command_evidence'));
+    assert.ok(!context.model.sessions[2]?.tools.includes('run_fixture_command'));
     assert.equal(context.model.sessions[0]?.model, context.model.sessions[3]?.model);
     assert.notDeepEqual(context.model.sessions[0]?.tools, context.model.sessions[3]?.tools);
     assert.match(result.artifacts['report.md'] ?? '', /Reviewer 已独立确认/);
+    const reviewerPrompt =
+      context.model.sessions.find((session) => session.role === 'reviewer')?.systemPrompt ?? '';
+    const sourceIndex = reviewerPrompt.indexOf('先读动态上下文 `selectedScenarioSnapshot`');
+    const planIndex = reviewerPrompt.indexOf('再对照 `plan.md`');
+    const evidenceIndex = reviewerPrompt.indexOf('接着通过 `list_evidence_files`');
+    const executionIndex = reviewerPrompt.indexOf('再打开 `execution.md`');
+    assert.ok(sourceIndex >= 0, 'Reviewer must receive the frozen-original reading rule');
+    assert.ok(planIndex > sourceIndex, 'Reviewer must compare the plan with frozen originals');
+    assert.ok(evidenceIndex > planIndex, 'Reviewer must read raw evidence after the plan');
+    assert.ok(executionIndex > evidenceIndex, 'Reviewer must read execution drafts last');
+    // Prove complete, single delivery per role, not semantic quality from slogan matching.
+    const resources = ['main-planning', 'runner-execution', 'reviewer-audit', 'main-finalization'];
+    const common = (await readFile('resources/agent-roles/common.md', 'utf8')).trim();
+    for (const [index, resource] of resources.entries()) {
+      const prompt = context.model.sessions[index]?.systemPrompt ?? '';
+      const content = (await readFile(`resources/agent-roles/${resource}.md`, 'utf8')).trim();
+      assert.equal(prompt.split(common).length - 1, 1);
+      assert.equal(prompt.split(content).length - 1, 1);
+      for (const other of resources.filter((id) => id !== resource)) {
+        assert.ok(!prompt.includes(`luowang-role-id: ${other};`));
+      }
+      assert.ok(!prompt.includes('luowang-role-id: scenario-initialization;'));
+    }
   });
+
+  it('retains a real parser rejection for the isolated Reviewer without executing inline code', async () => {
+    const context = await createContext('review-all', 'rejected-command');
+    const result = await context.orchestrator.run({
+      request: '验证受控命令诊断交接',
+      trigger: 'manual',
+    });
+    assert.equal(result.status, 'completed', JSON.stringify(result));
+    const body = context.evidence.objects.get(`${result.runId}/command-1.json`);
+    assert.ok(body);
+    const captured = JSON.parse(body.toString());
+    assert.match(captured.result.error, /COMMAND_NOT_ALLOWED/);
+    assert.doesNotMatch(captured.result.error, /未生成可信最终结论/);
+    assert.equal(captured.result.exitCode, undefined);
+    assert.ok(context.evidence.reads.includes(`${result.runId}/command-1.json`));
+    assert.ok(!context.model.sessions[1]?.tools.includes('capture_test_data_cleanup_query'));
+  });
+
+  it.each(['capture', 'upload'] as const)(
+    'keeps command evidence %s failures blocked through production Pi',
+    async (failure) => {
+      const context = await createContext('review-all', 'normal');
+      const capture =
+        failure === 'capture'
+          ? vi
+              .spyOn(RunWorkspace.prototype, 'writeHarnessEvidence')
+              .mockRejectedValueOnce(new Error('fixture write failure'))
+          : undefined;
+      if (failure === 'upload')
+        context.evidence.oss.uploadFile = async () => {
+          throw new Error('fixture upload failure');
+        };
+      try {
+        const result = await context.orchestrator.run({
+          request: '验证命令证据失败不能被草稿通过掩盖',
+          trigger: 'manual',
+        });
+        assert.equal(result.status, 'completed', JSON.stringify(result));
+        assert.equal(result.result, 'blocked');
+        assert.match(
+          result.artifacts['report.md'] ?? '',
+          failure === 'capture' ? /受控命令结果保存失败/ : /证据上传失败/,
+        );
+      } finally {
+        capture?.mockRestore();
+      }
+    },
+  );
 
   it('creates the first scenario branch through FIFO before one six-Session production Pi initialization Run', async () => {
     const context = await createContext('autonomous', 'normal', false);
@@ -137,7 +226,7 @@ describe('Closure 6 local production Pi path', () => {
   it('runs unfamiliar-project direct initialization through six isolated production Pi Sessions', async () => {
     const context = await createContext('autonomous', 'normal');
     const result = await context.orchestrator.run({
-      request: '初始化陌生项目并直接新增一个高价值场景',
+      request: '初始化陌生项目并整理场景测试集',
       trigger: 'manual',
       initialization: true,
     });
@@ -153,8 +242,11 @@ describe('Closure 6 local production Pi path', () => {
       'main-b',
     ]);
     assert.equal(new Set(context.model.sessions.map((session) => session.id)).size, 6);
+    // Check the actual dynamic task as well as the loaded role resources.
+    const candidateTask = context.model.sessions[2]?.prompts[0] ?? '';
+    assert.match(candidateTask, /尽可能全面地整理项目所需的候选场景并更新验证计划，不追求绝对穷尽/);
+    assert.doesNotMatch(candidateTask, /少量高价值/);
     assert.deepEqual(Object.keys(result.artifacts).sort(), [
-      'draft-report.md',
       'execution.md',
       'plan.md',
       'report.md',
@@ -164,6 +256,92 @@ describe('Closure 6 local production Pi path', () => {
     assert.match(result.artifacts['scenario-changes.patch'] ?? '', /ONBOARD-SMOKE-001/);
     assert.equal(context.model.sessions.filter((session) => session.role === 'main-a').length, 2);
     assert.equal(context.model.sessions.filter((session) => session.role === 'runner').length, 2);
+  });
+
+  it('rejects initialization when an approved patch candidate is omitted from the plan', async () => {
+    const context = await createContext('autonomous', 'omit-approved');
+    const result = await context.orchestrator.run({
+      request: '不能跳过新增 approved 场景',
+      trigger: 'manual',
+      initialization: true,
+    });
+    assert.equal(result.status, 'failed');
+    assert.equal(result.result, null);
+    assert.match(result.errorMessage ?? '', /approved 场景未纳入执行清单：ONBOARD-OMITTED-002/);
+    assertSessionSequence(context.model, ['main-a', 'runner', 'main-a'], [1, 1, 3]);
+  });
+
+  it('rejects initialization when a modified approved scene is omitted', async () => {
+    const context = await createContext('autonomous', 'omit-modified');
+    const result = await context.orchestrator.run({
+      request: '修改 approved 也必须执行',
+      trigger: 'manual',
+      initialization: true,
+    });
+    assert.equal(result.status, 'failed');
+    assert.equal(result.result, null);
+    assert.match(result.errorMessage ?? '', /approved 场景未纳入执行清单：CORE-STATE-001/);
+    assertSessionSequence(context.model, ['main-a', 'runner', 'main-a'], [1, 1, 3]);
+  });
+
+  it('allows unselected draft candidates without treating them as passed', async () => {
+    const context = await createContext('autonomous', 'unselected-draft');
+    const result = await context.orchestrator.run({
+      request: 'draft 只记录缺口',
+      trigger: 'manual',
+      initialization: true,
+    });
+    assert.equal(result.result, 'passed', JSON.stringify(result));
+    assert.match(result.artifacts['scenario-changes.patch'] ?? '', /status: draft/);
+    assert.doesNotMatch(result.artifacts['report.md'] ?? '', /ONBOARD-OMITTED-002/);
+    assert.deepEqual(result.scenarioProgress, { completed: 1, total: 1 });
+  });
+
+  it('reuses an existing approved scenario without manufacturing a patch', async () => {
+    const context = await createContext('autonomous', 'reuse-existing');
+    const result = await context.orchestrator.run({
+      request: '初始化时复用 target 中已有的高价值场景',
+      trigger: 'manual',
+      initialization: true,
+    });
+
+    assert.equal(result.status, 'completed', JSON.stringify(result));
+    assert.equal(result.result, 'passed', JSON.stringify(result));
+    assert.equal(result.artifacts['scenario-changes.patch'], undefined);
+    assert.match(result.artifacts['plan.md'] ?? '', /CORE-STATE-001/);
+    assert.deepEqual(result.scenarioProgress, { completed: 1, total: 1 });
+    assertSessionSequence(context.model, [
+      'main-a',
+      'runner',
+      'main-a',
+      'runner',
+      'reviewer',
+      'main-b',
+    ]);
+  });
+
+  it('runs a justified empty initialization plan through formal 0/0 review', async () => {
+    const context = await createContext('autonomous', 'empty-initialization');
+    const result = await context.orchestrator.run({
+      request: '初始化时记录没有可信场景的依据',
+      trigger: 'manual',
+      initialization: true,
+    });
+
+    assert.equal(result.status, 'completed', JSON.stringify(result));
+    assert.equal(result.result, 'passed');
+    assert.equal(result.scenarioProgress?.completed, 0);
+    assert.equal(result.scenarioProgress?.total, 0);
+    assert.match(result.artifacts['plan.md'] ?? '', /无需场景测试/);
+    assert.equal(result.artifacts['scenario-changes.patch'], undefined);
+    assertSessionSequence(context.model, [
+      'main-a',
+      'runner',
+      'main-a',
+      'runner',
+      'reviewer',
+      'main-b',
+    ]);
   });
 
   it('stops review-required initialization after three Sessions and selectively finalizes two artifacts', async () => {
@@ -179,6 +357,13 @@ describe('Closure 6 local production Pi path', () => {
     assertSessionSequence(context.model, ['main-a', 'runner', 'main-a']);
     assert.deepEqual(Object.keys(result.artifacts).sort(), ['report.md', 'scenario-changes.patch']);
     assert.match(result.artifacts['report.md'] ?? '', /等待场景变更人工审核/);
+    assert.match(result.artifacts['report.md'] ?? '', /候选范围：核心入口验证/);
+    assert.match(result.artifacts['report.md'] ?? '', /退款权限风险尚未覆盖/);
+    assert.match(result.artifacts['report.md'] ?? '', /ONBOARD-SMOKE-001/);
+    assert.doesNotMatch(
+      result.artifacts['report.md'] ?? '',
+      /local-synthetic-password|https:\/\/example.test/,
+    );
     assert.equal(
       context.model.sessions.some((session) => session.role === 'reviewer'),
       false,
@@ -188,14 +373,14 @@ describe('Closure 6 local production Pi path', () => {
       false,
     );
     assert.equal(context.specialCleanupCalls(), 1);
-    assert.match(result.artifacts['report.md'] ?? '', /测试数据：全部登记测试数据均已独立核验清理/);
+    assert.match(result.artifacts['report.md'] ?? '', /测试数据：测试数据清理完成/);
     assert.match(result.artifacts['report.md'] ?? '', /特殊归档仅保留/);
     assert.doesNotMatch(result.artifacts['report.md'] ?? '', /测试数据残留|清理失败/);
 
     const publicationModes: string[] = [];
     const archiveRepository = {
       validateScenarioPatch: (target: string, patch: string) =>
-        context.repository.validateScenarioPatch(target, patch),
+        context.repository.validateScenarioPatch!(target, patch),
       publishScenarioChanges: async (
         _runId: string,
         _patch: string,
@@ -271,6 +456,7 @@ interface ProductionContext {
   configuration: ReturnType<typeof createConfigurationStore>;
   runStore: RunStore;
   specialCleanupCalls(): number;
+  evidence: ReturnType<typeof localEvidenceTransport>;
 }
 
 async function createContext(
@@ -291,7 +477,32 @@ async function createContext(
   await git(['config', 'user.name', 'LuoWang Closure 6'], source);
   await git(['config', 'user.email', 'luowang-closure6@example.test'], source);
   await writeFile(join(source, 'README.md'), '# Local Pi target\n', 'utf8');
-  await git(['add', 'README.md'], source);
+  if (behavior === 'reuse-existing' || behavior === 'omit-modified') {
+    const scenarioDirectory = join(source, 'docs', 'scenario-testing', 'scenarios');
+    await mkdir(scenarioDirectory, { recursive: true });
+    await writeFile(
+      join(scenarioDirectory, 'CORE-STATE-001.md'),
+      `---
+id: CORE-STATE-001
+name: 状态保持
+description: 验证状态保持的业务结果
+status: approved
+tags:
+  - core
+---
+
+## 目的
+
+验证状态保持。
+
+## 期望
+
+操作后仍保持状态。
+`,
+      'utf8',
+    );
+  }
+  await git(['add', '-A'], source);
   await git(['commit', '-m', 'fixture: initialize target'], source);
   await git(['remote', 'add', 'origin', remote], source);
   await git(['push', '-u', 'origin', 'main'], source);
@@ -339,6 +550,7 @@ async function createContext(
   const runStore = createRunStore(database.sqlite);
   const model = await startLocalModelProtocol(behavior);
   cleanup.push(() => model.close());
+  const evidence = localEvidenceTransport();
   let specialCleanupCalls = 0;
   const testData = createTestDataManager({
     cleanupAdapter: {
@@ -357,6 +569,7 @@ async function createContext(
     provider: {} as ProviderAdapter,
     sessions: model.sessionFactory,
     commandRunner: createControlledCommandRunner(process.env),
+    oss: evidence.oss,
     testData,
     runStore,
     logger: pino({ level: 'silent' }),
@@ -371,10 +584,15 @@ async function createContext(
     configuration,
     runStore,
     specialCleanupCalls: () => specialCleanupCalls,
+    evidence,
   };
 }
 
-function assertSessionSequence(model: LocalModelProtocol, expected: string[]): void {
+function assertSessionSequence(
+  model: LocalModelProtocol,
+  expected: string[],
+  promptCounts = expected.map(() => 1),
+): void {
   assert.deepEqual(
     model.sessions.map((session) => session.role),
     expected,
@@ -383,9 +601,9 @@ function assertSessionSequence(model: LocalModelProtocol, expected: string[]): v
     model.sessions.every((session) => session.disposed),
     true,
   );
-  assert.equal(
-    model.sessions.every((session) => session.prompts.length === 1),
-    true,
+  assert.deepEqual(
+    model.sessions.map((session) => session.prompts.length),
+    promptCounts,
   );
   assert.equal(new Set(model.sessions.map((session) => session.id)).size, expected.length);
   if (model.sessions.some((session) => session.roleInstructionVersions.length > 0)) {

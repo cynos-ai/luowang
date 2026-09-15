@@ -1239,7 +1239,7 @@ function RunDetailPanel({
   busy: boolean;
   onRetry: () => void;
 }) {
-  const artifactNames = ['plan.md', 'execution.md', 'draft-report.md', 'review.md', 'report.md'];
+  const artifactNames = ['plan.md', 'execution.md', 'review.md', 'report.md'];
   const canRetry = run.archive && run.archive.archiveStatus !== 'completed';
   return (
     <section className="run-detail" aria-labelledby="run-detail-title">

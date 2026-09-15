@@ -29,6 +29,10 @@ const SECRET_FIELDS: Record<SecretKey, { key: SecretKey; label: string }> = {
   gitToken: { key: 'gitToken', label: 'GitHub Token' },
   testUsername: { key: 'testUsername', label: '测试环境账号' },
   testPassword: { key: 'testPassword', label: '测试环境密码' },
+  testDataCleanupToken: {
+    key: 'testDataCleanupToken',
+    label: '按 Run 清理专用 Token（需配置部署清理地址）',
+  },
 };
 
 const GITHUB_CHECK_IDS = [
@@ -436,7 +440,11 @@ export function SettingsPage({
           onDeleteSecret={(key) => void deleteSecret(key)}
           onSaveAndCheck={() =>
             void execute('environment-check', async () => {
-              await saveRepository(environmentPatch(repository), ['testUsername', 'testPassword']);
+              await saveRepository(environmentPatch(repository), [
+                'testUsername',
+                'testPassword',
+                'testDataCleanupToken',
+              ]);
               await runCheck('test-environment-url');
             })
           }
@@ -1119,8 +1127,11 @@ function EnvironmentSection({
   check: ConnectivityCheck | undefined;
   busy: string | null;
   onChange: (repository: RepositoryConfig) => void;
-  onSecretChange: (key: 'testUsername' | 'testPassword', value: string) => void;
-  onDeleteSecret: (key: 'testUsername' | 'testPassword') => void;
+  onSecretChange: (
+    key: 'testUsername' | 'testPassword' | 'testDataCleanupToken',
+    value: string,
+  ) => void;
+  onDeleteSecret: (key: 'testUsername' | 'testPassword' | 'testDataCleanupToken') => void;
   onSaveAndCheck: () => void;
 }) {
   return (
@@ -1173,6 +1184,13 @@ function EnvironmentSection({
           value={secretDraft.testPassword}
           onChange={(value) => onSecretChange('testPassword', value)}
           onDelete={() => onDeleteSecret('testPassword')}
+        />
+        <SecretField
+          field={SECRET_FIELDS.testDataCleanupToken}
+          metadata={config.secrets.testDataCleanupToken}
+          value={secretDraft.testDataCleanupToken}
+          onChange={(value) => onSecretChange('testDataCleanupToken', value)}
+          onDelete={() => onDeleteSecret('testDataCleanupToken')}
         />
       </div>
       <ConnectivityResult check={check} busy={busy === 'environment-check'} />
@@ -1420,6 +1438,7 @@ function emptySecretDraft(): Record<SecretKey, string> {
     gitToken: '',
     testUsername: '',
     testPassword: '',
+    testDataCleanupToken: '',
     ossAccessKeyId: '',
     ossAccessKeySecret: '',
   };

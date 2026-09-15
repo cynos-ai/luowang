@@ -108,8 +108,17 @@ class DefaultScenarioProgressController {
     if (scenarioIds.some((id) => !this.allowed.has(id))) {
       throw new Error('场景 ID 不在 Main 计划或当前工作场景中');
     }
-    if (scenarioIds.length === 0 && this.allowed.size > 0) {
-      throw new Error('Main 计划包含可执行场景，不能声明为零场景');
+    const allowedOrder = [...this.allowed.keys()];
+    if (scenarioIds.length === 0 && allowedOrder.length > 0) {
+      throw new Error(
+        'Main 计划包含可执行场景，不能声明为零场景；声明必须与 execution_scenarios 完整一致',
+      );
+    }
+    if (
+      scenarioIds.length !== allowedOrder.length ||
+      scenarioIds.some((id, index) => id !== allowedOrder[index])
+    ) {
+      throw new Error('Runner 声明必须与 plan.md 的 execution_scenarios 完整顺序一致');
     }
     this.declared = scenarioIds;
     this.options.state.currentScenario = null;

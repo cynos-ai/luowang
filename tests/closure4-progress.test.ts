@@ -151,7 +151,7 @@ describe('Closure 4 Runner scenario progress', () => {
     const state = runState();
     const controller = createScenarioProgressController({
       state,
-      allowedScenarios: SCENARIOS,
+      allowedScenarios: [SCENARIOS[0] as (typeof SCENARIOS)[number]],
       now: clockSequence(),
     });
     await invokeOk(controller.tools, 'begin_scenario_execution', {

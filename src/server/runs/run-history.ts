@@ -140,15 +140,14 @@ export function createIssueCandidateController(
     name: 'query_issue_candidates',
     label: '查询相似 Issue 候选',
     description:
-      'Main · 最终汇总在读取本次 draft/review 并形成 Bug 候选后，只读查询相似 Issue 和有限关联 Run。不会创建、修改、关闭或评论 Issue。',
+      'Main · 最终汇总在读取本次 plan/review 并取得已审核 Bug 候选后，只读查询相似 Issue 和有限关联 Run。不会创建、修改、关闭或评论 Issue。',
     parameters,
     execute: async (
       _toolCallId: string,
       params: Static<typeof parameters>,
     ): Promise<AgentToolResult<Record<string, unknown>>> => {
       try {
-        if (!canQuery())
-          throw new Error('必须先读取 draft-report.md 和 review.md，再查询 Issue 候选');
+        if (!canQuery()) throw new Error('必须先读取 plan.md 和 review.md，再查询 Issue 候选');
         const query = validateIssueCandidateQuery(params);
         const key = JSON.stringify(query);
         const prior = previous.get(key);

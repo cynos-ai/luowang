@@ -80,6 +80,7 @@ export type SecretKey =
   | 'gitToken'
   | 'testUsername'
   | 'testPassword'
+  | 'testDataCleanupToken'
   | 'ossAccessKeyId'
   | 'ossAccessKeySecret';
 
