@@ -12,6 +12,7 @@ import { initializeDatabase } from '../src/server/db/migrate.js';
 import {
   createPlaywrightMcpAdapter,
   PLAYWRIGHT_MCP_VERSION,
+  SESSION_REPLAY_TOOL_NAMES,
 } from '../src/server/browser/playwright-mcp.js';
 import {
   createReviewerEvidenceTools,
@@ -84,7 +85,12 @@ describe('Phase 4 browser and evidence boundaries', () => {
     });
     const adapter = createPlaywrightMcpAdapter(configuration, {
       probe: async () => ({
-        toolNames: ['browser_navigate', 'browser_snapshot', 'browser_take_screenshot'],
+        toolNames: [
+          'browser_navigate',
+          'browser_snapshot',
+          'browser_take_screenshot',
+          ...SESSION_REPLAY_TOOL_NAMES,
+        ],
       }),
     });
     const definition = adapter.serverDefinition('C:/runs/evidence');
@@ -100,9 +106,45 @@ describe('Phase 4 browser and evidence boundaries', () => {
     assert.ok(definition.args.includes('--snapshot-mode=full'));
     assert.ok(definition.args.includes('--codegen=none'));
     assert.ok(definition.args.includes('--output-dir=C:/runs/evidence'));
+    // Cookie read/restore is the only approved storage surface.
+    assert.ok(definition.args.includes('--caps=storage'));
+    assert.deepEqual(
+      [...SESSION_REPLAY_TOOL_NAMES],
+      ['browser_cookie_list', 'browser_cookie_get', 'browser_cookie_set'],
+    );
     assert.ok(definition.excludeTools.includes('browser_evaluate'));
     assert.ok(definition.excludeTools.includes('browser_run_code_unsafe'));
+    for (const name of [
+      'browser_cookie_delete',
+      'browser_cookie_clear',
+      'browser_storage_state',
+      'browser_set_storage_state',
+      'browser_localstorage_get',
+      'browser_sessionstorage_list',
+    ])
+      assert.ok(definition.excludeTools.includes(name), name);
     assert.equal((await adapter.checkConnectivity()).status, 'ok');
+  });
+
+  it('fails the browser connectivity check when cookie session replay is missing', async () => {
+    const dataDirectory = await mkdtemp(join(tmpdir(), 'luowang-phase4-browser-missing-'));
+    cleanup.push(async () => rm(dataDirectory, { recursive: true, force: true }));
+    const config = loadConfig({ NODE_ENV: 'test', LUOWANG_DATA_DIR: dataDirectory });
+    const database = initializeDatabase(config);
+    cleanup.push(async () => database.close());
+    const configuration = createConfigurationStore(database.sqlite, {
+      repoDir: config.repoDir,
+      reportDir: config.reportDir,
+    });
+    configuration.updateHarness({ mcp: { enabled: true, browser: 'chromium' } });
+    const adapter = createPlaywrightMcpAdapter(configuration, {
+      probe: async () => ({
+        toolNames: ['browser_navigate', 'browser_snapshot', 'browser_take_screenshot'],
+      }),
+    });
+    const result = await adapter.checkConnectivity();
+    assert.equal(result.status, 'failed');
+    assert.match(result.message, /Cookie 会话重放/);
   });
 
   it('blocks cleanup when data was registered without a real cleanup adapter', async () => {
