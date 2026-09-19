@@ -35,6 +35,8 @@ v0.4.0 的固定提交 Quality CI 已通过，真实非生产样本已检出注�
 
 后续已使用现有 GitHub CLI 登录凭据完成正常 Run 的幂等归档，报告提交为 [`5c0b294`](https://github.com/cynos-ai/cynos-website/commit/5c0b294d88726ee35f4ed2abb1be45f90f5c54f8)，仅新增本 Run 两份报告，内容与本地一致，没有新增模型请求。项目 `.env` Token 的写入权限仍未修复；缺陷与证据受阻验收仍待完成。
 
+第二轮已实际使用 `deepseek-v4-flash`，共 81/300 次请求：缺陷样本检出问题，但因浏览器操作证据缺失最终 blocked，报告已归档；证据受阻样本在模型调用前失败，未形成业务结论。随后修复了 `mcp__playwright` 入口漏记证据的问题，quality 容器 254 项测试及格式、lint、类型检查、构建通过；尚未用模型复验该修复。两套沙箱已清空并撤销，截图披露、受阻样本与整体 live/release 验收仍未完成。
+
 验收命令按证明范围严格分层：
 
 ```bash

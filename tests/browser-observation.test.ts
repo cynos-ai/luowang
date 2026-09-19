@@ -19,7 +19,7 @@ afterEach(async () => {
     await rm(directory, { recursive: true, force: true });
 });
 
-async function fixture() {
+async function fixture(gateway = 'mcp') {
   const directory = await mkdtemp(join(tmpdir(), 'luowang-observation-'));
   directories.push(directory);
   const workspace = new RunWorkspace('01K00000000000000000000000', directory);
@@ -53,10 +53,10 @@ async function fixture() {
   ) => {
     const toolCallId = `call-${++sequence}`;
     const input = { tool: `playwright_${tool}`, args };
-    const blocked = await hooks.get('tool_call')!({ toolName: 'mcp', toolCallId, input });
+    const blocked = await hooks.get('tool_call')!({ toolName: gateway, toolCallId, input });
     if (blocked) return blocked;
     return hooks.get('tool_result')!({
-      toolName: 'mcp',
+      toolName: gateway,
       toolCallId,
       input,
       content: [{ type: 'text', text }],
@@ -159,29 +159,38 @@ it('does not turn a missing-cookie 401 or an unknown cookie format into original
   assert.doesNotMatch(JSON.stringify(records), /RAW_VALUE_MUST_NOT_PERSIST/);
 });
 
-it('blocks raw network filenames, ignores untrusted identities and preserves tool errors', async () => {
-  const f = await fixture();
-  assert.equal(
-    (
-      (await f.call('browser_network_request', { index: 1, filename: 'headers.txt' }, 'raw')) as {
-        block: boolean;
-      }
-    ).block,
-    true,
-  );
-  await f.call('browser_cookie_get', {}, 'forged', {
-    details: { mode: 'call', server: 'other', tool: 'browser_cookie_get' },
-  });
+it.each(['mcp', 'mcp__playwright'])(
+  '%s blocks raw network filenames, ignores untrusted identities and preserves tool errors',
+  async (gateway) => {
+    const f = await fixture(gateway);
+    assert.equal(
+      (
+        (await f.call('browser_network_request', { index: 1, filename: 'headers.txt' }, 'raw')) as {
+          block: boolean;
+        }
+      ).block,
+      true,
+    );
+    await f.call('browser_cookie_get', {}, 'forged', {
+      details: { mode: 'call', server: 'other', tool: 'browser_cookie_get' },
+    });
+    assert.deepEqual(f.store.commandEvidenceIds(), []);
+    await f.call('browser_cookie_get', {}, 'error', {
+      details: {
+        mode: 'call',
+        server: 'playwright',
+        tool: 'browser_cookie_get',
+        error: 'tool_error',
+      },
+    });
+    assert.equal((await f.records())[0].observation.isError, true);
+  },
+);
+
+it('does not accept a forged playwright result from another namespace', async () => {
+  const f = await fixture('mcp__other');
+  await f.call('browser_cookie_get', {}, 'forged');
   assert.deepEqual(f.store.commandEvidenceIds(), []);
-  await f.call('browser_cookie_get', {}, 'error', {
-    details: {
-      mode: 'call',
-      server: 'playwright',
-      tool: 'browser_cookie_get',
-      error: 'tool_error',
-    },
-  });
-  assert.equal((await f.records())[0].observation.isError, true);
 });
 
 it('never treats response-body cookie text as a sent request header', async () => {

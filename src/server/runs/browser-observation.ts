@@ -31,7 +31,9 @@ export function createBrowserObservationExtension(options: {
     hidden: true,
     factory: (pi) => {
       pi.on('tool_call', (event) => {
-        if (event.toolName !== 'mcp' || typeof event.input.tool !== 'string') return;
+        // The pinned adapter exposes both gateways even with directTools disabled.
+        if (event.toolName !== 'mcp' && event.toolName !== 'mcp__playwright') return;
+        if (typeof event.input.tool !== 'string') return;
         // The application installs only the playwright server, with a fixed server prefix.
         const tool = event.input.tool.replace(/^playwright_/, '');
         if (!tool.startsWith('browser_'))
@@ -55,7 +57,7 @@ export function createBrowserObservationExtension(options: {
         });
       });
       pi.on('tool_result', async (event) => {
-        if (event.toolName !== 'mcp') return;
+        if (event.toolName !== 'mcp' && event.toolName !== 'mcp__playwright') return;
         const start = starts.get(event.toolCallId);
         starts.delete(event.toolCallId);
         const details = asObject(event.details);

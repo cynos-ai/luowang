@@ -85,3 +85,21 @@
 - 已准备的 runtime 镜像 `sha256:8d7c21b86a97a2fb56581062cd5fe4cfb00436aed0dca654900765c79dba01b8` 包含 `7b1c27d` 的后补修复，构建及断网、只读、非 root 原生 MCP 预检 passed，预检 modelRequests=0。
 - 对用户指定模型的首次文本就绪请求返回 400；随后一次去除可选参数的最小请求也返回 400，接口明确说明仅接受 `deepseek-flash`、`deepseek-v4-pro`，不接受 `deepseek-v4.1-flash`。只读 `/models` 清单与该错误一致，本地 Pi 目录也无该 ID。本轮计数 2/300，未调用视觉模型、未创建业务 Run 或测试账号。
 - 已请求用户确认使用服务端 `deepseek-flash`，或更新支持指定 v4.1 ID 的受控接口配置；未擅自替换模型或宣称别名等价。检查事实保存在 `.cynos/acceptance/run-evidence-followup-v41/model-readiness.json` 和 `model-diagnostic.json`。待模型名称/接口确认后，沿用本轮已批准预算，不重复请求预算授权。
+- 用户随后询问改用 `deepseek-v4-flash`；实际最小调用返回 200，证明服务端清单及先前错误列出的名称不完整，不能据此推断其他别名也被拒绝。Main/Runner 使用该模型，Reviewer 延续项目原定 `deepseek-v4-flash-vision-exp`，其合成图片输入检查返回 200 且正确识别左右颜色。至此本轮累计 4/300 请求；已启动缺陷/受阻各一次的新样本流程，仍固定原目标提交，使用独立第二轮证据目录和 OSS 前缀。
+
+## 第二轮结果与后续修补
+
+本轮已停止，共 81/300 次请求：就绪检查 4 次、缺陷样本 77 次、受阻样本 0 次。没有重跑。固定目标仍为 `6405a45b6889ad92cf7cfbce12d8ec22b5040f23`，业务候选为上述包含 `7b1c27d` 的 runtime 镜像。
+
+| 样本 | Run | 结果 |
+| --- | --- | --- |
+| 注入缺陷 | `01M2WS1AFYVBDS40N4PK0PHQ9K` | 四 Session 完成；检出缺陷并关联既有官网 #5，但另一项期望缺少重放证据，最终 blocked；归档提交 `4687771541a987c101eaa852a2046b9a565d307c` |
+| 证据受阻 | `01M2WSAQDGRKYEXTTQVJ6DRAVS` | 模型调用前 failed，无 Session 或业务结论；缺少四份必需工件，归档失败后停止 |
+
+- 缺陷样本只有 3 条场景进度记录、0 条浏览器操作记录；17 次独立证据读取的哈希匹配，不能由此推断缺失操作已被验证。Reviewer 仍指出截图中的合成账号标识；当前 Markdown 已知凭据/公开口令扫描未命中，不等于所有标识或图像无披露。
+- 受阻样本的原始启动错误未被本轮驱动保存，不能把后续“缺少必需工件”的归档错误当作启动根因。在复制状态上进行零模型准备诊断，prepareRun 成功到达故意中止的 Session factory，未复现原错误、未新建正式 Run。后续驱动须保存经过脱敏的原始 errorMessage 和失败阶段；本轮冻结驱动和失败记录保留。
+- 两个 Run 均经受控 DELETE→独立 GET 确认 remaining=0，独立数据库查询均 users=0、sessions=0；容器和网络已撤销。使用现有 GitHub CLI 凭据的进程内覆盖完成目标写入，未修改项目持久 Secret；原 `.env` Token 权限问题仍未修复。
+- 零模型复现确认：固定适配器即使关闭 directTools，仍提供 `mcp` 和 `mcp__playwright` 两个入口；旧记录器只接入前者，后者会漏记且绕过网络文件名限制。此缺口与本轮缺失记录一致，但本轮未保存原始工具入口名，不能声称已直接证明该 Run 使用了哪个入口。
+- 现已为两个入口接入相同捕获及安全检查。真实 SDK/MCP/合成 HTTP 服务回归覆盖原 Cookie 的读取、恢复、实际发送及脱敏关联；另覆盖两个入口的文件名限制、服务端身份及错误保留，其他 namespace 仍拒绝。修复前失败保存在 `namespace-reproduction.log`；修复后 quality 容器 format/lint/typecheck、36 文件 / 254 测试及 build 全部通过（`namespace-quality.log`）。中途类型收窄失败保留为 `namespace-quality-1.log`。
+- 证据目录为 `.cynos/acceptance/run-evidence-followup-v41/`，名称沿用首次模型选择：模型就绪检查、`live-data/proof/`、`live-audit.json`、`live-independent-database-counts.json`、`preparation-diagnostic.json` 和质量检查日志均保留。
+- 本次代码修补发生在真实样本之后，未新增模型验证。接下来先补全驱动失败诊断，再安排修复候选的缺陷/受阻验收及截图披露核验；不自动花完剩余额度。整体 live/release=blocked，humanScoring=not_run，#68/#64/#65 继续开放，无合并或发布。
