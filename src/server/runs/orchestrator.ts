@@ -59,6 +59,7 @@ import { createScenarioProgressController, type ProgressScenario } from './scena
 import { scenarioReviewSummary } from './scenario-review-summary.js';
 import { snapshotSelectedScenarios, type SelectedScenarioSource } from './selected-scenarios.js';
 import { createReviewReadOrder } from './review-order.js';
+import { createBrowserObservationExtension } from './browser-observation.js';
 import {
   assertScenarioResultsMatchPlan,
   ExecutionPlanError,
@@ -928,6 +929,31 @@ class DefaultRunOrchestrator implements RunOrchestrator {
             allowedScenarios: await this.progressScenarios(workspace, repository, context, true),
             now: this.now,
           });
+    const operationContext = () =>
+      progress?.operationContext() ?? { scope: 'initialization-reconnaissance', scenarioId: null };
+    const progressTools = (progress?.tools ?? []).map((tool): ToolDefinition => ({
+      ...tool,
+      execute: async (...args) => {
+        const result = await tool.execute(...args);
+        if (
+          !(result.details as Record<string, unknown> | undefined)?.error &&
+          (state.scenarioProgress?.total ?? 0) > 0 &&
+          evidenceStore?.captureObservation
+        ) {
+          try {
+            await evidenceStore.captureObservation(context.targetCommit, {
+              source: 'scenario-progress',
+              event: tool.name,
+              at: this.now().toISOString(),
+              ...operationContext(),
+            });
+          } catch {
+            this.addBlockingReason(context, '场景进度证据保存失败');
+          }
+        }
+        return result;
+      },
+    }));
     const tools = [
       ...createTargetContextTools(this.targetToolOptions(repository, context, 'runner')),
       ...createWorkingScenarioTools({
@@ -936,6 +962,10 @@ class DefaultRunOrchestrator implements RunOrchestrator {
       }),
       createReadArtifactTool((name) => readAllowedArtifact(workspace, name, ['plan.md'])),
       createRunnerCommandTool(async (command, signal) => {
+        const execution = {
+          ...(progress?.recordOperation('command') ?? operationContext()),
+          startedAt: this.now().toISOString(),
+        };
         // Obtain redaction values before execution; failure must not persist raw output.
         let secrets: string[];
         try {
@@ -954,6 +984,7 @@ class DefaultRunOrchestrator implements RunOrchestrator {
               context.targetCommit,
               result,
               secrets,
+              { ...execution, finishedAt: this.now().toISOString() },
             );
           } catch {
             this.addBlockingReason(context, '受控命令结果保存失败，不能确认执行结果');
@@ -981,7 +1012,7 @@ class DefaultRunOrchestrator implements RunOrchestrator {
         this.options.secretStore,
       ),
       ...createTestDataTools(this.options.testData ?? createTestDataManager(), context.runId),
-      ...(progress?.tools ?? []),
+      ...progressTools,
       ...(evidenceStore ? createRunnerEvidenceTools(evidenceStore) : []),
       createArtifactWriterTool(
         'write_execution',
@@ -1004,7 +1035,20 @@ class DefaultRunOrchestrator implements RunOrchestrator {
       runnerUserMessage(context, purpose),
       runnerOutputContract(),
       false,
-      browserExtension ? [browserExtension] : [],
+      browserExtension && evidenceStore
+        ? [
+            browserExtension,
+            createBrowserObservationExtension({
+              store: evidenceStore,
+              targetCommit: context.targetCommit,
+              now: this.now,
+              operationContext: () => progress?.recordOperation('browser') ?? operationContext(),
+              onFailure: () => this.addBlockingReason(context, 'MCP 操作证据捕获失败'),
+            }),
+          ]
+        : browserExtension
+          ? [browserExtension]
+          : [],
     );
     const progressError = progress?.completionError();
     if (progressError) {

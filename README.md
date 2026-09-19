@@ -1,6 +1,6 @@
 # LuoWang
 
-罗网（LuoWang）是一个独立部署的 AI 场景测试 Harness。当前仓库已完成 Phase 0–9 的主要模块和 v0.7 生产闭环：除了安全配置控制台、唯一 GitHub 目标仓库索引、Main → Runner → Reviewer → Main 的本地 Run、受控 Playwright MCP UI 执行、S3-compatible OSS 证据 Gateway、幂等归档和持久 FIFO 自动化队列，还支持长期场景生命周期、三种场景维护模式、陌生项目初始化，以及完整运维控制台。当前生产闭环版本为 v0.4.0；v0.1.0、v0.2.0、v0.2.1 与 v0.3.1 均保持既有不可变指向。
+罗网（LuoWang）是一个独立部署的 AI 场景测试 Harness。当前仓库已实现 Phase 0–9 的主要模块：安全配置控制台、唯一 GitHub 目标仓库索引、Main → Runner → Reviewer → Main 的 Run、受控 Playwright MCP UI 执行、S3-compatible OSS 证据 Gateway、幂等归档、持久 FIFO 自动化队列、长期场景生命周期、三种场景维护模式、陌生项目初始化和运维控制台。当前已发布版本为 v0.4.0；v0.1.0、v0.2.0、v0.2.1 与 v0.3.1 均保持既有不可变指向。
 
 ## 本地启动
 
@@ -28,6 +28,8 @@ docker compose down
 Compose 将数据保存到 `luowang-data` 卷，并把宿主机端口绑定到 `127.0.0.1`。管理员密码只在空数据库首次启动时读取；主密钥只用于进程内派生 Secret Store 密钥，二者都不会写入 SQLite。
 
 ## 验收状态
+
+v0.4.0 的固定提交 Quality CI 已通过，真实非生产样本已检出注入的会话缺陷；该发布轮的正常样本仍因重放证据不可供独立审核而 blocked（[#68](https://github.com/cynos-ai/luowang/issues/68)）。场景进度时序（[#64](https://github.com/cynos-ai/luowang/issues/64)）和执行记录披露（[#65](https://github.com/cynos-ai/luowang/issues/65)）也仍有待复验，独立人工质量评分未完成。这些结果不表示全站、当前部署或总体模型质量已验收。后续修复与实际验证结果见 [实施计划](docs/changes/luowang-run-evidence-followup/plan.md)；代码修复不会改写旧 Run 的结论。
 
 验收命令按证明范围严格分层：
 

@@ -196,7 +196,7 @@ export class RunWorkspace implements RunArtifactReader {
   }
 
   async writeHarnessEvidence(name: string, content: string): Promise<void> {
-    if (!/^command-[1-9][0-9]*\.json$/.test(name)) {
+    if (!/^(?:command|operation)-[1-9][0-9]*\.json$/.test(name)) {
       throw new RunWorkspaceError('ARTIFACT_NOT_ALLOWED', 'Harness 证据文件名无效');
     }
     if (typeof content !== 'string' || content.includes('\u0000')) {

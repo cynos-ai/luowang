@@ -11,7 +11,7 @@ import {
 } from '../src/server/runs/evidence.js';
 import { createReviewReadOrder } from '../src/server/runs/review-order.js';
 import { RunWorkspace } from '../src/server/runs/workspace.js';
-import { localEvidenceTransport } from './acceptance/local-evidence.js';
+import { localEvidenceTransport, TEST_PNG } from './acceptance/local-evidence.js';
 
 const snapshot = 'page-2026-09-08T05-59-05-339Z.yml';
 const consoleFile = 'console-2026-09-08T05-58-41-973Z.log';
@@ -89,7 +89,7 @@ it('redacts browser records before upload and again at read, without giving the 
 it('rejects wrong readers and unknown IDs without I/O, failure counters or satisfying image read order', async () => {
   const { workspace, store, tool, transport } = await fixture();
   await writeFile(join(workspace.evidenceDirectory, snapshot), '- heading "登录"');
-  await writeFile(join(workspace.evidenceDirectory, 'login.png'), Buffer.from([137, 80, 78, 71]));
+  await writeFile(join(workspace.evidenceDirectory, 'login.png'), TEST_PNG);
   await store.uploadAll();
   let failures = 0;
   const order = createReviewReadOrder(
@@ -193,7 +193,7 @@ it('defers Runner text uploads and sends a sanitized immutable byte snapshot, no
 it('validates the requested image ID before consulting vision metadata and never delivers an unsupported image', async () => {
   const { workspace, store, transport } = await fixture();
   await writeFile(join(workspace.evidenceDirectory, snapshot), '- heading "登录"');
-  await writeFile(join(workspace.evidenceDirectory, 'login.png'), Buffer.from([137, 80, 78, 71]));
+  await writeFile(join(workspace.evidenceDirectory, 'login.png'), TEST_PNG);
   await store.uploadAll();
   let checks = 0;
   const image = createReviewerEvidenceTools(store, async () => {

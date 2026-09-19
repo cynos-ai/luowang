@@ -52,7 +52,7 @@ describe('scenario quality feedback', () => {
 
   it('provides a complete parser-valid template even when the target has no scenarios', async () => {
     const role = await readFile('resources/agent-roles/main-planning.md', 'utf8');
-    const template = role.match(/```markdown\n([\s\S]*?)```/)?.[1];
+    const template = role.match(/```markdown\r?\n([\s\S]*?)```/)?.[1];
     assert.ok(template);
     const scene = parseScenarioMarkdown(
       template,

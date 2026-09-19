@@ -1,4 +1,5 @@
 import { strict as assert } from 'node:assert';
+import { TEST_PNG } from './acceptance/local-evidence.js';
 import { access, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -190,11 +191,14 @@ describe('Phase 4 browser and evidence boundaries', () => {
     cleanup.push(async () => rm(directory, { recursive: true, force: true }));
     const workspace = new RunWorkspace('01K00000000000000000000001', directory);
     await workspace.create();
-    await writeFile(join(workspace.evidenceDirectory, 'login.png'), Buffer.from('png-bytes'));
+    await writeFile(join(workspace.evidenceDirectory, 'login.png'), TEST_PNG);
     await writeFile(join(workspace.evidenceDirectory, 'console.log'), 'text-only evidence');
     const store = createRunEvidenceStore(workspace, fakeOss());
     const upload = await store.uploadAll();
-    assert.equal(upload.failures.length, 0);
+    assert.deepEqual(
+      upload.failures.map((failure) => failure.filename),
+      ['console.log'],
+    );
     const listTool = createReviewerEvidenceTools(store).find(
       (candidate) => candidate.name === 'list_evidence_files',
     );
@@ -209,7 +213,12 @@ describe('Phase 4 browser and evidence boundaries', () => {
     const listedText = listed.content.find((item) => item.type === 'text');
     assert.ok(listedText && listedText.type === 'text');
     assert.deepEqual(JSON.parse(listedText.text), [
-      { name: 'login.png', sizeBytes: 9, kind: 'image', readTool: 'read_evidence_image' },
+      {
+        name: 'login.png',
+        sizeBytes: TEST_PNG.length,
+        kind: 'image',
+        readTool: 'read_evidence_image',
+      },
     ]);
     const manager = createTestDataManager();
     const dataId = `${manager.prefix(workspace.runId)}screenshot-user`;
@@ -244,7 +253,7 @@ describe('Phase 4 browser and evidence boundaries', () => {
     await store.cleanupLocal();
     assert.deepEqual(
       (await store.list()).map((file) => file.name),
-      ['console.log', 'login.png'],
+      ['login.png'],
     );
     assert.equal(
       await access(join(workspace.evidenceDirectory, 'login.png')).then(
@@ -255,7 +264,7 @@ describe('Phase 4 browser and evidence boundaries', () => {
     );
     const uploadedCleanup = await store.cleanupUploaded();
     assert.deepEqual(uploadedCleanup, {
-      deleted: ['console.log', 'login.png'],
+      deleted: ['login.png'],
       failures: [],
     });
     assert.deepEqual(await store.list(), []);

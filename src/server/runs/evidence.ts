@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { Type, type Static } from 'typebox';
 import type { AgentToolResult, ToolDefinition } from '@earendil-works/pi-coding-agent';
 
@@ -44,9 +44,13 @@ export interface RunEvidenceStore {
     targetCommit: string,
     result: CommandRunResult | { error: string },
     secrets: readonly string[],
+    execution?: Record<string, unknown>,
   ): Promise<string>;
   commandEvidenceIds(): string[];
   readCommandEvidence(filename: string): Promise<string>;
+  registerSensitiveValue?(value: string): void;
+  identifySensitiveValue?(value: string): string;
+  captureObservation?(targetCommit: string, observation: Record<string, unknown>): Promise<string>;
   allowBrowserRecords?(): void;
   browserEvidenceIds?(): string[];
   readBrowserEvidence?(filename: string): Promise<string>;
@@ -74,7 +78,29 @@ class DefaultRunEvidenceStore implements RunEvidenceStore {
   private reviewReads = 0;
   private readonly commandEvidence = new Map<string, { sha256: string; sizeBytes: number }>();
   private commandSequence = 0;
+  private observationSequence = 0;
+  private captureSequence = 0;
   private browserRecordsAllowed = false;
+  private readonly runtimeSecrets = new Set<string>();
+  private readonly credentialReferences = new Map<string, string>();
+
+  registerSensitiveValue(value: string): void {
+    if (value) this.runtimeSecrets.add(value);
+  }
+
+  identifySensitiveValue(value: string): string {
+    this.registerSensitiveValue(value);
+    let reference = this.credentialReferences.get(value);
+    if (!reference) {
+      reference = `credential-${randomBytes(16).toString('hex')}`;
+      this.credentialReferences.set(value, reference);
+    }
+    return reference;
+  }
+
+  private secrets(): string[] {
+    return [...this.reviewSecrets(), ...this.runtimeSecrets];
+  }
 
   constructor(
     private readonly workspace: RunWorkspace,
@@ -108,6 +134,13 @@ class DefaultRunEvidenceStore implements RunEvidenceStore {
   async upload(filename: string): Promise<EvidenceReference> {
     const existing = this.references.get(filename);
     if (existing) return existing;
+    if (
+      !this.commandEvidence.has(filename) &&
+      !isBrowserRecordName(filename) &&
+      !['image/png', 'image/jpeg', 'image/gif', 'image/webp'].includes(contentTypeFor(filename))
+    ) {
+      throw new Error('未获准的文本或二进制证据不能上传；请使用 Harness 捕获的命令/MCP 记录或截图');
+    }
     const files = await this.workspace.listEvidence();
     const file = files.find((item) => item.name === filename);
     if (!file) throw new Error(`证据文件不存在：${filename}`);
@@ -115,17 +148,26 @@ class DefaultRunEvidenceStore implements RunEvidenceStore {
     if (isBrowserRecordName(filename)) {
       const original = await this.workspace.readEvidence(filename);
       const text = decodeBrowserRecord(original);
-      const clean = redactCommandText(text, this.reviewSecrets(), Number.MAX_SAFE_INTEGER);
+      const clean = redactCommandText(text, this.secrets(), Number.MAX_SAFE_INTEGER);
       if (Buffer.byteLength(clean) > 1024 * 1024) throw new Error('脱敏浏览器记录超过大小限制');
       if (clean !== text) await this.workspace.replaceBrowserEvidence(filename, clean);
       browserBody = Buffer.from(clean);
     }
     if (this.commandEvidence.has(filename)) {
-      this.assertCommandIntegrity(filename, await this.workspace.readEvidence(filename));
+      browserBody = await this.workspace.readEvidence(filename);
+      this.assertCommandIntegrity(filename, browserBody);
     }
-    const reference = browserBody
-      ? await uploadEvidenceBody(this.oss, this.workspace.runId, filename, browserBody)
-      : await this.oss.uploadFile(this.workspace.runId, filename, file.path);
+    if (!browserBody) {
+      browserBody = await this.workspace.readEvidence(filename);
+      if (!isRasterImage(browserBody, contentTypeFor(filename)))
+        throw new Error('截图格式与文件名不符，拒绝上传');
+    }
+    const reference = await uploadEvidenceBody(
+      this.oss,
+      this.workspace.runId,
+      filename,
+      browserBody,
+    );
     this.references.set(filename, reference);
     return reference;
   }
@@ -231,12 +273,16 @@ class DefaultRunEvidenceStore implements RunEvidenceStore {
     targetCommit: string,
     result: CommandRunResult | { error: string },
     secrets: readonly string[],
+    execution?: Record<string, unknown>,
   ): Promise<string> {
-    const clean = (value: string, limit?: number) => redactCommandText(value, secrets, limit);
+    const clean = (value: string, limit?: number) =>
+      redactCommandText(value, [...secrets, ...this.secrets()], limit);
     const content = `${JSON.stringify(
       {
         runId: this.workspace.runId,
         targetCommit,
+        sequence: ++this.captureSequence,
+        ...(execution ? { execution } : {}),
         command: clean(command, 16 * 1024),
         result:
           'error' in result
@@ -250,7 +296,29 @@ class DefaultRunEvidenceStore implements RunEvidenceStore {
       null,
       2,
     )}\n`;
-    const filename = `command-${++this.commandSequence}.json`;
+    return this.writeCommandRecord(content, `command-${++this.commandSequence}.json`);
+  }
+
+  async captureObservation(
+    targetCommit: string,
+    observation: Record<string, unknown>,
+  ): Promise<string> {
+    const secrets = this.secrets();
+    const sanitize = (value: unknown): unknown => {
+      if (typeof value === 'string') return redactCommandText(value, secrets);
+      if (Array.isArray(value)) return value.map(sanitize);
+      if (value && typeof value === 'object')
+        return Object.fromEntries(
+          Object.entries(value).map(([key, item]) => [key, sanitize(item)]),
+        );
+      return value;
+    };
+    const content = `${JSON.stringify({ runId: this.workspace.runId, targetCommit, sequence: ++this.captureSequence, observation: sanitize(observation) }, null, 2)}\n`;
+    return this.writeCommandRecord(content, `operation-${++this.observationSequence}.json`);
+  }
+
+  private async writeCommandRecord(content: string, filename: string): Promise<string> {
+    if (Buffer.byteLength(content) > 1024 * 1024) throw new Error('受控证据超过大小限制');
     await this.workspace.writeHarnessEvidence(filename, content);
     this.commandEvidence.set(filename, {
       sha256: createHash('sha256').update(content).digest('hex'),
@@ -278,7 +346,7 @@ class DefaultRunEvidenceStore implements RunEvidenceStore {
       throw new Error('浏览器记录内容已改变');
     }
     const text = decodeBrowserRecord(evidence.body);
-    const clean = redactCommandText(text, this.reviewSecrets(), Number.MAX_SAFE_INTEGER);
+    const clean = redactCommandText(text, this.secrets(), Number.MAX_SAFE_INTEGER);
     const bytes = Buffer.from(clean);
     const content =
       bytes.length <= 64 * 1024
@@ -321,6 +389,19 @@ function decodeBrowserRecord(body: Buffer): string {
   const text = new TextDecoder('utf-8', { fatal: true }).decode(body);
   if (text.includes('\u0000')) throw new Error('浏览器记录不是有效文本');
   return text;
+}
+
+function isRasterImage(body: Buffer, contentType: string): boolean {
+  if (contentType === 'image/png')
+    return body.subarray(0, 8).equals(Buffer.from('89504e470d0a1a0a', 'hex'));
+  if (contentType === 'image/jpeg') return body.subarray(0, 3).equals(Buffer.from('ffd8ff', 'hex'));
+  if (contentType === 'image/gif')
+    return ['GIF87a', 'GIF89a'].includes(body.subarray(0, 6).toString('ascii'));
+  return (
+    contentType === 'image/webp' &&
+    body.subarray(0, 4).toString('ascii') === 'RIFF' &&
+    body.subarray(8, 12).toString('ascii') === 'WEBP'
+  );
 }
 
 function invalidEvidenceRequest() {
@@ -462,7 +543,7 @@ export function createReviewerEvidenceTools(
       name: 'read_command_evidence',
       label: '读取受控命令结果',
       description:
-        '按本 Run 的证据 ID 只读查询 Harness 捕获的命令、退出码和脱敏输出；截断会标注，不执行命令，不读取任意文本、路径或其他 Session。',
+        '按本 Run 的证据 ID 只读查询 Harness 捕获的命令结果、MCP 操作或场景进度记录；按 source、sequence 和时间区分来源与顺序。截断会标注，不执行命令，不读取任意文本、路径或其他 Session。',
       parameters: Type.Object({
         filename: Type.String({ description: 'list_evidence_files 返回的 command 证据 ID' }),
       }),

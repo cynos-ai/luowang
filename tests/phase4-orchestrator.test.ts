@@ -1,4 +1,5 @@
 import { strict as assert } from 'node:assert';
+import { TEST_PNG } from './acceptance/local-evidence.js';
 import { execFile } from 'node:child_process';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -190,7 +191,7 @@ class FailureBoundarySessionFactory implements AgentSessionFactory {
             });
           } else if (this.mode !== 'browser-missing') {
             await mkdir(join(context.runDirectory, 'evidence'), { recursive: true });
-            await writeFile(join(context.runDirectory, 'evidence', 'login.png'), 'fixture image');
+            await writeFile(join(context.runDirectory, 'evidence', 'login.png'), TEST_PNG);
           }
           await invokeTool(input, 'write_execution', {
             content: '# Execution\n\nRunner 已按计划执行。\n',
@@ -410,6 +411,7 @@ function fakeOss(mode: FailureMode): OssAdapter {
       };
     },
     putObject: async (key, body) => {
+      if (mode === 'upload-failure') throw new Error('fixture upload failed');
       objects.set(key, Buffer.from(body));
     },
     getObject: async (key) => {

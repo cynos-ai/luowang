@@ -120,14 +120,21 @@ describe('Closure 6 local production Pi path', () => {
     'keeps command evidence %s failures blocked through production Pi',
     async (failure) => {
       const context = await createContext('review-all', 'normal');
+      const writeEvidence = RunWorkspace.prototype.writeHarnessEvidence;
       const capture =
         failure === 'capture'
-          ? vi
-              .spyOn(RunWorkspace.prototype, 'writeHarnessEvidence')
-              .mockRejectedValueOnce(new Error('fixture write failure'))
+          ? vi.spyOn(RunWorkspace.prototype, 'writeHarnessEvidence').mockImplementation(function (
+              this: RunWorkspace,
+              name,
+              content,
+            ) {
+              if (name.startsWith('command-'))
+                return Promise.reject(new Error('fixture write failure'));
+              return writeEvidence.call(this, name, content);
+            })
           : undefined;
       if (failure === 'upload')
-        context.evidence.oss.uploadFile = async () => {
+        context.evidence.oss.putObject = async () => {
           throw new Error('fixture upload failure');
         };
       try {
