@@ -19,7 +19,7 @@ import {
   type ParsedReport,
 } from '../repository/markdown.js';
 import type { GitChangedFile, GitRepository } from '../repository/git-repository.js';
-import { RepositoryError } from '../repository/errors.js';
+import { GitCommandError, RepositoryError } from '../repository/errors.js';
 import type { RepositoryIndexer } from '../repository/indexer.js';
 import type { RepositoryService } from '../repository/service.js';
 import type { ConfigurationStore } from '../configuration.js';
@@ -2270,6 +2270,22 @@ function normalizeFinalReportFrontmatter(content: string): string {
 }
 
 function safeMessage(error: unknown): string {
+  if (error instanceof GitCommandError) {
+    // Command arguments, stderr and even a custom message can contain credentials.
+    const operation = error.command[0];
+    const safeOperation = [
+      'clone',
+      'fetch',
+      'checkout',
+      'rev-parse',
+      'log',
+      'merge',
+      'ls-remote',
+    ].includes(operation ?? '')
+      ? ` ${operation}`
+      : '';
+    return `Git${safeOperation} 操作失败；请检查仓库连接、访问权限和工作树状态。原始错误未公开。`;
+  }
   if (error instanceof MarkdownValidationError) return error.safeDiagnostic;
   if (
     error instanceof RunOrchestratorError ||

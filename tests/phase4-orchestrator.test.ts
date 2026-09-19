@@ -19,6 +19,7 @@ import { createTestDataManager } from '../src/server/runs/test-data.js';
 import type { ProviderAdapter } from '../src/server/runs/provider.js';
 import type { AgentSessionFactory, AgentSessionInput } from '../src/server/runs/types.js';
 import { createRepositoryService } from '../src/server/repository/service.js';
+import { GitCommandError } from '../src/server/repository/errors.js';
 import type { OssAdapter } from '../src/server/storage/oss.js';
 import type { SecretStore } from '../src/server/security/secret-store.js';
 
@@ -30,6 +31,31 @@ afterEach(async () => {
 });
 
 describe('Phase 4 Run blocking boundaries', () => {
+  it.each(['fetch', 'UNTRUSTED_SECRET_COMMAND'])(
+    'keeps a safe preparation diagnostic for Git %s failures',
+    async (operation) => {
+      const fixture = await createGitFixture();
+      const context = await createRunContext(
+        fixture,
+        'vision-reviewer',
+        new GitCommandError(
+          [operation, 'https://SECRET_ARGUMENT@example.test'],
+          'SECRET_STDERR',
+          128,
+          'SECRET_MESSAGE',
+        ),
+      );
+      const result = await context.orchestrator.run({ request: '准备失败诊断', trigger: 'manual' });
+      assert.equal(result.status, 'failed');
+      assert.equal(result.result, null);
+      assert.match(
+        result.errorMessage ?? '',
+        operation === 'fetch' ? /^Git fetch 操作失败/ : /^Git 操作失败/,
+      );
+      assert.equal(result.artifacts['plan.md'], undefined);
+      assert.doesNotMatch(JSON.stringify(result), /SECRET_|UNTRUSTED|example\.test/);
+    },
+  );
   it.each([
     ['OSS 上传失败', 'upload-failure', /证据上传失败/],
     ['UI 缺少 MCP 或截图', 'browser-missing', /Playwright MCP 未启用|可审核的 evidence/],
@@ -284,7 +310,11 @@ class FailureBoundarySessionFactory implements AgentSessionFactory {
   }
 }
 
-async function createRunContext(fixture: Fixture, mode: FailureMode): Promise<RunContextFixture> {
+async function createRunContext(
+  fixture: Fixture,
+  mode: FailureMode,
+  preparationError?: GitCommandError,
+): Promise<RunContextFixture> {
   const dataDirectory = await mkdtemp(join(tmpdir(), 'luowang-phase4-orchestrator-'));
   const reportDir = join(dataDirectory, 'report');
   cleanup.push(async () => rm(dataDirectory, { recursive: true, force: true }));
@@ -318,6 +348,13 @@ async function createRunContext(fixture: Fixture, mode: FailureMode): Promise<Ru
     repoDir: config.repoDir,
     allowLocalRepository: true,
   });
+  if (preparationError) {
+    const git = await repository.getRepository();
+    git.fetch = async () => {
+      throw preparationError;
+    };
+    repository.getRepository = async () => git;
+  }
   const orchestrator = createRunOrchestrator({
     configuration,
     repository,

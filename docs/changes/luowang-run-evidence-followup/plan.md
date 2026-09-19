@@ -114,3 +114,14 @@
 - 启动前检查真实 Git 推送权限、同容器原生浏览器和目标健康；继续使用独立沙箱、Run 数据标识、受控 Secret Store 与 CLI 凭据的进程内覆盖。仅允许既定目标内当前 Run 报告和本轮 OSS 前缀；不新建 Issue，不改历史报告。每样本一次，额度/认证/归档/启动故障即停，独立验证清理后撤销环境。新轮预算尚待明确确认，不续用上一轮剩余额度；此次准备未新增模型请求。
 
 - 候选 runtime 构建成功，可运行镜像 ID 为 `sha256:960ba4ee2aae7ef42a4607c8c41f18d9d3d57dbf1e51d8c6227810bf5822affb`。断网、只读、非 root、既定 tmpfs 配置下原生 MCP 预检 passed，modelRequests=0；证明为 `candidate.json`、`runtime-preflight.log` 和 `build-runtime.log`。新驱动及辅助脚本哈希已保存在 `driver-hashes.json`。
+
+## 第三轮授权与停止结果
+
+- 用户明确回复“批准”，本轮缺陷/受阻各一次、300 次上限的授权记录为 `authorization.json`。实际运行前核对驱动哈希、Git 推送权限和两个目标的同容器原生预检，全部通过。
+- 缺陷 Run `01M2WVDK0BBMCGM0ZRXFCBB2H8` 在提交范围准备阶段 failed，result=null，Session 创建尝试为 0，模型请求为 **0/300**。仅生成清理用 execution.md，无业务结论。新驱动保存产品返回的错误、阶段和活动后停止，未尝试归档，受阻样本未启动。本轮结束，不自动补跑。
+- 产品返回的 errorMessage 仍是“Run 执行失败，未生成可信最终结论”。因此只能定位到准备阶段，不能认定具体 Git 命令或网络/权限根因。此前驱动确有漏存返回错误的问题，但补存字段仍不足以定位被产品主动隐藏的底层错误。
+- 两个沙箱独立数据库均 users=0、sessions=0；缺陷 Run 受控 DELETE→独立 GET 返回 remaining=0。容器和网络已撤销。证据为本轮目录下 `live-launch.log`、`live-data/proof/defect-run-result.json`、`budget.json`、`defect-independent-cleanup.json`、`live-independent-database-counts.json`。
+- 在复制状态上进行零模型准备诊断，prepareRun 成功，并到达故意中止的 Session 边界，未新建正式 Run，未复现原故障。诊断中 merge 的非零退出随后被既有准备流程处理，整体准备成功，不能把它当成本轮失败根因。记录为 `preparation-diagnostic.json`。
+- 停止后补充产品安全诊断：GitCommandError 只公开白名单操作名及固定提示，未知命令、参数、stderr、自定义 message 保持隐藏。新增两个回归验证准备失败仍为 failed/null、不生成 plan，且敏感字段不回显。此修补不会恢复历史原始错误，也不声称解决了启动根因。
+- 原代码候选 `89d10ee` 的 CI 完整 local acceptance 已通过，但整条工作流被文档提交取消；`7757948` 的工作流在本轮记录时仍运行中。本轮真实验收未通过，live/release=blocked，humanScoring=not_run。后续应先定位准备阶段的间歇失败，再安排新的模型业务样本。
+- 后补安全诊断的 quality 容器 format/lint/typecheck、36 文件 / 256 测试及 build 全部通过（`post-stop-quality.log`）；未追加模型样本。
