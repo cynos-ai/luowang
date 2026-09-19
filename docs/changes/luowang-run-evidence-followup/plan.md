@@ -78,3 +78,10 @@
 - 使用 GitHub CLI 凭据的进程内覆盖完成正常 Run `01M2VZGC4D8AGZWPT164BBW0TV` 归档，未写回 `.env` 或 Secret Store。提交 `5c0b294d88726ee35f4ed2abb1be45f90f5c54f8` 只新增本 Run 的 `review.md`、`report.md`；与本地原件逐字节一致，重复归档返回同一提交，Indexer 已回读。没有新增模型调用、Issue 或场景 patch。证据：`normal-archive-retry.json`。
 - 正常 Run 的历史首次归档失败记录不变；缺陷中断、受阻未运行、截图标识问题与整体 live/release=blocked 仍保留。项目配置 Token 的长期权限修复仍待处理，不能将本次 CLI 凭据可用写成配置已修好。
 - 下一轮建议：基于已通过 CI 的 `7b1c27d`，仍固定目标 `6405a45b6889ad92cf7cfbce12d8ec22b5040f23`，只新增缺陷与证据受阻各一次样本，不重跑已通过的正常样本；合计最多 300 次模型请求，计入全部重试。沿用隔离沙箱、三组模型、四 Session、Run 清理和报告范围，同时核对截图字段处理。先实际 Git 推送权限和同容器原生预检，任何归档失败也停止后续样本。此新范围及预算尚未获批，不自动续用上一轮剩余额度。
+
+## 第二轮授权与模型就绪检查
+
+- 用户明确要求“继续，测试的模型使用 deepseek-v4.1-flash”，批准上述缺陷/受阻各一次、总计 300 次的新轮方案，并覆盖本轮原模型约定。仍保留 Main/Runner/Reviewer 三组配置及正常四 Session，不将模型目录缺项自动视为不支持。
+- 已准备的 runtime 镜像 `sha256:8d7c21b86a97a2fb56581062cd5fe4cfb00436aed0dca654900765c79dba01b8` 包含 `7b1c27d` 的后补修复，构建及断网、只读、非 root 原生 MCP 预检 passed，预检 modelRequests=0。
+- 对用户指定模型的首次文本就绪请求返回 400；随后一次去除可选参数的最小请求也返回 400，接口明确说明仅接受 `deepseek-flash`、`deepseek-v4-pro`，不接受 `deepseek-v4.1-flash`。只读 `/models` 清单与该错误一致，本地 Pi 目录也无该 ID。本轮计数 2/300，未调用视觉模型、未创建业务 Run 或测试账号。
+- 已请求用户确认使用服务端 `deepseek-flash`，或更新支持指定 v4.1 ID 的受控接口配置；未擅自替换模型或宣称别名等价。检查事实保存在 `.cynos/acceptance/run-evidence-followup-v41/model-readiness.json` 和 `model-diagnostic.json`。待模型名称/接口确认后，沿用本轮已批准预算，不重复请求预算授权。
