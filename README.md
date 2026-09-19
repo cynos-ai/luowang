@@ -31,6 +31,8 @@ Compose 将数据保存到 `luowang-data` 卷，并把宿主机端口绑定到 `
 
 v0.4.0 的固定提交 Quality CI 已通过，真实非生产样本已检出注入的会话缺陷；该发布轮的正常样本仍因重放证据不可供独立审核而 blocked（[#68](https://github.com/cynos-ai/luowang/issues/68)）。场景进度时序（[#64](https://github.com/cynos-ai/luowang/issues/64)）和执行记录披露（[#65](https://github.com/cynos-ai/luowang/issues/65)）也仍有待复验，独立人工质量评分未完成。这些结果不表示全站、当前部署或总体模型质量已验收。后续修复与实际验证结果见 [实施计划](docs/changes/luowang-run-evidence-followup/plan.md)；代码修复不会改写旧 Run 的结论。
 
+2026-09-19 修复候选的正常样本已通过：Reviewer 独立读取了原 Cookie 与实际请求头的关联证据，四个隔离 Session 完成，操作与场景进度顺序可核对。本轮在 155/400 次模型请求时因 GitHub 归档推送 403 停止；缺陷样本中断，证据受阻样本未运行，整体 live/release 仍 blocked。测试数据已清空、临时环境已撤销；截图仍有合成账号标识，披露要求尚未全部满足。
+
 验收命令按证明范围严格分层：
 
 ```bash
