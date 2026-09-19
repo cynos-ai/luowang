@@ -103,3 +103,14 @@
 - 现已为两个入口接入相同捕获及安全检查。真实 SDK/MCP/合成 HTTP 服务回归覆盖原 Cookie 的读取、恢复、实际发送及脱敏关联；另覆盖两个入口的文件名限制、服务端身份及错误保留，其他 namespace 仍拒绝。修复前失败保存在 `namespace-reproduction.log`；修复后 quality 容器 format/lint/typecheck、36 文件 / 254 测试及 build 全部通过（`namespace-quality.log`）。中途类型收窄失败保留为 `namespace-quality-1.log`。
 - 证据目录为 `.cynos/acceptance/run-evidence-followup-v41/`，名称沿用首次模型选择：模型就绪检查、`live-data/proof/`、`live-audit.json`、`live-independent-database-counts.json`、`preparation-diagnostic.json` 和质量检查日志均保留。
 - 本次代码修补发生在真实样本之后，未新增模型验证。接下来先补全驱动失败诊断，再安排修复候选的缺陷/受阻验收及截图披露核验；不自动花完剩余额度。整体 live/release=blocked，humanScoring=not_run，#68/#64/#65 继续开放，无合并或发布。
+
+## 下一轮准备（2026-09-19）
+
+- 当前候选代码为 `89d10eed285ef03a31aca5a0868ac3b0b9c3c1c0`，包含两个 MCP 入口的证据捕获。CI 的完整 local acceptance 已通过，生产镜像及原生预检结果另行记录。
+- 在独立 `.cynos/acceptance/run-evidence-followup-next/` 准备新驱动，保留上轮冻结驱动。Run 返回后先保存脱敏 `errorMessage`、产品 phase、驱动阶段、最近活动、Session 创建尝试和已存在工件名；未完成 Run 停止后续样本，不尝试归档空报告。归档失败不会覆盖先前 Run 诊断。
+- 零模型验证覆盖返回失败、抛出异常、归档失败三条路径，均保留记录并执行清理；已知 Secret 及 URL 编码形式、Cookie/Authorization 头、端点和邮箱脱敏检查通过。仅复制允许的 Session 元数据，不记录模型正文或原始工具参数。语法检查及无新轮授权时拒绝启动检查通过。证明为 `diagnostics-check.json`、`driver-failure-check.json`、`authorization-check.json`。
+- 待执行方案：目标仍为官网 `6405a45b6889ad92cf7cfbce12d8ec22b5040f23`，候选为上述修复构建的不可变 runtime；只新增缺陷、证据受阻各一次，建议总计最多 300 次请求（含重试），正常样本不重跑。Main/Runner 使用 `deepseek-v4-flash`，Reviewer 使用 `deepseek-v4-flash-vision-exp`。
+- 缺陷样本应有可供 Reviewer 独立读取的原 Cookie 与实际请求关联，并保留已检出问题；受阻样本应完成四 Session 并因实际证据不可读保持 blocked，不能以启动失败替代。两者同时检查真实进度和截图账号披露，不用指令已存在代替效果证明。
+- 启动前检查真实 Git 推送权限、同容器原生浏览器和目标健康；继续使用独立沙箱、Run 数据标识、受控 Secret Store 与 CLI 凭据的进程内覆盖。仅允许既定目标内当前 Run 报告和本轮 OSS 前缀；不新建 Issue，不改历史报告。每样本一次，额度/认证/归档/启动故障即停，独立验证清理后撤销环境。新轮预算尚待明确确认，不续用上一轮剩余额度；此次准备未新增模型请求。
+
+- 候选 runtime 构建成功，可运行镜像 ID 为 `sha256:960ba4ee2aae7ef42a4607c8c41f18d9d3d57dbf1e51d8c6227810bf5822affb`。断网、只读、非 root、既定 tmpfs 配置下原生 MCP 预检 passed，modelRequests=0；证明为 `candidate.json`、`runtime-preflight.log` 和 `build-runtime.log`。新驱动及辅助脚本哈希已保存在 `driver-hashes.json`。
