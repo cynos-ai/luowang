@@ -149,3 +149,15 @@
 - 合成账号经受控清理与独立 GET 确认 remaining=0，两个沙箱独立数据库均 users=0、sessions=0；容器和网络已撤销。历史样本、驱动及失败证据未改写。
 - 证明目录：`.cynos/acceptance/run-startup-chain/`，包括 `trace-check.json`、`driver-hashes.json`、`build-runtime.log`、`live-manifest.json`、`launch.log`、`live-data/proof/startup-trace.json`、`chain-result.json`、`independent-cleanup.json` 和 `live-independent-database-counts.json`。诊断脚本与运行细节保持本地，不将运行日志提交 Git。
 - 下一项为新轮真实验收方案：使用上述固定候选和既定官网 target，缺陷/证据受阻各一次，建议最多 300 请求，全部重试计入；继续使用已确认的文本/视觉模型。启动链路原故障尚未定位，若再次发生，必须先保存本次追踪，停止后续样本并清理。新轮预算尚未确认，本次未开启业务复验；#68/#64/#65、整体 live/release 和人工评分状态不变。
+
+## 第四轮结果（2026-09-20）
+
+- 用户在明确“两样本、300 请求”方案后回复“继续”，本轮据此授权执行。固定候选为上述 `45f924f50f56` runtime，目标仍为官网 `6405a45b6889ad92cf7cfbce12d8ec22b5040f23`；文本/视觉模型不变。新目录 `.cynos/acceptance/run-evidence-round4/` 保留授权、驱动哈希、Git 追踪和原始样本，不覆盖前轮。
+- Git 与浏览器预检通过，缺陷 Run `01M2Y7WX9DDJWHQWNEPTV3AJ1A` 通过此前的启动准备阶段，四个隔离 Session 均创建。本轮 **39/300** 请求后停止，全部模型 HTTP 响应为 200；Run 最终为 failed/result=null，错误为“角色没有写入必需工件：report.md”。只保留 plan/execution/review，无可信最终报告，未归档；受阻样本未启动，无补跑。
+- Main 的计划把 Cookie/请求头操作当作独立 HTTP 能力，并声明不需要浏览器，Runner 因而未取得 MCP。Runner 尝试的 HTTP 客户端和内联解释器命令被权限边界拒绝，目标工作区也未安装测试依赖，未实际执行登录/退出/删除验证。Reviewer 判为 blocked，未确认产品缺陷；其将页面期望解释为等价 API 观察的口径仍有问题，不能据此认定原页面期望已覆盖。
+- 18 条受控记录为 15 条命令及 3 条进度，无浏览器操作或截图；17 次证据读取的本地哈希核验匹配。已知配置凭据、账号与公开单测口令扫描未命中，不将没有截图解释为截图披露要求已通过。Reviewer 指出 command-1 先前上传失败与后来可读同时存在；保留上传失败事实，不能因后续读取成功自动消除阻塞。
+- 最终 Main 创建成功但未形成有效 report.md；没有保存其完整工具调用轨迹，不能认定它从未尝试写入或进一步推断具体拒绝原因。模型 HTTP 200 不证明报告协议履行成功。
+- 两套沙箱独立数据库均 users=0、sessions=0，受控清理及独立 GET 确认剩余为 0，容器和网络撤销。证明为 `live-data/proof/`、`live-audit.json`、`live-launch.log` 和 `live-independent-database-counts.json`。
+- 停止后仅补充规划和最终汇总指令：说明 Cookie/网络详情属于 MCP、选用时须声明浏览器需要、页面观察不由 API 替代；明确 blocked 仍须成功调用 write_report，失败须在原 Session 修正。没有程序代判语义、放宽工具权限或补写历史报告。指令效果尚未用模型验证，整体 live/release=blocked，humanScoring=not_run，相关 Issue 保持开放。
+- 后续优先完善最小化工具调用状态追踪（只保存工具名、结果状态与安全错误，不保存模型正文或凭据），再针对规划工具选择和最终报告交付设计小范围复验；不继续重复整轮付费测试来追求通过。任何新模型样本须先明确范围及预算。
+- 后补指令的 quality 容器 format/lint/typecheck、36 文件 / 256 测试及 build 全部通过（`post-stop-quality.log`）；首次检查仅因两份 Markdown 格式失败，记录保留为 `post-stop-quality-1.log`。
