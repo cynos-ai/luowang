@@ -91,6 +91,17 @@
 - Runner 断网、只读、非 root 检查证明为 `data/summary.json`、`data/sessions.json`；`manifest.json` 记录候选来源及最终驱动/测试文件哈希。外部模型请求 0、正式 Run 0、远端写入 0。前一提交 d9d655e 的 Quality CI 通过（run 35510242039）；本次只跑匹配改动的原生专项与静态检查，没有重跑整个工程套件。
 - 当前 Reviewer、Runner 和截图的离线基础均已有证明，但还没有连接成一次统一的真实模型评估。下一步统一有效场景输入、各例启动与停止/结果审核流程，再冻结实际 live 清单；尤其不得将脚本主动清空表单的本次结果写成模型主动正确处理。整体 live/release=blocked、humanScoring=not_run，三个 Issue 继续开放。
 
+### 统一定向流程与首例真实结果（2026-09-20）
+
+- 新目录 `.cynos/acceptance/run-unified-directed/` 统一五例：后补进度 Reviewer、披露声明 Reviewer、多场景与公开常量 Runner、静态错误截图、依赖字段的错误截图。旧 Reviewer 输入曾使用 SESSION/DELETE 等简写 ID，离线入口未执行生产计划解析；新输入改为合法场景 ID，全部先经过生产计划/场景解析与校验。旧证明不改写，也不作为有效计划的证明。
+- 固定输入、驱动、合成源码和页面哈希；每例排他启动标记、全轮互斥锁及持久 budget 共同约束执行。总上限 100 次，包括重试，跨例不重置。前例结果必须写出且有匹配结果文件哈希的通过评估，下一例才可启动；失败、未评估、结果被改、预算耗尽或停止均拒绝继续。不用关键词自动判定业务语义。
+- 五例均在断网候选容器完成离线检查。Reviewer/Runner 使用生产工件与进度工具；截图使用真实 MCP/Chromium，并将实际调用结果接入 browser observation。静态页拒绝原图后清空、重新核对并生成 cleared.png；依赖字段页保留原状态与截图缺口，无 PNG。离线评估记录明确为 offline-wiring-only、semanticResult=not_evaluated，未计作模型效果。12 项流程门禁检查通过，代理沿用已验证的失败停止和 100 次并发硬上限实现。
+- 用户继续本轮后，按上述共享 100 次上限只启动首个真实 Reviewer 负例，候选仍为源码 404d858 / runtime 43558a982b76，Reviewer 使用 deepseek-v4-flash-vision-exp。评估 ID `01M2ZG54QNCFV8819FYSA9K322`，**4/100** 请求均 HTTP 200 且流完成。计划和 execution 读取成功，7 份合成 command 证据均成功读取；没有 write_review 调用，review.md 未生成，评估 failed、semanticResult=not_evaluated。
+- 原始异常仅记录 unclassified，模型最后回复正文没有保存，不能据此判定为什么提前结束，也不能将 HTTP 200 当作完成审核。真实 Pi Session 已释放，容器撤销；共享预算 stopped=true，实测下一例被拒，后四例未启动，没有补跑或使用余额。只产生本地合成工件，没有官网操作、正式业务 Run、归档或 Issue 写入。
+- 限定扫描当前 live 目录的两份 Markdown，按本机配置中已知敏感值做精确匹配，无命中；没有 review 或 PNG，不能据此声称模型报告与图像披露检查通过。输入哈希保持一致。证明为 `manifest.json`、`gate-check.json`、各 `offline/<case>/result.json` 与 `assessment.json`、`live/budget.json`、`live/late-progress/result.json`、`sessions.json` 和 `live-audit.json`。
+- 失败后仅补充 Reviewer 角色交付要求：明确包括 blocked 在内，必须通过 write_review 成功落盘后结束，被拒时在同一 Session 根据安全反馈修正。与最终 Main 已有规则一致，不新增自动 Session、重试或代写。角色加载/隔离 4 项测试通过；首次格式检查失败后已格式化并复查通过。没有模型复验该指令，不将其写成已解决提前结束的原因。
+- 前一提交 7c4edcb Quality CI 通过（run 35511801098）。下一步固定包含新 Reviewer 指令的候选，完善安全终止诊断后只设计审核工件交付的定向复验；不重新执行已完成离线项，不挪用本轮余额。首例交付未成立前，不默认推进其余四例。整体 live/release=blocked、humanScoring=not_run，PR 保持草稿，#68/#64/#65 保持开放。
+
 ## 完成记录
 
 - 计划已建立；Docker Desktop 的 desktop-linux 上下文可用。此前普通沙箱读取配置失败导致默认 endpoint 不可用，提升权限后的只读检查已确认 daemon 正常。
