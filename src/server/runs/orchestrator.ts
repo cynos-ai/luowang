@@ -32,6 +32,7 @@ import {
 import { contentTypeFor, createOssAdapter, type OssAdapter } from '../storage/oss.js';
 import {
   buildSessionInput,
+  AgentSessionTerminationError,
   createArtifactWriterTool,
   createPlanWriterTool,
   createPiAgentSessionFactory,
@@ -2270,6 +2271,9 @@ function normalizeFinalReportFrontmatter(content: string): string {
 }
 
 function safeMessage(error: unknown): string {
+  if (error instanceof AgentSessionTerminationError) {
+    return new AgentSessionTerminationError(error.reason).message;
+  }
   if (error instanceof GitCommandError) {
     // Command arguments, stderr and even a custom message can contain credentials.
     const operation = error.command[0];

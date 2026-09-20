@@ -183,3 +183,13 @@
 - Run 数据受控清理后独立 GET 确认 remaining=0，两套沙箱独立数据库均 users=0、sessions=0，容器和网络已撤销。当前本地 Markdown 已知配置凭据和公开样例口令精确扫描未命中；没有截图，不构成截图披露验收。证明为 `live-audit.json`、`live-data/proof/`、`live-independent-database-counts.json`。
 - 停止后新增独立零模型传输诊断 helper，白名单分类 DNS/连接/超时/TLS/未知错误，不保存异常正文、URL 或响应正文；传输失败立即停止预算，后续调用不能再次外发。合成故障验证五类失败、Secret 哨兵不回显、HTTP 认证/限流停止及额度上限通过，证明为 `.cynos/acceptance/run-transport-diagnostic/check.json`。helper 尚未接入正式产品或新 live 驱动，不修改第五轮冻结驱动，不宣称历史错误已恢复或线上传输已修复。
 - 下一步先将该 helper 接入新的驱动并验证完整代理失败路径，同时补充 SDK Session 的安全终止状态，以区分传输结束与正常结束后漏写工件；再做不发送模型请求的连接检查。诊断可用后再安排新业务轮次，不自动补跑或消耗本轮余额。整体 live/release=blocked，humanScoring=not_run，#68/#64/#65 保持开放，PR #71 保持草稿。
+
+## 传输停止与 Session 诊断完成（2026-09-20）
+
+- 生产适配器在 Pi prompt 返回后检查最终 assistant 的 stopReason。error/aborted/length 抛出固定类别的安全错误，由 Run 保留；不读取或公开 errorMessage/模型正文，不新增重试。Pi 内部已恢复并正常完成时继续既有流程，正常结束后漏写计划仍保留工件错误。此改动不会恢复第五轮未保存的终止状态或具体传输根因。
+- 新增真实 Pi SDK 加本地模型协议回归：上游返回含敏感哨兵的 HTTP 400 时，Run 为 failed/null，仅一个 Session 且已释放，公开结果只含固定 error 类别，无 plan；正常响应但不写计划时仍报 plan.md 缺失。已有四 Session 成功路径继续通过。
+- 新验收驱动位于 `.cynos/acceptance/run-evidence-transport-ready/`，已接入传输 helper 和 HTTP 代理，冻结文件哈希；第五轮原始驱动未改。连接失败立即阻止后续上游请求，响应头后的流中断也记录固定类别及 response-stream 阶段并停止，认证/限流与总额度限制继续保留。未生成候选清单，未启动新业务轮次。
+- 完整本地 HTTP 代理故障测试通过：连接失败、响应流中断、认证失败各只外发一次模拟上游请求；后续客户端重试被阻止。成功路径受两次测试额度限制，敏感哨兵和上游地址未进入预算记录。全部为本地合成调用，外部模型请求为 0。证明为 `.cynos/acceptance/run-transport-diagnostic/proxy-check.json`，新驱动与 launcher 语法检查通过。
+- quality 使用既有 Dockerfile quality 环境 `83af1339518d` 加当前源码，无重新下载依赖；格式、lint、类型检查、36 文件 / 258 测试及 build 全部通过。日志为该目录 `build-quality.log`、`quality.log`。没有将此工程验证写成完整 runtime 或真实模型验收。
+- 在第五轮原候选容器对模型服务源站做一次无认证 HEAD，154 ms 收到 HTTP 401；本次容器到源站 HTTP 路径可达。未携带 API Key、未调用推理接口，不证明模型认证或推理服务可用，也不排除之前的间歇故障。证明为 `connection-check.json`。
+- 下一步固定包含此次 Session 修复的 runtime，核验新驱动与候选后，再安排缺陷/证据受阻各一次的新轮验收；建议仍为 300 请求上限，沿用当前模型、固定目标与失败停止规则。此次没有新增付费样本或消耗第五轮剩余额度。整体 live/release 仍 blocked，humanScoring=not_run。

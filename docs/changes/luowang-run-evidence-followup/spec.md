@@ -21,6 +21,7 @@
 - Run 遇到 GitCommandError 时保留白名单操作名（如 fetch），不再只给无阶段的通用失败提示；未知命令名、参数、stderr 和自定义错误正文不得进入公开诊断。不根据此提示推断网络或权限根因。
 - 规划指令说明工具的实际提供方式：受控 Cookie 读取/恢复和请求头观察属于 Playwright MCP；Main 选择这些操作时须据此声明 requiresBrowser，不假定独立 HTTP 工具可用。显式页面期望不由 API 响应替代。此规则供模型判断，不增加自然语言正则门禁或自动覆盖声明。
 - 最终 Main 即使汇总 blocked 也须成功通过 write_report 落盘；被拒时根据安全反馈在同一 Session 修正。不由 Harness 伪造缺失报告或自动增加模型轮次。
+- Pi prompt 返回后仍核对最终 assistant 的 stopReason；error、aborted、length 是未正常完成，不进入后续工件校验冒充漏写文件。公开诊断仅保留固定结束类别，不包含模型错误正文。正常结束后缺失工件仍由既有校验处理；不据此推断网络根因，不额外重试或补写报告。
 
 ## 验收
 
