@@ -70,6 +70,17 @@
 - 在已验证的 luowang:screenshot-quality 容器内断网运行两个专项文件，挂载本次测试文件只读，**2 文件 / 16 项测试通过**。日志为 `.cynos/acceptance/run-targeted-preparation/tests.log`。这是受控工具回归，未调用真实模型，未重新执行全套 268 项工程检查。
 - 文档前一提交 346f6e6 的 Quality CI 已通过（run 35497959613）。本次未改生产代码、角色指令或 runtime；#64/#65 模型效果、截图真实处理、整体 live/release 和人工评分状态不变。
 
+### 定向驱动接入与停止机制（2026-09-20）
+
+- 独立驱动位于 `.cynos/acceptance/run-directed-review/`。先接入无需业务环境的两个 Reviewer 负例：后补进度、无依据的披露声明。使用生产 runReviewer、角色资源、工件读取顺序与 command 证据 store；不安装仓库发布或归档服务。Runner 实际操作、公开口令省略和两种截图后续处理尚未接入，不能把这两个负例扩称为五项验证全部就绪。
+- `inputs.json` 保存明确标为合成评估的场景、事件与 execution；`manifest.json` 固定输入和全部驱动模块哈希、100 次总上限、每例一次、候选镜像及源码版本。启动时先检查哈希，再用排他文件写入阻止重复启动；读取凭据和启动模型均在离线模式之外。真实模式还需明确启用本轮范围与额度，当前未启用。
+- 复用已验证传输代理。新零模型检查覆盖输入被修改、重复启动、错误模型 ID、连接失败、响应流中断、认证失败、限流及 105 个并发请求冲击 100 次硬上限。失败类各仅外发一次模拟请求；额度类只外发 100 次模拟请求。诊断记录不含合成敏感哨兵或上游地址。证明为 `.cynos/acceptance/run-targeted-preparation/directed-control-check.json`；外部模型请求为 0。
+- 候选继续使用 `43558a982b76` runtime（源码 404d858）。核对 404d858 到当前 988c4e1 仅文档和进度回归差异，无生产代码/角色变化；988c4e1 Quality CI 已通过（run 35501062348）。没有为相同生产代码重建镜像。
+- 在该候选的断网、只读、非 root 容器中运行离线接线检查：两个模拟 Session，16 次生产工具调用均返回成功，证据读取失败为 0，两个模拟 Session 均释放，两个 review 工件成功写出。离线输出固定标明只检查工具流程，semanticResult=not_evaluated，不是模型审核通过。证据为 `offline-data/summary.json`、`sessions.json` 和 `budget.json`。
+- 合成事件由评估驱动写入受控 store，未伪称真实浏览器事件，也未复制历史 Run。当前材料足以检查读取路径及进度矛盾，尚不足以证明完整 Cookie 重放；不能用 Reviewer 对该材料的判断直接证明官网功能通过或失败。
+- live 驱动即使写出 review，也只运行首例后停止，等待语义审核，不把文件存在或 HTTP 成功作为继续消费额度的条件。当前没有外部模型请求、真实 Pi Session、业务数据或远端写入，整体 live/release=blocked、humanScoring=not_run。
+- 下一步先补齐真实模式的受控证据输入及结果审核接续，再将 Runner/截图输入接到各自实际工具环境。只有对应输入、驱动和预算都冻结后才执行该例；保留此次离线证明，不在旧输出目录补跑。
+
 ## 完成记录
 
 - 计划已建立；Docker Desktop 的 desktop-linux 上下文可用。此前普通沙箱读取配置失败导致默认 endpoint 不可用，提升权限后的只读检查已确认 daemon 正常。
