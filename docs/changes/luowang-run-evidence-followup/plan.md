@@ -26,7 +26,7 @@
 | --- | --- | --- |
 | AC-FOLLOWUP-01：重放、隔离与凭据保护 | 原生 SDK/MCP 回归覆盖实际 Cookie 请求关联、Run 隔离与完整性；旧候选正常样本可独立确认原 Session 返回 401；第六轮可识别注入缺陷；最新候选正确保留注入读取失败并交付 blocked 报告 | 最新候选尚无正常重放通过样本；第六轮的任意 Cookie 前缀披露不由完整值脱敏保证，不能将此项整体记为完成 |
 | AC-FOLLOWUP-02：上传来源与字节 | 工程回归拒绝自定义文本、伪造命令文件、二进制和 SVG；获准证据按固定字节上传 | 图片格式检查不代表内容安全；截图真实模型行为另按 AC-04 验证 |
-| AC-FOLLOWUP-03：真实进度 | 工程记录冻结操作当时的时间与归属；正常、第六轮、最新受阻样本的审核数据只出现 AUTH-LOGIN-001 | #64 原问题涉及两个场景交叉执行与事后补报；单场景样本不能证明模型已正确处理跨场景归属 |
+| AC-FOLLOWUP-03：真实进度 | 工程记录冻结操作当时的时间与归属；2026-09-21 合成正向对照中 Reviewer 正确单列跨场景归属和补报问题，并保留证据充分的功能通过结论 | #64 仍缺 Runner 按真实操作正确开始和结束多个场景的模型证明；Reviewer 定向对照不能替代完整 Run |
 | AC-FOLLOWUP-04：最小披露 | 角色指令已更新；已知 Secret/运行时完整值写入脱敏及失败关闭有回归；最新样本限定范围的 Markdown 扫描无命中；原生浏览器回归覆盖八类非空字段截图拒绝 | #65 是复述公开单测口令常量，并非已确认受控 Secret 泄漏；现有无命中扫描不能证明模型遇到该常量时仍会省略。最新样本无 PNG，尚无真实模型截图拒绝后正确处理的证明；任意片段和其他角色工件继续单列 |
 | AC-FOLLOWUP-05：工程与准确报告 | 37 文件 / 268 项测试及格式、lint、类型检查、构建通过；d2d00dc 的 Quality CI 成功（run 35497245787）；文档保留失败、版本与扫描范围 | 联合 live/release 与独立人工评分未完成；不能把跨版本的局部成功合成最新版本验收通过 |
 
@@ -38,7 +38,7 @@
 | 第六轮注入缺陷 | f773b19 | 检出沙箱缺陷、四 Session 报告交付；读取失败和披露问题保留，整体 blocked，报告未发布 |
 | 最新证据受阻 | 404d858 | 包含读取诊断、execution 脱敏和截图依赖补丁；四 Session 正确 blocked、无 confirmed Bug、不推进；归档 71007f3 字节一致且幂等；无 PNG |
 
-最新 runtime 为 `sha256:43558a982b76de62bf94a29a3f48680f2ac9bbc8003400539d4b1f00d7b9165a`。d2d00dc 只更新验收文档，不是一次新 runtime 或新模型样本。原始证明路径见各轮记录；本次从三个 live-audit.json 提取 scenarioId 去重，均仅 AUTH-LOGIN-001，并复核最新 archive-verification.json 与 archive-idempotence.json。
+最新四 Session 受阻样本的 runtime 为 `sha256:43558a982b76de62bf94a29a3f48680f2ac9bbc8003400539d4b1f00d7b9165a`。d2d00dc 只更新验收文档，不是一次新 runtime 或新模型样本。原始证明路径见各轮记录；本次从三个 live-audit.json 提取 scenarioId 去重，均仅 AUTH-LOGIN-001，并复核最新 archive-verification.json 与 archive-idempotence.json。
 
 ### 按顺序执行的剩余工作
 
@@ -133,6 +133,15 @@
 - V2 冻结后只做断网离线验证：17 次真实浏览器操作、23 份 command 记录；核对删除前后状态 false→true、/delete 200、原 Cookie 一致及后续 /me 401；原值未持久化，Reviewer 模拟工具流程全部可读并完成工件。外部模型请求为 0，未启动 V2 live，不以离线流程替代语义验收。
 - 原轮 live 三份 Markdown 按已知配置敏感值精确扫描无命中，无 PNG；容器已撤销，无官网操作、正式业务 Run、归档或 Issue 写入。本轮余额不使用。证明为原目录 manifest.json、live/budget.json、live/complete-linkage-late-progress/{result,sessions,assessment}.json、live-audit.json，以及 V2 manifest.json、offline/complete-linkage-late-progress/result.json。最新远端 CI 查询仍 pending，不写成通过。
 - 下一步只验证补齐材料的 V2，对照指令版本不变；确认原 Cookie 重放与删除前置均可独立读取后，再判断是否存在单因进度错误的阻塞。其他披露/截图案例继续等待；整体 live/release=blocked，humanScoring=not_run，三个 Issue 与 PR 草稿状态不变。
+
+## 进度正向对照 V2 通过（2026-09-21）
+
+- 保持 9799588 的 Reviewer 指令与 e4a09c238b15 runtime 不变，仅运行补齐删除证据的 V2。Run `01M2ZRXWWNJMPGXYPRE9Z8PE3Q` 使用 **8/30** 次请求，均 HTTP 200 且流完成；17 次真实浏览器操作产生 23 份 command 记录，全部被 Reviewer 成功读取。冻结输入哈希未变，未续用旧轮额度。
+- Reviewer 根据服务端删除状态 false→true、实际删除请求详情、删除前后相同 Cookie 引用及 /me 200→401，判两个合成场景 passed；同时准确指出删除操作归属 SESSION、DELETE 开始前已完成操作及事后补报。功能证据与执行记录问题分别表达，没有单因归属错误否定已成立结果，也未外推为官网通过。
+- write_review 一次成功，writer 内容哈希与原始工件一致，Session 正常 stop 并释放。两次 read_run_artifact 被拒，参数未保存；不猜测具体对象，也不将工具路由拒绝记为证据损坏。原始审核保留，独立 assessment.json 绑定 result.json 哈希，仅将 complete-evidence-progress-control-only 判为 pass。
+- 范围限制：恢复步骤重写了浏览器已有的同值 Cookie，不能证明恢复动作的独立成因；本例仅证明所给合成期望及 Reviewer 区分进度问题的能力。三份 Markdown 按已知配置敏感值精确扫描无命中，无 PNG；不代表任意敏感片段或图片安全。临时容器已撤销，无官网业务执行、正式归档或 Issue 写入。
+- 证明保存在 `.cynos/acceptance/run-progress-positive-v2/` 的 manifest.json、live/budget.json、live/complete-linkage-late-progress/{result,sessions,assessment}.json 与 live-audit.json。此前材料缺口样本仍保留 inconclusive，不改为成功。本轮查询 b364778 的 Quality CI 仍在运行（run 35520963006）；未修改生产代码。
+- 下一步依次验证 Reviewer 对无依据披露声明的处理、Runner 省略公开口令及真实多场景顺序、截图被拒后的处理；各例先固定输入和新预算，不使用本轮余额。随后才补当前候选完整业务样本和独立人工评分。#64 尚缺 Runner 行为证明，三个 Issue 继续开放，PR #71 保持草稿，live/release=blocked、humanScoring=not_run。
 
 ## 完成记录
 
