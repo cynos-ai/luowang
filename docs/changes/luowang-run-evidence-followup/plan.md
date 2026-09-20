@@ -222,3 +222,15 @@
 - 在固定 quality 环境通过 format/lint/typecheck、**37 文件 / 268 测试**及 build。第一次使用旧 quality 镜像覆盖源码时，非 root pretest 无权修改旧依赖文件而失败；诊断镜像已按正式 Dockerfile 的构建顺序先以 root 应用补丁，再以 node 用户测试，全部通过。两次日志均保留在 `.cynos/acceptance/run-screenshot-guard/`，不把初次失败写成成功。
 - 边界：整页所有 frame 采取保守检查，元素截图也可能因区域外的普通输入被拒；普通正文、Canvas、封闭 Shadow DOM 以及检查后动态变化不在保证范围。不能以本回归替代截图内容审核，也不能声称第六轮原图已安全。任意 Cookie 片段和其他角色工件的保护缺口继续保留。
 - 下一步固定同时包含执行记录脱敏、读取诊断和截图补丁的 runtime；此次变更位于 node_modules，不能像前轮一样只复制 dist 到旧 runtime。先核验生产镜像里的补丁和原生预检，再设计一次有界受阻样例验证，避免重跑已完成的正常样本。本次外部模型请求为 0，live/release 仍 blocked，humanScoring=not_run，PR #71 保持草稿。
+
+## 单次证据受阻验收完成（2026-09-20）
+
+- 用户继续后续工作，本轮只执行受阻样例一次，模型请求上限 150，正常/缺陷样例不重跑。模型仍为既定文本/视觉组合，目标仍固定官网 `6405a45b6889ad92cf7cfbce12d8ec22b5040f23`。独立目录 `.cynos/acceptance/run-blocked-closure/` 保存范围、冻结驱动哈希和原始证明，不续用旧轮余额。
+- 固定候选源码为 `404d85885bf046efa6e9de312e74d2b349170db1`，完整 CI 已通过。quality 中相关源码与工作区、依赖锁与旧 runtime 核对一致后，重新编译并复制 dist 及已打补丁的 Playwright coreBundle，形成 runtime `sha256:43558a982b76de62bf94a29a3f48680f2ac9bbc8003400539d4b1f00d7b9165a`。生产镜像中的补丁字节哈希与 quality 一致，原生预检通过；没有仅复制 dist 遗漏依赖补丁。
+- 新驱动保留截图与写入安全边界，并记录经过白名单约束的读取失败对象名、耗时和类别；合成哨兵测试确认不保存附加原始诊断。只对本 Run 的 operation 对象读取注入不可用错误，不删除或损坏 OSS 原始对象、不向业务 Agent 告知预设结论。
+- Run `01M2YVAJV51D6AJG6WE873278H` 完成四个隔离 Session，实际 **78/150** 请求，全部 HTTP 200 且流完成。Runner 捕获 60 条记录（57 条浏览器操作、3 条进度）；Reviewer 20 次命令证据读取被注入阻断，另 10 次获准读取成功且哈希匹配。失败对象、耗时和 unknown 类别已保存；unknown 符合驱动注入普通错误的事实，不伪装成实际 OSS 超时。
+- Reviewer 与最终报告均将 AUTH-LOGIN-001 判为 blocked，confirmed_bugs 为空。最终 Main 一次 write_report 成功；另一次工件读取被拒但未阻止交付，具体对象未记录。该样例证明真实证据不可读时仍能完成报告并保留阻塞，不是产品通过或缺陷样例复验。
+- 返回 Markdown 的已知配置凭据、临时账号、随机口令及清理凭据精确扫描无命中；execution.md 有脱敏标记。独立审核脚本对其较窄的配置凭据/公开样例口令扫描亦无命中，范围不混用。本轮未生成 PNG，不能将截图保护的本地回归扩大成真实模型截图验收；也不保证任意敏感片段均可识别。
+- 报告归档提交为 `71007f3e97c25b5dad2b43e47d496630eab106e9`：远端只新增当前 Run 的 review.md/report.md，字节与本地逐份一致。零模型重复归档返回同一提交、progressed=false、issues=[]，没有新增 Issue 或推进测试目标。合成数据受控清理后独立 GET 为 remaining=0，数据库 users=0、sessions=0，容器和网络已撤销。
+- 证明为 `source-provenance.json`、`candidate-verification.json`、`candidate.json`、`live-data/proof/`、`live-audit.json`、`summary.json`、`archive-verification.json`、`archive-idempotence.json` 与独立数据库计数。历史失败 Run 不改写；第六轮报告仍未发布。
+- 下一步先逐项整理现有正常、缺陷、受阻样例的验收证据及候选版本差异，复核公开报告和相关 Issue/PR 的未完成项，形成审核清单，不再默认重跑整轮。当前受阻样例验收成立；截图真实效果、任意敏感片段及人工质量评分继续单列，整体 live/release 仍 blocked，humanScoring=not_run，PR #71 保持草稿。
