@@ -113,6 +113,16 @@
 - 失败后仅明确既有证据规则：操作名称、单个标识和状态序列不能补足凭据与实际请求头的关联；承认无法排除其他 401 原因时，该期望保持未验证、场景 blocked；合成输入不得扩大为产品事实。未增加业务关键词门禁或自动改判。角色加载/隔离 4 项测试与格式检查通过（`role-followup-check.log`），尚未模型复验这条补充。
 - 下一步针对“缺少关联仍判 passed”做单项证据判断验证，沿用原始不足证据，不通过添加答案或补齐证据追求通过；先固定新指令候选与新额度。交付问题已有本次成功证明，其他四例继续等待，不恢复旧失败轮。整体 live/release=blocked，humanScoring=not_run，PR #71 保持草稿。
 
+## 缺少重放关联的单项复验通过（2026-09-20）
+
+- 用户继续该证据判断复验后，使用独立 `.cynos/acceptance/run-reviewer-sufficiency/`，仅执行原 late-progress 负例一次，新上限 30 次请求，不续用旧轮余额。inputs.json 与上一轮逐字哈希一致，没有补证据、追加预期答案或改变模型；Reviewer 仍使用 deepseek-v4-flash-vision-exp。
+- 源码候选为 9799588，从前轮 2344d57a2ea2 runtime 仅加入新 Reviewer 指令，形成 `sha256:e4a09c238b15fb6d548f74bb53dc3fe8d3239b98dba5677ccf6b75fdc95e72bd`。基础层保持一致、仅多一层，指令字节哈希与源码匹配；冻结驱动与输入后断网预检通过。该源码提交的 Quality CI 本轮查询时仍 pending，不写成已通过；本轮未改生产代码，采用此前角色专项通过及本次候选/离线预检作为有界定向测试依据。
+- 评估 `01M2ZNQ8HSR74ZSKTYBG0CE266` 共 **5/30** 请求，均 HTTP 200 且流完成；write_review 一次成功，writer 内容哈希、结果文件哈希与实际 review.md 一致。Session 结束类别 stop，已释放；容器已撤销。另有一次 read_run_artifact 被拒，参数未记录；7 份受控证据可读，证据读取失败为 0。
+- 正文复核确认：AUTH-SESSION-001 仅在合成范围内 passed；AUTH-DELETE-001 因缺少原凭据与实际请求头的关联而 blocked，明确单个引用和 200→204→401 不能排除无 Cookie/其他凭据导致拒绝；不再声称固定 target 的真实产品行为已被观察。审核交付和本次“缺少重放关联不得判 passed”的单项验收通过。
+- 原 review 保留，单独 assessment.json 绑定结果文件哈希，decision=pass 的范围仅为 missing-replay-linkage-only，releaseReady=false。报告还称跨场景归属的记录不能作为该场景执行证据；当前 blocked 同时有真实关联缺口，尚不能证明仅有归属错误时会如何判定。#64 需增加关联证据完整的正向对照，验证不会单因进度问题否定已成立功能结果，不能据本次关闭。
+- 当前 live 三份 Markdown 的已知配置敏感值精确扫描无命中，输入哈希未变；没有 PNG，不代表图像审核通过。证明为 candidate-verification.json、manifest.json、offline/late-progress/result.json、live/budget.json、live/late-progress/{result,sessions,assessment}.json 及 live-audit.json。没有新正式 Run、官网操作、归档、Issue 写入或其他模型案例，不消耗剩余额度。
+- 下一步先准备“原 Session 关联充分但场景归属错误”的对照，沿用同一指令版本，以区分证据不足与进度问题；其后再推进披露声明、Runner 公开口令省略及截图处理。整体 live/release=blocked、humanScoring=not_run，PR #71 与三个 Issue 状态不变。本次没有继续修改 Reviewer 指令。
+
 ## 完成记录
 
 - 计划已建立；Docker Desktop 的 desktop-linux 上下文可用。此前普通沙箱读取配置失败导致默认 endpoint 不可用，提升权限后的只读检查已确认 daemon 正常。

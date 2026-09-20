@@ -33,7 +33,7 @@ Compose 将数据保存到 `luowang-data` 卷，并把宿主机端口绑定到 `
 
 以下按发生顺序保留验证过程，其中“待完成”描述当时状态。
 
-统一定向流程已通过五例离线检查；首个真实 Reviewer 负例未写入 review.md 后停止。新增交付要求后，独立单项复验在 6/30 次请求内成功写入审核，但 Reviewer 承认缺少原 Session 请求关联仍判 passed，证据判断未通过。已明确该情况下保持 blocked，尚未模型复验此补充；其余案例未继续，整体状态保持 blocked。
+统一定向流程已通过五例离线检查。Reviewer 曾漏写审核，随后成功交付但仍把缺少原 Session 请求关联的场景判 passed。最新单项复验使用相同不足证据，5/30 次请求内成功交付，并正确将该场景判 blocked、保留合成范围。这一负例通过；仍需验证证据完整但进度归属错误时是否准确判断，其余披露和截图模型案例尚未完成，整体状态保持 blocked。
 
 v0.4.0 的固定提交 Quality CI 已通过，真实非生产样本已检出注入的会话缺陷；该发布轮的正常样本仍因重放证据不可供独立审核而 blocked（[#68](https://github.com/cynos-ai/luowang/issues/68)）。场景进度时序（[#64](https://github.com/cynos-ai/luowang/issues/64)）和执行记录披露（[#65](https://github.com/cynos-ai/luowang/issues/65)）也仍有待复验，独立人工质量评分未完成。这些结果不表示全站、当前部署或总体模型质量已验收。后续修复与实际验证结果见 [实施计划](docs/changes/luowang-run-evidence-followup/plan.md)；代码修复不会改写旧 Run 的结论。
 
