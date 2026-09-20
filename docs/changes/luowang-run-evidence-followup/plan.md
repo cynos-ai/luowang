@@ -152,11 +152,14 @@
 - 查询上一提交 24dc476 的 CI（run 35521805182）：quality 镜像构建及 local acceptance/quality matrix 步骤成功；production 镜像构建在安装浏览器系统依赖、从 Aliyun Debian 镜像下载软件包期间持续约 54 分钟，最终在作业 60 分钟边界取消，native MCP 预检未执行。日志证明构建下载过慢及取消发生的位置，不据此认定测试失败或完整 CI 成功；本地保留 ci-24dc476.log。需排查 CI 下载源与缓存，保留容器质量门禁及 runtime 原生预检。
 - 下一步先处理上述 CI 构建阻塞，再验证 Runner 公开常量省略与真实多场景顺序，随后验证截图拒绝后的处理；另设明确预算，不消耗本例余额。#65 尚缺 Runner 行为证明，三个 Issue 仍开放，PR #71 保持草稿。live/release=blocked、humanScoring=not_run。
 
-## CI Debian 下载源修复（2026-09-21，验证中）
+## CI Debian 下载源修复通过（2026-09-21）
 
 - 24dc476 的完整日志显示 production 构建在 Aliyun 下载浏览器系统依赖时持续约 54 分钟，最终到达作业 60 分钟边界取消；quality/local acceptance 已成功，但不能算完整 CI 通过。
 - 最小修改仅将 GitHub-hosted runner 的 DEBIAN_MIRROR 与 DEBIAN_SECURITY_MIRROR 覆盖值切到 Debian 官方 CDN；复用既有参数，quality/runtime 两次构建一致。Dockerfile 国内默认值、固定 Node digest、npm/浏览器下载源、缓存和 60 分钟上限不变，保留容器内全量质量检查及 runtime 原生 MCP 正反向预检。
 - 工作流格式、YAML 解析和构建参数接续检查通过。推送后以 GitHub runner 的完整构建及预检验证网络环境下的实际效果，不以本地缓存命中或仅下载探测宣称修复成立；本次无模型请求，发布状态仍 blocked。
+- 固定提交 `7320a18b568c318a392d5b3797f0113688f3efcc` 的 [Quality CI 35525400183](https://github.com/cynos-ai/luowang/actions/runs/35525400183) 完整通过：quality 镜像构建 5 分 5 秒，local acceptance/quality matrix 4 分 1 秒，production 镜像构建 2 分 22 秒，生产原生 MCP 与只读状态目录拒绝预检均成功，作业总计约 12 分钟。此前 24dc476 的取消结果不改写；单次成功不保证任何网络条件下的下载耗时。
+- 原始步骤时间、提交绑定与日志保存到 `.cynos/acceptance/run-ci-debian-cdn/{result.json,ci.log}`。等待 CI 时准备了 `.cynos/acceptance/run-runner-constant/`：从既有统一输入复制公开常量/两个场景案例，冻结候选及新上限 30 的驱动，断网验证两个 start→command→finish 顺序、7 份记录及 execution 写入通过。该例模型请求为 0，未启用 live，不算 Runner 模型行为验收。
+- 下一步只运行这一例 Runner 定向验证，独立检查 writer 输入/工件是否省略公开常量，以及实际命令与场景时序；使用冻结的新预算，不挪用旧轮余额。随后再验证截图处理及完整业务样本，live/release=blocked、humanScoring=not_run，PR 保持草稿。
 
 ## 完成记录
 
