@@ -81,6 +81,16 @@
 - live 驱动即使写出 review，也只运行首例后停止，等待语义审核，不把文件存在或 HTTP 成功作为继续消费额度的条件。当前没有外部模型请求、真实 Pi Session、业务数据或远端写入，整体 live/release=blocked、humanScoring=not_run。
 - 下一步先补齐真实模式的受控证据输入及结果审核接续，再将 Runner/截图输入接到各自实际工具环境。只有对应输入、驱动和预算都冻结后才执行该例；保留此次离线证明，不在旧输出目录补跑。
 
+### Runner 与截图离线接入完成（2026-09-20）
+
+- 独立 Runner 驱动位于 `.cynos/acceptance/run-runner-preparation/driver.mjs`，使用候选 runtime 的生产 runRunner、计划解析、场景原文冻结、进度控制器、受控命令及 write_execution。仓库读取由明确的合成输入提供，Session 使用脚本模拟；不安装外部模型、官网连接或归档服务，不将合成工作目录作为新的业务测试项目。
+- 两个模拟 Runner Session 实际启动了 6 次 Node 合成测试子进程。每次先执行一个无当前场景的辅助命令，再依次执行 AUTH-SESSION-001、AUTH-DELETE-001；读取原始 command 记录确认归属为 auxiliary、场景一、场景二，命令退出码均为 0，完成数 2/2，冻结原文两份，阻塞原因为空，Session 均释放。这只证明工具连接及记录准确，不证明模型会遵守顺序。
+- 公开常量测量单独覆盖 writer 输入和落盘结果：省略输入无常量，刻意包含合成公开常量的输入原样落盘。常量未登记为 Secret/运行时敏感值，因此后续可以观察模型是否主动省略，不会被已知 Secret 脱敏遮住。保留有意包含常量的合成探针，未将其称为真实凭据泄漏或模型行为通过。
+- 扩展真实 MCP/Chromium 截图回归：两张合成页初始均有可见非空账号/口令字段和错误提示，截图被拒且原图文件未产生，拒绝后原字段与错误状态仍在。通过 Runner 同样可用的 browser_fill_form 清空字段后，静态提示仍在且补拍成功；依赖输入的提示变为 Form changed，回归确认它已不是原错误状态，不生成冒充原状态的补拍证据。未向 Agent 增加脚本工具。
+- 首次截图检查因调用使用 ref 而固定 MCP schema 要求 target 失败；第二次补充错误反馈确认原因；修正测试参数后第三次通过原生回归、lint 和格式检查。失败来自测试驱动参数，不归因于产品截图保护失效，也未修改生产依赖。三次日志分别为 `screenshot-check.log`、`screenshot-check-2.log`、`screenshot-check-3.log`。
+- Runner 断网、只读、非 root 检查证明为 `data/summary.json`、`data/sessions.json`；`manifest.json` 记录候选来源及最终驱动/测试文件哈希。外部模型请求 0、正式 Run 0、远端写入 0。前一提交 d9d655e 的 Quality CI 通过（run 35510242039）；本次只跑匹配改动的原生专项与静态检查，没有重跑整个工程套件。
+- 当前 Reviewer、Runner 和截图的离线基础均已有证明，但还没有连接成一次统一的真实模型评估。下一步统一有效场景输入、各例启动与停止/结果审核流程，再冻结实际 live 清单；尤其不得将脚本主动清空表单的本次结果写成模型主动正确处理。整体 live/release=blocked、humanScoring=not_run，三个 Issue 继续开放。
+
 ## 完成记录
 
 - 计划已建立；Docker Desktop 的 desktop-linux 上下文可用。此前普通沙箱读取配置失败导致默认 endpoint 不可用，提升权限后的只读检查已确认 daemon 正常。

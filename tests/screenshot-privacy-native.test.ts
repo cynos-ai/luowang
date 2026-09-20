@@ -23,6 +23,8 @@ it('native MCP refuses populated text fields before producing pixels and permits
     '/frame': '<iframe src="/text"></iframe>',
     '/empty': '<h1>Login</h1><input aria-label="Account"><input type="password">',
     '/hidden': `<input style="display:none" value="${sentinel}"><h1>Visible area</h1>`,
+    '/stable-error': `<h1>Login rejected</h1><input aria-label="Account" value="${sentinel}"><input aria-label="Passphrase" type="password" value="${sentinel}">`,
+    '/dependent-error': `<h1 id="result">Login rejected</h1><input aria-label="Account" value="${sentinel}" oninput="document.getElementById('result').textContent='Form changed'"><input aria-label="Passphrase" type="password" value="${sentinel}">`,
   };
   const server = createServer((request, response) => {
     response.writeHead(200, { 'content-type': 'text/html' });
@@ -93,6 +95,53 @@ it('native MCP refuses populated text fields before producing pixels and permits
       assert.ok(!allowed.isError, JSON.stringify(allowed));
       const png = await readFile(join(directory, `${name}.png`));
       assert.ok(png.subarray(0, 8).equals(Buffer.from('89504e470d0a1a0a', 'hex')));
+    }
+    for (const name of ['stable-error', 'dependent-error']) {
+      await client.callTool({
+        name: 'browser_navigate',
+        arguments: { url: `http://127.0.0.1:${address.port}/${name}` },
+      });
+      const blocked = await client.callTool({
+        name: 'browser_take_screenshot',
+        arguments: { filename: `${name}-original.png` },
+      });
+      assert.equal(blocked.isError, true);
+      assert.ok(!(await readdir(directory)).includes(`${name}-original.png`));
+      const before = JSON.stringify(
+        await client.callTool({ name: 'browser_snapshot', arguments: {} }),
+      );
+      assert.match(before, /Login rejected/);
+      assert.ok(before.includes(sentinel), 'refusal must preserve the original field state');
+      // Use the same ref-based form tool available to Runner, never browser script execution.
+      const snapshotText = JSON.parse(before)
+        .content.filter((part: { type: string }) => part.type === 'text')
+        .map((part: { text: string }) => part.text)
+        .join('\n') as string;
+      const fields = ['Account', 'Passphrase'].map((label) => {
+        const ref = snapshotText.match(new RegExp(`textbox "${label}" \\[ref=([^\\]]+)\\]`))?.[1];
+        assert.ok(ref, `missing ${label} ref`);
+        return { name: label, type: 'textbox', target: ref, value: '' };
+      });
+      const cleared = await client.callTool({ name: 'browser_fill_form', arguments: { fields } });
+      assert.ok(!cleared.isError, JSON.stringify(cleared));
+      const after = JSON.stringify(
+        await client.callTool({ name: 'browser_snapshot', arguments: {} }),
+      );
+      assert.ok(!after.includes(sentinel));
+      if (name === 'stable-error') {
+        assert.match(after, /Login rejected/);
+        const screenshot = await client.callTool({
+          name: 'browser_take_screenshot',
+          arguments: { filename: `${name}-cleared.png` },
+        });
+        assert.ok(!screenshot.isError);
+        assert.ok((await readdir(directory)).includes(`${name}-cleared.png`));
+      } else {
+        assert.match(after, /Form changed/);
+        assert.doesNotMatch(after, /Login rejected/);
+        // A clean form is now a different observation, not evidence of the original error.
+        assert.ok(!(await readdir(directory)).includes(`${name}-cleared.png`));
+      }
     }
   } finally {
     await client.close();
