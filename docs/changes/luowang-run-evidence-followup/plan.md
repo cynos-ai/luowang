@@ -123,6 +123,17 @@
 - 当前 live 三份 Markdown 的已知配置敏感值精确扫描无命中，输入哈希未变；没有 PNG，不代表图像审核通过。证明为 candidate-verification.json、manifest.json、offline/late-progress/result.json、live/budget.json、live/late-progress/{result,sessions,assessment}.json 及 live-audit.json。没有新正式 Run、官网操作、归档、Issue 写入或其他模型案例，不消耗剩余额度。
 - 下一步先准备“原 Session 关联充分但场景归属错误”的对照，沿用同一指令版本，以区分证据不足与进度问题；其后再推进披露声明、Runner 公开口令省略及截图处理。整体 live/release=blocked、humanScoring=not_run，PR #71 与三个 Issue 状态不变。本次没有继续修改 Reviewer 指令。
 
+## 进度正向对照：材料缺口，结论暂不成立（2026-09-20）
+
+- 用户继续后，建立 `.cynos/acceptance/run-progress-positive/`，使用上一轮同一 9799588 指令及 e4a09c238b15 runtime，仅执行关联完整但进度错误的一例，新上限 30 次请求。生产 browser observation 接入真实 MCP/Chromium 与本地合成服务，Cookie 原值随机生成且只在内存使用；服务独立记录原 Cookie 是否匹配及状态码。合成服务不是官网新业务测试目标，不产生官网行为结论。
+- 首次断网预检成功：14 次真实浏览器操作、19 份 command 记录；observed-browser、restore-input、observed-request-header 的 Run 内标识一致，服务端观察删除前 /me 200、删除请求 200、删除后同 Cookie 的 /me 401，原 Cookie 不在命令证据中。删除操作被故意记在 SESSION 窗口，随后才补 DELETE start/finish；最终 2/2 不被当成进度准确证明。
+- 真实评估 `01M2ZR2W0B0JZFWH3QRCCW6YCX` 共 **5/30** 请求，均 HTTP 200 且流完成，write_review 一次成功、writer 哈希与文件一致，Session 正常 stop 并释放。另有一次 read_run_artifact 拒绝，参数未记录；证据读取失败为 0。Reviewer 将两个场景判为 blocked，原因包括看不到中间的删除状态变化，无法解释同 Cookie 的 200→401。
+- 复核发现对照材料确有缺口：browser_navigate 的参数/输出按现有策略省略；网络列表在后续导航后只展示当前请求。本地 driver 的服务端 receipt 虽证明删除发生，却只保存于评估结果，未提供给 Reviewer。Cookie 关联完整不等于删除前置证据完整，不能据此认定 Reviewer 仅因进度归属而过度阻塞。原结果保留，独立 assessment 绑定结果哈希，decision=inconclusive、controlValidity=failed，未改模型指令或产品证据边界。
+- 新目录 `.cynos/acceptance/run-progress-positive-v2/` 仅修正材料：紧随删除操作捕获实际 /delete 请求详情与请求头，并由合成服务在处理请求时经受控 store 记录删除前后状态和 Cookie 是否匹配；事件来自实际请求处理，不是模型自填结论。新增记录保持 SESSION 归属，原后补进度错误仍保留。
+- V2 冻结后只做断网离线验证：17 次真实浏览器操作、23 份 command 记录；核对删除前后状态 false→true、/delete 200、原 Cookie 一致及后续 /me 401；原值未持久化，Reviewer 模拟工具流程全部可读并完成工件。外部模型请求为 0，未启动 V2 live，不以离线流程替代语义验收。
+- 原轮 live 三份 Markdown 按已知配置敏感值精确扫描无命中，无 PNG；容器已撤销，无官网操作、正式业务 Run、归档或 Issue 写入。本轮余额不使用。证明为原目录 manifest.json、live/budget.json、live/complete-linkage-late-progress/{result,sessions,assessment}.json、live-audit.json，以及 V2 manifest.json、offline/complete-linkage-late-progress/result.json。最新远端 CI 查询仍 pending，不写成通过。
+- 下一步只验证补齐材料的 V2，对照指令版本不变；确认原 Cookie 重放与删除前置均可独立读取后，再判断是否存在单因进度错误的阻塞。其他披露/截图案例继续等待；整体 live/release=blocked，humanScoring=not_run，三个 Issue 与 PR 草稿状态不变。
+
 ## 完成记录
 
 - 计划已建立；Docker Desktop 的 desktop-linux 上下文可用。此前普通沙箱读取配置失败导致默认 endpoint 不可用，提升权限后的只读检查已确认 daemon 正常。
