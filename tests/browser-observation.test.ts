@@ -19,7 +19,7 @@ afterEach(async () => {
     await rm(directory, { recursive: true, force: true });
 });
 
-async function fixture(gateway = 'mcp') {
+async function fixture(gateway = 'mcp', operationContext?: () => Record<string, unknown>) {
   const directory = await mkdtemp(join(tmpdir(), 'luowang-observation-'));
   directories.push(directory);
   const workspace = new RunWorkspace('01K00000000000000000000000', directory);
@@ -35,7 +35,7 @@ async function fixture(gateway = 'mcp') {
     store,
     targetCommit: 'fixed-target',
     now: () => new Date('2026-09-19T00:00:00Z'),
-    operationContext: () => ({ scenarioId }),
+    operationContext: operationContext ?? (() => ({ scenarioId })),
     onFailure: () => {
       failures++;
     },
@@ -272,4 +272,52 @@ it('progress context snapshots preserve completed and auxiliary facts across lat
   assert.equal(active.scenarioId, 'A');
   assert.deepEqual(active.completed, []);
   assert.deepEqual(controller.operationContext().completed, ['A']);
+});
+
+it('keeps cross-scenario and auxiliary evidence unchanged when a second scenario is reported late', async () => {
+  const state = {} as RunState;
+  let tick = 0;
+  const controller = createScenarioProgressController({
+    state,
+    allowedScenarios: [
+      { id: 'SESSION', name: 'Session recovery' },
+      { id: 'DELETE', name: 'Account deletion' },
+    ],
+    now: () => new Date(Date.UTC(2026, 8, 20, 0, 0, tick++)),
+  });
+  const f = await fixture('mcp', () => controller.recordOperation('browser'));
+  const invoke = async (name: string, params: Record<string, unknown>) => {
+    const result = await controller.tools
+      .find((tool) => tool.name === name)!
+      .execute('progress', params, undefined, undefined, {} as never);
+    assert.notEqual((result.details as Record<string, unknown>).error, true);
+  };
+  await invoke('begin_scenario_execution', { scenarioIds: ['SESSION', 'DELETE'] });
+  await invoke('start_scenario', { scenarioId: 'SESSION' });
+  await f.call('browser_click', { ref: 'session-check' }, 'Session verified');
+  // A model performs DELETE work while SESSION is active. The Harness must not infer
+  // its business meaning or retroactively relabel it when DELETE is started later.
+  await f.call('browser_click', { ref: 'delete-account' }, 'Account deleted');
+  await invoke('finish_scenario', { scenarioId: 'SESSION' });
+  await f.call('browser_snapshot', {}, 'Auxiliary inspection');
+  const before = await f.records();
+  await invoke('start_scenario', { scenarioId: 'DELETE' });
+  await invoke('finish_scenario', { scenarioId: 'DELETE' });
+  assert.deepEqual(await f.records(), before);
+  assert.deepEqual(
+    before.map((record) => record.observation.execution),
+    [
+      { scenarioId: 'SESSION', scope: 'scenario', declared: true, completed: [] },
+      { scenarioId: 'SESSION', scope: 'scenario', declared: true, completed: [] },
+      { scenarioId: null, scope: 'auxiliary', declared: true, completed: ['SESSION'] },
+    ],
+  );
+  assert.deepEqual(state.scenarioProgress, { completed: 2, total: 2 });
+  // Completion counts alone do not certify attribution or product correctness.
+  assert.equal(controller.completionError(), null);
+  const messages = state.activities!.map((activity) => activity.message);
+  assert.ok(
+    messages.indexOf('辅助操作（无当前场景）：开始浏览器操作') <
+      messages.indexOf('开始场景 DELETE · Account deletion'),
+  );
 });
