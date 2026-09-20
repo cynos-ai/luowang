@@ -22,6 +22,7 @@ RUN sed -i \
 
 COPY package.json package-lock.json ./
 COPY scripts/patch-playwright-request-headers.mjs ./scripts/patch-playwright-request-headers.mjs
+COPY scripts/patch-playwright-screenshot-guard.mjs ./scripts/patch-playwright-screenshot-guard.mjs
 RUN npm ci --registry=${NPM_REGISTRY} \
   && node scripts/patch-playwright-request-headers.mjs
 

@@ -1,6 +1,7 @@
 import { readFile, writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
+import './patch-playwright-screenshot-guard.mjs';
 
 // The pinned MCP uses Request.headers(), which omits Cookie. Preserve the
 // existing tool surface, but await allHeaders() for independently reviewable
