@@ -7,7 +7,7 @@ import { createTextResult } from './agent-session.js';
 import { redactSensitiveText } from './test-data.js';
 import type { CommandRunResult } from './command-runner.js';
 import type { OssAdapter } from '../storage/oss.js';
-import { contentTypeFor, uploadEvidenceBody } from '../storage/oss.js';
+import { contentTypeFor, uploadEvidenceBody, OssError } from '../storage/oss.js';
 import { RunWorkspace, isBrowserRecordName, type RunEvidenceFile } from './workspace.js';
 
 const MAX_REVIEW_IMAGE_BYTES = 16 * 1024 * 1024;
@@ -49,6 +49,7 @@ export interface RunEvidenceStore {
   commandEvidenceIds(): string[];
   readCommandEvidence(filename: string): Promise<string>;
   registerSensitiveValue?(value: string): void;
+  redactText?(value: string): string;
   identifySensitiveValue?(value: string): string;
   captureObservation?(targetCommit: string, observation: Record<string, unknown>): Promise<string>;
   allowBrowserRecords?(): void;
@@ -100,6 +101,10 @@ class DefaultRunEvidenceStore implements RunEvidenceStore {
 
   private secrets(): string[] {
     return [...this.reviewSecrets(), ...this.runtimeSecrets];
+  }
+
+  redactText(value: string): string {
+    return redactCommandText(value, this.secrets(), Number.MAX_SAFE_INTEGER);
   }
 
   constructor(
@@ -343,7 +348,7 @@ class DefaultRunEvidenceStore implements RunEvidenceStore {
       throw new Error('不是本 Run 已上传的浏览器记录');
     const evidence = await this.readUploaded(filename);
     if (createHash('sha256').update(evidence.body).digest('hex') !== reference.sha256) {
-      throw new Error('浏览器记录内容已改变');
+      throw new EvidenceIntegrityError('浏览器记录内容已改变');
     }
     const text = decodeBrowserRecord(evidence.body);
     const clean = redactCommandText(text, this.secrets(), Number.MAX_SAFE_INTEGER);
@@ -370,7 +375,7 @@ class DefaultRunEvidenceStore implements RunEvidenceStore {
       body.byteLength > 1024 * 1024 ||
       createHash('sha256').update(body).digest('hex') !== expected.sha256
     ) {
-      throw new Error('命令证据不属于本 Run 的 Harness 捕获记录或内容已改变');
+      throw new EvidenceIntegrityError('命令证据不属于本 Run 的 Harness 捕获记录或内容已改变');
     }
   }
 
@@ -498,9 +503,40 @@ export function createRunnerEvidenceTools(store: RunEvidenceStore): ToolDefiniti
   ];
 }
 
+export interface EvidenceReadFailureDiagnostic {
+  filename: string;
+  kind: 'timeout' | 'authentication' | 'not-found' | 'connection' | 'unknown' | 'integrity';
+  durationMs: number;
+}
+
+class EvidenceIntegrityError extends Error {}
+
+function readFailureDiagnostic(
+  filename: string,
+  error: unknown,
+  startedAt: number,
+): EvidenceReadFailureDiagnostic {
+  const kind =
+    error instanceof EvidenceIntegrityError
+      ? 'integrity'
+      : error instanceof OssError &&
+          ['timeout', 'authentication', 'not-found', 'connection'].includes(error.failureKind)
+        ? error.failureKind
+        : 'unknown';
+  return {
+    filename:
+      /^(?:operation|command)-\d+\.json$/.test(filename) || isBrowserRecordName(filename)
+        ? filename
+        : '[known evidence]',
+    kind,
+    durationMs: Math.max(0, Date.now() - startedAt),
+  };
+}
+
 export function createReviewerEvidenceTools(
   store: RunEvidenceStore,
   canReadImage: () => Promise<boolean> = async () => true,
+  onReadFailure: (diagnostic: EvidenceReadFailureDiagnostic) => void = () => {},
 ): ToolDefinition[] {
   const filenameParameters = Type.Object({
     filename: Type.String({ description: '已上传截图的相对文件名' }),
@@ -549,13 +585,16 @@ export function createReviewerEvidenceTools(
       }),
       execute: async (_toolCallId: string, params: { filename: string }) => {
         if (!store.commandEvidenceIds().includes(params.filename)) return invalidEvidenceRequest();
+        const startedAt = Date.now();
         try {
           return createTextResult(await store.readCommandEvidence(params.filename));
-        } catch {
+        } catch (error) {
           store.recordReadFailure?.();
+          const diagnostic = readFailureDiagnostic(params.filename, error, startedAt);
+          onReadFailure(diagnostic);
           return createTextResult(
             '受控命令证据不可用或校验失败；请核对本 Run 的证据 ID，不能确认相关结果',
-            { error: true },
+            { error: true, readFailure: diagnostic },
           );
         }
       },
@@ -573,12 +612,16 @@ export function createReviewerEvidenceTools(
       execute: async (_toolCallId: string, params: { filename: string }) => {
         if (!store.readBrowserEvidence || !store.browserEvidenceIds?.().includes(params.filename))
           return invalidEvidenceRequest();
+        const startedAt = Date.now();
         try {
           return createTextResult(await store.readBrowserEvidence(params.filename));
-        } catch {
+        } catch (error) {
           store.recordReadFailure?.();
+          const diagnostic = readFailureDiagnostic(params.filename, error, startedAt);
+          onReadFailure(diagnostic);
           return createTextResult('浏览器原始记录不可用、内容无效或校验失败，不能确认相关结果', {
             error: true,
+            readFailure: diagnostic,
           });
         }
       },

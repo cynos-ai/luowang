@@ -1019,7 +1019,22 @@ class DefaultRunOrchestrator implements RunOrchestrator {
         'write_execution',
         '写入执行记录',
         '写入本次 Run 的完整 execution.md，记录命令、观察、失败和清理情况。',
-        (content) => workspace.writer('runner').writeExecution(content),
+        (content) => {
+          // Never persist raw output when the Secret Store is unavailable.
+          let clean: string;
+          try {
+            if (evidenceStore?.redactText) clean = evidenceStore.redactText(content);
+            else {
+              const secrets = SECRET_KEYS.map((key) => this.options.secretStore?.get(key)).filter(
+                (value): value is string => Boolean(value),
+              );
+              clean = redactCommandText(content, secrets, Number.MAX_SAFE_INTEGER);
+            }
+          } catch {
+            throw new Error('执行记录脱敏不可用，未写入工件');
+          }
+          return workspace.writer('runner').writeExecution(clean);
+        },
       ),
     ];
     const browserExtension =
@@ -1362,22 +1377,33 @@ class DefaultRunOrchestrator implements RunOrchestrator {
     const tools = [
       createReadArtifactTool(readOrder.readArtifact),
       ...(evidenceStore
-        ? createReviewerEvidenceTools(evidenceStore, async () => {
-            let visionAvailable = false;
-            try {
-              const model = await this.options.provider?.resolveModel('reviewer');
-              visionAvailable = model ? supportsVision(model) : false;
-            } catch {
-              /* Unknown capability is not permission to deliver images. */
-            }
-            if (!visionAvailable) {
-              this.addBlockingReason(
-                context,
-                'Reviewer 模型不支持或无法确认图像输入，不能审核图片证据',
+        ? createReviewerEvidenceTools(
+            evidenceStore,
+            async () => {
+              let visionAvailable = false;
+              try {
+                const model = await this.options.provider?.resolveModel('reviewer');
+                visionAvailable = model ? supportsVision(model) : false;
+              } catch {
+                /* Unknown capability is not permission to deliver images. */
+              }
+              if (!visionAvailable) {
+                this.addBlockingReason(
+                  context,
+                  'Reviewer 模型不支持或无法确认图像输入，不能审核图片证据',
+                );
+              }
+              return visionAvailable;
+            },
+            ({ filename, kind, durationMs }) => {
+              this.setPhase(
+                state,
+                state.phase,
+                `证据读取失败：${filename}；类别=${kind}；耗时=${durationMs}ms`,
+                'warning',
               );
-            }
-            return visionAvailable;
-          }).map(readOrder.wrap)
+            },
+          ).map(readOrder.wrap)
         : []),
       createArtifactWriterTool(
         'write_review',

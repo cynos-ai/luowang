@@ -21,7 +21,12 @@ import {
 } from '../src/server/runs/evidence.js';
 import { createTestDataManager, createTestDataTools } from '../src/server/runs/test-data.js';
 import { RunWorkspace } from '../src/server/runs/workspace.js';
-import { createOssAdapter, type OssAdapter, type S3ClientLike } from '../src/server/storage/oss.js';
+import {
+  createOssAdapter,
+  OssError,
+  type OssAdapter,
+  type S3ClientLike,
+} from '../src/server/storage/oss.js';
 import type { SecretStore } from '../src/server/security/secret-store.js';
 
 const cleanup: Array<() => Promise<void>> = [];
@@ -31,6 +36,79 @@ afterEach(async () => {
 });
 
 describe('Phase 4 browser and evidence boundaries', () => {
+  it.each([
+    [{ name: 'TimeoutError', message: 'private-diagnostic' }, 'timeout'],
+    [{ $metadata: { httpStatusCode: 403 }, message: 'private-diagnostic' }, 'authentication'],
+    [{ cause: { code: 'ECONNRESET' }, message: 'private-diagnostic' }, 'connection'],
+    [{ $metadata: { httpStatusCode: 404 } }, 'not-found'],
+    [null, 'unknown'],
+  ] as const)('keeps safe storage failure categories: %j', async (error, kind) => {
+    const fixture = await createStorageFixture({ clientError: { value: error } });
+    await assert.rejects(fixture.oss.getObject('phase4/object.json'), (caught: unknown) => {
+      assert.ok(caught instanceof OssError);
+      assert.equal(caught.failureKind, kind);
+      assert.doesNotMatch(JSON.stringify(caught) + caught.message, /private-diagnostic/);
+      return true;
+    });
+  });
+
+  it('records known-object read failures without counting invalid routes or erasing failure after success', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'luowang-read-diagnostic-'));
+    cleanup.push(async () => rm(directory, { recursive: true, force: true }));
+    const workspace = new RunWorkspace('01K00000000000000000000001', directory);
+    await workspace.create();
+    const oss = fakeOss();
+    const store = createRunEvidenceStore(workspace, oss);
+    const filename = await store.captureCommand(
+      'node --version',
+      'fixed-target',
+      { error: 'synthetic failure' },
+      [],
+    );
+    await store.upload(filename);
+    const original = oss.getObject.bind(oss);
+    oss.getObject = async () => {
+      throw new OssError('OSS_REQUEST_FAILED', 'private-diagnostic', 'timeout');
+    };
+    const diagnostics: unknown[] = [];
+    const tool = createReviewerEvidenceTools(store, undefined, (value) =>
+      diagnostics.push(value),
+    ).find((t) => t.name === 'read_command_evidence')!;
+    const call = (name: string) =>
+      tool.execute('read', { filename: name } as never, undefined, undefined, {} as never);
+    await call('../private-diagnostic');
+    assert.equal(diagnostics.length, 0);
+    assert.equal(store.readFailureCount?.(), 0);
+    const failed = await call(filename);
+    assert.doesNotMatch(JSON.stringify(failed), /private-diagnostic/);
+    assert.equal((failed.details as { readFailure: { kind: string } }).readFailure.kind, 'timeout');
+    const failures = store.readFailureCount!();
+    oss.getObject = original;
+    await call(filename);
+    assert.equal(store.readFailureCount!(), failures);
+    oss.getObject = async (key) => ({ ...(await original(key)), body: Buffer.from('changed') });
+    const changed = await call(filename);
+    assert.equal(
+      (changed.details as { readFailure: { kind: string } }).readFailure.kind,
+      'integrity',
+    );
+  });
+
+  it('redacts registered runtime credentials without truncating execution prose', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'luowang-redact-execution-'));
+    cleanup.push(async () => rm(directory, { recursive: true, force: true }));
+    const store = createRunEvidenceStore(
+      new RunWorkspace('01K00000000000000000000001', directory),
+      undefined,
+      { reviewSecrets: () => ['synthetic@example.test'] },
+    );
+    store.registerSensitiveValue?.('synthetic-cookie-value');
+    const text = store.redactText!(
+      'synthetic@example.test synthetic-cookie-value\n' + '观察。'.repeat(30000) + '\n结论 failed',
+    );
+    assert.doesNotMatch(text, /synthetic@example|synthetic-cookie-value|truncated/);
+    assert.ok(text.endsWith('结论 failed'));
+  });
   it('uses stable S3-compatible keys and completes put/get/head/delete', async () => {
     const fixture = await createStorageFixture();
     const object = Buffer.from('phase4 evidence', 'utf8');
@@ -277,7 +355,7 @@ interface StorageFixture {
 }
 
 async function createStorageFixture(
-  overrides: { publicBaseUrl?: string } = {},
+  overrides: { publicBaseUrl?: string; clientError?: { value: unknown } } = {},
 ): Promise<StorageFixture> {
   const directory = await mkdtemp(join(tmpdir(), 'luowang-phase4-storage-'));
   cleanup.push(async () => rm(directory, { recursive: true, force: true }));
@@ -300,7 +378,14 @@ async function createStorageFixture(
   });
   const client = new MemoryS3Client();
   const oss = createOssAdapter(configuration, fakeSecretStore(), {
-    clientFactory: () => client,
+    clientFactory: () =>
+      overrides.clientError
+        ? {
+            send: async () => {
+              throw overrides.clientError!.value;
+            },
+          }
+        : client,
     randomId: () => 'connectivity-test',
   });
   return { directory, oss };
