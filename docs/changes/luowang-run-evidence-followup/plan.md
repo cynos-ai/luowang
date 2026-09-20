@@ -193,3 +193,15 @@
 - quality 使用既有 Dockerfile quality 环境 `83af1339518d` 加当前源码，无重新下载依赖；格式、lint、类型检查、36 文件 / 258 测试及 build 全部通过。日志为该目录 `build-quality.log`、`quality.log`。没有将此工程验证写成完整 runtime 或真实模型验收。
 - 在第五轮原候选容器对模型服务源站做一次无认证 HEAD，154 ms 收到 HTTP 401；本次容器到源站 HTTP 路径可达。未携带 API Key、未调用推理接口，不证明模型认证或推理服务可用，也不排除之前的间歇故障。证明为 `connection-check.json`。
 - 下一步固定包含此次 Session 修复的 runtime，核验新驱动与候选后，再安排缺陷/证据受阻各一次的新轮验收；建议仍为 300 请求上限，沿用当前模型、固定目标与失败停止规则。此次没有新增付费样本或消耗第五轮剩余额度。整体 live/release 仍 blocked，humanScoring=not_run。
+
+## 第六轮：缺陷证据与报告交付成立，整体仍受阻（2026-09-20）
+
+- 用户继续上述有界验收；目标、模型与两样本各一次/300 请求上限不变。固定提交 `f773b198ed6a82508e8ff9853897cce02b70f94f`，其完整 CI 已通过。核对 quality 镜像内源码与当前代码、基础 runtime 的依赖锁一致后，重新编译 dist 并加入既有 runtime，生成 `sha256:7aa7ef257972091edc9cc502d151a28b9fbbe5a3d8d437d34587fa3563ba9054`。没有重新下载运行环境；源码/依赖来源、构建与断网原生预检保存在 `.cynos/acceptance/run-evidence-transport-ready/`。
+- 新驱动哈希核对、Git dry-run 和两个目标浏览器预检通过。缺陷 Run `01M2YJPQ1767J6NE3ZAXJK0MZH` 完成四个隔离 Session，Main 成功 write_plan 且 requiresBrowser=true，Runner/Reviewer/最终 Main 均交付工件。**80/300** 请求全部取得 HTTP 200 且响应流完成，本轮没有触发模型传输异常。
+- Reviewer 根据原 Cookie 的读取、恢复和实际请求头相等引用，确认退出后 `/api/me` 仍返回 200，违反场景期望；保留已确认缺陷并形成既有官网 #5 的关联决策。该缺陷是本轮非生产沙箱注入条件，不据此断言官网当前生产版本仍有此问题。页面刷新、退出后的页面及账号删除后的拒绝行为也有原始记录；删除前直接使用恢复后的会话，未重新登录，Reviewer 如实记录该步骤偏差。
+- 捕获 47 条记录：44 条浏览器操作、3 条进度。Reviewer 成功读取 61 次，落盘证据哈希全部匹配；但 read_command_evidence 另有 **8 次拒绝**，每次约 15 秒，随后读取成功。现有追踪只保留固定拒绝类别，未保存具体失败对象及底层原因，不能认定为超时或特定网络故障。真实读取失败的阻塞不因重试成功而消除，最终报告正确保留 blocked，同时保留已确认缺陷。
+- 最终 Main 的 write_report 一次成功；另有一次 read_run_artifact 被拒，具体对象未记录，之后仍完成报告。没有把工具 HTTP 成功等同于无错误。
+- 披露检查命中 execution.md，独立复查确认包含合成账号完整邮箱；Reviewer 还指出 Cookie 明文前缀。配置 Secret 精确复扫未命中，但没有独立复扫随机测试口令，不能扩大为全部秘密安全。两张 PNG 经实际查看：原 login-rejected.png 仍含账号字段和掩码密码框，后来补拍的 login-rejected-sanitized.png 输入框为空；原图未改。仅补拍不能撤销已捕获、已上传的原图，本轮披露验收未通过。
+- 驱动因此拦住 Git 归档，未发布报告或修改 Issue，受阻样本未启动，无补跑。清理后独立 GET 为 remaining=0，两套数据库均 users=0、sessions=0，容器和网络撤销。证据为 `live-data/proof/`、`live-audit.json`、`visual-check.json`、`disclosure-detail.json` 和 `live-independent-database-counts.json`；本轮源文件保持不变。
+- 停止后仅做一次零模型存储诊断：经同一生产 OSS adapter 顺序读取本 Run 的 47 份命令对象，每份一次，全部可读且与本地哈希匹配（`oss-diagnostic.json`）。这是当前读取事实，不解释历史 8 次失败，也不清除原 Run 阻塞。
+- 后续顺序：先为既有证据读取 owner 增加受控对象名、耗时和白名单失败类别的诊断，保留真实读取/完整性失败阻塞；再检查现有工件写入和截图捕获的保密边界，优先复用 Secret 脱敏 owner，避免只靠反复补充角色提示。涉及截图或产物自动处理的行为先按 Spec 明确，不修改历史证据或放宽读取。工程验证后再设计小范围验证，受阻样本仍待执行，不直接重复整轮。live/release=blocked，humanScoring=not_run，#68/#64/#65 保持开放，PR #71 仍为草稿。
