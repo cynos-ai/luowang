@@ -102,6 +102,17 @@
 - 失败后仅补充 Reviewer 角色交付要求：明确包括 blocked 在内，必须通过 write_review 成功落盘后结束，被拒时在同一 Session 根据安全反馈修正。与最终 Main 已有规则一致，不新增自动 Session、重试或代写。角色加载/隔离 4 项测试通过；首次格式检查失败后已格式化并复查通过。没有模型复验该指令，不将其写成已解决提前结束的原因。
 - 前一提交 7c4edcb Quality CI 通过（run 35511801098）。下一步固定包含新 Reviewer 指令的候选，完善安全终止诊断后只设计审核工件交付的定向复验；不重新执行已完成离线项，不挪用本轮余额。首例交付未成立前，不默认推进其余四例。整体 live/release=blocked、humanScoring=not_run，PR 保持草稿，#68/#64/#65 保持开放。
 
+## Reviewer 单项交付复验：交付通过，证据判断未通过（2026-09-20）
+
+- 用户继续单项复验后建立独立 `.cynos/acceptance/run-reviewer-delivery/`，新上限 30 次请求，仅 late-progress 一例，不继承上一轮余额。沿用合法合成输入与 production runReviewer，冻结驱动；新增诊断仅记录白名单结束类别、最终消息角色、是否有可见正文及固定异常类别，不保存模型正文或隐藏推理。合成敏感哨兵测试通过。
+- 6e18038 的 Quality CI 已通过。从既有 43558a982b76 runtime 仅加入该提交的 Reviewer 指令，形成不可变镜像 `sha256:2344d57a2ea2232a7d7267677ceff0fac49497c455dde2b61b6f51a5120cd8ea`；核对基础层全部相同、仅增加一层、镜像内指令字节哈希与当时源码一致。首次 Dockerfile 将镜像 ID 用作 FROM，被当成远端名称而失败；核对本地标签指向后第二次构建成功，两个日志保留。断网离线预检通过。
+- 真实评估 `01M2ZMJY418AG713QDA5Q9QAGC` 使用 deepseek-v4-flash-vision-exp，**6/30** 请求均 HTTP 200 且流完成。write_review 一次返回成功，writer 内容哈希与落盘文件一致；Session 的结束类别为 stop，已释放，容器已撤销。另有一次 read_run_artifact 被拒，参数未记录；7 份命令证据可读，证据读取失败为 0。交付验收成立，不等于所有工具调用均成功。
+- 独立复核审核正文：Reviewer 正确识别 DELETE 操作实际发生在 SESSION 窗口，以及 DELETE 自身 start/finish 之间没有操作，未把 2/2 当作实时准确证明。但它同时承认没有原 Session 与实际请求头的关联，无法排除其他原因导致 401，却仍依据 action 名称、单个 credentialRef 和状态码顺序判 DELETE passed；还把合成事件扩大为固定 target 上的实际产品观察。证据充分性判断未通过，不能把这份报告当成正常重放或官网功能通过。
+- 保留原 review.md，单独 `assessment.json` 绑定结果文件哈希，记录 delivery=passed、lateProgressDetection=passed、evidenceSufficiency=failed、decision=fail、nextCaseAllowed=false。这是本任务的定向内容复核，独立人工质量评分仍 not_run。无其他案例、无补跑、无正式 Run/归档/Issue 写入；余下额度不使用。
+- 当前 live 目录三份 Markdown 按已知配置敏感值精确扫描无命中；没有 PNG，不扩大为图片审核通过。冻结输入哈希未变。证明为 `candidate-verification.json`、`manifest.json`、`diagnostic-check.json`、`offline/late-progress/result.json`、`live/budget.json`、`live/late-progress/{result,sessions,assessment}.json` 和 `live-audit.json`。
+- 失败后仅明确既有证据规则：操作名称、单个标识和状态序列不能补足凭据与实际请求头的关联；承认无法排除其他 401 原因时，该期望保持未验证、场景 blocked；合成输入不得扩大为产品事实。未增加业务关键词门禁或自动改判。角色加载/隔离 4 项测试与格式检查通过（`role-followup-check.log`），尚未模型复验这条补充。
+- 下一步针对“缺少关联仍判 passed”做单项证据判断验证，沿用原始不足证据，不通过添加答案或补齐证据追求通过；先固定新指令候选与新额度。交付问题已有本次成功证明，其他四例继续等待，不恢复旧失败轮。整体 live/release=blocked，humanScoring=not_run，PR #71 保持草稿。
+
 ## 完成记录
 
 - 计划已建立；Docker Desktop 的 desktop-linux 上下文可用。此前普通沙箱读取配置失败导致默认 endpoint 不可用，提升权限后的只读检查已确认 daemon 正常。
