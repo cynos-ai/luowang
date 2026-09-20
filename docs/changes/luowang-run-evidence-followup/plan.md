@@ -161,3 +161,15 @@
 - 停止后仅补充规划和最终汇总指令：说明 Cookie/网络详情属于 MCP、选用时须声明浏览器需要、页面观察不由 API 替代；明确 blocked 仍须成功调用 write_report，失败须在原 Session 修正。没有程序代判语义、放宽工具权限或补写历史报告。指令效果尚未用模型验证，整体 live/release=blocked，humanScoring=not_run，相关 Issue 保持开放。
 - 后续优先完善最小化工具调用状态追踪（只保存工具名、结果状态与安全错误，不保存模型正文或凭据），再针对规划工具选择和最终报告交付设计小范围复验；不继续重复整轮付费测试来追求通过。任何新模型样本须先明确范围及预算。
 - 后补指令的 quality 容器 format/lint/typecheck、36 文件 / 256 测试及 build 全部通过（`post-stop-quality.log`）；首次检查仅因两份 Markdown 格式失败，记录保留为 `post-stop-quality-1.log`。
+
+## 两项定向模型验证（2026-09-20）
+
+- 用户要求继续上一节的小范围验证。本次明确只验证规划工具选择和 blocked 报告交付，各一个独立 Session，总上限 40 请求，实际 **14/40**（规划 9、最终汇总 5），模型为 `deepseek-v4-flash`，无补跑。没有 Runner/Reviewer 业务执行、测试账号创建、OSS 上传、GitHub 报告发布或正式 Run。
+- 使用 `45f924f50f56` runtime，以只读挂载载入从 `c5db5b2` 复制并冻结哈希的角色资源；不是声称旧镜像内已包含新指令。两提交间无 src 代码差异，环境与资源组合记录在 `.cynos/acceptance/run-directed-checks/manifest.json`。`c5db5b2` 完整 Quality CI 已通过（run `35482598419`）。
+- 工具追踪只保存注册工具名、起止时间、成功/拒绝/异常状态、固定错误类别，以及 write_plan 的 boolean 和 writer 内容哈希；不保存参数正文、返回正文或原始异常。零模型故障测试确认拒绝/抛错可区分、原异常继续传递且敏感文本不回显。模型请求代理记录全部请求及重试，40 次硬上限。
+- 规划结果：成功通过 write_plan 写入计划，`requiresBrowser=true`。计划明确 Cookie/请求头由 MCP 提供，并保留页面登录、真实刷新与退出后页面观察，不再将这些期望替换为 API 响应。生产规划校验通过；此结果只证明本次规划行为，不证明 Runner 已执行。
+- 最终汇总结果：读取第四轮 plan/review 的逐字副本，在单独评估目录成功通过 write_report 写出可解析的 blocked 报告，场景为 AUTH-LOGIN-001，confirmed_bugs 为空。副本沿用来源 Run ID 便于核对，时间字段来自评估上下文；输出只属于本次评估，未回填原 Run、未发布，也不改变第四轮 failed/result=null。
+- 两个 writer 均一次成功，返回内容哈希与实际文件一致；源 plan/review 哈希前后不变。最终汇总另有一次 read_run_artifact 被拒，未记录参数，具体读取对象未知；拒绝记录保留，之后成功完成报告，不将其写成所有工具均无错误。
+- 两份新 Markdown 的已知配置凭据与目标公开单测口令精确扫描未命中；不扩大为截图隐私或历史工件全面检查。容器已撤销。本轮没有测试应用或账号，故无需伪造业务清理结果。
+- 证明：该目录下 `trace-check.json`、`manifest.json`、`audit.json`、`data/budget.json`、`data/tool-events.json`、`data/sessions.json`、`data/source-hashes.json`、`data/summary.json` 和独立 evaluation 输出。定向两项通过，整体 live/release 仍 blocked、humanScoring=not_run；#68/#64/#65 不关闭。
+- 下一步：将已验证角色资源纳入新的固定 runtime，再安排缺陷/证据受阻各一次的完整四 Session 验收，建议新轮 300 请求上限，并沿用工具/Git 状态追踪及失败即停规则；新轮范围与预算另行确认，不把本次剩余额度用于完整场景。
