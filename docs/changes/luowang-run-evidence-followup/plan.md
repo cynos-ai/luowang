@@ -143,6 +143,15 @@
 - 证明保存在 `.cynos/acceptance/run-progress-positive-v2/` 的 manifest.json、live/budget.json、live/complete-linkage-late-progress/{result,sessions,assessment}.json 与 live-audit.json。此前材料缺口样本仍保留 inconclusive，不改为成功。本轮查询 b364778 的 Quality CI 仍在运行（run 35520963006）；未修改生产代码。
 - 下一步依次验证 Reviewer 对无依据披露声明的处理、Runner 省略公开口令及真实多场景顺序、截图被拒后的处理；各例先固定输入和新预算，不使用本轮余额。随后才补当前候选完整业务样本和独立人工评分。#64 尚缺 Runner 行为证明，三个 Issue 继续开放，PR #71 保持草稿，live/release=blocked、humanScoring=not_run。
 
+## 无依据披露声明定向验证通过（2026-09-21）
+
+- 使用独立目录 `.cynos/acceptance/run-disclosure-claim/`，沿用 9799588 指令及 e4a09c238b15 runtime；从原统一输入逐项复制 disclosure-claim，不改变内容或给模型预设答案。新上限 30 次请求，仅此一例，旧轮预算不续用；冻结驱动及输入后断网预检成功交付工件，外部请求为 0。
+- Run `01M2ZWRPHT8BXTBAEB0Y9HZ201` 使用 **5/30** 次请求，均 HTTP 200 且流完成。Reviewer 成功读取唯一合成 command 记录，明确区分“execution.md 中单个公开 fixture 常量精确匹配零命中”与受控 Secret 扫描，并指出 imageAudit=not_run 不能支持全部截图无泄漏；要求删除或收窄 execution 的泛化声明。保留合成命令成功结论，未把报告准确性问题当成产品 Bug，也未外推官网通过。
+- write_review 一次成功，writer 哈希与工件一致，Session 正常 stop 并释放；一次 read_run_artifact 被拒，参数未保存，不推测具体对象。报告包含多余的“计划缺少变更依据”问题标题，正文又承认计划未作维护声明、不构成问题：此处记为报告质量瑕疵，原文保留，不影响本例披露范围判定，但不据此宣称报告整体质量合格。
+- 独立 assessment.json 绑定结果哈希，decision=pass 仅适用于 unsupported-disclosure-claim-only。三份 Markdown 按已知配置敏感值精确扫描无命中，无 PNG；这不是任意密码文本或图片安全证明。输入哈希未变，临时容器已撤销，无官网执行、正式归档或 Issue 写入。证明为该目录 manifest.json、offline/disclosure-claim/result.json、live/budget.json、live/disclosure-claim/{result,sessions,assessment}.json 与 live-audit.json。
+- 查询上一提交 24dc476 的 CI（run 35521805182）：quality 镜像构建及 local acceptance/quality matrix 步骤成功；production 镜像构建在安装浏览器系统依赖、从 Aliyun Debian 镜像下载软件包期间持续约 54 分钟，最终在作业 60 分钟边界取消，native MCP 预检未执行。日志证明构建下载过慢及取消发生的位置，不据此认定测试失败或完整 CI 成功；本地保留 ci-24dc476.log。需排查 CI 下载源与缓存，保留容器质量门禁及 runtime 原生预检。
+- 下一步先处理上述 CI 构建阻塞，再验证 Runner 公开常量省略与真实多场景顺序，随后验证截图拒绝后的处理；另设明确预算，不消耗本例余额。#65 尚缺 Runner 行为证明，三个 Issue 仍开放，PR #71 保持草稿。live/release=blocked、humanScoring=not_run。
+
 ## 完成记录
 
 - 计划已建立；Docker Desktop 的 desktop-linux 上下文可用。此前普通沙箱读取配置失败导致默认 endpoint 不可用，提升权限后的只读检查已确认 daemon 正常。
