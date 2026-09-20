@@ -29,6 +29,10 @@ Compose 将数据保存到 `luowang-data` 卷，并把宿主机端口绑定到 `
 
 ## 验收状态
 
+截至 2026-09-20，修复分支工程检查已通过（37 个测试文件 / 268 项测试），但整体 live/release 仍 blocked，独立人工评分未完成。正常重放、注入缺陷识别和证据受阻已有不同候选版本上的证明；最新候选只完成了受阻样本，不能将这些结果合并为最新版本全部通过。仍需验证多场景进度、模型省略公开单测口令、截图被拒后的处理，以及当前候选正常重放。逐项依据和执行顺序见 [当前验收结论与剩余工作](docs/changes/luowang-run-evidence-followup/plan.md#当前验收结论与剩余工作2026-09-20)。
+
+以下按发生顺序保留验证过程，其中“待完成”描述当时状态。
+
 v0.4.0 的固定提交 Quality CI 已通过，真实非生产样本已检出注入的会话缺陷；该发布轮的正常样本仍因重放证据不可供独立审核而 blocked（[#68](https://github.com/cynos-ai/luowang/issues/68)）。场景进度时序（[#64](https://github.com/cynos-ai/luowang/issues/64)）和执行记录披露（[#65](https://github.com/cynos-ai/luowang/issues/65)）也仍有待复验，独立人工质量评分未完成。这些结果不表示全站、当前部署或总体模型质量已验收。后续修复与实际验证结果见 [实施计划](docs/changes/luowang-run-evidence-followup/plan.md)；代码修复不会改写旧 Run 的结论。
 
 2026-09-19 修复候选的正常样本已通过：Reviewer 独立读取了原 Cookie 与实际请求头的关联证据，四个隔离 Session 完成，操作与场景进度顺序可核对。本轮在 155/400 次模型请求时因 GitHub 归档推送 403 停止；缺陷样本中断，证据受阻样本未运行，整体 live/release 仍 blocked。测试数据已清空、临时环境已撤销；截图仍有合成账号标识，披露要求尚未全部满足。
