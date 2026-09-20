@@ -152,6 +152,12 @@
 - 查询上一提交 24dc476 的 CI（run 35521805182）：quality 镜像构建及 local acceptance/quality matrix 步骤成功；production 镜像构建在安装浏览器系统依赖、从 Aliyun Debian 镜像下载软件包期间持续约 54 分钟，最终在作业 60 分钟边界取消，native MCP 预检未执行。日志证明构建下载过慢及取消发生的位置，不据此认定测试失败或完整 CI 成功；本地保留 ci-24dc476.log。需排查 CI 下载源与缓存，保留容器质量门禁及 runtime 原生预检。
 - 下一步先处理上述 CI 构建阻塞，再验证 Runner 公开常量省略与真实多场景顺序，随后验证截图拒绝后的处理；另设明确预算，不消耗本例余额。#65 尚缺 Runner 行为证明，三个 Issue 仍开放，PR #71 保持草稿。live/release=blocked、humanScoring=not_run。
 
+## CI Debian 下载源修复（2026-09-21，验证中）
+
+- 24dc476 的完整日志显示 production 构建在 Aliyun 下载浏览器系统依赖时持续约 54 分钟，最终到达作业 60 分钟边界取消；quality/local acceptance 已成功，但不能算完整 CI 通过。
+- 最小修改仅将 GitHub-hosted runner 的 DEBIAN_MIRROR 与 DEBIAN_SECURITY_MIRROR 覆盖值切到 Debian 官方 CDN；复用既有参数，quality/runtime 两次构建一致。Dockerfile 国内默认值、固定 Node digest、npm/浏览器下载源、缓存和 60 分钟上限不变，保留容器内全量质量检查及 runtime 原生 MCP 正反向预检。
+- 工作流格式、YAML 解析和构建参数接续检查通过。推送后以 GitHub runner 的完整构建及预检验证网络环境下的实际效果，不以本地缓存命中或仅下载探测宣称修复成立；本次无模型请求，发布状态仍 blocked。
+
 ## 完成记录
 
 - 计划已建立；Docker Desktop 的 desktop-linux 上下文可用。此前普通沙箱读取配置失败导致默认 endpoint 不可用，提升权限后的只读检查已确认 daemon 正常。
