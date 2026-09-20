@@ -173,3 +173,13 @@
 - 两份新 Markdown 的已知配置凭据与目标公开单测口令精确扫描未命中；不扩大为截图隐私或历史工件全面检查。容器已撤销。本轮没有测试应用或账号，故无需伪造业务清理结果。
 - 证明：该目录下 `trace-check.json`、`manifest.json`、`audit.json`、`data/budget.json`、`data/tool-events.json`、`data/sessions.json`、`data/source-hashes.json`、`data/summary.json` 和独立 evaluation 输出。定向两项通过，整体 live/release 仍 blocked、humanScoring=not_run；#68/#64/#65 不关闭。
 - 下一步：将已验证角色资源纳入新的固定 runtime，再安排缺陷/证据受阻各一次的完整四 Session 验收，建议新轮 300 请求上限，并沿用工具/Git 状态追踪及失败即停规则；新轮范围与预算另行确认，不把本次剩余额度用于完整场景。
+
+## 第五轮结果与传输诊断（2026-09-20）
+
+- 用户继续上述后续工作，本轮执行缺陷/证据受阻各一次、300 请求上限，使用既定文本/视觉模型和官网固定 target `6405a45b6889ad92cf7cfbce12d8ec22b5040f23`。证据保存在独立 `.cynos/acceptance/run-evidence-round5/`，包含授权范围及冻结驱动哈希。
+- 两次完整 runtime 构建因 Debian 软件源下载缓慢主动停止，日志分别保留；没有将其记为构建通过。核对 `b86329c..5056eb1` 只有文档与角色资源差异后，在已验证的 `45f924f50f56` runtime 上固化角色资源，形成不可变镜像 `sha256:111e139505729cee5899533248a1ff6d269d0d2af7223dab88e2592cd659815e`。原环境层保留，新增一层，镜像内角色资源字节哈希与工作区一致；断网、只读、非 root 原生 MCP 预检通过。证明为 `runtime-provenance.json`、`candidate.json` 和 `runtime-preflight.log`。代码提交 `5056eb1` 的完整 Quality CI 已通过（run `35483552843`）。
+- Git 真实推送 dry-run、两个目标同容器浏览器预检通过。缺陷 Run `01M2YAJ6RRV907FAN0GYR472DV` 在 Main 规划阶段停止，failed/result=null，错误为“Run 工件不存在：plan.md”。仅创建一个 Session，14 次受控工具执行均返回，无 write_plan 调用；没有 Runner、浏览器证据或独立证据读取。未归档，受阻样本未启动，无补跑。
+- 请求代理记录 **16/300** 次尝试，前 4 次取得 HTTP 200，后 12 次未记录上游响应状态。驱动代码在 fetch 异常时统一返回 502，且未立即设置停止标志，允许调用侧继续重试；因此不能把 plan 缺失直接归因为模型不遵守指令。异常原文及类别未保存，无法确定 DNS、连接、TLS、超时或其他具体原因，也不能把 16 次尝试全算作已完成推理或已计费请求。
+- Run 数据受控清理后独立 GET 确认 remaining=0，两套沙箱独立数据库均 users=0、sessions=0，容器和网络已撤销。当前本地 Markdown 已知配置凭据和公开样例口令精确扫描未命中；没有截图，不构成截图披露验收。证明为 `live-audit.json`、`live-data/proof/`、`live-independent-database-counts.json`。
+- 停止后新增独立零模型传输诊断 helper，白名单分类 DNS/连接/超时/TLS/未知错误，不保存异常正文、URL 或响应正文；传输失败立即停止预算，后续调用不能再次外发。合成故障验证五类失败、Secret 哨兵不回显、HTTP 认证/限流停止及额度上限通过，证明为 `.cynos/acceptance/run-transport-diagnostic/check.json`。helper 尚未接入正式产品或新 live 驱动，不修改第五轮冻结驱动，不宣称历史错误已恢复或线上传输已修复。
+- 下一步先将该 helper 接入新的驱动并验证完整代理失败路径，同时补充 SDK Session 的安全终止状态，以区分传输结束与正常结束后漏写工件；再做不发送模型请求的连接检查。诊断可用后再安排新业务轮次，不自动补跑或消耗本轮余额。整体 live/release=blocked，humanScoring=not_run，#68/#64/#65 保持开放，PR #71 保持草稿。
