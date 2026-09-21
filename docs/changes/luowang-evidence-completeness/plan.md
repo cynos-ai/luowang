@@ -145,3 +145,17 @@ TIME-P/N 的 plan 增加相同报告要求：说明事件时间的依据和可�
 新冻结目录为 `.cynos/acceptance/run-record-accuracy-round4/frozen/`。六例零模型预检全部通过；每例 Reviewer 工具轨迹均为成功读取 execution.md 后再调用 write_review。新增自动断言把该顺序纳入驱动测试。3 文件 / 36 项定向测试通过，覆盖冻结和预算、漏读拒绝、编排集成与六例工具交付；既有修复节点的完整本地验收仍为 40 文件 / 304 测试、格式、lint、类型检查、构建、e2e 和 Phase 9（34 AC）通过。
 
 现有 Secret Store 的禁网可用性检查通过。第四轮尚未调用真实模型，modelRequests=0、humanScoring=not_run；必须获得独立的新轮 120 次请求预算后才逐例执行，失败即停。第三轮保持 7/120、stopped、failed，剩余 113 次不转入本轮。工程门禁通过不证明 Reviewer 会正确理解或引用 execution，live/release 继续 blocked。
+
+### 第四轮真实验证与最终汇总来源修复（2026-09-21）
+
+负责人明确批准第四轮独立 120 次请求预算后，按顺序执行 SOURCE-P 与 SOURCE-N，共 4 个隔离 Session、16/120 次请求。两个案例的 Reviewer 都在成功读取 execution.md 后才提交审核；每份 writer 原始输入与对应落盘工件 SHA-256 相同。独立核对由 Codex 完成，humanScoring 保持 not_run。
+
+| 案例 | Run | 累计请求数 | 核对结果 |
+| --- | --- | --- | --- |
+| SOURCE-P | 01M31WZVH4C86ZA6579JZ7BCM6 | 8 | passed：准确引用 Runner 的标题观察，同时把 passed 归于 Reviewer 对快照的独立判断；最终 Main 保留审核来源 |
+| SOURCE-N | 01M31X1VG34XHANBKWY7S9ZW89 | 16 | 整体 failed：Reviewer 正确区分 Runner 未声明标题观察及自身独立发现；最终 Main 把 Reviewer 已作出的适用性判断错误改归自己 |
+| TIME-P/N、COUNT-P/N | 未运行 | 0 | not_run：按失败即停约定停止 |
+
+SOURCE-N 的 review.md 已明确写明 Runner 的“未检查错误提示”与场景仅检查标题的范围一致，且该对象本就不是适用期望。report.md 却声称这是“本次汇总角色的判断，非 Reviewer 已作出的适用性结论”。这不是普通措辞差异：最终 Main 丢失了 Reviewer 来源，并越过只整理 plan/review 的职责自行补判。Reviewer 维度记 passed，最终 Main 维度记 failed，本例整体 failed。预算已锁定 stopped，剩余 104 次不自动转入新一轮。
+
+原始 sessions.json、writer 输入、工件、score.json 和预算保存在 `.cynos/acceptance/run-record-accuracy-round4/frozen/live/`，结束轮次的任何记录不修改。修订 main-finalization 指令，要求 Reviewer 已交付的期望适用性、范围解释和结论依据继续归 Reviewer；不能声称 Reviewer 未作判断后由最终 Main 补判。审核内部矛盾仍按既定结果聚合规则处理并保留来源，不扩大最终 Main 的读取权限。新增角色资源防回归断言，角色加载、记录精度和生产 Pi 定向回归共 36 项通过。当前源码的 quality 镜像 `sha256:9b980c14dc659f009a253ae1bdfcec1baad83ad3427ae0403baf6c2d26cff567` 完整本地验收通过，覆盖 40 文件 / 305 测试、格式、lint、类型检查、构建、e2e 与 Phase 9（34 AC）；live/release 因未提供外部联合验收输入保持 blocked。以上只证明约束和工程回归，不能冒充模型复验通过；下一轮仍须重新冻结候选并获得独立预算。

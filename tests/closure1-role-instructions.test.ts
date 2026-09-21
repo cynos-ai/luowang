@@ -64,6 +64,13 @@ describe('Closure 1 built-in role instructions', () => {
     }
   });
 
+  it('keeps Reviewer applicability judgments attributed during finalization', async () => {
+    const loaded = await createRoleInstructionLoader().load('main-finalization', false);
+    assert.match(loaded.content, /期望适用性、范围解释和结论依据仍归 Reviewer/);
+    assert.match(loaded.content, /不能声称 Reviewer 未作该判断/);
+    assert.match(loaded.content, /不重新决定期望是否适用/);
+  });
+
   it('ignores ambient target, host and user resources outside the fixed allowlist', async () => {
     const root = await mkdtemp(join(tmpdir(), 'luowang-closure1-ambient-'));
     cleanup.push(async () => rm(root, { recursive: true, force: true }));
