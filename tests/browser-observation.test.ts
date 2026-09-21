@@ -1,4 +1,5 @@
 import { strict as assert } from 'node:assert';
+import { randomUUID } from 'node:crypto';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -15,6 +16,81 @@ import { RunWorkspace } from '../src/server/runs/workspace.js';
 import { localEvidenceTransport } from './acceptance/local-evidence.js';
 
 const directories: string[] = [];
+it.each(['mcp', 'mcp__playwright'])(
+  'registers filling input before %s returns and preserves failed operation evidence',
+  async (gateway) => {
+    const f = await fixture(gateway);
+    const value = randomUUID();
+    const identify = f.store.identifySensitiveValue!.bind(f.store);
+    let registered = false;
+    f.store.identifySensitiveValue = (input) => {
+      registered = true;
+      return identify(input);
+    };
+    const result = await f.call(
+      'browser_fill_form',
+      {
+        fields: [
+          { name: 'Account', target: 'e1', type: 'textbox', value },
+          { name: 'Confirm', target: 'e2', type: 'textbox', value },
+          { name: 'Remember', target: 'e3', type: 'checkbox', value: 'true' },
+        ],
+      },
+      `Error after first field: ${value}`,
+      { isError: true },
+    );
+    assert.ok(registered);
+    assert.ok(!JSON.stringify(result).includes(value));
+    const record = (await f.records())[0].observation;
+    assert.equal(record.isError, true);
+    assert.equal(record.arguments.fields[0].value, '[REDACTED]');
+    assert.equal(
+      record.arguments.fields[0].valueReference,
+      record.arguments.fields[1].valueReference,
+    );
+    assert.equal(record.arguments.fields[2].value, 'true');
+    assert.match(record.output, /Error after first field/);
+    assert.ok(!JSON.stringify(record).includes(value));
+    assert.equal(f.store.redactText!(`未记录 ${value}`), '未记录 [REDACTED]');
+    const other = await fixture();
+    assert.equal(other.store.redactText!(value), value);
+    const typed = await f.call(
+      'browser_type',
+      { target: 'e1', text: value, submit: true, type: 'checkbox' },
+      `Typed ${value}`,
+    );
+    assert.ok(!JSON.stringify(typed).includes(value));
+    assert.equal(
+      (await f.records())[1].observation.arguments.valueReference,
+      record.arguments.fields[0].valueReference,
+    );
+  },
+);
+
+it('blocks malformed batches and registration failures before the filling tool runs', async () => {
+  const f = await fixture();
+  for (const args of [
+    {
+      fields: [
+        { target: 'e1', name: 'A', type: 'textbox', value: 'good' },
+        { target: 'e2', type: 'unknown', value: 'bad' },
+      ],
+    },
+    { fields: 'bad' },
+  ]) {
+    const result = await f.call('browser_fill_form', args, 'must not run');
+    assert.equal((result as { block: boolean }).block, true);
+  }
+  assert.equal(f.store.redactText!('good'), 'good');
+  f.store.identifySensitiveValue = () => {
+    throw new Error('private failure');
+  };
+  const result = await f.call('browser_type', { target: 'e1', text: randomUUID() }, 'must not run');
+  assert.equal((result as { block: boolean }).block, true);
+  assert.doesNotMatch(JSON.stringify(result), /private failure/);
+  assert.equal(f.failures(), 3);
+  assert.equal(f.store.commandEvidenceIds().length, 0);
+});
 it('decodes nested and multiline snapshot field values without treating headings as credentials', () => {
   const snapshot = readInlineBrowserSnapshot(
     '### Snapshot\n```yaml\n- generic:\n  - heading "Public label"\n  - textbox "Notes": |-\n      first line\n      second line\n  - spinbutton "Code": 12345\n```',

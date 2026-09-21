@@ -1,4 +1,5 @@
 import { strict as assert } from 'node:assert';
+import { randomUUID } from 'node:crypto';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
@@ -144,6 +145,11 @@ it.each(['mcp', 'mcp__playwright'])(
           input,
         });
         assert.ok(!blocked?.block);
+        if (tool === 'browser_type')
+          assert.equal(store.redactText!(String(args.text)), '[REDACTED]');
+        if (tool === 'browser_fill_form')
+          for (const field of args.fields as Array<{ value: string }>)
+            assert.equal(store.redactText!(field.value), '[REDACTED]');
         const result = await proxy.execute(
           toolCallId,
           input,
@@ -179,6 +185,17 @@ it.each(['mcp', 'mcp__playwright'])(
         '[REDACTED] / [REDACTED]',
       );
       await call('browser_take_screenshot', { filename: 'original-form.png' });
+      const target = snapshotText.match(/textbox "Account" \[ref=([^\]]+)\]/)?.[1];
+      assert.ok(target, snapshotText);
+      const filled = randomUUID();
+      const typed = randomUUID();
+      const fillResult = await call('browser_fill_form', {
+        fields: [{ name: 'Account', type: 'textbox', target, value: filled }],
+      });
+      assert.ok(!fillResult.includes(filled));
+      const typeResult = await call('browser_type', { target, text: typed });
+      assert.ok(!typeResult.includes(typed));
+      assert.equal(store.redactText!(`未记录 ${filled} ${typed}`), '未记录 [REDACTED] [REDACTED]');
       assert.equal(
         (await store.list()).find((file) => file.name === 'original-form.png')?.screenshotInspection
           ?.status,

@@ -2,6 +2,7 @@ import type { InlineExtension } from '@earendil-works/pi-coding-agent';
 import { redactCommandText, type RunEvidenceStore } from './evidence.js';
 import { readInlineBrowserSnapshot } from './browser-snapshot.js';
 import { readScreenshotReceipt } from './screenshot-inspection.js';
+import { FILLING_TOOLS, registerBrowserInput } from './browser-input.js';
 
 const RECORDED_TOOLS = new Set([
   'browser_cookie_list',
@@ -27,7 +28,14 @@ export function createBrowserObservationExtension(options: {
       credentials.set(value, options.store.identifySensitiveValue(value));
     return credentials.get(value)!;
   };
-  const starts = new Map<string, { startedAt: string; execution: Record<string, unknown> }>();
+  const starts = new Map<
+    string,
+    {
+      startedAt: string;
+      execution: Record<string, unknown>;
+      fillingInput?: Record<string, unknown>;
+    }
+  >();
   return {
     name: 'luowang-browser-observation',
     hidden: true,
@@ -46,6 +54,15 @@ export function createBrowserObservationExtension(options: {
           };
         if (event.input.server !== undefined && event.input.server !== 'playwright') return;
         const args = parseArguments(event.input.args);
+        let fillingInput: Record<string, unknown> | undefined;
+        if (FILLING_TOOLS.has(tool)) {
+          try {
+            fillingInput = registerBrowserInput(tool, args, options.store);
+          } catch {
+            options.onFailure();
+            return { block: true, reason: '填写参数校验或敏感值登记失败，未执行填写。' };
+          }
+        }
         if (tool === 'browser_take_screenshot' && typeof args?.filename === 'string') {
           const name = args.filename.replace(/^\.\//, '');
           try {
@@ -72,6 +89,7 @@ export function createBrowserObservationExtension(options: {
         starts.set(event.toolCallId, {
           startedAt: options.now().toISOString(),
           execution: options.operationContext(),
+          fillingInput,
         });
       });
       pi.on('tool_result', async (event) => {
@@ -159,17 +177,20 @@ export function createBrowserObservationExtension(options: {
           const observation = {
             source: 'playwright-mcp-tool-result',
             tool,
-            ...start,
+            startedAt: start.startedAt,
+            execution: start.execution,
             finishedAt: options.now().toISOString(),
             isError: event.isError || Boolean(details.error),
             screenshot,
-            arguments: safeArguments,
+            arguments: start.fillingInput ?? safeArguments,
             credentialReferences: references.map((ref) => ({ ...ref, name: clean(ref.name) })),
             output: snapshot
               ? options.store.redactText!(snapshot.text)
-              : tool.startsWith('browser_cookie_') || !RECORDED_TOOLS.has(tool)
-                ? '[Output omitted; this receipt records operation timing, not a business verdict]'
-                : clean(raw),
+              : start.fillingInput
+                ? options.store.redactText!(raw)
+                : tool.startsWith('browser_cookie_') || !RECORDED_TOOLS.has(tool)
+                  ? '[Output omitted; this receipt records operation timing, not a business verdict]'
+                  : clean(raw),
             limitation:
               'References compare exact values within this Run only. An input is not proof of a sent request; omitted/truncated output cannot prove absence.',
           };
@@ -178,13 +199,13 @@ export function createBrowserObservationExtension(options: {
           return {
             content: [
               ...event.content.map((part) =>
-                snapshot && part.type === 'text'
+                (snapshot || start.fillingInput) && part.type === 'text'
                   ? { ...part, text: options.store.redactText!(part.text) }
                   : part,
               ),
               {
                 type: 'text' as const,
-                text: `Harness 已捕获脱敏证据 ${id}；Reviewer 通过 read_command_evidence 读取。${snapshot ? '该记录包含脱敏后的内联快照正文。' : !RECORDED_TOOLS.has(tool) ? '该记录仅含操作时序，不含页面正文，不能引用为页面内容证据。' : ''}`,
+                text: `Harness 已捕获脱敏证据 ${id}；Reviewer 通过 read_command_evidence 读取。${start.fillingInput ? '该记录包含填写参数与工具结果；参数不证明字段已填写成功或请求已发出，失败可能已部分执行。' : ''}${snapshot ? '该记录包含脱敏后的内联快照正文。' : !RECORDED_TOOLS.has(tool) && !start.fillingInput ? '该记录仅含操作时序，不含页面正文，不能引用为页面内容证据。' : ''}`,
               },
             ],
           };
