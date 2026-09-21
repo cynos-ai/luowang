@@ -94,3 +94,24 @@ SOURCE-P 已完成两个独立 Session 的交付，Run `01M31JA659J5SN0GRQWACCS5
 新材料位于 `.cynos/acceptance/run-record-accuracy-round2/frozen/`，包含修订后的共同/Reviewer 指令与当前驱动，评分参考 SHA-256 为 `860a6780ff33424a9c3c5b85ae5ee50cfd70402c5a8047b1ac0ae7838d9c9bef`。六例 CLI 零模型预检通过，15 项驱动测试通过，已有 Secret Store 禁网可用性检查通过；日志及启动信息均在该轮目录。格式、lint、git diff --check 通过。未重跑全套工程验收。
 
 本轮真实模型请求为 0，预算尚未启用。已请求负责人明确授权新轮上限 120 次（含重试），仍使用现有 Secret Store、api.deepseek.com 和固定 Main/Reviewer 模型；收到批准后才逐例执行，任一失败停止。上一轮保持 12/120、stopped、整体 failed；不自动使用剩余 108 次，不将材料准备视为模型复验通过。
+
+### 第二轮真实验证结果（2026-09-21）
+
+负责人明确批准后，在冻结候选上执行 SOURCE-P、SOURCE-N、TIME-P，共 6 个隔离 Session、28/120 次请求，均使用预定模型及现有 Secret Store。独立核对结果如下；这是 Codex 对原始工件的核对，humanScoring 仍 not_run。
+
+| 案例 | Run | 请求数 | 核对结果 |
+| --- | --- | --- | --- |
+| SOURCE-P | 01M31MZ1E9323GNP931ZHBP5RQ | 9 | passed：准确引用 Runner 原文，保留 Reviewer 独立读取；不再把预置快照认定为浏览器执行 |
+| SOURCE-N | 01M31N1N01D27SB84TPSYMXGDK | 10 | passed：标题发现归 Reviewer，未伪造 Runner 发现；浏览器操作归属保留未知，不删除已有标题观察 |
+| TIME-P | 01M31N3SG0SXKAC5MZVW6JQ61V | 9 | 整体 failed：Reviewer 给 Runner 加上了不存在的通过判定；时间正向能力 not_demonstrated |
+| TIME-N、COUNT-P/N | 未运行 | 0 | not_run：按失败即停约定停止 |
+
+TIME-P 中，Reviewer 成功读取 operation-1.json，其中明确有 `timeOriginUnixMs=1789948800000`、`offset=1250`、`unit=ms`、`clock=fixture-clock`。审核没有保留该原点及换算依据，最终 Main 也未获交付这些内容，因此这一例不能证明正向时间能力。原评分文字允许换算但未强制逐项展示，**不把没有算出绝对时间本身冒充明确的产品失败**。最终 Main 仍按职责只读 plan/review，不单独归责其遗漏未交付的原始字段。
+
+明确触发停止的是来源失实：execution.md 只有“日志记录 event-ready，offset=1250，unit=ms。”，没有通过判定；Reviewer 结尾却写“同意 execution.md 对 RECORD-TIME-001 的通过结论”。这是 Reviewer 自行得出的通过被归给 Runner。最终 Main 没有重复该句；本例整体失败不等于两个角色均出现同一错误。
+
+三例的每份 writer 原始输入与对应落盘工件 SHA-256 相同；工具读取、角色会话、判分及预算保存在 `.cynos/acceptance/run-record-accuracy-round2/frozen/live/`。score.json 绑定结果和工具记录哈希，预算已 stopped，剩余 92 次不自动重跑。第一轮失败与第二轮原始输出均不修改；来源两例通过也不能合并成全部模型验收通过，live/release 仍 blocked。
+
+本节点补充共同指令：事实陈述与判定分别归属，不能给前序工件补写结果；说明时间是否可确定时同时检查原点、单位和偏移，区分场景要求与记录支持的结论。通过 3 文件 / 33 项角色加载、隔离、生产 Pi 和验收分层回归；格式与 git diff --check 通过。日志见 `.cynos/acceptance/run-record-accuracy-round2/followup/roles.log`。未重跑完整工程验收、未构建新生产镜像、未对本次指令修订调用真实模型，故只报告修订及工程检查完成，不宣称模型问题已解决。
+
+下一轮先明确时间验证的交付要求：在评估请求中要求报告记录支持的时间依据与可得结论，但不提供具体预期时间；区分“没被要求展示能力”与“错误声称无依据”。评分增加“不得给 execution 补写结果判定”的显式检查，再冻结新材料及预算。已结束轮次不续跑、不改分追通过。
