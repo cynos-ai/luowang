@@ -15,6 +15,7 @@ import {
   type ToolDefinition,
 } from '@earendil-works/pi-coding-agent';
 import { createPlaywrightMcpAdapter } from '../src/server/browser/playwright-mcp.js';
+import { assertBrowserEvidenceCoverage } from '../src/server/browser/evidence-policy.js';
 import type { ConfigurationStore } from '../src/server/configuration.js';
 import { createBrowserObservationExtension } from '../src/server/runs/browser-observation.js';
 import { createRunEvidenceStore } from '../src/server/runs/evidence.js';
@@ -132,6 +133,18 @@ it.each(['mcp', 'mcp__playwright'])(
           undefined,
           session.extensionRunner.createContext(),
         );
+      const inventory = await proxies
+        .get('mcp')!
+        .execute(
+          'inventory',
+          { server: 'playwright' },
+          AbortSignal.timeout(20000),
+          undefined,
+          session.extensionRunner.createContext(),
+        );
+      const names = (inventory.details as { tools: string[] }).tools;
+      assert.ok(names.length > 0);
+      assertBrowserEvidenceCoverage(names.map((name) => name.replace(/^playwright_/, '')));
       let sequence = 0;
       const call = async (tool: string, args: Record<string, unknown>) => {
         const proxy = proxies.get(proxyName);

@@ -17,6 +17,26 @@ import { localEvidenceTransport } from './acceptance/local-evidence.js';
 
 const directories: string[] = [];
 it.each(['mcp', 'mcp__playwright'])(
+  'blocks unknown %s tools before execution and rejects mismatched result identities',
+  async (gateway) => {
+    const f = await fixture(gateway);
+    const blocked = await f.call('browser_future_tool', {}, 'must not run');
+    assert.equal((blocked as { block: boolean }).block, true);
+    assert.equal(f.store.commandEvidenceIds().length, 0);
+    const mismatch = await f.call('browser_click', {}, 'untrusted-result', {
+      details: { mode: 'call', server: 'playwright', tool: 'browser_future_tool' },
+    });
+    assert.doesNotMatch(JSON.stringify(mismatch), /untrusted-result/);
+    assert.equal(f.failures(), 2);
+    assert.equal(f.store.commandEvidenceIds().length, 0);
+    await f.call('browser_click', {}, 'not persisted as content');
+    const record = (await f.records())[0].observation;
+    assert.equal(record.evidencePolicy.capture, 'receipt');
+    assert.equal(record.evidencePolicy.readTool, 'read_command_evidence');
+    assert.match(record.output, /Output omitted/);
+  },
+);
+it.each(['mcp', 'mcp__playwright'])(
   'links %s navigation snapshots to sanitized readable files',
   async (gateway) => {
     const f = await fixture(gateway);

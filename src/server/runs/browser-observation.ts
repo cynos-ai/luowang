@@ -2,15 +2,10 @@ import type { InlineExtension } from '@earendil-works/pi-coding-agent';
 import { redactCommandText, type RunEvidenceStore } from './evidence.js';
 import { readBrowserSnapshotFile, readInlineBrowserSnapshot } from './browser-snapshot.js';
 import { readScreenshotReceipt } from './screenshot-inspection.js';
-import { FILLING_TOOLS, registerBrowserInput } from './browser-input.js';
+import { registerBrowserInput } from './browser-input.js';
+import { browserEvidencePolicy } from '../browser/evidence-policy.js';
 
-const RECORDED_TOOLS = new Set([
-  'browser_cookie_list',
-  'browser_cookie_get',
-  'browser_cookie_set',
-  'browser_network_requests',
-  'browser_network_request',
-]);
+const isReplayTool = (tool: string) => browserEvidencePolicy(tool)?.capture === 'replay';
 
 /** Observe the installed MCP proxy; never execute an additional browser operation. */
 export function createBrowserObservationExtension(options: {
@@ -34,6 +29,7 @@ export function createBrowserObservationExtension(options: {
       startedAt: string;
       execution: Record<string, unknown>;
       fillingInput?: Record<string, unknown>;
+      tool: string;
     }
   >();
   return {
@@ -53,9 +49,14 @@ export function createBrowserObservationExtension(options: {
               '请使用 MCP 工具清单中的完整 browser_* 名称（可带 playwright_ 前缀），以便保存受控执行记录。',
           };
         if (event.input.server !== undefined && event.input.server !== 'playwright') return;
+        const policy = browserEvidencePolicy(tool);
+        if (!policy) {
+          options.onFailure();
+          return { block: true, reason: '该工具没有受控证据采集/读取规则，未执行操作。' };
+        }
         const args = parseArguments(event.input.args);
         let fillingInput: Record<string, unknown> | undefined;
-        if (FILLING_TOOLS.has(tool)) {
+        if (policy.capture === 'filling') {
           try {
             fillingInput = registerBrowserInput(tool, args, options.store);
           } catch {
@@ -76,10 +77,7 @@ export function createBrowserObservationExtension(options: {
             return { block: true, reason: '截图证据目录检查失败，未执行截图。' };
           }
         }
-        if (
-          (RECORDED_TOOLS.has(tool) || tool === 'browser_snapshot') &&
-          args?.filename !== undefined
-        ) {
+        if ((isReplayTool(tool) || tool === 'browser_snapshot') && args?.filename !== undefined) {
           return {
             block: true,
             reason:
@@ -87,6 +85,7 @@ export function createBrowserObservationExtension(options: {
           };
         }
         starts.set(event.toolCallId, {
+          tool,
           startedAt: options.now().toISOString(),
           execution: options.operationContext(),
           fillingInput,
@@ -100,9 +99,10 @@ export function createBrowserObservationExtension(options: {
         // Identity comes from the adapter's actual resolved tool, not the model's name.
         if (!start || details?.mode !== 'call' || details.server !== 'playwright') return;
         const tool = details.tool;
-        if (typeof tool !== 'string' || !tool.startsWith('browser_')) return;
         try {
-          const args = RECORDED_TOOLS.has(tool) ? (parseArguments(event.input.args) ?? {}) : {};
+          if (typeof tool !== 'string' || tool !== start.tool || !browserEvidencePolicy(tool))
+            throw new Error('MCP evidence identity mismatch');
+          const args = isReplayTool(tool) ? (parseArguments(event.input.args) ?? {}) : {};
           const raw = event.content
             .filter((part) => part.type === 'text')
             .map((part) => part.text)
@@ -183,6 +183,7 @@ export function createBrowserObservationExtension(options: {
           const observation = {
             source: 'playwright-mcp-tool-result',
             tool,
+            evidencePolicy: browserEvidencePolicy(tool),
             startedAt: start.startedAt,
             execution: start.execution,
             finishedAt: options.now().toISOString(),
@@ -195,7 +196,7 @@ export function createBrowserObservationExtension(options: {
               ? options.store.redactText!(snapshot.text)
               : start.fillingInput
                 ? options.store.redactText!(raw)
-                : tool.startsWith('browser_cookie_') || !RECORDED_TOOLS.has(tool)
+                : tool.startsWith('browser_cookie_') || !isReplayTool(tool)
                   ? '[Output omitted; this receipt records operation timing, not a business verdict]'
                   : clean(raw),
             limitation:
@@ -212,7 +213,7 @@ export function createBrowserObservationExtension(options: {
               ),
               {
                 type: 'text' as const,
-                text: `Harness 已捕获脱敏证据 ${id}；Reviewer 通过 read_command_evidence 读取。${start.fillingInput ? '该记录包含填写参数与工具结果；参数不证明字段已填写成功或请求已发出，失败可能已部分执行。' : ''}${browserSnapshot ? '该记录关联已保存的脱敏快照；Runner 结束后由 Harness 上传，Reviewer 按文件列表的状态使用 read_browser_evidence 读取。' : ''}${snapshot ? '该记录包含脱敏后的内联快照正文。' : !RECORDED_TOOLS.has(tool) && !start.fillingInput && !browserSnapshot ? '该记录仅含操作时序，不含页面正文，不能引用为页面内容证据。' : ''}`,
+                text: `Harness 已捕获脱敏证据 ${id}；Reviewer 通过 read_command_evidence 读取。${start.fillingInput ? '该记录包含填写参数与工具结果；参数不证明字段已填写成功或请求已发出，失败可能已部分执行。' : ''}${browserSnapshot ? '该记录关联已保存的脱敏快照；Runner 结束后由 Harness 上传，Reviewer 按文件列表的状态使用 read_browser_evidence 读取。' : ''}${snapshot ? '该记录包含脱敏后的内联快照正文。' : !isReplayTool(tool) && !start.fillingInput && !browserSnapshot ? '该记录仅含操作时序，不含页面正文，不能引用为页面内容证据。' : ''}`,
               },
             ],
           };

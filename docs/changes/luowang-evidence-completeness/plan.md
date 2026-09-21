@@ -7,7 +7,7 @@
 3. **类别预检节点**：A3 集中工具证据规则，实际发现清单预检与运行时兜底，验证未知工具不能静默放过；通过检查后 push。
 4. **指令及模型节点**：修来源、时间和计数指令，先做零模型加载检查；冻结六个正反案例及判分标准，明确预算后单独验证。不得以此安排提前合并 #71，不把工程通过算成模型通过。
 
-每个节点更新实际完成证明。禁止改历史样本追分；不新增发布门禁、不兼容旧格式。A1/A2 工程已实现，A3/B 尚未实施，live/release=blocked，humanScoring=not_run。
+每个节点更新实际完成证明。禁止改历史样本追分；不新增发布门禁、不兼容旧格式。A1/A2/A3 工程已实现，B 尚未实施，live/release=blocked，humanScoring=not_run。
 
 ## A1 完成证明（2026-09-21）
 
@@ -23,3 +23,11 @@
 - 3 文件 / 34 项专项通过，包含两个真实 MCP 入口的导航登记、脱敏落盘及上传后读取；随机合成字段关联、缺失、越界、无效 YAML 和采集后篡改回归。首次专项中的旧任意文本快照 fixture 已改为固定 YAML，超长日志截断仍单独验证，不保留旧快照格式兼容。
 - 证明存放于 `.cynos/acceptance/run-navigation-evidence/`。本次不调用模型，不修改页面/图片或历史报告；A3 预检和 B 族模型验收继续待办。
 - 首轮完整检查发现一处类型推断错误及格式问题，修正后重新验收。最终 `quality-final.log` 和 `acceptance/2026-09-21T06-42-33-093Z-local/report.json` 确认退出 0：38 文件 / 283 测试、格式、lint、类型检查、构建、e2e、Phase 9（34 AC）全部通过。local=passed，live/release=blocked，humanScoring=not_run。
+
+## A3 实现与验证（2026-09-21）
+
+- 实际核对固定 MCP 工具清单，将五类采集规则与读取路由集中维护；连接检查、原生预检和两个运行入口使用同一规则。未知工具在执行前阻止，实际返回身份不匹配时拒绝原始结果并记证据失败。
+- 4 文件 / 41 项专项通过，包含真实 MCP 两入口工具清单覆盖、未知工具预检失败、排除工具过滤、运行时阻止及回执内容限制。类型检查通过。
+- 完整原生预检通过，evidencePolicyComplete=true，modelRequests=0。首次因临时挂载目录 EACCES 在工具启动前失败；修正 tmpfs 写权限后通过，没有放宽安全或工具规则。日志保存在 `.cynos/acceptance/run-evidence-policy/native-preflight.log` 与 `native-preflight-fixed.log`。
+- 后续 B 族单独补来源、时间、计数指令及冻结正反案例；工程通过不代表模型行为通过，不启用历史模型预算，不提前合并 PR #71。
+- 完整 local acceptance 退出 0，39 文件 / 287 测试、格式、lint、类型检查、构建、e2e 及 Phase 9 通过。证明为 `.cynos/acceptance/run-evidence-policy/quality.log` 和 `acceptance/2026-09-21T07-14-28-090Z-local/report.json`；local=passed，live/release=blocked，humanScoring=not_run。

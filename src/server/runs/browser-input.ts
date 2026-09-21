@@ -1,7 +1,5 @@
 import type { RunEvidenceStore } from './evidence.js';
 
-export const FILLING_TOOLS = new Set(['browser_fill_form', 'browser_type']);
-
 /** Register the entire batch before MCP can execute even its first field. */
 export function registerBrowserInput(
   tool: string,
