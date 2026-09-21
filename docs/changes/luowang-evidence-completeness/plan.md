@@ -167,3 +167,11 @@ SOURCE-N 的 review.md 已明确写明 Runner 的“未检查错误提示”与�
 新冻结目录为 `.cynos/acceptance/run-record-accuracy-round5/frozen/`。六例零模型预检全部通过：每例 Reviewer 都在成功读取 execution.md 后才写 review，最终 Main 只读取 plan.md 与 review.md。当前 quality 镜像中的角色加载、记录精度和生产 Pi 定向回归 3 文件 / 36 项通过；既有同一源码完整本地验收仍为 40 文件 / 305 测试、格式、lint、类型检查、构建、e2e 与 Phase 9（34 AC）通过。
 
 现有 Secret Store 的禁网可用性检查通过，输出仅确认 provider key 可用，modelRequests=0，不输出凭据。第五轮尚未启用真实模型预算，humanScoring=not_run；前四轮的预算、工件和失败结论保持不变，任何剩余请求都不转入本轮。下一步需明确批准新的 120 次请求上限，仍按 SOURCE-P、SOURCE-N、TIME-P、TIME-N、COUNT-P、COUNT-N 顺序逐例独立判分，任一案例失败即停止。live/release 继续 blocked。
+
+### 第五轮首例与证据清单计数修复（2026-09-22）
+
+负责人明确批准第五轮独立 120 次请求预算后执行 SOURCE-P，Run `01M32FS54FDGV8087Y3JRRRZ12`，共 9/120 次请求、2 个隔离 Session。Reviewer 成功读取 execution.md，准确引用 Runner 的“观察到 Login rejected”，把 passed 归为自己的快照核对判断，并明确预置快照不证明实际浏览器执行。最终 Main 保留了 Reviewer 的判断来源和适用性边界，第四轮发现的来源改写问题没有重现。
+
+但最终报告的覆盖缺口同时写了“唯一证据为预置合成快照”和“本 Run 证据列表为空”。实际 `list_evidence_files` 返回一个 browser 工件，报告要表达的是没有 command、MCP、控制台或实际操作归属记录，不能扩大成零证据文件。这个矛盾会让证据清单及计数失真，因此 Reviewer 维度记 passed，最终 Main 维度记 failed，SOURCE-P 整体 failed。两份 writer 原始输入与落盘工件 SHA-256 相同，预算已锁定 stopped；SOURCE-N、TIME-P/N、COUNT-P/N 均未运行，剩余 111 次不转入后续轮次。humanScoring 保持 not_run。
+
+原始 sessions.json、工件、独立 score.json 和预算保存在 `.cynos/acceptance/run-record-accuracy-round5/frozen/live/`，结束轮次记录不修改。修订 main-finalization 指令：存在浏览器、图片或其他证据文件但缺少某类操作记录时，分别写清现有证据与缺失项；证据文件数量和类别须与 review.md 一致，不得把“没有某类证据”写成“证据列表为空”。新增角色资源防回归断言，角色加载、记录精度和生产 Pi 定向回归 3 文件 / 36 项通过。当前源码的 quality 镜像 `sha256:2e66f5387d391e5cb973509d0a4199f0324b06b292f75f9f08566531eccfdb83` 完整本地验收通过，覆盖 40 文件 / 305 测试、格式、lint、类型检查、构建、e2e 与 Phase 9（34 AC）；live/release 因未提供外部联合验收输入保持 blocked。修订后仍需新的独立模型轮次，不能改写第五轮失败结论。
