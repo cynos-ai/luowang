@@ -9,7 +9,14 @@ import {
 } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { caseIds } from './fixtures.mjs';
-import { freeze, verify, sha, createBudget, requireScoredCase } from './control.mjs';
+import {
+  freeze,
+  verify,
+  sha,
+  createBudget,
+  requireScoredCase,
+  stopForDeliveryFailure,
+} from './control.mjs';
 import { runCase } from './driver.mjs';
 import { modelProxy } from './proxy.mjs';
 
@@ -88,7 +95,7 @@ if (mode === 'freeze') {
         );
         if (budget.state.stopped) throw new Error('Model transport stopped');
       } catch {
-        budget.stop('case-delivery-failure');
+        stopForDeliveryFailure(budget);
         throw new Error('Case failed; round stopped');
       }
     } finally {

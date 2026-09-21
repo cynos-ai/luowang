@@ -126,3 +126,7 @@ export function createBudget(
     },
   };
 }
+
+export function stopForDeliveryFailure(budget) {
+  if (!budget.state.stopped) budget.stop('case-delivery-failure');
+}

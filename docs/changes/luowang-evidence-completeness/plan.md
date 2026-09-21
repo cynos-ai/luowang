@@ -175,3 +175,11 @@ SOURCE-N 的 review.md 已明确写明 Runner 的“未检查错误提示”与�
 但最终报告的覆盖缺口同时写了“唯一证据为预置合成快照”和“本 Run 证据列表为空”。实际 `list_evidence_files` 返回一个 browser 工件，报告要表达的是没有 command、MCP、控制台或实际操作归属记录，不能扩大成零证据文件。这个矛盾会让证据清单及计数失真，因此 Reviewer 维度记 passed，最终 Main 维度记 failed，SOURCE-P 整体 failed。两份 writer 原始输入与落盘工件 SHA-256 相同，预算已锁定 stopped；SOURCE-N、TIME-P/N、COUNT-P/N 均未运行，剩余 111 次不转入后续轮次。humanScoring 保持 not_run。
 
 原始 sessions.json、工件、独立 score.json 和预算保存在 `.cynos/acceptance/run-record-accuracy-round5/frozen/live/`，结束轮次记录不修改。修订 main-finalization 指令：存在浏览器、图片或其他证据文件但缺少某类操作记录时，分别写清现有证据与缺失项；证据文件数量和类别须与 review.md 一致，不得把“没有某类证据”写成“证据列表为空”。新增角色资源防回归断言，角色加载、记录精度和生产 Pi 定向回归 3 文件 / 36 项通过。当前源码的 quality 镜像 `sha256:2e66f5387d391e5cb973509d0a4199f0324b06b292f75f9f08566531eccfdb83` 完整本地验收通过，覆盖 40 文件 / 305 测试、格式、lint、类型检查、构建、e2e 与 Phase 9（34 AC）；live/release 因未提供外部联合验收输入保持 blocked。修订后仍需新的独立模型轮次，不能改写第五轮失败结论。
+
+### 第六轮传输停止与诊断保留（2026-09-22）
+
+第六轮冻结提交 `a3161afeeffaa4dcde3d00c7d6c301af4f1b3e70` 与 quality 镜像 `sha256:2e66f5387d391e5cb973509d0a4199f0324b06b292f75f9f08566531eccfdb83`。六例 inputs.json 与 rubric.json 和第五轮逐字节相同；manifest 只有 `resources/agent-roles/main-finalization.md` 变化。六例零模型预检、工具顺序及 Secret Store 禁网检查通过，modelRequests=0。负责人批准新的 120 次请求上限后启动 SOURCE-P。
+
+首个 Reviewer 请求在获得任何 HTTP 状态前失败，预算记录只有一次 `deepseek-v4-flash-vision-exp` 尝试，状态为 failed；Reviewer Session 没有工具调用，result.status=failed，未形成 review.md、report.md 或可判分的模型语义结果。驱动按传输失败规则将第六轮锁定在 1/120，SOURCE-N、TIME-P/N、COUNT-P/N 均未运行，剩余 119 次不重试也不转入后续轮次。humanScoring 与 semanticResult 均保持 not_run/not_evaluated。
+
+本轮还暴露了评估驱动的诊断覆盖：代理已因传输或响应失败停止预算，CLI 外层捕获又把 reason 改成更泛的 case-delivery-failure。修订控制 helper，使外层只在预算尚未停止时写交付失败；已存在的最早传输停止原因保持不变。新增回归同时验证已有原因不被覆盖，以及非传输的普通交付失败仍记录 case-delivery-failure。角色加载、记录精度和生产 Pi 定向回归 3 文件 / 37 项通过。当前源码的 quality 镜像 `sha256:1805ef5a37e806a0cfee2c2057ff7833466acc987e268ef396b8ed4fe81190e0` 完整本地验收通过，覆盖 40 文件 / 306 测试、格式、lint、类型检查、构建、e2e 与 Phase 9（34 AC）；live/release 因未提供外部联合验收输入保持 blocked。第六轮原始 budget.json 不修改，无法从已覆盖的字段进一步断言 DNS、连接、超时或响应流中的哪一种具体原因；修订后的诊断行为仍需下一轮真实失败才能实证。

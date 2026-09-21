@@ -9,6 +9,7 @@ import {
   verify,
   requireScoredCase,
   sha,
+  stopForDeliveryFailure,
 } from './acceptance/record-accuracy/control.mjs';
 import { runCase } from './acceptance/record-accuracy/driver.mjs';
 import { modelProxy } from './acceptance/record-accuracy/proxy.mjs';
@@ -121,6 +122,18 @@ test('budget counts attempted calls including failures and refuses all work afte
   ).rejects.toThrow('stopped');
   expect(full.state.requests).toBe(120);
   expect(calls).toBe(1);
+});
+
+test('delivery failure keeps the earlier transport stop reason', () => {
+  const stopped = createBudget(() => {});
+  stopped.stop('transport-or-response-failure');
+  stopForDeliveryFailure(stopped);
+  expect(stopped.state.reason).toBe('transport-or-response-failure');
+
+  const delivery = createBudget(() => {});
+  stopForDeliveryFailure(delivery);
+  expect(delivery.state.stopped).toBe(true);
+  expect(delivery.state.reason).toBe('case-delivery-failure');
 });
 
 test('scoring requires both role assessments and unchanged writer artifacts', async () => {
