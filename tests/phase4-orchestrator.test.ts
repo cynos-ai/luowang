@@ -129,6 +129,20 @@ describe('Phase 4 Run blocking boundaries', () => {
     assert.match(result.artifacts['report.md'] ?? '', /Issue 查询覆盖缺口/);
   });
 
+  it('does not write a review or start finalization when Reviewer skips execution', async () => {
+    const fixture = await createGitFixture();
+    const context = await createRunContext(fixture, 'review-without-execution');
+    const result = await context.orchestrator.run({
+      request: '审核漏读执行工件',
+      trigger: 'manual',
+    });
+    assert.equal(result.status, 'failed', JSON.stringify(result));
+    assert.equal(result.result, null);
+    assert.equal(result.errorMessage, '角色没有写入必需工件：review.md');
+    assert.equal(result.artifacts['review.md'], undefined);
+    assert.equal(result.artifacts['report.md'], undefined);
+  });
+
   it('does not complete a Run when Main finalization writes a non-schema scenario result', async () => {
     const fixture = await createGitFixture();
     const context = await createRunContext(fixture, 'malformed-report');
@@ -159,6 +173,7 @@ type FailureMode =
   | 'cleanup-review'
   | 'browser-missing'
   | 'review-read-failure'
+  | 'review-without-execution'
   | 'vision-reviewer'
   | 'vision-unavailable'
   | 'malformed-report'
@@ -232,12 +247,11 @@ class FailureBoundarySessionFactory implements AgentSessionFactory {
           assert.match(input.systemPrompt, /没有新增或修改场景不等于没有执行场景/);
           assert.match(input.systemPrompt, /模型看图或人工触发 Run 不代表人工复核/);
           assert.match(input.systemPrompt, /操作成功也不能反证截图完整/);
-          for (const name of ['plan.md', 'execution.md']) {
-            await invokeTool(input, 'read_run_artifact', { name });
-          }
+          await invokeTool(input, 'read_run_artifact', { name: 'plan.md' });
           assert.ok(!input.customTools.some((t) => t.name === 'verify_test_data_cleanup'));
           if (
             this.mode === 'review-read-failure' ||
+            this.mode === 'review-without-execution' ||
             this.mode === 'vision-reviewer' ||
             this.mode === 'vision-unavailable' ||
             this.mode === 'malformed-report' ||
@@ -255,12 +269,19 @@ class FailureBoundarySessionFactory implements AgentSessionFactory {
               assert.ok(image.content.every((part) => part.type !== 'image'));
             }
           }
-          await invokeTool(input, 'write_review', {
+          if (this.mode !== 'review-without-execution') {
+            await invokeTool(input, 'read_run_artifact', { name: 'execution.md' });
+          }
+          const reviewWrite = await invokeTool(input, 'write_review', {
             content:
               this.mode === 'cleanup-review' || this.mode === 'cleanup-failure'
                 ? '# Review\n\n无需场景测试：计划仅验证 Harness 生命周期，不影响产品行为。\n'
                 : '# Review\n\n独立审核完成。\n',
           });
+          if (this.mode === 'review-without-execution') {
+            assert.equal((reviewWrite as { details: { error?: boolean } }).details.error, true);
+            assert.match(JSON.stringify(reviewWrite), /成功读取 execution.md/);
+          }
           return;
         }
 

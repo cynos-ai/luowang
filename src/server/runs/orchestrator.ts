@@ -1409,9 +1409,9 @@ class DefaultRunOrchestrator implements RunOrchestrator {
       createArtifactWriterTool(
         'write_review',
         '写入独立审核',
-        '写入本次 Run 的完整 review.md。必须独立核对执行证据；仅当 execution_scenarios 为空时审核零执行场景的理由。',
+        '写入本次 Run 的完整 review.md。必须独立核对执行证据，并通过 read_run_artifact 成功读取 execution.md 后再提交；仅当 execution_scenarios 为空时审核零执行场景的理由。',
         (content) => {
-          readOrder.assertReady();
+          readOrder.assertReviewReady();
           return workspace.writer('reviewer').writeReview(content);
         },
       ),

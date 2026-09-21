@@ -125,3 +125,15 @@ TIME-P/N 的 plan 增加相同报告要求：说明事件时间的依据和可�
 新轮冻结目录 `.cynos/acceptance/run-record-accuracy-round3/frozen/`，输入 SHA-256 为 `ea4ce9def8ff918898cc7f1a728c55ceddd7d16b845a1829bf071f3999203d5d`，独立评分参考 SHA-256 为 `b08a437d1ac630d15c7167ffd65bbb8365bee7b779cb4623b05991a64f5cbe61`。六例 CLI 零模型预检及 15 项驱动测试通过，格式、lint、git diff --check 通过；日志在该轮目录。原两轮冻结材料、评分、预算与失败输出不变。
 
 本节点真实模型请求为 0，第三轮 120 次请求预算待负责人明确批准，仍按每例独立判分、失败即停执行。未重跑完整工程验收、未构建生产镜像、未进行真实模型复验；第二轮余下 92 次不自动转入本轮，live/release 仍 blocked。
+
+### 第三轮首例与必需工件漏读修复（2026-09-21）
+
+明确批准第三轮预算后执行 SOURCE-P，Run `01M31Q8HH9DC0R2QXE8JS687AN`，共 7/120 次请求、2 个 Session。Reviewer 独立读取 plan.md 和浏览器快照，但完整工具轨迹中没有 execution.md 读取；write_review 仍成功，随后最终 Main 正常读取 plan/review 并写报告。Reviewer 没有伪造浏览器执行，但未获得 Runner 原文，因此不能验证来源对照；本例按审核交付不完整记 failed，其余五例未运行。budget 已 stopped，剩余 113 次不自动续跑。
+
+两份 writer 原始输入与落盘工件哈希一致，原始记录、独立 score 及预算保存在 `.cynos/acceptance/run-record-accuracy-round3/frozen/live/`。人工未评分，humanScoring 仍 not_run。最终 Main 无权补读 execution，不以扩大其权限修复上游漏读。第一、二轮记录保持不变。
+
+根因是既有 `review-order` 的 assertReady 仅校验计划、存在的 patch 与原始图片尝试，并同时用于 execution 读取前及 review 提交前。它没有记录 execution 成功读取，故只读快照即可提交。修复复用同一 Session 的顺序控制：execution 读取前沿用既有证据顺序检查；实际读取成功后才登记；write_review 使用独立的提交检查，漏读或读取失败时返回明确提示且不写文件。零图片或零执行场景也须读取真实执行工件，但不要求不存在的图片/日志。真实图片读取失败仍作为阻塞事实允许后续诚实交付，不改原失败规则。
+
+新增回归覆盖漏读、提前拒绝、真实读取失败、成功后提交及 Session 间不共享状态；编排集成证明读完图片但跳过 execution 时，review/report 均不会生成，最终汇总不会继续。正常 Phase 4 测试替身也按已有要求先读图片再读执行记录，避免以先前被拒的尝试冒充成功读取。专项 6 文件 / 75 项通过，日志 `.cynos/acceptance/run-record-accuracy-round3/followup/targeted.log`；完整 quality 容器本地验收退出 0：40 文件 / 304 测试、格式、lint、类型检查、构建、e2e 及 Phase 9（34 AC）均通过，证明见同目录 quality.log 与 acceptance/2026-09-21T10-16-38-640Z-local/report.json。本地验收未调用真实模型；未构建新的生产容器镜像，不将工程通过视作模型语义通过。
+
+该修复只能证明必需工件确实交付给模型，不能证明模型理解、引文或判定准确。本轮不重跑模型覆盖原失败，下一轮仍须冻结新候选并独立复验；live/release 保持 blocked。
