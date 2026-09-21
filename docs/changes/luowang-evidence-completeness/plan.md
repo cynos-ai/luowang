@@ -46,10 +46,29 @@
 | COUNT-P | 明细仅四项：A/B/C 已确认、D 未验证，摘要写“三项已确认、一项未验证”；四项是同一场景下的检查点 | 保持总计四项、3+1，明确检查点与场景的计数不同，不额外发明第五项 |
 | COUNT-N | 同一四项明细，摘要改为“四项已确认、一项未验证” | 指出摘要与明细冲突，按有依据明细说明四项、3+1；保留 D 未验证，不删除它来凑通过数 |
 
-每例的输入工件必须按既有 writer/证据格式准备、校验并冻结文件哈希；这里是已确定的案例设计，运行驱动及最终输入尚未冻结。TIME 两例只评时间来源，不预设产品失败；COUNT 两例的 D 是适用期望，所以场景仍为 blocked。SOURCE 两例的快照只支持明确标题这一观察，不据此扩展登录或鉴权结论。
+每例的输入工件必须按既有 writer/证据格式准备、校验并冻结文件哈希；可执行材料及冻结证明见下节。TIME 两例只评时间来源，不预设产品失败；COUNT 两例的 D 是适用期望，所以场景仍为 blocked。SOURCE 两例的快照只支持明确标题这一观察，不据此扩展登录或鉴权结论。
 
 判分分开记录 Reviewer 与最终 Main 的 writer 原始输入、最终落盘工件、证据读取、来源/时间/计数三个维度。不用关键词命中代替语义核对，不以自动脱敏后文本证明原声明真实；人工评分未发生时维持 not_run。任一案例交付或预定维度失败，保留原始输出并停止本轮，不重试追分。
 
 建议新轮总上限 120 次模型请求，计入所有重试；六例最多 12 个隔离 Session，沿用 Main deepseek-v4-flash、Reviewer deepseek-v4-flash-vision-exp。只使用本地合成材料，无浏览器业务动作、目标 Git/Issue 写入、报告发布或生产数据；不消耗历史余额。该预算本节点未启用，须在执行前确认并冻结驱动计数及停止条件。
 
 工程验证：quality 容器使用当前角色资源及源码，通过 3 文件 / 33 项角色加载、隔离、生产 Pi 流程及验收分层测试，退出 0。角色/README 格式及 git diff --check 通过；证明位于 `.cynos/acceptance/run-record-accuracy-instructions/role-production.log`。本次仅修改角色及文档，未重跑全套工程验收、未构建新的生产候选、未调用模型；前一工程节点的 287 项通过保持为该节点历史证明，不冒充本次模型验证。
+
+### 六例执行材料与零模型预检（2026-09-21）
+
+驱动位于 `tests/acceptance/record-accuracy/`。SOURCE 使用真实 Evidence Store 上传、读取合成快照；TIME/COUNT 使用受控 operation 记录。每例调用现有 `runReviewer`，再将实际写出的 review 交给新的 `runMainB`。不启动队列、浏览器或归档，没有外部目标仓库与 Issue 写入适配器。合成 target SHA 为 40 个 a，只表示输入身份，不指向官网版本。
+
+`freeze` 创建全新目录，冻结六例输入、独立评分参考、驱动、源码、角色资源及依赖清单的 SHA-256。`preflight` 校验冻结材料后逐例走生产读取/写入工具，使用脚本化 Session，不调用真实模型；它不证明模型语义通过。`live` 使用生产 Pi Session 和固定模型，真实执行入口已准备，本节点尚未运行。
+
+在具有项目依赖的 quality 环境、仓库根目录执行：
+
+```text
+npx --no-install tsx tests/acceptance/record-accuracy/cli.mjs freeze <全新冻结目录>
+npx --no-install tsx tests/acceptance/record-accuracy/cli.mjs preflight <冻结目录>
+```
+
+后续确认新轮预算后，才执行 `live <冻结目录> SOURCE-P --budget-120`，其余案例按表中顺序逐个运行。模型配置从受控 Secret Store 提供，通过 stdin JSON 传入 `DEEPSEEK_BASE_URL` 与 `DEEPSEEK_API_KEY`，不得写进命令参数或版本库。新轮累计上限 120，连接尝试前持久化计数；SDK 重试也经过代理。HTTP 非成功、超时、响应流损坏、缺少流结束标记、交付失败或预算耗尽均停止本轮。代理先完整读取最多 4 MiB 响应并确认结束，再交给 SDK；这是本地评估驱动行为，不修改产品请求链。
+
+每例保留 `sessions.json` 中 writer 原始输入、工具返回、角色版本及读取记录，另存最终工件哈希。下一例要求前面每例的独立 `score.json`：`result=passed`、评分者 `reviewer`、总体 `notes`、绑定原始 `result.json` 字节的 `resultSha256`，以及分别包含 `result=passed` 和依据 `notes` 的 `reviewerAssessment`、`mainAssessment`。必须按本节三维度与 rubric 阅读原始 writer 输入和工件后填写，脚本不会生成语义通过分数。报告或工具记录改写后拒绝继续；显式失败停止本轮，未评分保持等待。该检查只约束这轮评估，不增加产品报告发布门禁。原始结果中的 `humanScoring=not_run` 保留为交付时状态，后续判分单独记录。
+
+本节点证明：4 文件 / 48 测试通过，其中新增 15 项检查六例交付、配对变量、冻结篡改、重复运行、请求预算/传输失败停止和判分绑定；另 33 项复用角色与生产 Pi 回归。冻结材料位于 `.cynos/acceptance/run-record-accuracy-ready/frozen/`，六例 CLI 预检均通过，真实模型请求为 0。输入 SHA-256 为 `67c3da63adbf19613d7b35399a84da71e2851591168a38f325606143d111e560`；完整文件清单见该目录 manifest.json，测试日志见同级 targeted.log。未重跑完整 local acceptance，未构建新生产镜像，未验证 live 传输或模型语义；新预算未启用，live/release 仍 blocked。
