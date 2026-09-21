@@ -72,3 +72,17 @@ npx --no-install tsx tests/acceptance/record-accuracy/cli.mjs preflight <冻结�
 每例保留 `sessions.json` 中 writer 原始输入、工具返回、角色版本及读取记录，另存最终工件哈希。下一例要求前面每例的独立 `score.json`：`result=passed`、评分者 `reviewer`、总体 `notes`、绑定原始 `result.json` 字节的 `resultSha256`，以及分别包含 `result=passed` 和依据 `notes` 的 `reviewerAssessment`、`mainAssessment`。必须按本节三维度与 rubric 阅读原始 writer 输入和工件后填写，脚本不会生成语义通过分数。报告或工具记录改写后拒绝继续；显式失败停止本轮，未评分保持等待。该检查只约束这轮评估，不增加产品报告发布门禁。原始结果中的 `humanScoring=not_run` 保留为交付时状态，后续判分单独记录。
 
 本节点证明：4 文件 / 48 测试通过，其中新增 15 项检查六例交付、配对变量、冻结篡改、重复运行、请求预算/传输失败停止和判分绑定；另 33 项复用角色与生产 Pi 回归。冻结材料位于 `.cynos/acceptance/run-record-accuracy-ready/frozen/`，六例 CLI 预检均通过，真实模型请求为 0。输入 SHA-256 为 `67c3da63adbf19613d7b35399a84da71e2851591168a38f325606143d111e560`；完整文件清单见该目录 manifest.json，测试日志见同级 targeted.log。未重跑完整 local acceptance，未构建新生产镜像，未验证 live 传输或模型语义；新预算未启用，live/release 仍 blocked。
+
+### 首例真实验证与停止记录（2026-09-21）
+
+负责人明确批准后启用本轮 120 次请求上限。API Key 从已有受控 Secret Store 读取，向 `api.deepseek.com` 请求；未沿用旧轮余额。候选为 `ba00b55` 源码与角色资源，quality 镜像 `sha256:b900d9d5e72b7a75c2efd7eb9b15eecba1a6b0f4f5566aafe4df6070a6f3f2a2` 加载冻结的当前源码。启动信息保存在 `.cynos/acceptance/run-record-accuracy-ready/launch-candidate.json`。
+
+SOURCE-P 已完成两个独立 Session 的交付，Run `01M31JA659J5SN0GRQWACCS5ZN`，共 12/120 次请求。Reviewer 实际读到受控快照与 execution，最终 Main 实际读到 plan/review；两份 writer 原始输入与落盘工件均保留。原定检查通过：Reviewer 正确引用 Runner 的“观察到 Login rejected”，同时区分自己的独立读取；Main 保留审核来源，没有声称自己回读原快照。标题观察也未扩展成登录/鉴权通过。
+
+但额外发现了一处执行归因错误：review 的“覆盖缺口”第 3 项仅凭本 Run 有浏览器快照，就断言 `browserRequired` 与“真实执行不符”；report 的第 3 项及“必要下一步”沿用了该判断。本例的快照由驱动预置，不存在浏览器执行 Session 或调用；读取 browser 格式文件不能证明本 Run 执行过浏览器。该判断出现在原始 writer 输入中，落盘转换没有产生或修正它。
+
+本例整体记为 failed，并停止本轮；**不能将这一新增发现写成原定 Runner 引用归属检查失败**。SOURCE-N、TIME-P/N、COUNT-P/N 均 not_run，剩余 108 次不自动用于重跑追分。独立核对由 Codex 完成，humanScoring 仍 not_run，不冒充人工验收。原始结果、score.json、sessions.json、工件和预算位于 `.cynos/acceptance/run-record-accuracy-ready/frozen/live/`；score 绑定结果字节和已核对的工件/工具记录哈希，budget 已标 stopped。
+
+本节点修订 common/Reviewer 指令：将证据内容、文件存在与操作归属分开；browserRequired 表达执行需要，预置合成快照与 false 可同时成立。保持最终 Main 只读计划/审核的边界，不要求它越权回读证据。修订后通过 3 文件 / 33 项角色加载、隔离、生产 Pi 与验收分层回归，日志 `.cynos/acceptance/run-record-accuracy-attribution/roles.log`；格式与 git diff --check 通过。未重跑完整 local acceptance、未构建生产镜像、未对修订后的指令调用真实模型，故不宣称问题已由模型复验证实解决；live/release 仍 blocked。
+
+下一轮须重新冻结候选及明确预算，保留本轮历史。将“预置证据不证明实际操作”作为显式验收点，再执行来源正反例及尚未运行的时间、计数案例；不修改本轮输入、评分参考或失败输出。
