@@ -159,3 +159,11 @@ TIME-P/N 的 plan 增加相同报告要求：说明事件时间的依据和可�
 SOURCE-N 的 review.md 已明确写明 Runner 的“未检查错误提示”与场景仅检查标题的范围一致，且该对象本就不是适用期望。report.md 却声称这是“本次汇总角色的判断，非 Reviewer 已作出的适用性结论”。这不是普通措辞差异：最终 Main 丢失了 Reviewer 来源，并越过只整理 plan/review 的职责自行补判。Reviewer 维度记 passed，最终 Main 维度记 failed，本例整体 failed。预算已锁定 stopped，剩余 104 次不自动转入新一轮。
 
 原始 sessions.json、writer 输入、工件、score.json 和预算保存在 `.cynos/acceptance/run-record-accuracy-round4/frozen/live/`，结束轮次的任何记录不修改。修订 main-finalization 指令，要求 Reviewer 已交付的期望适用性、范围解释和结论依据继续归 Reviewer；不能声称 Reviewer 未作判断后由最终 Main 补判。审核内部矛盾仍按既定结果聚合规则处理并保留来源，不扩大最终 Main 的读取权限。新增角色资源防回归断言，角色加载、记录精度和生产 Pi 定向回归共 36 项通过。当前源码的 quality 镜像 `sha256:9b980c14dc659f009a253ae1bdfcec1baad83ad3427ae0403baf6c2d26cff567` 完整本地验收通过，覆盖 40 文件 / 305 测试、格式、lint、类型检查、构建、e2e 与 Phase 9（34 AC）；live/release 因未提供外部联合验收输入保持 blocked。以上只证明约束和工程回归，不能冒充模型复验通过；下一轮仍须重新冻结候选并获得独立预算。
+
+### 第五轮材料准备（2026-09-21）
+
+第五轮冻结当前提交 `558ef0ac3a47723fdeaf143ca1daae72dcc5d6f4`，使用 quality 镜像 `sha256:9b980c14dc659f009a253ae1bdfcec1baad83ad3427ae0403baf6c2d26cff567`。与第四轮 manifest 对比，候选文件只变化 `resources/agent-roles/main-finalization.md`；六例 inputs.json 与 rubric.json 逐字节不变，SHA-256 分别保持 `ea4ce9def8ff918898cc7f1a728c55ceddd7d16b845a1829bf071f3999203d5d` 和 `b08a437d1ac630d15c7167ffd65bbb8365bee7b779cb4623b05991a64f5cbe61`。比较记录位于 `.cynos/acceptance/run-record-accuracy-round5/candidate-diff.json`，不修改第四轮材料或评分追求通过。
+
+新冻结目录为 `.cynos/acceptance/run-record-accuracy-round5/frozen/`。六例零模型预检全部通过：每例 Reviewer 都在成功读取 execution.md 后才写 review，最终 Main 只读取 plan.md 与 review.md。当前 quality 镜像中的角色加载、记录精度和生产 Pi 定向回归 3 文件 / 36 项通过；既有同一源码完整本地验收仍为 40 文件 / 305 测试、格式、lint、类型检查、构建、e2e 与 Phase 9（34 AC）通过。
+
+现有 Secret Store 的禁网可用性检查通过，输出仅确认 provider key 可用，modelRequests=0，不输出凭据。第五轮尚未启用真实模型预算，humanScoring=not_run；前四轮的预算、工件和失败结论保持不变，任何剩余请求都不转入本轮。下一步需明确批准新的 120 次请求上限，仍按 SOURCE-P、SOURCE-N、TIME-P、TIME-N、COUNT-P、COUNT-N 顺序逐例独立判分，任一案例失败即停止。live/release 继续 blocked。
