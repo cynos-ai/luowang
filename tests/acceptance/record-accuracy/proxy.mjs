@@ -1,5 +1,40 @@
 import { createServer } from 'node:http';
 
+const DNS_FAILURE_CODES = new Set(['ENOTFOUND', 'EAI_AGAIN']);
+const TLS_FAILURE_CODES = new Set([
+  'SELF_SIGNED_CERT_IN_CHAIN',
+  'DEPTH_ZERO_SELF_SIGNED_CERT',
+  'UNABLE_TO_VERIFY_LEAF_SIGNATURE',
+  'CERT_HAS_EXPIRED',
+  'ERR_TLS_CERT_ALTNAME_INVALID',
+]);
+
+function upstreamFailureCategory(error) {
+  if (
+    (error instanceof DOMException && error.name === 'TimeoutError') ||
+    error?.name === 'TimeoutError'
+  ) {
+    return 'upstream-timeout';
+  }
+  const codes = [];
+  let current = error;
+  for (let depth = 0; depth < 4 && current && typeof current === 'object'; depth++) {
+    if (typeof current.code === 'string') codes.push(current.code);
+    current = current.cause;
+  }
+  if (codes.includes('ETIMEDOUT')) return 'upstream-timeout';
+  if (codes.some((code) => DNS_FAILURE_CODES.has(code))) return 'upstream-dns';
+  if (
+    codes.some(
+      (code) =>
+        TLS_FAILURE_CODES.has(code) || code.startsWith('ERR_TLS_') || code.startsWith('ERR_SSL_'),
+    )
+  ) {
+    return 'upstream-tls';
+  }
+  return 'upstream-connect';
+}
+
 // Completion (including the response body) belongs to the counted attempt.
 export function modelProxy(budget, endpoint, apiKey, request = fetch) {
   return createServer(async (req, res) => {
@@ -27,10 +62,7 @@ export function modelProxy(budget, endpoint, apiKey, request = fetch) {
             signal: AbortSignal.timeout(180000),
           });
         } catch (error) {
-          receipt.failureCategory =
-            error instanceof DOMException && error.name === 'TimeoutError'
-              ? 'upstream-timeout'
-              : 'upstream-connect';
+          receipt.failureCategory = upstreamFailureCategory(error);
           throw error;
         }
         receipt.httpStatus = upstream.status;

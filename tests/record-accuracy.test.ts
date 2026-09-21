@@ -192,55 +192,80 @@ test('proxy completes a valid streamed response and counts it once', async () =>
   }
 });
 
-test.each(['http-error', 'stream-error', 'missing-done', 'timeout'])(
-  'proxy latches %s without forwarding retries',
-  async (failure) => {
-    let calls = 0;
-    const budget = createBudget(() => {});
-    const server = modelProxy(
-      budget,
-      'https://invalid.example/v1/chat/completions',
-      'synthetic-key',
-      async () => {
-        calls++;
-        if (failure === 'http-error') return new Response('', { status: 429 });
-        if (failure === 'timeout') throw new DOMException('synthetic', 'TimeoutError');
-        if (failure === 'missing-done') return new Response('data: {}\n\n');
-        return new Response(
-          new ReadableStream({
-            start(controller) {
-              controller.error(new Error('synthetic'));
-            },
-          }),
-        );
-      },
-    );
-    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
-    try {
-      const address = server.address() as { port: number };
-      for (let i = 0; i < 2; i++) {
-        const response = await fetch(`http://127.0.0.1:${address.port}/v1/chat/completions`, {
-          method: 'POST',
-          body: JSON.stringify({ model: 'deepseek-v4-flash', stream: true }),
+test.each([
+  'http-error',
+  'stream-error',
+  'missing-done',
+  'timeout',
+  'dns-error',
+  'tls-error',
+  'connect-error',
+])('proxy latches %s without forwarding retries', async (failure) => {
+  let calls = 0;
+  const budget = createBudget(() => {});
+  const server = modelProxy(
+    budget,
+    'https://invalid.example/v1/chat/completions',
+    'synthetic-key',
+    async () => {
+      calls++;
+      if (failure === 'http-error') return new Response('', { status: 429 });
+      if (failure === 'timeout') throw new DOMException('synthetic', 'TimeoutError');
+      if (failure === 'dns-error') {
+        throw Object.assign(new TypeError('synthetic'), {
+          cause: Object.assign(new Error('synthetic'), { code: 'ENOTFOUND' }),
         });
-        expect(response.status).toBe(403);
       }
-      expect(calls).toBe(1);
-      expect(budget.state.stopped).toBe(true);
-      expect(budget.state.requests).toBe(1);
-      expect(budget.state.attempts[0].failureCategory).toBe(
-        (
-          {
-            'http-error': 'upstream-http',
-            'stream-error': 'response-stream-error',
-            'missing-done': 'response-incomplete',
-            timeout: 'upstream-timeout',
-          } as Record<string, string>
-        )[failure],
+      if (failure === 'tls-error') {
+        throw Object.assign(new TypeError('synthetic'), {
+          cause: Object.assign(new Error('synthetic'), {
+            code: 'SELF_SIGNED_CERT_IN_CHAIN',
+          }),
+        });
+      }
+      if (failure === 'connect-error') {
+        throw Object.assign(new TypeError('synthetic'), {
+          cause: Object.assign(new Error('synthetic'), { code: 'ECONNRESET' }),
+        });
+      }
+      if (failure === 'missing-done') return new Response('data: {}\n\n');
+      return new Response(
+        new ReadableStream({
+          start(controller) {
+            controller.error(new Error('synthetic'));
+          },
+        }),
       );
-    } finally {
-      server.closeAllConnections();
-      await new Promise<void>((resolve) => server.close(() => resolve()));
+    },
+  );
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  try {
+    const address = server.address() as { port: number };
+    for (let i = 0; i < 2; i++) {
+      const response = await fetch(`http://127.0.0.1:${address.port}/v1/chat/completions`, {
+        method: 'POST',
+        body: JSON.stringify({ model: 'deepseek-v4-flash', stream: true }),
+      });
+      expect(response.status).toBe(403);
     }
-  },
-);
+    expect(calls).toBe(1);
+    expect(budget.state.stopped).toBe(true);
+    expect(budget.state.requests).toBe(1);
+    expect(budget.state.attempts[0].failureCategory).toBe(
+      (
+        {
+          'http-error': 'upstream-http',
+          'stream-error': 'response-stream-error',
+          'missing-done': 'response-incomplete',
+          timeout: 'upstream-timeout',
+          'dns-error': 'upstream-dns',
+          'tls-error': 'upstream-tls',
+          'connect-error': 'upstream-connect',
+        } as Record<string, string>
+      )[failure],
+    );
+  } finally {
+    server.closeAllConnections();
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
+});
