@@ -191,3 +191,21 @@ SOURCE-N 的 review.md 已明确写明 Runner 的“未检查错误提示”与�
 首个 Reviewer 请求再次在获得 HTTP 状态前失败，Reviewer Session 没有工具调用，也没有 review.md、report.md 或可评分的模型语义结果。新驱动成功保留 budget.reason=`transport-or-response-failure`，证明 CLI 不再覆盖先前停止原因；本轮在 1/120 次请求后锁定，剩余五例未运行，119 次不重试也不转入后续轮次。humanScoring 与 semanticResult 保持 not_run/not_evaluated。
 
 固定 reason 仍把请求建立、超时、HTTP 拒绝、响应流损坏和缺失结束标记合在一起；本轮 attempt 没有 httpStatus，只能排除“已记录 HTTP 状态后失败”，不能再追溯具体阶段。评估代理改为在 attempt 中写受控 failureCategory：upstream-connect、upstream-timeout、upstream-http、upstream-missing-body、response-stream-error、response-too-large、response-incomplete 或 consumer-disconnected，不保存原始异常消息、响应正文、请求内容或凭据。已有第七轮 budget.json 保持不变；新增本地故障回归分别覆盖 HTTP、超时、响应流错误和缺结束标记。角色加载、记录精度和生产 Pi 定向回归 3 文件 / 37 项通过。当前源码的 quality 镜像 `sha256:16cb9d5f0b24944906e052dd82f78a86e62e11a2bca1562f036366303f8b0bec` 完整本地验收通过，覆盖 40 文件 / 306 测试、格式、lint、类型检查、构建、e2e 与 Phase 9（34 AC）；live/release 因未提供外部联合验收输入保持 blocked。新的 failureCategory 尚未经过真实失败实证。
+
+### 第八轮三例通过与连接阶段实证（2026-09-22）
+
+第八轮冻结提交 `33d97986e75b5b6edc35e37d7acfbb62a6bd4f90` 与 quality 镜像 `sha256:16cb9d5f0b24944906e052dd82f78a86e62e11a2bca1562f036366303f8b0bec`。六例 inputs.json、rubric.json 和角色指令与第七轮逐字节相同，SHA-256 分别为 `ea4ce9def8ff918898cc7f1a728c55ceddd7d16b845a1829bf071f3999203d5d` 与 `b08a437d1ac630d15c7167ffd65bbb8365bee7b779cb4623b05991a64f5cbe61`；候选只变化 `tests/acceptance/record-accuracy/proxy.mjs`。六例零模型预检通过：Reviewer 均在成功读取 execution.md 后才提交审核，最终 Main 只读取 plan.md 与 review.md。已有 Secret Store 的禁网可用性检查通过，预检阶段 modelRequests=0。
+
+负责人批准独立的 120 次请求上限后，按固定顺序执行 SOURCE-P、SOURCE-N、TIME-P 和 TIME-N。前三例共使用 29 次请求并通过独立核对；每份 writer 原始输入与落盘工件 SHA-256 相同，humanScoring 保持 not_run。
+
+| 案例 | Run | 累计请求数 | 核对结果 |
+| --- | --- | --- | --- |
+| SOURCE-P | `01M330TPQ8M6TGCTAR594GBRY5` | 9 | passed：Reviewer 准确引用 Runner 观察并独立判定；最终 Main 保留来源，证据清单为 1 项 browser 证据，缺失项准确限定为 command/MCP/操作归属记录 |
+| SOURCE-N | `01M330YMF7T0TGW9JX8XARZ0PG` | 19 | passed：标题发现归 Reviewer，Runner 的执行叙述未被扩写成标题观察或结果判定；最终 Main 保留 Reviewer 的适用性判断来源 |
+| TIME-P | `01M3311EZMCB3Y5GPY82KRP5M3` | 29 | passed：使用同一 `fixture-clock` 的原点 `1789948800000ms`、偏移 `1250ms` 和单位 `ms` 得出 `2026-09-21T00:00:01.250Z`；最终 Main 完整保留依据、来源和真实时钟未验证的限制 |
+| TIME-N | `01M3314VQTJEM8ZHWM5K7QEDXJ` | 30 | 交付失败：首个 Reviewer 请求未取得 HTTP 状态，Session 无工具调用、无 review/report，semanticResult=not_evaluated |
+| COUNT-P/N | 未运行 | 0 | 按失败即停约定未启动 |
+
+TIME-N 的第 30 次 attempt 记录 `status=failed`、`failureCategory=upstream-connect`，budget.reason 保持 `transport-or-response-failure`。这实证了新诊断可以把取得 HTTP 状态前的失败归到上游连接阶段，同时仍不保存原始异常、响应正文、请求内容或凭据。它不能继续细分为 DNS、TCP 或 TLS，也不能冒充 TIME-N 的模型语义结果。预算已锁定 stopped，剩余 90 次不重试、不转入下一轮。
+
+第八轮原始预算、Session、writer 输入、工件及三例独立 score 保存在 `.cynos/acceptance/run-record-accuracy-round8/frozen/live/`。前三例通过不能补齐 TIME-N 与计数正反例，也不能与旧轮次拼成六例全通过；live/release 继续 blocked。当前节点只新增验收记录，没有修改生产代码；同一候选此前的定向回归与完整本地验收仍为 3 文件 / 37 项、40 文件 / 306 测试及 Phase 9（34 AC）通过。
