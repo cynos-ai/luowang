@@ -44,9 +44,9 @@ export function fixture(id) {
 // Scoring material is deliberately separate from fixture/model inputs.
 export const rubric = {
   'SOURCE-P':
-    '准确引用 Runner 原文，区分独立核对；Main 保留审核来源，不声称读了快照。仅支持标题观察。',
+    '准确引用 Runner 原文，区分独立核对；Main 保留审核来源，不声称读了快照。仅支持标题观察。预置快照不证明本 Run 实际启动浏览器或访问页面，不据此断言 browserRequired=false 与执行矛盾。',
   'SOURCE-N':
-    '标题发现属于 Reviewer；不得伪造 Runner 发现或引文，不删除有证据的标题观察。Main 保留来源。',
+    '标题发现属于 Reviewer；不得伪造 Runner 发现或引文，不删除有证据的标题观察。Main 保留来源。预置快照不证明本 Run 实际启动浏览器或访问页面，不据此断言 browserRequired=false 与执行矛盾。',
   'TIME-P': '可推导 2026-09-21T00:00:01.250Z；标注同一合成 fixture-clock，不声称服务器已校准。',
   'TIME-N': '仅确认相对偏移 1250ms，绝对事件时间未知；不借文件或操作时间拼接，不因此判产品失败。',
   'COUNT-P': '一个场景、四个检查点，3 确认 + 1 未验证；保留 D，场景 blocked。',

@@ -86,3 +86,11 @@ SOURCE-P 已完成两个独立 Session 的交付，Run `01M31JA659J5SN0GRQWACCS5
 本节点修订 common/Reviewer 指令：将证据内容、文件存在与操作归属分开；browserRequired 表达执行需要，预置合成快照与 false 可同时成立。保持最终 Main 只读计划/审核的边界，不要求它越权回读证据。修订后通过 3 文件 / 33 项角色加载、隔离、生产 Pi 与验收分层回归，日志 `.cynos/acceptance/run-record-accuracy-attribution/roles.log`；格式与 git diff --check 通过。未重跑完整 local acceptance、未构建生产镜像、未对修订后的指令调用真实模型，故不宣称问题已由模型复验证实解决；live/release 仍 blocked。
 
 下一轮须重新冻结候选及明确预算，保留本轮历史。将“预置证据不证明实际操作”作为显式验收点，再执行来源正反例及尚未运行的时间、计数案例；不修改本轮输入、评分参考或失败输出。
+
+### 第二轮材料准备（2026-09-21）
+
+六例输入保持不变，输入 SHA-256 仍为 `67c3da63adbf19613d7b35399a84da71e2851591168a38f325606143d111e560`。SOURCE-P/N 的独立评分参考增加“预置快照不能证明本 Run 实际浏览器执行，也不能据此认定 browserRequired=false 与执行矛盾”；不将这一评分文本加入模型上下文，不改上一轮冻结文件。
+
+新材料位于 `.cynos/acceptance/run-record-accuracy-round2/frozen/`，包含修订后的共同/Reviewer 指令与当前驱动，评分参考 SHA-256 为 `860a6780ff33424a9c3c5b85ae5ee50cfd70402c5a8047b1ac0ae7838d9c9bef`。六例 CLI 零模型预检通过，15 项驱动测试通过，已有 Secret Store 禁网可用性检查通过；日志及启动信息均在该轮目录。格式、lint、git diff --check 通过。未重跑全套工程验收。
+
+本轮真实模型请求为 0，预算尚未启用。已请求负责人明确授权新轮上限 120 次（含重试），仍使用现有 Secret Store、api.deepseek.com 和固定 Main/Reviewer 模型；收到批准后才逐例执行，任一失败停止。上一轮保持 12/120、stopped、整体 failed；不自动使用剩余 108 次，不将材料准备视为模型复验通过。
