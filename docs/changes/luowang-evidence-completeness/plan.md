@@ -209,3 +209,11 @@ SOURCE-N 的 review.md 已明确写明 Runner 的“未检查错误提示”与�
 TIME-N 的第 30 次 attempt 记录 `status=failed`、`failureCategory=upstream-connect`，budget.reason 保持 `transport-or-response-failure`。这实证了新诊断可以把取得 HTTP 状态前的失败归到上游连接阶段，同时仍不保存原始异常、响应正文、请求内容或凭据。它不能继续细分为 DNS、TCP 或 TLS，也不能冒充 TIME-N 的模型语义结果。预算已锁定 stopped，剩余 90 次不重试、不转入下一轮。
 
 第八轮原始预算、Session、writer 输入、工件及三例独立 score 保存在 `.cynos/acceptance/run-record-accuracy-round8/frozen/live/`。前三例通过不能补齐 TIME-N 与计数正反例，也不能与旧轮次拼成六例全通过；live/release 继续 blocked。当前节点只新增验收记录，没有修改生产代码；同一候选此前的定向回归与完整本地验收仍为 3 文件 / 37 项、40 文件 / 306 测试及 Phase 9（34 AC）通过。
+
+### 第九轮连接失败复现（2026-09-22）
+
+第九轮复用第八轮逐字节相同的 inputs.json、rubric.json、角色指令和候选 manifest；当前提交 `d2efd06030c290705b6f8ac2d46037468fa78f96` 只比第八轮候选多 README 与本计划的验收记录，不改变 manifest 内的被评估源码。六例零模型预检再次通过，Reviewer 均在成功读取 execution.md 后才可写审核，最终 Main 只读取 plan.md 与 review.md；Secret Store 禁网检查通过，modelRequests=0。
+
+负责人批准独立的 120 次请求上限后启动 SOURCE-P，Run `01M331Z0KHHCP84ZKK5R67GT2S`。首个 `deepseek-v4-flash-vision-exp` 请求未取得 HTTP 状态，attempt 记录 `status=failed`、`failureCategory=upstream-connect`，budget.reason 保持 `transport-or-response-failure`。Reviewer Session 无工具调用，未生成 review.md、report.md 或可评分的模型语义结果；humanScoring=not_run、semanticResult=not_evaluated。
+
+驱动在 1/120 次请求后锁定本轮，SOURCE-N、TIME-P/N、COUNT-P/N 均未运行，剩余 119 次不重试也不转入下一轮。该结果再次证明连接阶段失败可以被稳定识别，但不能区分 DNS、TCP 或 TLS，也不能说明模型语义能力。第九轮没有暴露新的产品代码问题，因此不为同一外部连接失败修改生产代码；下一步先在相同容器网络路径做不带凭据、不计模型请求的连接诊断，再决定是否申请新的模型轮次。live/release 继续 blocked。
