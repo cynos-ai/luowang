@@ -183,3 +183,11 @@ SOURCE-N 的 review.md 已明确写明 Runner 的“未检查错误提示”与�
 首个 Reviewer 请求在获得任何 HTTP 状态前失败，预算记录只有一次 `deepseek-v4-flash-vision-exp` 尝试，状态为 failed；Reviewer Session 没有工具调用，result.status=failed，未形成 review.md、report.md 或可判分的模型语义结果。驱动按传输失败规则将第六轮锁定在 1/120，SOURCE-N、TIME-P/N、COUNT-P/N 均未运行，剩余 119 次不重试也不转入后续轮次。humanScoring 与 semanticResult 均保持 not_run/not_evaluated。
 
 本轮还暴露了评估驱动的诊断覆盖：代理已因传输或响应失败停止预算，CLI 外层捕获又把 reason 改成更泛的 case-delivery-failure。修订控制 helper，使外层只在预算尚未停止时写交付失败；已存在的最早传输停止原因保持不变。新增回归同时验证已有原因不被覆盖，以及非传输的普通交付失败仍记录 case-delivery-failure。角色加载、记录精度和生产 Pi 定向回归 3 文件 / 37 项通过。当前源码的 quality 镜像 `sha256:1805ef5a37e806a0cfee2c2057ff7833466acc987e268ef396b8ed4fe81190e0` 完整本地验收通过，覆盖 40 文件 / 306 测试、格式、lint、类型检查、构建、e2e 与 Phase 9（34 AC）；live/release 因未提供外部联合验收输入保持 blocked。第六轮原始 budget.json 不修改，无法从已覆盖的字段进一步断言 DNS、连接、超时或响应流中的哪一种具体原因；修订后的诊断行为仍需下一轮真实失败才能实证。
+
+### 第七轮传输复现与阶段诊断（2026-09-22）
+
+第七轮冻结提交 `0405f792e2c3637df7a55e907f5daedc92cfca57` 与 quality 镜像 `sha256:1805ef5a37e806a0cfee2c2057ff7833466acc987e268ef396b8ed4fe81190e0`。inputs.json、rubric.json 和所有角色指令与第六轮逐字节相同，manifest 只变化 `tests/acceptance/record-accuracy/cli.mjs` 与 `control.mjs`。六例零模型预检、工具顺序和 Secret Store 禁网检查通过，modelRequests=0。负责人批准新的 120 次请求上限后启动 SOURCE-P。
+
+首个 Reviewer 请求再次在获得 HTTP 状态前失败，Reviewer Session 没有工具调用，也没有 review.md、report.md 或可评分的模型语义结果。新驱动成功保留 budget.reason=`transport-or-response-failure`，证明 CLI 不再覆盖先前停止原因；本轮在 1/120 次请求后锁定，剩余五例未运行，119 次不重试也不转入后续轮次。humanScoring 与 semanticResult 保持 not_run/not_evaluated。
+
+固定 reason 仍把请求建立、超时、HTTP 拒绝、响应流损坏和缺失结束标记合在一起；本轮 attempt 没有 httpStatus，只能排除“已记录 HTTP 状态后失败”，不能再追溯具体阶段。评估代理改为在 attempt 中写受控 failureCategory：upstream-connect、upstream-timeout、upstream-http、upstream-missing-body、response-stream-error、response-too-large、response-incomplete 或 consumer-disconnected，不保存原始异常消息、响应正文、请求内容或凭据。已有第七轮 budget.json 保持不变；新增本地故障回归分别覆盖 HTTP、超时、响应流错误和缺结束标记。角色加载、记录精度和生产 Pi 定向回归 3 文件 / 37 项通过。当前源码的 quality 镜像 `sha256:16cb9d5f0b24944906e052dd82f78a86e62e11a2bca1562f036366303f8b0bec` 完整本地验收通过，覆盖 40 文件 / 306 测试、格式、lint、类型检查、构建、e2e 与 Phase 9（34 AC）；live/release 因未提供外部联合验收输入保持 blocked。新的 failureCategory 尚未经过真实失败实证。

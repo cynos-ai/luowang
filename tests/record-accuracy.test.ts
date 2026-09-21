@@ -228,6 +228,16 @@ test.each(['http-error', 'stream-error', 'missing-done', 'timeout'])(
       expect(calls).toBe(1);
       expect(budget.state.stopped).toBe(true);
       expect(budget.state.requests).toBe(1);
+      expect(budget.state.attempts[0].failureCategory).toBe(
+        (
+          {
+            'http-error': 'upstream-http',
+            'stream-error': 'response-stream-error',
+            'missing-done': 'response-incomplete',
+            timeout: 'upstream-timeout',
+          } as Record<string, string>
+        )[failure],
+      );
     } finally {
       server.closeAllConnections();
       await new Promise<void>((resolve) => server.close(() => resolve()));
