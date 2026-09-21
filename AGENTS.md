@@ -11,6 +11,7 @@
 
 - 语义判断与客观事实的最新规则以 `docs/changes/luowang-model-semantic-decisions/spec.md` 为准：Main 显式声明浏览器执行需要，不用正则判断计划含义；安全和格式校验保留。
 - MCP启动、工件可重写和审核证据读取的最新规则以 `docs/changes/luowang-retest-followup/spec.md` 为准：Reviewer可受控读取本Run的浏览器快照/日志，不开放任意文本；工具路由错误不冒充证据损坏，真实读取或完整性失败仍阻塞。
+- 截图采集与取证状态的最新规则以 `docs/changes/luowang-screenshot-capture-integrity/spec.md` 为准：禁止为截图清空/覆盖表单或隐去待验证内容；合成测试截图按新计划改为警告和检测标签，文字保护复用 run-evidence-followup。报告保持自动归档、人工事后审核，不新增发布门禁；具体实现进度见新目录 plan.md，不把需求写成已完成事实。
 
 ## 仓库与分支
 
