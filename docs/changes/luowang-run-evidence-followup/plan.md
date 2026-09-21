@@ -181,6 +181,15 @@
 - 证明为该目录 manifest.json、offline/screenshot-stable/result.json、live/budget.json、live/screenshot-stable/{result,sessions,assessment}.json、原始 operation/PNG 与 live-audit.json。assessment 绑定结果和图片哈希，nextCaseAllowed=false；未改产品代码或历史证据。
 - 下一步先检查现有 Playwright snapshot 与 Evidence Store 接口，设计受控页面字段值登记及可审核状态证据，明确采集范围、失败行为和不改变页面的约束；先做零模型回归，再决定新候选定向复验。保留公开源码常量省略测试，避免自动脱敏掩盖模型行为；不靠反复补提示或重跑追求通过。PR #71 仍为草稿，三个 Issue 开放，live/release=blocked、humanScoring=not_run。
 
+## 内联快照字段登记与内容证据修复（2026-09-21）
+
+- 新增固定 Playwright 内联 YAML 解析，识别 textbox/searchbox/spinbutton/combobox 的明确标量值，保留精确字符串而不把数字样式转换后再脱敏。字段值先进入已有 Run 内存敏感值集合；返回文本、保存的快照正文和后续 execution 共用现有脱敏 owner，不新增 Secret 库或持久化原值。
+- command 证据现在可以保存脱敏内联快照正文，工具反馈明确区别正文与纯时序回执；Reviewer 复用 read_command_evidence、Run 绑定和完整性检查，不开放任意读取。显式 browser_snapshot 禁止 filename；结构不支持、正文缺失、登记/脱敏或证据捕获失败时返回固定失败，不把原始结果回传作为降级。
+- 首次真实 MCP 检查发现自动导航生成的是快照文件链接，修正为只识别显式内联快照；自动文件链接仍保留为时序事实，不能算正文。随后两个原生 SDK/MCP 入口的零模型测试均通过，真实字段值在 Agent 返回文本、上传工件和后续脱敏中消失，标题保留，原有 Cookie 重放关联正常。
+- 新回归覆盖嵌套/多行/数值形态字段、Run 隔离、非法 YAML/别名/字段形态、指定原始文件、登记异常；不会把普通标题当成凭据。保留原公开源码常量省略测试，不以自动脱敏掩盖模型行为。页面自动生成的原文件、未暴露字段、图片/正文和任意片段不在新增保证范围，严格格式遇到未支持页面形态会保留阻塞。
+- 最终在现有 screenshot-quality 容器挂载当前 src/tests/scripts/resources/docs 与工作流运行完整 local acceptance：**37 文件 / 273 项测试**，format/lint/typecheck/build/e2e 和工程专项全部通过；报告为 `.cynos/acceptance/run-snapshot-privacy-fix/acceptance/2026-09-21T03-42-53-732Z-local/report.json`，最终日志为 quality-final.log。首次原生测试因把自动文件链接当作内联格式而失败，修正后通过；第一轮完整检查后补充了反馈与上传断言，因此以最终第二轮结果为准。
+- 原失败 Run 和图片未修改，未启动模型复验、未归档报告或写入 Issue。本轮工程检查结果另记录于 `.cynos/acceptance/run-snapshot-privacy-fix/`；下一步固定含新解析器的候选，先核对镜像与脱敏快照可读性，再安排有界的截图行为复验，仍保留模型判断与工程保护两项独立结论。live/release=blocked，humanScoring=not_run，PR #71 保持草稿。
+
 ## 完成记录
 
 - 计划已建立；Docker Desktop 的 desktop-linux 上下文可用。此前普通沙箱读取配置失败导致默认 endpoint 不可用，提升权限后的只读检查已确认 daemon 正常。

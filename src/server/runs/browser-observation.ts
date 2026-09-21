@@ -1,5 +1,6 @@
 import type { InlineExtension } from '@earendil-works/pi-coding-agent';
 import { redactCommandText, type RunEvidenceStore } from './evidence.js';
+import { readInlineBrowserSnapshot } from './browser-snapshot.js';
 
 const RECORDED_TOOLS = new Set([
   'browser_cookie_list',
@@ -44,11 +45,14 @@ export function createBrowserObservationExtension(options: {
           };
         if (event.input.server !== undefined && event.input.server !== 'playwright') return;
         const args = parseArguments(event.input.args);
-        if (RECORDED_TOOLS.has(tool) && args?.filename !== undefined) {
+        if (
+          (RECORDED_TOOLS.has(tool) || tool === 'browser_snapshot') &&
+          args?.filename !== undefined
+        ) {
           return {
             block: true,
             reason:
-              '重放/网络证据请省略 filename，返回文本由 Harness 脱敏捕获；不要把原始请求头另存文件。',
+              '重放/网络/快照证据请省略 filename，返回文本由 Harness 脱敏捕获；不要把原始内容另存文件。',
           };
         }
         starts.set(event.toolCallId, {
@@ -71,6 +75,14 @@ export function createBrowserObservationExtension(options: {
             .filter((part) => part.type === 'text')
             .map((part) => part.text)
             .join('\n');
+          const snapshot = readInlineBrowserSnapshot(raw);
+          if (snapshot) {
+            if (!options.store.registerSensitiveValue || !options.store.redactText)
+              throw new Error('Snapshot privacy unavailable');
+            for (const value of snapshot.fieldValues) options.store.registerSensitiveValue(value);
+          }
+          if (tool === 'browser_snapshot' && !snapshot && !event.isError && !details.error)
+            throw new Error('Snapshot content unavailable');
           const references: Array<{
             source: string;
             name: string;
@@ -130,8 +142,9 @@ export function createBrowserObservationExtension(options: {
             isError: event.isError || Boolean(details.error),
             arguments: safeArguments,
             credentialReferences: references.map((ref) => ({ ...ref, name: clean(ref.name) })),
-            output:
-              tool.startsWith('browser_cookie_') || !RECORDED_TOOLS.has(tool)
+            output: snapshot
+              ? options.store.redactText!(snapshot.text)
+              : tool.startsWith('browser_cookie_') || !RECORDED_TOOLS.has(tool)
                 ? '[Output omitted; this receipt records operation timing, not a business verdict]'
                 : clean(raw),
             limitation:
@@ -141,10 +154,14 @@ export function createBrowserObservationExtension(options: {
           const id = await options.store.captureObservation(options.targetCommit, observation);
           return {
             content: [
-              ...event.content,
+              ...event.content.map((part) =>
+                snapshot && part.type === 'text'
+                  ? { ...part, text: options.store.redactText!(part.text) }
+                  : part,
+              ),
               {
                 type: 'text' as const,
-                text: `Harness 已捕获脱敏证据 ${id}；Reviewer 通过 read_command_evidence 读取。`,
+                text: `Harness 已捕获脱敏证据 ${id}；Reviewer 通过 read_command_evidence 读取。${snapshot ? '该记录包含脱敏后的内联快照正文。' : !RECORDED_TOOLS.has(tool) ? '该记录仅含操作时序，不含页面正文，不能引用为页面内容证据。' : ''}`,
               },
             ],
           };
@@ -152,7 +169,6 @@ export function createBrowserObservationExtension(options: {
           options.onFailure();
           return {
             content: [
-              ...event.content,
               {
                 type: 'text' as const,
                 text: 'Harness 捕获重放证据失败，不能确认相关审核证据已保存。',

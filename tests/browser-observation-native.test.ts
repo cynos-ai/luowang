@@ -36,7 +36,9 @@ it.each(['mcp', 'mcp__playwright'])(
         response.statusCode = 401;
       }
       response.setHeader('content-type', 'text/html');
-      response.end('<h1>Local replay fixture</h1>');
+      response.end(
+        '<h1>Local replay fixture</h1><input aria-label="Account" value="native-form-account"><input aria-label="Passphrase" type="password" value="native-form-passphrase">',
+      );
     });
     let session: Awaited<ReturnType<typeof createAgentSession>>['session'] | undefined;
     try {
@@ -153,7 +155,7 @@ it.each(['mcp', 'mcp__playwright'])(
           !(result.details as Record<string, unknown>)?.error,
           JSON.stringify(result.content),
         );
-        await session.extensionRunner.emitToolResult({
+        const observed = await session.extensionRunner.emitToolResult({
           type: 'tool_result',
           toolName: proxyName,
           toolCallId,
@@ -162,12 +164,20 @@ it.each(['mcp', 'mcp__playwright'])(
           details: result.details,
           isError: false,
         });
-        return result.content
+        return (observed?.content ?? result.content)
           .filter((part) => part.type === 'text')
           .map((part) => part.text)
           .join('\n');
       };
-      await call('browser_navigate', { url: `${baseUrl}/login` });
+      const page = await call('browser_navigate', { url: `${baseUrl}/login` });
+      assert.doesNotMatch(page, /native-form-account|native-form-passphrase/);
+      const snapshotText = await call('browser_snapshot', {});
+      assert.match(snapshotText, /Local replay fixture/);
+      assert.doesNotMatch(snapshotText, /native-form-account|native-form-passphrase/);
+      assert.equal(
+        store.redactText!('native-form-account / native-form-passphrase'),
+        '[REDACTED] / [REDACTED]',
+      );
       await call('browser_cookie_get', { name: 'session' });
       await call('browser_navigate', { url: `${baseUrl}/logout` });
       await call('browser_cookie_set', {
@@ -192,6 +202,9 @@ it.each(['mcp', 'mcp__playwright'])(
           .map(async (id) => JSON.parse(await store.readCommandEvidence(id)).observation),
       );
       const get = observations.find((record) => record.tool === 'browser_cookie_get');
+      const snapshot = observations.find((record) => record.tool === 'browser_snapshot');
+      assert.match(snapshot.output, /Local replay fixture/);
+      assert.doesNotMatch(snapshot.output, /native-form-account|native-form-passphrase/);
       const set = observations.find((record) => record.tool === 'browser_cookie_set');
       const network = observations.find((record) => record.tool === 'browser_network_request');
       assert.equal(get.credentialReferences.length, 1, JSON.stringify(get));
@@ -209,7 +222,10 @@ it.each(['mcp', 'mcp__playwright'])(
         headers.credentialReferences[0].reference,
         get.credentialReferences[0].reference,
       );
-      for (const body of transport.objects.values()) assert.ok(!body.toString().includes(cookie));
+      for (const body of transport.objects.values()) {
+        assert.ok(!body.toString().includes(cookie));
+        assert.doesNotMatch(body.toString(), /native-form-account|native-form-passphrase/);
+      }
     } finally {
       if (session) {
         await session.extensionRunner.emit({ type: 'session_shutdown', reason: 'quit' });

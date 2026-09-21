@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, it } from 'vitest';
 import { createBrowserObservationExtension } from '../src/server/runs/browser-observation.js';
+import { readInlineBrowserSnapshot } from '../src/server/runs/browser-snapshot.js';
 import {
   createRunEvidenceStore,
   createReviewerEvidenceTools,
@@ -14,9 +15,70 @@ import { RunWorkspace } from '../src/server/runs/workspace.js';
 import { localEvidenceTransport } from './acceptance/local-evidence.js';
 
 const directories: string[] = [];
+it('decodes nested and multiline snapshot field values without treating headings as credentials', () => {
+  const snapshot = readInlineBrowserSnapshot(
+    '### Snapshot\n```yaml\n- generic:\n  - heading "Public label"\n  - textbox "Notes": |-\n      first line\n      second line\n  - spinbutton "Code": 12345\n```',
+  );
+  assert.deepEqual(snapshot?.fieldValues, ['first line\nsecond line', '12345']);
+  for (const text of [
+    '- textbox "A": &value secret\n- textbox "B": *value',
+    '- textbox "A": [secret]',
+    '- textbox "A": secret\n  textbox "A": other',
+  ])
+    assert.throws(() => readInlineBrowserSnapshot(`### Snapshot\n\`\`\`yaml\n${text}\n\`\`\``));
+});
 afterEach(async () => {
   for (const directory of directories.splice(0))
     await rm(directory, { recursive: true, force: true });
+});
+
+it.each(['mcp', 'mcp__playwright'])(
+  'captures sanitized inline snapshots through %s and retains values for later writing',
+  async (gateway) => {
+    const f = await fixture(gateway);
+    const result = await f.call(
+      'browser_navigate',
+      {},
+      '### Snapshot\n```yaml\n- heading "Login rejected"\n- textbox "Account" [ref=e1]: page-only-account\n- textbox "Passphrase" [ref=e2]: "page-only-passphrase"\n```',
+    );
+    assert.doesNotMatch(JSON.stringify(result), /page-only-account|page-only-passphrase/);
+    await f.store.uploadAll();
+    const record = (await f.records())[0];
+    assert.match(record.observation.output, /Login rejected/);
+    assert.doesNotMatch(JSON.stringify(record), /page-only-account|page-only-passphrase/);
+    assert.equal(
+      f.store.redactText!('未记录 page-only-account 和 page-only-passphrase'),
+      '未记录 [REDACTED] 和 [REDACTED]',
+    );
+    const other = await fixture();
+    assert.equal(other.store.redactText!('page-only-account'), 'page-only-account');
+  },
+);
+
+it('rejects file snapshots and fails closed on unknown or unavailable snapshot protection', async () => {
+  const f = await fixture();
+  assert.ok(
+    ((await f.call('browser_snapshot', { filename: 'raw.yml' }, 'unused')) as { block: boolean })
+      .block,
+  );
+  for (const raw of [
+    '### Snapshot\n[Snapshot](raw.yml)',
+    '### Snapshot\n```yaml\n- textbox "Account": {unknown: raw-private-value}\n```',
+  ]) {
+    const result = await f.call('browser_snapshot', {}, raw);
+    assert.doesNotMatch(JSON.stringify(result), /raw-private-value|raw.yml/);
+  }
+  f.store.registerSensitiveValue = () => {
+    throw new Error('raw-private-value');
+  };
+  const result = await f.call(
+    'browser_snapshot',
+    {},
+    '### Snapshot\n```yaml\n- textbox "Account": raw-private-value\n```',
+  );
+  assert.doesNotMatch(JSON.stringify(result), /raw-private-value/);
+  assert.equal(f.failures(), 3);
+  assert.equal(f.store.commandEvidenceIds().length, 0);
 });
 
 async function fixture(gateway = 'mcp', operationContext?: () => Record<string, unknown>) {
@@ -299,7 +361,11 @@ it('keeps cross-scenario and auxiliary evidence unchanged when a second scenario
   // its business meaning or retroactively relabel it when DELETE is started later.
   await f.call('browser_click', { ref: 'delete-account' }, 'Account deleted');
   await invoke('finish_scenario', { scenarioId: 'SESSION' });
-  await f.call('browser_snapshot', {}, 'Auxiliary inspection');
+  await f.call(
+    'browser_snapshot',
+    {},
+    '### Snapshot\n```yaml\n- heading "Auxiliary inspection"\n```',
+  );
   const before = await f.records();
   await invoke('start_scenario', { scenarioId: 'DELETE' });
   await invoke('finish_scenario', { scenarioId: 'DELETE' });
