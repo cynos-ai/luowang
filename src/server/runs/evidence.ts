@@ -13,6 +13,7 @@ import type { CommandRunResult } from './command-runner.js';
 import type { OssAdapter } from '../storage/oss.js';
 import { contentTypeFor, uploadEvidenceBody, OssError } from '../storage/oss.js';
 import { RunWorkspace, isBrowserRecordName, type RunEvidenceFile } from './workspace.js';
+import { readBrowserSnapshotText } from './browser-snapshot.js';
 
 const MAX_REVIEW_IMAGE_BYTES = 16 * 1024 * 1024;
 
@@ -60,6 +61,12 @@ export interface RunEvidenceStore {
   browserEvidenceIds?(): string[];
   readBrowserEvidence?(filename: string): Promise<string>;
   captureScreenshot?(filename: string, inspection: ScreenshotInspection): Promise<void>;
+  captureBrowserSnapshot?(filename: string): Promise<{
+    filename: string;
+    capturedSha256: string;
+    status: 'sanitized-local';
+    readTool: 'read_browser_evidence';
+  }>;
 }
 
 export interface EvidenceReadResult {
@@ -91,6 +98,33 @@ class DefaultRunEvidenceStore implements RunEvidenceStore {
   private readonly runtimeSecrets = new Set<string>();
   private readonly credentialReferences = new Map<string, string>();
   private readonly screenshots = new Map<string, ScreenshotInspection>();
+  private readonly snapshotHashes = new Map<string, string>();
+  private readonly failedSnapshots = new Set<string>();
+
+  async captureBrowserSnapshot(filename: string) {
+    if (!filename.startsWith('page-') || !isBrowserRecordName(filename))
+      throw new Error('快照文件名无效');
+    this.failedSnapshots.add(filename);
+    const body = await this.workspace.readEvidence(filename);
+    const known = this.snapshotHashes.get(filename);
+    if (known) {
+      if (createHash('sha256').update(body).digest('hex') !== known)
+        throw new Error('快照文件内容已改变');
+    } else {
+      const snapshot = readBrowserSnapshotText(decodeBrowserRecord(body));
+      for (const value of snapshot.fieldValues) this.registerSensitiveValue(value);
+      const clean = this.redactText(snapshot.text);
+      await this.workspace.replaceBrowserEvidence(filename, clean);
+      this.snapshotHashes.set(filename, createHash('sha256').update(clean).digest('hex'));
+    }
+    this.failedSnapshots.delete(filename);
+    return {
+      filename,
+      capturedSha256: this.snapshotHashes.get(filename)!,
+      status: 'sanitized-local' as const,
+      readTool: 'read_browser_evidence' as const,
+    };
+  }
 
   async captureScreenshot(filename: string, inspection: ScreenshotInspection): Promise<void> {
     const body = await this.workspace.readEvidence(filename);
@@ -186,11 +220,19 @@ class DefaultRunEvidenceStore implements RunEvidenceStore {
     if (!file) throw new Error(`证据文件不存在：${filename}`);
     let browserBody: Buffer | undefined;
     if (isBrowserRecordName(filename)) {
+      if (this.failedSnapshots.has(filename)) throw new Error('快照采集失败，拒绝上传');
+      if (filename.startsWith('page-') && !this.snapshotHashes.has(filename))
+        await this.captureBrowserSnapshot(filename);
       const original = await this.workspace.readEvidence(filename);
+      const capturedHash = this.snapshotHashes.get(filename);
+      if (capturedHash && createHash('sha256').update(original).digest('hex') !== capturedHash)
+        throw new Error('快照文件内容已改变');
       const text = decodeBrowserRecord(original);
       const clean = redactCommandText(text, this.secrets(), Number.MAX_SAFE_INTEGER);
       if (Buffer.byteLength(clean) > 1024 * 1024) throw new Error('脱敏浏览器记录超过大小限制');
       if (clean !== text) await this.workspace.replaceBrowserEvidence(filename, clean);
+      if (capturedHash)
+        this.snapshotHashes.set(filename, createHash('sha256').update(clean).digest('hex'));
       browserBody = Buffer.from(clean);
     }
     if (this.commandEvidence.has(filename)) {

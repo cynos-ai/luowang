@@ -7,7 +7,7 @@
 3. **类别预检节点**：A3 集中工具证据规则，实际发现清单预检与运行时兜底，验证未知工具不能静默放过；通过检查后 push。
 4. **指令及模型节点**：修来源、时间和计数指令，先做零模型加载检查；冻结六个正反案例及判分标准，明确预算后单独验证。不得以此安排提前合并 #71，不把工程通过算成模型通过。
 
-每个节点更新实际完成证明。禁止改历史样本追分；不新增发布门禁、不兼容旧格式。当前 A2/A3/B 尚未实施，live/release=blocked，humanScoring=not_run。
+每个节点更新实际完成证明。禁止改历史样本追分；不新增发布门禁、不兼容旧格式。A1/A2 工程已实现，A3/B 尚未实施，live/release=blocked，humanScoring=not_run。
 
 ## A1 完成证明（2026-09-21）
 
@@ -15,3 +15,11 @@
 - 真实 MCP 专项 2 文件 / 20 测试通过，覆盖随机合成填写、执行前登记、返回文字保护及既有重放链路；单元回归覆盖同值关联、Run 隔离、异常和否认句中的原值脱敏。保护通过不代表模型声明真实。
 - 最终完整 local acceptance 退出 0：38 文件 / 280 测试，以及格式、lint、类型检查、构建、e2e 和 Phase 9（34 AC）全部通过。证明目录为 `.cynos/acceptance/run-filling-evidence/`，最终报告为 `acceptance/2026-09-21T06-11-34-522Z-local/report.json`，日志为 `quality-final.log`。
 - 模型请求为 0；local=passed，live/release=blocked，humanScoring=not_run。下一节点补导航快照登记与操作关联，不改历史工件。
+
+## A2 实现与验证（2026-09-21）
+
+- 从真实 MCP 结果关联本 Run 的快照文件，复用结构解析器在采集时登记字段、保存脱敏正文；操作记录包含文件名、采集哈希、已保存状态及读取工具。沿用 Runner 后统一上传和 Reviewer browser evidence 通道，不新增任意读取权限。
+- 采集失败不回传原始结果，标记证据失败并禁止该文件上传。上传前验证本地采集字节，允许既有晚登记值再次脱敏；最终上传及读取事实仍由 Evidence Store 记录。
+- 3 文件 / 34 项专项通过，包含两个真实 MCP 入口的导航登记、脱敏落盘及上传后读取；随机合成字段关联、缺失、越界、无效 YAML 和采集后篡改回归。首次专项中的旧任意文本快照 fixture 已改为固定 YAML，超长日志截断仍单独验证，不保留旧快照格式兼容。
+- 证明存放于 `.cynos/acceptance/run-navigation-evidence/`。本次不调用模型，不修改页面/图片或历史报告；A3 预检和 B 族模型验收继续待办。
+- 首轮完整检查发现一处类型推断错误及格式问题，修正后重新验收。最终 `quality-final.log` 和 `acceptance/2026-09-21T06-42-33-093Z-local/report.json` 确认退出 0：38 文件 / 283 测试、格式、lint、类型检查、构建、e2e、Phase 9（34 AC）全部通过。local=passed，live/release=blocked，humanScoring=not_run。

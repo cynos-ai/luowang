@@ -1,18 +1,37 @@
 import { parseDocument } from 'yaml';
+import { isBrowserRecordName } from './workspace.js';
+
+export function readBrowserSnapshotFile(raw: string): string | undefined {
+  if (!raw.includes('### Snapshot')) return undefined;
+  const matches = [...raw.matchAll(/^### Snapshot\r?\n- \[Snapshot\]\(([^\r\n]+)\)(?:\r?\n|$)/gm)];
+  if (!matches.length) return undefined;
+  const filename = matches[0][1].replace(/^\.\//, '');
+  if (
+    matches.length !== 1 ||
+    raw.split('### Snapshot').length !== 2 ||
+    !filename.startsWith('page-') ||
+    !isBrowserRecordName(filename)
+  )
+    throw new Error('Unsupported snapshot file reference');
+  return filename;
+}
 
 /** Parse the pinned MCP inline YAML snapshot, never arbitrary tool text or filenames. */
 export function readInlineBrowserSnapshot(
   raw: string,
 ): { text: string; fieldValues: string[] } | undefined {
   if (!raw.includes('### Snapshot')) return undefined;
-  // Automatic navigation snapshots are file links, not inline content evidence.
-  if (/^### Snapshot\r?\n- \[Snapshot\]\([^\r\n]+\)\s*$/m.test(raw)) return undefined;
+  if (readBrowserSnapshotFile(raw)) return undefined;
   const matches = [
     ...raw.matchAll(/^### Snapshot\r?\n```yaml\r?\n([\s\S]*?)\r?\n```(?:\r?\n|$)/gm),
   ];
   if (matches.length !== 1 || raw.split('### Snapshot').length !== 2)
     throw new Error('Unsupported snapshot envelope');
   const text = matches[0][1];
+  return readBrowserSnapshotText(text);
+}
+
+export function readBrowserSnapshotText(text: string): { text: string; fieldValues: string[] } {
   if (Buffer.byteLength(text) > 64 * 1024) throw new Error('Snapshot too large');
   const document = parseDocument(text, { uniqueKeys: true, schema: 'failsafe' });
   if (document.errors.length || document.warnings.length) throw new Error('Invalid snapshot YAML');

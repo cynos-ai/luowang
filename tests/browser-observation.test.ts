@@ -17,6 +17,60 @@ import { localEvidenceTransport } from './acceptance/local-evidence.js';
 
 const directories: string[] = [];
 it.each(['mcp', 'mcp__playwright'])(
+  'links %s navigation snapshots to sanitized readable files',
+  async (gateway) => {
+    const f = await fixture(gateway);
+    const filename = 'page-2026-09-21T00-00-00-001Z.yml';
+    const secret = randomUUID();
+    await writeFile(
+      join(f.workspace.evidenceDirectory, filename),
+      `- heading "Rejected"\n- textbox "Account": ${secret}\n`,
+    );
+    const result = await f.call(
+      'browser_navigate',
+      {},
+      `### Snapshot\n- [Snapshot](${filename})\n`,
+    );
+    assert.ok(!JSON.stringify(result).includes(secret));
+    assert.equal(f.store.redactText!(secret), '[REDACTED]');
+    const record = (await f.records())[0].observation.browserSnapshot;
+    assert.equal(record.filename, filename);
+    assert.equal(record.status, 'sanitized-local');
+    f.store.allowBrowserRecords!();
+    const upload = await f.store.uploadAll();
+    assert.equal(upload.failures.length, 0);
+    assert.equal(
+      upload.references.find((ref) => ref.filename === filename)!.sha256,
+      record.capturedSha256,
+    );
+    const reader = createReviewerEvidenceTools(f.store).find(
+      (tool) => tool.name === 'read_browser_evidence',
+    )!;
+    const read = await reader.execute('read', { filename }, undefined, undefined, {} as never);
+    assert.match(JSON.stringify(read), /Rejected/);
+    assert.ok(!JSON.stringify(read).includes(secret));
+  },
+);
+
+it('rejects missing, escaping, malformed and overwritten navigation snapshots', async () => {
+  const f = await fixture();
+  const filename = 'page-2026-09-21T00-00-00-001Z.yml';
+  for (const name of [filename, '../' + filename, '/tmp/' + filename]) {
+    await f.call('browser_navigate', {}, `### Snapshot\n- [Snapshot](${name})\n`);
+  }
+  assert.equal(f.failures(), 3);
+  await writeFile(join(f.workspace.evidenceDirectory, filename), '- textbox "A": [unsupported]');
+  await f.call('browser_navigate', {}, `### Snapshot\n- [Snapshot](${filename})\n`);
+  await assert.rejects(() => f.store.upload(filename));
+  assert.equal(f.transport.objects.size, 0);
+  const other = await fixture();
+  await writeFile(join(other.workspace.evidenceDirectory, filename), '- heading "Original"');
+  await other.call('browser_navigate', {}, `### Snapshot\n- [Snapshot](${filename})\n`);
+  await writeFile(join(other.workspace.evidenceDirectory, filename), '- heading "Changed"');
+  await assert.rejects(() => other.store.upload(filename), /内容已改变/);
+  assert.equal(other.transport.objects.size, 0);
+});
+it.each(['mcp', 'mcp__playwright'])(
   'registers filling input before %s returns and preserves failed operation evidence',
   async (gateway) => {
     const f = await fixture(gateway);

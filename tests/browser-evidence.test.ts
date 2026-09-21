@@ -76,7 +76,7 @@ it('redacts browser records before upload and again at read, without giving the 
   const { workspace, store, transport } = await fixture(secrets);
   await writeFile(
     join(workspace.evidenceDirectory, snapshot),
-    'synthetic-known-secret\nCookie: session=raw-cookie\nfuture-secret\n',
+    '- generic: synthetic-known-secret\n- generic: "Cookie: session=raw-cookie"\n- generic: future-secret\n',
   );
   await store.upload(snapshot);
   const local = (await workspace.readEvidence(snapshot)).toString();
@@ -172,7 +172,10 @@ it('requires plan and existing patch first, without making all browser records m
 
 it('defers Runner text uploads and sends a sanitized immutable byte snapshot, not a reopened file', async () => {
   const { workspace, store, transport } = await fixture(['synthetic-secret']);
-  await writeFile(join(workspace.evidenceDirectory, snapshot), 'synthetic-secret\n原始状态');
+  await writeFile(
+    join(workspace.evidenceDirectory, snapshot),
+    '- textbox "Input": synthetic-secret\n- heading "原始状态"',
+  );
   const upload = createRunnerEvidenceTools(store).find((t) => t.name === 'upload_evidence')!;
   assert.equal((await execute(upload, snapshot)).details?.status, 'deferred');
   assert.equal(transport.objects.size, 0);
@@ -211,14 +214,15 @@ it('validates the requested image ID before consulting vision metadata and never
 
 it('bounds output with explicit truncation but rejects binary and oversized browser uploads', async () => {
   const { workspace, store } = await fixture();
-  await writeFile(join(workspace.evidenceDirectory, snapshot), '检查'.repeat(20000));
-  await store.upload(snapshot);
-  const result = JSON.parse(await store.readBrowserEvidence!(snapshot));
+  await writeFile(join(workspace.evidenceDirectory, consoleFile), '检查'.repeat(20000));
+  await store.upload(consoleFile);
+  const result = JSON.parse(await store.readBrowserEvidence!(consoleFile));
   assert.match(result.content, /\[browser evidence truncated\]$/);
   assert.doesNotMatch(result.content, /\uFFFD/);
   for (const bytes of [Buffer.from([255, 0]), Buffer.alloc(1024 * 1024 + 1, 97)]) {
-    await writeFile(join(workspace.evidenceDirectory, consoleFile), bytes);
-    await assert.rejects(() => store.upload(consoleFile));
+    const invalidFile = 'console-2026-09-08T05-58-42-973Z.log';
+    await writeFile(join(workspace.evidenceDirectory, invalidFile), bytes);
+    await assert.rejects(() => store.upload(invalidFile));
   }
 });
 

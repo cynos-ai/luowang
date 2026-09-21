@@ -177,6 +177,15 @@ it.each(['mcp', 'mcp__playwright'])(
       };
       const page = await call('browser_navigate', { url: `${baseUrl}/login` });
       assert.doesNotMatch(page, /native-form-account|native-form-passphrase/);
+      assert.equal(store.redactText!('native-form-account'), '[REDACTED]');
+      const navigationRecord = JSON.parse(
+        await store.readCommandEvidence(store.commandEvidenceIds()[0]),
+      ).observation;
+      assert.equal(navigationRecord.browserSnapshot.status, 'sanitized-local');
+      assert.doesNotMatch(
+        (await workspace.readEvidence(navigationRecord.browserSnapshot.filename)).toString(),
+        /native-form-account|native-form-passphrase/,
+      );
       const snapshotText = await call('browser_snapshot', {});
       assert.match(snapshotText, /Local replay fixture/);
       assert.doesNotMatch(snapshotText, /native-form-account|native-form-passphrase/);
@@ -218,6 +227,11 @@ it.each(['mcp', 'mcp__playwright'])(
       assert.equal(observedCookie, `session=${cookie}`);
       assert.equal(failures, 0);
       const uploaded = await store.uploadAll();
+      store.allowBrowserRecords!();
+      assert.match(
+        await store.readBrowserEvidence!(navigationRecord.browserSnapshot.filename),
+        /Local replay fixture/,
+      );
       assert.deepEqual(uploaded.failures, []);
       const observations = await Promise.all(
         store

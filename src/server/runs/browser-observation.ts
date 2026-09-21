@@ -1,6 +1,6 @@
 import type { InlineExtension } from '@earendil-works/pi-coding-agent';
 import { redactCommandText, type RunEvidenceStore } from './evidence.js';
-import { readInlineBrowserSnapshot } from './browser-snapshot.js';
+import { readBrowserSnapshotFile, readInlineBrowserSnapshot } from './browser-snapshot.js';
 import { readScreenshotReceipt } from './screenshot-inspection.js';
 import { FILLING_TOOLS, registerBrowserInput } from './browser-input.js';
 
@@ -108,6 +108,12 @@ export function createBrowserObservationExtension(options: {
             .map((part) => part.text)
             .join('\n');
           const snapshot = readInlineBrowserSnapshot(raw);
+          const snapshotFile = readBrowserSnapshotFile(raw);
+          if (snapshotFile && !options.store.captureBrowserSnapshot)
+            throw new Error('Snapshot capture unavailable');
+          const browserSnapshot = snapshotFile
+            ? await options.store.captureBrowserSnapshot!(snapshotFile)
+            : undefined;
           const screenshot =
             tool === 'browser_take_screenshot' && !event.isError && !details.error
               ? readScreenshotReceipt(raw)
@@ -182,6 +188,7 @@ export function createBrowserObservationExtension(options: {
             finishedAt: options.now().toISOString(),
             isError: event.isError || Boolean(details.error),
             screenshot,
+            browserSnapshot,
             arguments: start.fillingInput ?? safeArguments,
             credentialReferences: references.map((ref) => ({ ...ref, name: clean(ref.name) })),
             output: snapshot
@@ -199,13 +206,13 @@ export function createBrowserObservationExtension(options: {
           return {
             content: [
               ...event.content.map((part) =>
-                (snapshot || start.fillingInput) && part.type === 'text'
+                (snapshot || browserSnapshot || start.fillingInput) && part.type === 'text'
                   ? { ...part, text: options.store.redactText!(part.text) }
                   : part,
               ),
               {
                 type: 'text' as const,
-                text: `Harness 已捕获脱敏证据 ${id}；Reviewer 通过 read_command_evidence 读取。${start.fillingInput ? '该记录包含填写参数与工具结果；参数不证明字段已填写成功或请求已发出，失败可能已部分执行。' : ''}${snapshot ? '该记录包含脱敏后的内联快照正文。' : !RECORDED_TOOLS.has(tool) && !start.fillingInput ? '该记录仅含操作时序，不含页面正文，不能引用为页面内容证据。' : ''}`,
+                text: `Harness 已捕获脱敏证据 ${id}；Reviewer 通过 read_command_evidence 读取。${start.fillingInput ? '该记录包含填写参数与工具结果；参数不证明字段已填写成功或请求已发出，失败可能已部分执行。' : ''}${browserSnapshot ? '该记录关联已保存的脱敏快照；Runner 结束后由 Harness 上传，Reviewer 按文件列表的状态使用 read_browser_evidence 读取。' : ''}${snapshot ? '该记录包含脱敏后的内联快照正文。' : !RECORDED_TOOLS.has(tool) && !start.fillingInput && !browserSnapshot ? '该记录仅含操作时序，不含页面正文，不能引用为页面内容证据。' : ''}`,
               },
             ],
           };
