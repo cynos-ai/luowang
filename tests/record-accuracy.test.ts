@@ -53,6 +53,15 @@ test.each(caseIds)(
           t.status === 'returned',
       ),
     ).toBe(true);
+    const executionRead = sessions[0].tools.findIndex(
+      (tool) =>
+        tool.name === 'read_run_artifact' &&
+        tool.input.name === 'execution.md' &&
+        tool.status === 'returned',
+    );
+    const reviewWrite = sessions[0].tools.findIndex((tool) => tool.name === 'write_review');
+    expect(executionRead).toBeGreaterThan(-1);
+    expect(reviewWrite).toBeGreaterThan(executionRead);
     await expect(runCase(fixture(id), out)).rejects.toThrow();
   },
   30000,

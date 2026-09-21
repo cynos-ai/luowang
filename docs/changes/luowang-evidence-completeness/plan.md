@@ -137,3 +137,11 @@ TIME-P/N 的 plan 增加相同报告要求：说明事件时间的依据和可�
 新增回归覆盖漏读、提前拒绝、真实读取失败、成功后提交及 Session 间不共享状态；编排集成证明读完图片但跳过 execution 时，review/report 均不会生成，最终汇总不会继续。正常 Phase 4 测试替身也按已有要求先读图片再读执行记录，避免以先前被拒的尝试冒充成功读取。专项 6 文件 / 75 项通过，日志 `.cynos/acceptance/run-record-accuracy-round3/followup/targeted.log`；完整 quality 容器本地验收退出 0：40 文件 / 304 测试、格式、lint、类型检查、构建、e2e 及 Phase 9（34 AC）均通过，证明见同目录 quality.log 与 acceptance/2026-09-21T10-16-38-640Z-local/report.json。本地验收未调用真实模型；未构建新的生产容器镜像，不将工程通过视作模型语义通过。
 
 该修复只能证明必需工件确实交付给模型，不能证明模型理解、引文或判定准确。本轮不重跑模型覆盖原失败，下一轮仍须冻结新候选并独立复验；live/release 保持 blocked。
+
+### 第四轮材料准备（2026-09-21）
+
+第四轮只替换为包含 execution 读取门禁的候选源码与新增工具轨迹断言；六例 inputs.json 和 rubric.json 与第三轮逐字节相同。输入 SHA-256 保持 `ea4ce9def8ff918898cc7f1a728c55ceddd7d16b845a1829bf071f3999203d5d`，评分参考 SHA-256 保持 `b08a437d1ac630d15c7167ffd65bbb8365bee7b779cb4623b05991a64f5cbe61`，不调整案例追求通过。
+
+新冻结目录为 `.cynos/acceptance/run-record-accuracy-round4/frozen/`。六例零模型预检全部通过；每例 Reviewer 工具轨迹均为成功读取 execution.md 后再调用 write_review。新增自动断言把该顺序纳入驱动测试。3 文件 / 36 项定向测试通过，覆盖冻结和预算、漏读拒绝、编排集成与六例工具交付；既有修复节点的完整本地验收仍为 40 文件 / 304 测试、格式、lint、类型检查、构建、e2e 和 Phase 9（34 AC）通过。
+
+现有 Secret Store 的禁网可用性检查通过。第四轮尚未调用真实模型，modelRequests=0、humanScoring=not_run；必须获得独立的新轮 120 次请求预算后才逐例执行，失败即停。第三轮保持 7/120、stopped、failed，剩余 113 次不转入本轮。工程门禁通过不证明 Reviewer 会正确理解或引用 execution，live/release 继续 blocked。
