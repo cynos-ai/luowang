@@ -296,6 +296,12 @@ describe('Phase 4 browser and evidence boundaries', () => {
         sizeBytes: TEST_PNG.length,
         kind: 'image',
         readTool: 'read_evidence_image',
+        screenshotLabel: '字段检测未完成',
+        screenshotInspection: {
+          status: 'unknown',
+          scope: 'page',
+          sha256: upload.references[0].sha256,
+        },
       },
     ]);
     const manager = createTestDataManager();

@@ -1,6 +1,7 @@
 import type { InlineExtension } from '@earendil-works/pi-coding-agent';
 import { redactCommandText, type RunEvidenceStore } from './evidence.js';
 import { readInlineBrowserSnapshot } from './browser-snapshot.js';
+import { readScreenshotReceipt } from './screenshot-inspection.js';
 
 const RECORDED_TOOLS = new Set([
   'browser_cookie_list',
@@ -31,7 +32,7 @@ export function createBrowserObservationExtension(options: {
     name: 'luowang-browser-observation',
     hidden: true,
     factory: (pi) => {
-      pi.on('tool_call', (event) => {
+      pi.on('tool_call', async (event) => {
         // The pinned adapter exposes both gateways even with directTools disabled.
         if (event.toolName !== 'mcp' && event.toolName !== 'mcp__playwright') return;
         if (typeof event.input.tool !== 'string') return;
@@ -45,6 +46,19 @@ export function createBrowserObservationExtension(options: {
           };
         if (event.input.server !== undefined && event.input.server !== 'playwright') return;
         const args = parseArguments(event.input.args);
+        if (tool === 'browser_take_screenshot' && typeof args?.filename === 'string') {
+          const name = args.filename.replace(/^\.\//, '');
+          try {
+            if ((await options.store.list()).some((file) => file.name === name))
+              return {
+                block: true,
+                reason: '截图文件已存在，请使用新的相对文件名，不覆盖原始证据。',
+              };
+          } catch {
+            options.onFailure();
+            return { block: true, reason: '截图证据目录检查失败，未执行截图。' };
+          }
+        }
         if (
           (RECORDED_TOOLS.has(tool) || tool === 'browser_snapshot') &&
           args?.filename !== undefined
@@ -76,6 +90,14 @@ export function createBrowserObservationExtension(options: {
             .map((part) => part.text)
             .join('\n');
           const snapshot = readInlineBrowserSnapshot(raw);
+          const screenshot =
+            tool === 'browser_take_screenshot' && !event.isError && !details.error
+              ? readScreenshotReceipt(raw)
+              : undefined;
+          if (screenshot) {
+            if (!options.store.captureScreenshot) throw new Error('Screenshot capture unavailable');
+            await options.store.captureScreenshot(screenshot.filename, screenshot.inspection);
+          }
           if (snapshot) {
             if (!options.store.registerSensitiveValue || !options.store.redactText)
               throw new Error('Snapshot privacy unavailable');
@@ -140,6 +162,7 @@ export function createBrowserObservationExtension(options: {
             ...start,
             finishedAt: options.now().toISOString(),
             isError: event.isError || Boolean(details.error),
+            screenshot,
             arguments: safeArguments,
             credentialReferences: references.map((ref) => ({ ...ref, name: clean(ref.name) })),
             output: snapshot

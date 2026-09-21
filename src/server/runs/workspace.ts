@@ -56,6 +56,7 @@ export interface RunEvidenceFile {
   name: string;
   path: string;
   sizeBytes: number;
+  screenshotInspection?: import('../../shared/types.js').ScreenshotInspection;
 }
 
 export class RunWorkspace implements RunArtifactReader {

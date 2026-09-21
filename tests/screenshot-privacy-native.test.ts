@@ -1,6 +1,8 @@
+import { createHash } from 'node:crypto';
+import { readScreenshotReceipt } from '../src/server/runs/screenshot-inspection.js';
 import { strict as assert } from 'node:assert';
 import { createServer } from 'node:http';
-import { mkdtemp, readdir, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Client } from '@modelcontextprotocol/client';
@@ -9,10 +11,12 @@ import { it } from 'vitest';
 import { createPlaywrightMcpAdapter } from '../src/server/browser/playwright-mcp.js';
 import type { ConfigurationStore } from '../src/server/configuration.js';
 
-it('native MCP refuses populated text fields before producing pixels and permits empty forms', async () => {
+it('native MCP captures populated forms without changing state and labels detection outcomes', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'luowang-screenshot-guard-'));
   const sentinel = 'synthetic-field-value';
   const pages: Record<string, string> = {
+    '/unknown':
+      '<h1>Unchanged</h1><script>Element.prototype.checkVisibility = () => { throw new Error("fixture"); };</script><input value="field">',
     '/text': `<input aria-label="Account" value="${sentinel}">`,
     '/email': `<input type="email" aria-label="Account" value="${sentinel}">`,
     '/password': `<input type="password" value="${sentinel}">`,
@@ -56,93 +60,55 @@ it('native MCP refuses populated text fields before producing pixels and permits
       'editable',
       'shadow',
       'frame',
+      'empty',
+      'hidden',
+      'stable-error',
+      'dependent-error',
+      'unknown',
     ]) {
       await client.callTool({
         name: 'browser_navigate',
-        arguments: { url: `http://127.0.0.1:${address.port}/${name}` },
+        arguments: { url: 'http://127.0.0.1:' + address.port + '/' + name },
       });
-      const blocked = await client.callTool({
-        name: 'browser_take_screenshot',
-        arguments: { filename: `${name}.png`, fullPage: true },
-      });
-      assert.equal(blocked.isError, true, name);
-      assert.match(JSON.stringify(blocked), /Screenshot blocked/);
-      assert.doesNotMatch(JSON.stringify(blocked), new RegExp(sentinel));
-      assert.ok(!blocked.content.some((part) => part.type === 'image'));
-      assert.ok(!(await readdir(directory)).some((file) => file.endsWith('.png')), name);
-    }
-    await client.callTool({
-      name: 'browser_navigate',
-      arguments: { url: `http://127.0.0.1:${address.port}/text` },
-    });
-    const inline = await client.callTool({ name: 'browser_take_screenshot', arguments: {} });
-    assert.equal(inline.isError, true);
-    const snapshot = await client.callTool({ name: 'browser_snapshot', arguments: {} });
-    assert.match(
-      JSON.stringify(snapshot),
-      new RegExp(sentinel),
-      'guard must not clear or mask page state',
-    );
-    for (const name of ['empty', 'hidden']) {
-      await client.callTool({
-        name: 'browser_navigate',
-        arguments: { url: `http://127.0.0.1:${address.port}/${name}` },
-      });
-      const allowed = await client.callTool({
-        name: 'browser_take_screenshot',
-        arguments: { filename: `${name}.png` },
-      });
-      assert.ok(!allowed.isError, JSON.stringify(allowed));
-      const png = await readFile(join(directory, `${name}.png`));
-      assert.ok(png.subarray(0, 8).equals(Buffer.from('89504e470d0a1a0a', 'hex')));
-    }
-    for (const name of ['stable-error', 'dependent-error']) {
-      await client.callTool({
-        name: 'browser_navigate',
-        arguments: { url: `http://127.0.0.1:${address.port}/${name}` },
-      });
-      const blocked = await client.callTool({
-        name: 'browser_take_screenshot',
-        arguments: { filename: `${name}-original.png` },
-      });
-      assert.equal(blocked.isError, true);
-      assert.ok(!(await readdir(directory)).includes(`${name}-original.png`));
       const before = JSON.stringify(
         await client.callTool({ name: 'browser_snapshot', arguments: {} }),
       );
-      assert.match(before, /Login rejected/);
-      assert.ok(before.includes(sentinel), 'refusal must preserve the original field state');
-      // Use the same ref-based form tool available to Runner, never browser script execution.
-      const snapshotText = JSON.parse(before)
-        .content.filter((part: { type: string }) => part.type === 'text')
-        .map((part: { text: string }) => part.text)
-        .join('\n') as string;
-      const fields = ['Account', 'Passphrase'].map((label) => {
-        const ref = snapshotText.match(new RegExp(`textbox "${label}" \\[ref=([^\\]]+)\\]`))?.[1];
-        assert.ok(ref, `missing ${label} ref`);
-        return { name: label, type: 'textbox', target: ref, value: '' };
+      const captured = await client.callTool({
+        name: 'browser_take_screenshot',
+        arguments: { filename: name + '.png', fullPage: true },
       });
-      const cleared = await client.callTool({ name: 'browser_fill_form', arguments: { fields } });
-      assert.ok(!cleared.isError, JSON.stringify(cleared));
+      assert.ok(!captured.isError, JSON.stringify(captured));
+      const text = captured.content
+        .filter((part) => part.type === 'text')
+        .map((part) => part.text)
+        .join('\n');
+      const receipt = readScreenshotReceipt(text);
+      const expected =
+        name === 'unknown'
+          ? 'unknown'
+          : ['empty', 'hidden'].includes(name)
+            ? 'not_detected'
+            : 'detected';
+      assert.equal(receipt.inspection.status, expected, name);
+      assert.doesNotMatch(text, new RegExp(sentinel));
+      const png = await readFile(join(directory, name + '.png'));
+      assert.ok(png.subarray(0, 8).equals(Buffer.from('89504e470d0a1a0a', 'hex')));
+      assert.equal(receipt.inspection.sha256, createHash('sha256').update(png).digest('hex'));
       const after = JSON.stringify(
         await client.callTool({ name: 'browser_snapshot', arguments: {} }),
       );
-      assert.ok(!after.includes(sentinel));
-      if (name === 'stable-error') {
+      assert.equal(after, before, name + ': capture must not alter state');
+      if (name.endsWith('-error')) {
         assert.match(after, /Login rejected/);
-        const screenshot = await client.callTool({
-          name: 'browser_take_screenshot',
-          arguments: { filename: `${name}-cleared.png` },
-        });
-        assert.ok(!screenshot.isError);
-        assert.ok((await readdir(directory)).includes(`${name}-cleared.png`));
-      } else {
-        assert.match(after, /Form changed/);
-        assert.doesNotMatch(after, /Login rejected/);
-        // A clean form is now a different observation, not evidence of the original error.
-        assert.ok(!(await readdir(directory)).includes(`${name}-cleared.png`));
+        assert.ok(after.includes(sentinel));
       }
     }
+    const invalid = await client.callTool({
+      name: 'browser_take_screenshot',
+      arguments: { fullPage: true, target: 'missing-ref' },
+    });
+    assert.equal(invalid.isError, true);
+    assert.doesNotMatch(JSON.stringify(invalid), /LUOWANG_SCREENSHOT_CAPTURE/);
   } finally {
     await client.close();
     await transport.close();

@@ -178,6 +178,12 @@ it.each(['mcp', 'mcp__playwright'])(
         store.redactText!('native-form-account / native-form-passphrase'),
         '[REDACTED] / [REDACTED]',
       );
+      await call('browser_take_screenshot', { filename: 'original-form.png' });
+      assert.equal(
+        (await store.list()).find((file) => file.name === 'original-form.png')?.screenshotInspection
+          ?.status,
+        'detected',
+      );
       await call('browser_cookie_get', { name: 'session' });
       await call('browser_navigate', { url: `${baseUrl}/logout` });
       await call('browser_cookie_set', {

@@ -11,7 +11,8 @@ const path = join(root, 'lib/coreBundle.js');
 const source = await readFile(path, 'utf8');
 const before =
   '        const data = target ? await target.locator.screenshot(options) : await tab2.page.screenshot(options);';
-const guard = `        // LUOWANG_SCREENSHOT_FORM_GUARD_V1: no value leaves the browser check.
+const guard = `        // LUOWANG_SCREENSHOT_CAPTURE_V2: detect fields without altering the page.
+        let luowangFieldStatus = "not_detected";
         for (const frame of tab2.page.frames()) {
           let containsFilledField;
           try {
@@ -22,17 +23,28 @@ const guard = `        // LUOWANG_SCREENSHOT_FORM_GUARD_V1: no value leaves the 
               return element.isContentEditable && (element.textContent || '').length > 0;
             }));
           } catch {
-            throw new Error('Screenshot privacy check unavailable; no image captured. Use other controlled evidence or retry after the page is stable.');
+            luowangFieldStatus = 'unknown';
+            break;
           }
-          if (containsFilledField) throw new Error('Screenshot blocked: visible text fields contain values. Preserve required evidence first, then clear fields if this does not change the assertion, or use other controlled evidence. No image captured.');
+          if (containsFilledField) luowangFieldStatus = 'detected';
         }
 `;
+const receiptBefore =
+  '        await response2.addFileResult(resolvedFile, data);\n        if (!params2.filename)';
+const receiptAfter = `        await response2.addFileResult(resolvedFile, data);
+        response2.addTextResult("LUOWANG_SCREENSHOT_CAPTURE " + JSON.stringify({ filename: resolvedFile.relativeName, status: luowangFieldStatus, sha256: require("node:crypto").createHash("sha256").update(data).digest("hex"), scope: "page" }));
+        response2.addTextResult("Screenshot retains original page state. Field detection is not an image safety review. Do not clear or alter the page for evidence.");
+        if (!params2.filename)`;
 const after = guard + before;
-if (source.split(after).length - 1 === 1) {
+if (source.split(after).length - 1 === 1 && source.split(receiptAfter).length - 1 === 1) {
   // Repeated build/test invocations are idempotent.
 } else {
-  if (source.includes('LUOWANG_SCREENSHOT_FORM_GUARD_V1') || source.split(before).length - 1 !== 1)
+  if (
+    source.includes('LUOWANG_SCREENSHOT_') ||
+    source.split(before).length - 1 !== 1 ||
+    source.split(receiptBefore).length - 1 !== 1
+  )
     throw new Error('Pinned screenshot implementation changed; guard not applied');
-  await writeFile(path, source.replace(before, after));
-  console.log('Applied pinned MCP screenshot form guard');
+  await writeFile(path, source.replace(before, after).replace(receiptBefore, receiptAfter));
+  console.log('Applied pinned MCP screenshot capture labels');
 }

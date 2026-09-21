@@ -1,4 +1,5 @@
 import { randomBytes } from 'node:crypto';
+import { appendScreenshotLabels } from './screenshot-inspection.js';
 import type { Logger } from 'pino';
 import { Type } from 'typebox';
 import type { InlineExtension, ToolDefinition } from '@earendil-works/pi-coding-agent';
@@ -1488,7 +1489,9 @@ class DefaultRunOrchestrator implements RunOrchestrator {
               `最终报告格式无效，请修正后重新调用 write_report：${safeMessage(error)}`,
             );
           }
-          await workspace.writer('main-b').writeReport(normalized);
+          await workspace
+            .writer('main-b')
+            .writeReport(appendScreenshotLabels(normalized, context.evidence));
         },
       ),
       ...(context.initialization
@@ -2437,13 +2440,16 @@ function finalizationPromptContext(context: RunContext): Record<string, unknown>
     scenarioMode: context.scenarioMode,
     initialization: context.initialization,
     scenarioChanges: context.scenarioChanges ?? null,
-    evidence: context.evidence.map(({ filename, url, contentType, sizeBytes, sha256 }) => ({
-      filename,
-      url,
-      contentType,
-      sizeBytes,
-      sha256,
-    })),
+    evidence: context.evidence.map(
+      ({ filename, url, contentType, sizeBytes, sha256, screenshotInspection }) => ({
+        filename,
+        url,
+        contentType,
+        sizeBytes,
+        sha256,
+        screenshotInspection,
+      }),
+    ),
     blockingReasons: context.blockingReasons,
   };
 }

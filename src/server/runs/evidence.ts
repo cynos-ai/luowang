@@ -2,7 +2,11 @@ import { createHash, randomBytes } from 'node:crypto';
 import { Type, type Static } from 'typebox';
 import type { AgentToolResult, ToolDefinition } from '@earendil-works/pi-coding-agent';
 
-import type { EvidenceReference } from '../../shared/types.js';
+import {
+  screenshotInspectionLabel,
+  type EvidenceReference,
+  type ScreenshotInspection,
+} from '../../shared/types.js';
 import { createTextResult } from './agent-session.js';
 import { redactSensitiveText } from './test-data.js';
 import type { CommandRunResult } from './command-runner.js';
@@ -55,6 +59,7 @@ export interface RunEvidenceStore {
   allowBrowserRecords?(): void;
   browserEvidenceIds?(): string[];
   readBrowserEvidence?(filename: string): Promise<string>;
+  captureScreenshot?(filename: string, inspection: ScreenshotInspection): Promise<void>;
 }
 
 export interface EvidenceReadResult {
@@ -63,6 +68,7 @@ export interface EvidenceReadResult {
   contentType: string;
   source: 'oss' | 'local';
   url: string | null;
+  screenshotInspection?: ScreenshotInspection;
 }
 
 export function createRunEvidenceStore(
@@ -84,6 +90,29 @@ class DefaultRunEvidenceStore implements RunEvidenceStore {
   private browserRecordsAllowed = false;
   private readonly runtimeSecrets = new Set<string>();
   private readonly credentialReferences = new Map<string, string>();
+  private readonly screenshots = new Map<string, ScreenshotInspection>();
+
+  async captureScreenshot(filename: string, inspection: ScreenshotInspection): Promise<void> {
+    const body = await this.workspace.readEvidence(filename);
+    if (
+      !isRasterImage(body, contentTypeFor(filename)) ||
+      createHash('sha256').update(body).digest('hex') !== inspection.sha256
+    )
+      throw new Error('截图采集字节校验失败');
+    if (this.references.has(filename) || this.screenshots.has(filename))
+      throw new Error('截图证据文件名不可重用');
+    this.screenshots.set(filename, { ...inspection });
+  }
+
+  private screenshotFor(filename: string, body: Buffer): ScreenshotInspection | undefined {
+    if (!contentTypeFor(filename).startsWith('image/')) return undefined;
+    const sha256 = createHash('sha256').update(body).digest('hex');
+    const inspection =
+      this.screenshots.get(filename) ?? this.references.get(filename)?.screenshotInspection;
+    if (inspection && inspection.sha256 !== sha256)
+      throw new Error('截图内容已改变，检测标签不能复用');
+    return inspection ?? { status: 'unknown', scope: 'page', sha256 };
+  }
 
   registerSensitiveValue(value: string): void {
     if (value) this.runtimeSecrets.add(value);
@@ -133,7 +162,13 @@ class DefaultRunEvidenceStore implements RunEvidenceStore {
     for (const [name, captured] of this.commandEvidence) {
       if (!byName.has(name)) byName.set(name, { name, path: '', sizeBytes: captured.sizeBytes });
     }
-    return [...byName.values()].sort((left, right) => left.name.localeCompare(right.name));
+    return [...byName.values()]
+      .map((file) => ({
+        ...file,
+        screenshotInspection:
+          this.screenshots.get(file.name) ?? this.references.get(file.name)?.screenshotInspection,
+      }))
+      .sort((left, right) => left.name.localeCompare(right.name));
   }
 
   async upload(filename: string): Promise<EvidenceReference> {
@@ -167,12 +202,14 @@ class DefaultRunEvidenceStore implements RunEvidenceStore {
       if (!isRasterImage(browserBody, contentTypeFor(filename)))
         throw new Error('截图格式与文件名不符，拒绝上传');
     }
+    const screenshotInspection = this.screenshotFor(filename, browserBody);
     const reference = await uploadEvidenceBody(
       this.oss,
       this.workspace.runId,
       filename,
       browserBody,
     );
+    reference.screenshotInspection = screenshotInspection;
     this.references.set(filename, reference);
     return reference;
   }
@@ -201,6 +238,7 @@ class DefaultRunEvidenceStore implements RunEvidenceStore {
           contentType: object.contentType || reference.contentType,
           source: 'oss',
           url: reference.url,
+          screenshotInspection: this.screenshotFor(filename, object.body),
         };
       }
       const body = await this.workspace.readEvidence(filename);
@@ -210,6 +248,7 @@ class DefaultRunEvidenceStore implements RunEvidenceStore {
         contentType: contentTypeFor(filename),
         source: 'local',
         url: null,
+        screenshotInspection: this.screenshotFor(filename, body),
       };
     } catch (error) {
       this.readFailures += 1;
@@ -231,6 +270,7 @@ class DefaultRunEvidenceStore implements RunEvidenceStore {
         contentType: object.contentType || reference.contentType,
         source: 'oss',
         url: reference.url,
+        screenshotInspection: this.screenshotFor(filename, object.body),
       };
     } catch (error) {
       this.readFailures += 1;
@@ -462,7 +502,20 @@ export function createRunnerEvidenceTools(store: RunEvidenceStore): ToolDefiniti
         try {
           const files = await store.list();
           return createTextResult(
-            JSON.stringify(files.map(({ name, sizeBytes }) => ({ name, sizeBytes }))),
+            JSON.stringify(
+              files.map(({ name, sizeBytes, screenshotInspection }) => ({
+                name,
+                sizeBytes,
+                screenshotInspection,
+                ...(contentTypeFor(name).startsWith('image/')
+                  ? {
+                      screenshotLabel: screenshotInspectionLabel(
+                        screenshotInspection ?? { status: 'unknown' },
+                      ),
+                    }
+                  : {}),
+              })),
+            ),
           );
         } catch (error) {
           return createTextResult(safeMessage(error), { error: true });
@@ -552,23 +605,40 @@ export function createReviewerEvidenceTools(
         try {
           const commandIds = store.commandEvidenceIds();
           const browserIds = store.browserEvidenceIds?.() ?? [];
-          const files = (await store.list()).flatMap(({ name, sizeBytes }) => {
-            const kind = commandIds.includes(name)
-              ? 'command'
-              : browserIds.includes(name)
-                ? 'browser'
-                : contentTypeFor(name).startsWith('image/')
-                  ? 'image'
-                  : null;
-            if (!kind) return [];
-            const readTool =
-              kind === 'command'
-                ? 'read_command_evidence'
-                : kind === 'browser'
-                  ? 'read_browser_evidence'
-                  : 'read_evidence_image';
-            return [{ name, sizeBytes, kind, readTool }];
-          });
+          const files = (await store.list()).flatMap(
+            ({ name, sizeBytes, screenshotInspection }) => {
+              const kind = commandIds.includes(name)
+                ? 'command'
+                : browserIds.includes(name)
+                  ? 'browser'
+                  : contentTypeFor(name).startsWith('image/')
+                    ? 'image'
+                    : null;
+              if (!kind) return [];
+              const readTool =
+                kind === 'command'
+                  ? 'read_command_evidence'
+                  : kind === 'browser'
+                    ? 'read_browser_evidence'
+                    : 'read_evidence_image';
+              return [
+                {
+                  name,
+                  sizeBytes,
+                  kind,
+                  readTool,
+                  screenshotInspection,
+                  ...(kind === 'image'
+                    ? {
+                        screenshotLabel: screenshotInspectionLabel(
+                          screenshotInspection ?? { status: 'unknown' },
+                        ),
+                      }
+                    : {}),
+                },
+              ];
+            },
+          );
           return createTextResult(JSON.stringify(files));
         } catch (error) {
           return createTextResult(safeMessage(error), { error: true });
@@ -673,6 +743,10 @@ export function createReviewerEvidenceTools(
                   contentType: evidence.contentType,
                   source: evidence.source,
                   stableUrl: evidence.url,
+                  screenshotInspection: evidence.screenshotInspection,
+                  screenshotLabel: screenshotInspectionLabel(
+                    evidence.screenshotInspection ?? { status: 'unknown' },
+                  ),
                 }),
               },
               {
@@ -693,12 +767,13 @@ export function createReviewerEvidenceTools(
 
 export function evidenceReferenceContext(references: readonly EvidenceReference[]): string {
   return JSON.stringify(
-    references.map(({ filename, url, contentType, sizeBytes, sha256 }) => ({
+    references.map(({ filename, url, contentType, sizeBytes, sha256, screenshotInspection }) => ({
       filename,
       url,
       contentType,
       sizeBytes,
       sha256,
+      screenshotInspection,
     })),
   );
 }
