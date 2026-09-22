@@ -323,4 +323,23 @@ Reviewer 成功读取 70 份证据，包括 52 条操作收据、14 份页面快
 
 归档后清理查询 remaining=0，目标数据库停止前为 users=0、sessions=0。当前 HEAD `94e4205a5d097bdae9c2098e88358e7447abdeef` 相比 runtime 来源 `0c696f09112101b7d6cf41c874c04d49dea27a47` 只增加 README 和本计划的验收记录，没有代码或角色指令差异。
 
-这次 Run 补齐了“同一个 failed Run 有两个独立 confirmed Bugs，并成功归档到两个不同 Issue”的单项事实。正式 Closure 7 仍未通过：现有 initialization、passed、failed、blocked 事实分布在不同的临时数据库里，且尚未在同一持久候选实例完成首次 initialization、三 Session 场景审核 PR、PR 合并后的 current-head passed 重测及最终 live/release 检查。下一步应先建立一个持久候选实例，把这些事实按门禁顺序完整跑出，再执行 `test:acceptance:live`；不能把本次双 Issue 成功写成 release passed。`humanScoring=not_run`。
+这次 Run 补齐了“同一个 failed Run 有两个独立 confirmed Bugs，并成功归档到两个不同 Issue”的单项事实。正式 Closure 7 仍未通过：现有 passed、failed、blocked 事实分布在不同的临时数据库里，且尚未在同一持久候选实例完成首次 initialization、三 Session 场景审核 PR、PR 合并后的 current-head passed 重测及最终 live/release 检查。不能把本次双 Issue 成功写成 release passed。`humanScoring=not_run`。
+
+### Closure 7 历史事实审计（2026-09-22）
+
+为确认现有历史能否直接用于正式门禁，本轮只读扫描 `.cynos/acceptance/**/luowang.db`，严格复用 `tests/acceptance/closure.ts` 中 `selectLiveFacts()` 的筛选条件。共检查 127 份数据库，只有 6 份命中至少一项 Closure 7 事实：
+
+| 数据库 | 可用事实 |
+| --- | --- |
+| `run-joint-acceptance-0c696f0/live-data/state/luowang.db` | 含截图的 passed Run `01M33ZHXAK5DEB9TPFVDJ47AEH`；不推进的 blocked Run `01M3402YTEJ8TJ6RW2ZPHQS397` |
+| `run-closure7-dual-bug-round2-94e4205/live-data/state/luowang.db` | 双 confirmed Bug、双 Issue 的 failed Run `01M342XE5V39VTB8AQSSARMMFC` |
+| `run-evidence-followup/live-data/state/luowang.db` | 含截图的 passed Run `01M2VZGC4D8AGZWPT164BBW0TV` |
+| `run-evidence-followup-v41/live-data/state/luowang.db` | 不推进的 blocked Run `01M2WS1AFYVBDS40N4PK0PHQ9K` |
+| `run-blocked-closure/live-data/state/luowang.db` | 不推进的 blocked Run `01M2YVAJV51D6AJG6WE873278H` |
+| `run-joint-acceptance-6c93037/live-data/state/luowang.db` | 三个不推进的 blocked Run `01M33MYN0YAMPNW5PA50VQSDSZ`、`01M33NBRWACRX2E37GAHXJ7069`、`01M33NKSTFC65HNKBE222P7JV0` |
+
+127 份数据库的 `test_request_queue` 都为空。没有数据库保存首次 initialization queue/run、三 Session 特殊场景 PR Run、`manual-current-head` passed 重测或同时带“开始场景”和“完成场景”活动的 passed Run。现有单项事实也不在同一个持久实例中，不能通过复制、拼接或改写数据库把它们变成一条真实历史。
+
+GitHub 远端仍保留三条以 `scenario-testing` 为 base 的真实场景审核 PR：[#4](https://github.com/cynos-ai/cynos-website/pull/4) 对应 Run `01M1G225V3E3GZY46RW0CG5KR1`，已合并；[#7](https://github.com/cynos-ai/cynos-website/pull/7) 对应 Run `01M1GNA28DD9HJ1F7PN71V9ZD0`，已关闭未合并；[#8](https://github.com/cynos-ai/cynos-website/pull/8) 对应 Run `01M1H4F72HSFS5MHE41M894RKE`，已合并。这些 PR 能证明远端曾发生场景审核，不能替代候选实例已经丢失的 Run、工件契约和 queue 关联。远端 `scenario-testing` 当前 HEAD 为 `f4800046e7797109527371504d97f778926ca957`，分支已存在；在不删除现有分支和历史报告的前提下，无法重新产生 `preparedMergeMode=initial-create` 的首次创建事实。
+
+因此，当前固定目标 `cynos-ai/cynos-website` 无法用现有历史合法完成 Closure 7。继续重复普通 Run 只能增加 passed、failed 或 blocked 事实，补不回 initialization queue。正式 live/release 保持 blocked；下一步需要负责人明确更换一个尚无 `scenario-testing` 的独立测试仓库，之后从首次创建开始在同一个持久候选实例按门禁顺序执行。现有目标分支、报告和数据库均保持原样。

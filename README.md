@@ -29,7 +29,9 @@ Compose 将数据保存到 `luowang-data` 卷，并把宿主机端口绑定到 `
 
 ## 验收状态
 
-截至 2026-09-22，修复候选 `0c696f0` 已完成 normal、defect、blocked 三例复验，结果分别为 `passed`、`failed`、`blocked`；归档、清理、截图读取和远端工件核对均完成。负责人随后批准在测试项目中补齐第二条 Issue。双缺陷 Run `01M342XE5V39VTB8AQSSARMMFC` 使用四个隔离 Session 和 80 次模型请求，确认退出未撤销 Session 与删除接口虚假成功两项独立问题；Archiver 成功关联既有 Issue [#5](https://github.com/cynos-ai/cynos-website/issues/5)，并创建新 Issue [#12](https://github.com/cynos-ai/cynos-website/issues/12)。报告提交 `f4800046e7797109527371504d97f778926ca957` 只新增该 Run 的 report/review，本地与 Git blob 一致；4 张截图保持页面现场，清理后 users=0、sessions=0。这个 Run 已补齐“双 Bug、双 Issue”的单项事实。正式 Closure 7 仍需在同一持久候选实例完成首次 initialization、场景审核 PR、current-head passed 重测和最终 live/release 检查，当前不能称 release passed。完整记录见 [证据完整性计划](docs/changes/luowang-evidence-completeness/plan.md#closure-7-双缺陷-run-与第二条-issue2026-09-22)。
+截至 2026-09-22，修复候选 `0c696f0` 已完成 normal、defect、blocked 三例复验，结果分别为 `passed`、`failed`、`blocked`；归档、清理、截图读取和远端工件核对均完成。负责人随后批准在测试项目中补齐第二条 Issue。双缺陷 Run `01M342XE5V39VTB8AQSSARMMFC` 使用四个隔离 Session 和 80 次模型请求，确认退出未撤销 Session 与删除接口虚假成功两项独立问题；Archiver 成功关联既有 Issue [#5](https://github.com/cynos-ai/cynos-website/issues/5)，并创建新 Issue [#12](https://github.com/cynos-ai/cynos-website/issues/12)。报告提交 `f4800046e7797109527371504d97f778926ca957` 只新增该 Run 的 report/review，本地与 Git blob 一致；4 张截图保持页面现场，清理后 users=0、sessions=0。这个 Run 已补齐“双 Bug、双 Issue”的单项事实。
+
+正式 Closure 7 仍为 blocked。对本机 127 份 `luowang.db` 的只读审计表明，所有真实联合验收数据库的 `test_request_queue` 都为空；passed、failed、blocked 事实分散在不同临时数据库，没有 initialization、三 Session 场景 PR、current-head passed 重测或带开始/完成活动的 passed Run。目标仓库虽保留了真实场景审核 PR [#4](https://github.com/cynos-ai/cynos-website/pull/4)、[#7](https://github.com/cynos-ai/cynos-website/pull/7) 和 [#8](https://github.com/cynos-ai/cynos-website/pull/8)，但对应本地 Run/queue 已不存在，不能补进当前候选实例。`scenario-testing` 已存在，也不能在不删除历史分支的情况下重做首次 `initial-create`。当前固定仓库不能用现有事实合法跑过 live/release；完整记录见 [证据完整性计划](docs/changes/luowang-evidence-completeness/plan.md#closure-7-历史事实审计2026-09-22)。
 
 以下按发生顺序保留验证过程，其中“待完成”描述当时状态。
 
