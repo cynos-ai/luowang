@@ -552,10 +552,23 @@ export class GitRepository {
         await this.run(['push', 'origin', `HEAD:refs/heads/${branch}`]);
       } catch (error) {
         if (error instanceof GitCommandError) {
+          if (/\[rejected\][^\r\n]*\((?:non-fast-forward|fetch first)\)/i.test(error.stderr)) {
+            throw new RepositoryError(
+              'REPORT_PUBLISH_CONFLICT',
+              '报告发布被远端并发更新拒绝，未执行 force push',
+              409,
+            );
+          }
+          const denied =
+            /(?:returned error:\s*(?:401|403)\b|authentication failed|permission .* denied|write access .* not granted)/i.test(
+              error.stderr,
+            );
           throw new RepositoryError(
-            'REPORT_PUBLISH_CONFLICT',
-            '报告发布被远端并发更新拒绝，未执行 force push',
-            409,
+            'PUSH_REJECTED',
+            denied
+              ? '报告推送认证或权限被拒绝，请检查 GitHub Token 的仓库写入权限'
+              : '报告推送失败，请检查 Git 连接或远端限制；尚未确认是并发冲突',
+            denied ? 403 : 502,
           );
         }
         throw error;

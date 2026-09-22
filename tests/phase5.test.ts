@@ -5,12 +5,12 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
 
-import { afterEach, describe, it } from 'vitest';
+import { afterEach, describe, it, vi } from 'vitest';
 
 import type { RepositoryIssue } from '../src/shared/types.js';
 import { loadConfig } from '../src/server/config.js';
 import { initializeDatabase } from '../src/server/db/migrate.js';
-import { RepositoryError } from '../src/server/repository/errors.js';
+import { GitCommandError, RepositoryError } from '../src/server/repository/errors.js';
 import { GitRepository, type ReportFileName } from '../src/server/repository/git-repository.js';
 import { GitHubClient } from '../src/server/repository/github.js';
 import type { RepositoryService } from '../src/server/repository/service.js';
@@ -211,6 +211,59 @@ describe('Phase 5 archive and progress', () => {
 });
 
 describe('Phase 5 Git report publisher', () => {
+  it.each([
+    {
+      stderr:
+        'remote: Permission to owner/repo.git denied to private-account.\nfatal: The requested URL returned error: 403',
+      code: 'PUSH_REJECTED',
+      status: 403,
+    },
+    {
+      stderr: 'fatal: Could not resolve host: github.com',
+      code: 'PUSH_REJECTED',
+      status: 502,
+    },
+    {
+      stderr: ' ! [rejected] HEAD -> scenario-testing (fetch first)',
+      code: 'REPORT_PUBLISH_CONFLICT',
+      status: 409,
+    },
+  ])('preserves report publication failure category: $status', async ({ stderr, code, status }) => {
+    const fixture = await createGitFixture();
+    const repository = new GitRepository({
+      directory: fixture.cloneDir,
+      remoteUrl: fixture.remoteDir,
+    });
+    const before = (await git(['rev-parse', 'scenario-testing'], fixture.remoteDir)).stdout;
+    const internal = repository as unknown as {
+      run(args: string[], cwd?: string): Promise<{ stdout: string; stderr: string }>;
+    };
+    const original = internal.run.bind(repository);
+    const spy = vi.spyOn(internal, 'run').mockImplementation(async (args, cwd) => {
+      if (args[0] === 'push') throw new GitCommandError(args, stderr, 128);
+      return original(args, cwd);
+    });
+    try {
+      await assert.rejects(
+        repository.publishRunReports('scenario-testing', runIdAt(10), reportFiles('rejected')),
+        (error: unknown) => {
+          assert.ok(error instanceof RepositoryError);
+          assert.equal(error.code, code);
+          assert.equal(error.statusCode, status);
+          assert.ok(!error.message.includes('private-account'));
+          return true;
+        },
+      );
+      assert.equal(
+        (await git(['rev-parse', 'scenario-testing'], fixture.remoteDir)).stdout,
+        before,
+      );
+      assert.equal((await git(['status', '--porcelain'], fixture.cloneDir)).stdout.trim(), '');
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
   it('adds only the current Run report files, is idempotent, and refuses content conflicts', async () => {
     const fixture = await createGitFixture();
     const repository = new GitRepository({

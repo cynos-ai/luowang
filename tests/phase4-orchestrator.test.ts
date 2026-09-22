@@ -1,4 +1,5 @@
 import { strict as assert } from 'node:assert';
+import { TEST_PNG } from './acceptance/local-evidence.js';
 import { execFile } from 'node:child_process';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -18,7 +19,8 @@ import { createTestDataManager } from '../src/server/runs/test-data.js';
 import type { ProviderAdapter } from '../src/server/runs/provider.js';
 import type { AgentSessionFactory, AgentSessionInput } from '../src/server/runs/types.js';
 import { createRepositoryService } from '../src/server/repository/service.js';
-import type { OssAdapter } from '../src/server/storage/oss.js';
+import { GitCommandError } from '../src/server/repository/errors.js';
+import { OssError, type OssAdapter } from '../src/server/storage/oss.js';
 import type { SecretStore } from '../src/server/security/secret-store.js';
 
 const execFileAsync = promisify(execFile);
@@ -29,6 +31,31 @@ afterEach(async () => {
 });
 
 describe('Phase 4 Run blocking boundaries', () => {
+  it.each(['fetch', 'UNTRUSTED_SECRET_COMMAND'])(
+    'keeps a safe preparation diagnostic for Git %s failures',
+    async (operation) => {
+      const fixture = await createGitFixture();
+      const context = await createRunContext(
+        fixture,
+        'vision-reviewer',
+        new GitCommandError(
+          [operation, 'https://SECRET_ARGUMENT@example.test'],
+          'SECRET_STDERR',
+          128,
+          'SECRET_MESSAGE',
+        ),
+      );
+      const result = await context.orchestrator.run({ request: '准备失败诊断', trigger: 'manual' });
+      assert.equal(result.status, 'failed');
+      assert.equal(result.result, null);
+      assert.match(
+        result.errorMessage ?? '',
+        operation === 'fetch' ? /^Git fetch 操作失败/ : /^Git 操作失败/,
+      );
+      assert.equal(result.artifacts['plan.md'], undefined);
+      assert.doesNotMatch(JSON.stringify(result), /SECRET_|UNTRUSTED|example\.test/);
+    },
+  );
   it.each([
     ['OSS 上传失败', 'upload-failure', /证据上传失败/],
     ['UI 缺少 MCP 或截图', 'browser-missing', /Playwright MCP 未启用|可审核的 evidence/],
@@ -55,6 +82,23 @@ describe('Phase 4 Run blocking boundaries', () => {
         true,
       );
     }
+  });
+
+  it('keeps a Run unblocked when a transient OSS upload succeeds within the retry bound', async () => {
+    const fixture = await createGitFixture();
+    const context = await createRunContext(fixture, 'upload-retry');
+    const result = await context.orchestrator.run({
+      request: '验证 OSS 瞬时失败恢复',
+      trigger: 'manual',
+    });
+    assert.equal(result.status, 'completed', JSON.stringify(result));
+    assert.equal(result.result, 'passed', JSON.stringify(result));
+    assert.ok(!result.blockingReasons?.some((reason) => /证据上传失败/.test(reason)));
+    assert.match(
+      result.artifacts['execution.md'] ?? '',
+      /attempt 1\/3 · failed · connection · 将重试/,
+    );
+    assert.match(result.artifacts['execution.md'] ?? '', /attempt 2\/3 · succeeded/);
   });
 
   it.each(['cleanup-review', 'cleanup-failure'] as const)(
@@ -102,6 +146,20 @@ describe('Phase 4 Run blocking boundaries', () => {
     assert.match(result.artifacts['report.md'] ?? '', /Issue 查询覆盖缺口/);
   });
 
+  it('does not write a review or start finalization when Reviewer skips execution', async () => {
+    const fixture = await createGitFixture();
+    const context = await createRunContext(fixture, 'review-without-execution');
+    const result = await context.orchestrator.run({
+      request: '审核漏读执行工件',
+      trigger: 'manual',
+    });
+    assert.equal(result.status, 'failed', JSON.stringify(result));
+    assert.equal(result.result, null);
+    assert.equal(result.errorMessage, '角色没有写入必需工件：review.md');
+    assert.equal(result.artifacts['review.md'], undefined);
+    assert.equal(result.artifacts['report.md'], undefined);
+  });
+
   it('does not complete a Run when Main finalization writes a non-schema scenario result', async () => {
     const fixture = await createGitFixture();
     const context = await createRunContext(fixture, 'malformed-report');
@@ -128,10 +186,12 @@ describe('Phase 4 Run blocking boundaries', () => {
 
 type FailureMode =
   | 'upload-failure'
+  | 'upload-retry'
   | 'cleanup-failure'
   | 'cleanup-review'
   | 'browser-missing'
   | 'review-read-failure'
+  | 'review-without-execution'
   | 'vision-reviewer'
   | 'vision-unavailable'
   | 'malformed-report'
@@ -190,7 +250,7 @@ class FailureBoundarySessionFactory implements AgentSessionFactory {
             });
           } else if (this.mode !== 'browser-missing') {
             await mkdir(join(context.runDirectory, 'evidence'), { recursive: true });
-            await writeFile(join(context.runDirectory, 'evidence', 'login.png'), 'fixture image');
+            await writeFile(join(context.runDirectory, 'evidence', 'login.png'), TEST_PNG);
           }
           await invokeTool(input, 'write_execution', {
             content: '# Execution\n\nRunner 已按计划执行。\n',
@@ -205,12 +265,12 @@ class FailureBoundarySessionFactory implements AgentSessionFactory {
           assert.match(input.systemPrompt, /没有新增或修改场景不等于没有执行场景/);
           assert.match(input.systemPrompt, /模型看图或人工触发 Run 不代表人工复核/);
           assert.match(input.systemPrompt, /操作成功也不能反证截图完整/);
-          for (const name of ['plan.md', 'execution.md']) {
-            await invokeTool(input, 'read_run_artifact', { name });
-          }
+          await invokeTool(input, 'read_run_artifact', { name: 'plan.md' });
           assert.ok(!input.customTools.some((t) => t.name === 'verify_test_data_cleanup'));
           if (
             this.mode === 'review-read-failure' ||
+            this.mode === 'upload-retry' ||
+            this.mode === 'review-without-execution' ||
             this.mode === 'vision-reviewer' ||
             this.mode === 'vision-unavailable' ||
             this.mode === 'malformed-report' ||
@@ -228,12 +288,19 @@ class FailureBoundarySessionFactory implements AgentSessionFactory {
               assert.ok(image.content.every((part) => part.type !== 'image'));
             }
           }
-          await invokeTool(input, 'write_review', {
+          if (this.mode !== 'review-without-execution') {
+            await invokeTool(input, 'read_run_artifact', { name: 'execution.md' });
+          }
+          const reviewWrite = await invokeTool(input, 'write_review', {
             content:
               this.mode === 'cleanup-review' || this.mode === 'cleanup-failure'
                 ? '# Review\n\n无需场景测试：计划仅验证 Harness 生命周期，不影响产品行为。\n'
                 : '# Review\n\n独立审核完成。\n',
           });
+          if (this.mode === 'review-without-execution') {
+            assert.equal((reviewWrite as { details: { error?: boolean } }).details.error, true);
+            assert.match(JSON.stringify(reviewWrite), /成功读取 execution.md/);
+          }
           return;
         }
 
@@ -283,7 +350,11 @@ class FailureBoundarySessionFactory implements AgentSessionFactory {
   }
 }
 
-async function createRunContext(fixture: Fixture, mode: FailureMode): Promise<RunContextFixture> {
+async function createRunContext(
+  fixture: Fixture,
+  mode: FailureMode,
+  preparationError?: GitCommandError,
+): Promise<RunContextFixture> {
   const dataDirectory = await mkdtemp(join(tmpdir(), 'luowang-phase4-orchestrator-'));
   const reportDir = join(dataDirectory, 'report');
   cleanup.push(async () => rm(dataDirectory, { recursive: true, force: true }));
@@ -317,6 +388,13 @@ async function createRunContext(fixture: Fixture, mode: FailureMode): Promise<Ru
     repoDir: config.repoDir,
     allowLocalRepository: true,
   });
+  if (preparationError) {
+    const git = await repository.getRepository();
+    git.fetch = async () => {
+      throw preparationError;
+    };
+    repository.getRepository = async () => git;
+  }
   const orchestrator = createRunOrchestrator({
     configuration,
     repository,
@@ -389,6 +467,7 @@ function fakeBrowser(enabled: boolean): BrowserMcpAdapter {
 
 function fakeOss(mode: FailureMode): OssAdapter {
   const objects = new Map<string, Buffer>();
+  let uploadAttempts = 0;
   return {
     isConfigured: () => true,
     objectKey: (runId, filename) => `${runId}/${filename}`,
@@ -410,6 +489,11 @@ function fakeOss(mode: FailureMode): OssAdapter {
       };
     },
     putObject: async (key, body) => {
+      uploadAttempts += 1;
+      if (mode === 'upload-failure')
+        throw new OssError('OSS_REQUEST_FAILED', 'fixture upload failed', 'timeout');
+      if (mode === 'upload-retry' && uploadAttempts === 1)
+        throw new OssError('OSS_REQUEST_FAILED', 'fixture transient failure', 'connection');
       objects.set(key, Buffer.from(body));
     },
     getObject: async (key) => {

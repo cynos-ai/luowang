@@ -34,6 +34,85 @@ afterEach(async () => {
 });
 
 describe('Phase 3 agent run', () => {
+  it('does not write execution when redaction secrets are unavailable', async () => {
+    const fixture = await createGitFixture(true);
+    const context = await createRunContext(
+      fixture,
+      ['passed'],
+      undefined,
+      undefined,
+      '',
+      '\n',
+      false,
+      false,
+      {
+        secretStore: {
+          get: () => {
+            throw new Error('private-secret-store-diagnostic');
+          },
+        } as unknown as SecretStore,
+      },
+    );
+    let response: unknown;
+    const originalCreate = context.sessions.create.bind(context.sessions);
+    context.sessions.create = async (input) => {
+      if (input.role === 'runner') {
+        const writer = input.customTools.find((t) => t.name === 'write_execution')!;
+        const execute = writer.execute.bind(writer);
+        writer.execute = async (...args) => {
+          response = await execute(...args);
+          return response as Awaited<ReturnType<typeof execute>>;
+        };
+      }
+      return originalCreate(input);
+    };
+    const result = await context.orchestrator.run({
+      request: '脱敏不可用时拒绝写入',
+      trigger: 'manual',
+    });
+    assert.equal(result.status, 'failed');
+    assert.equal(result.artifacts['execution.md'], undefined);
+    assert.doesNotMatch(JSON.stringify(response), /private-secret-store-diagnostic/);
+    assert.match(JSON.stringify(response), /执行记录脱敏不可用/);
+  });
+  it('redacts execution before persistence and Reviewer handoff', async () => {
+    const fixture = await createGitFixture(true);
+    const account = 'runner-private@example.test';
+    const context = await createRunContext(
+      fixture,
+      ['passed'],
+      undefined,
+      undefined,
+      '',
+      '\n',
+      false,
+      false,
+      {
+        secretStore: {
+          get: (key: string) => (key === 'testUsername' ? account : undefined),
+        } as SecretStore,
+      },
+    );
+    const originalCreate = context.sessions.create.bind(context.sessions);
+    context.sessions.create = async (input) => {
+      const session = await originalCreate(input);
+      if (input.role !== 'runner') return session;
+      return {
+        ...session,
+        prompt: async (message) => {
+          await session.prompt(message);
+          await invokeTool(input, 'write_execution', {
+            content: `# Execution\n账号 ${account}\n观察失败，证据 command-1.json。`,
+          });
+        },
+      };
+    };
+    const result = await context.orchestrator.run({ request: '验证写入前脱敏', trigger: 'manual' });
+    assert.equal(result.status, 'completed');
+    assert.doesNotMatch(result.artifacts['execution.md'] ?? '', /runner-private@example/);
+    assert.match(result.artifacts['execution.md'] ?? '', /\[REDACTED\]/);
+    assert.match(result.artifacts['execution.md'] ?? '', /观察失败/);
+  });
   it('delivers only selected original definitions to Reviewer, not final Main', async () => {
     const fixture = await createGitFixture(true);
     const context = await createRunContext(fixture, ['passed'], undefined, {
@@ -57,6 +136,9 @@ describe('Phase 3 agent run', () => {
   it.each(['oversize', 'secret-failure'] as const)(
     'keeps a normal Run blocked when original input is unavailable: %s',
     async (failure) => {
+      // Fail only while the original scenario snapshot is being frozen; the
+      // separate writer test covers secrets remaining unavailable at execution.
+      let reviewerSecretsUnavailable = failure === 'secret-failure';
       const fixture = await createGitFixture(true);
       if (failure === 'oversize') {
         await writeFile(
@@ -78,7 +160,9 @@ describe('Phase 3 agent run', () => {
           ? {
               secretStore: {
                 get: () => {
-                  throw new Error('private-secret-store-diagnostic');
+                  if (reviewerSecretsUnavailable)
+                    throw new Error('private-secret-store-diagnostic');
+                  return undefined;
                 },
               } as unknown as SecretStore,
             }
@@ -86,6 +170,7 @@ describe('Phase 3 agent run', () => {
       );
       const create = context.sessions.create.bind(context.sessions);
       context.sessions.create = async (input) => {
+        if (input.role === 'runner') reviewerSecretsUnavailable = false;
         const session = await create(input);
         if (input.role !== 'reviewer') return session;
         return {

@@ -52,7 +52,7 @@ describe('scenario quality feedback', () => {
 
   it('provides a complete parser-valid template even when the target has no scenarios', async () => {
     const role = await readFile('resources/agent-roles/main-planning.md', 'utf8');
-    const template = role.match(/```markdown\n([\s\S]*?)```/)?.[1];
+    const template = role.match(/```markdown\r?\n([\s\S]*?)```/)?.[1];
     assert.ok(template);
     const scene = parseScenarioMarkdown(
       template,
@@ -138,6 +138,33 @@ describe('scenario quality feedback', () => {
     order.assertReady();
     await order.readArtifact('execution.md');
     assert.equal(failures, 1);
+  });
+
+  it('rejects review submission until execution is successfully read, even with no images', async () => {
+    let unavailable = true;
+    const order = createReviewReadOrder(
+      async (name) => {
+        if (name === 'execution.md' && unavailable) throw new Error('execution unavailable');
+        return name;
+      },
+      [],
+      () => assert.fail(),
+    );
+    await assert.rejects(order.readArtifact('execution.md'), /plan/);
+    await order.readArtifact('plan.md');
+    assert.throws(order.assertReviewReady, /execution.md/);
+    await assert.rejects(order.readArtifact('execution.md'), /unavailable/);
+    assert.throws(order.assertReviewReady, /execution.md/);
+    unavailable = false;
+    await order.readArtifact('execution.md');
+    assert.doesNotThrow(order.assertReviewReady);
+    const nextSession = createReviewReadOrder(
+      async (name) => name,
+      [],
+      () => assert.fail(),
+    );
+    await nextSession.readArtifact('plan.md');
+    assert.throws(nextSession.assertReviewReady, /execution.md/);
   });
 
   it('allows a zero-image review only after the plan, without requiring nonexistent evidence', async () => {

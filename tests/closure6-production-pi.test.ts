@@ -37,6 +37,29 @@ afterEach(async () => {
 });
 
 describe('Closure 6 local production Pi path', () => {
+  it('reports terminal SDK errors instead of a missing plan without exposing model text', async () => {
+    const context = await createContext('review-all', 'model-error');
+    const result = await context.orchestrator.run({ request: '模型异常诊断', trigger: 'manual' });
+    assert.equal(result.status, 'failed');
+    assert.equal(result.result, null);
+    assert.equal(result.errorMessage, 'Agent Session 未正常完成（error）；原始模型错误未公开。');
+    assert.doesNotMatch(JSON.stringify(result), /private-model-error-sentinel/);
+    assert.equal(context.model.sessions.length, 1);
+    assert.equal(context.model.sessions[0]?.disposed, true);
+    assert.equal(result.artifacts['plan.md'], undefined);
+  });
+
+  it('keeps missing-plan diagnostics when the model ends normally without writing', async () => {
+    const context = await createContext('review-all', 'missing-plan');
+    const result = await context.orchestrator.run({
+      request: '正常结束但漏写计划',
+      trigger: 'manual',
+    });
+    assert.equal(result.status, 'failed');
+    assert.equal(result.result, null);
+    assert.match(result.errorMessage ?? '', /plan\.md/);
+    assert.doesNotMatch(result.errorMessage ?? '', /Session 未正常完成/);
+  });
   it('runs an ordinary four-session Run through createAgentSession and custom tool loops', async () => {
     const context = await createContext('review-all', 'normal');
     const result = await context.orchestrator.run({
@@ -120,14 +143,21 @@ describe('Closure 6 local production Pi path', () => {
     'keeps command evidence %s failures blocked through production Pi',
     async (failure) => {
       const context = await createContext('review-all', 'normal');
+      const writeEvidence = RunWorkspace.prototype.writeHarnessEvidence;
       const capture =
         failure === 'capture'
-          ? vi
-              .spyOn(RunWorkspace.prototype, 'writeHarnessEvidence')
-              .mockRejectedValueOnce(new Error('fixture write failure'))
+          ? vi.spyOn(RunWorkspace.prototype, 'writeHarnessEvidence').mockImplementation(function (
+              this: RunWorkspace,
+              name,
+              content,
+            ) {
+              if (name.startsWith('command-'))
+                return Promise.reject(new Error('fixture write failure'));
+              return writeEvidence.call(this, name, content);
+            })
           : undefined;
       if (failure === 'upload')
-        context.evidence.oss.uploadFile = async () => {
+        context.evidence.oss.putObject = async () => {
           throw new Error('fixture upload failure');
         };
       try {

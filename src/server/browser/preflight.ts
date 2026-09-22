@@ -12,6 +12,7 @@ import {
 } from '@earendil-works/pi-coding-agent';
 
 import { buildSessionInput, createPiAgentSessionFactory } from '../runs/agent-session.js';
+import { assertBrowserEvidenceCoverage } from './evidence-policy.js';
 import {
   EXCLUDED_TOOL_NAMES,
   PLAYWRIGHT_MCP_SERVER_NAME,
@@ -174,6 +175,8 @@ export async function runBrowserPreflight(
       throw new Error('SESSION_REPLAY_TOOLS_MISSING');
     if (EXCLUDED_TOOL_NAMES.some((name) => tools.includes(prefixed(name))))
       throw new Error('UNAUTHORIZED_TOOLS_VISIBLE');
+    assertBrowserEvidenceCoverage(tools.map((name) => name.replace(/^playwright_/, '')));
+    checks.evidencePolicyComplete = true;
     checks.sessionReplayTools = true;
     checks.excludedToolsHidden = true;
     checks.nativeMcpBound = true;

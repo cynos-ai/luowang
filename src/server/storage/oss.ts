@@ -85,7 +85,12 @@ export class OssError extends Error {
     | 'OSS_REQUEST_FAILED'
     | 'OSS_OBJECT_NOT_FOUND';
 
-  constructor(code: OssError['code'], message: string) {
+  constructor(
+    code: OssError['code'],
+    message: string,
+    readonly failureKind:
+      'timeout' | 'authentication' | 'not-found' | 'connection' | 'unknown' = 'unknown',
+  ) {
     super(message);
     this.name = 'OssError';
     this.code = code;
@@ -566,15 +571,30 @@ async function bodyToBuffer(body: unknown): Promise<Buffer> {
 
 function classifyOssError(error: unknown, fallback: string): OssError {
   if (error instanceof OssError) return error;
-  const possible = error as {
+  const possible = (error ?? {}) as {
     name?: unknown;
     code?: unknown;
     $metadata?: { httpStatusCode?: number };
+    cause?: { code?: unknown };
   };
   const status = possible.$metadata?.httpStatusCode;
   if (status === 404 || possible.name === 'NoSuchKey' || possible.name === 'NotFound') {
-    return new OssError('OSS_OBJECT_NOT_FOUND', 'OSS 对象不存在');
+    return new OssError('OSS_OBJECT_NOT_FOUND', 'OSS 对象不存在', 'not-found');
   }
+  if (status === 401 || status === 403)
+    return new OssError('OSS_REQUEST_FAILED', fallback, 'authentication');
+  if (
+    possible.name === 'TimeoutError' ||
+    possible.name === 'AbortError' ||
+    ['ETIMEDOUT', 'UND_ERR_CONNECT_TIMEOUT'].includes(String(possible.code ?? possible.cause?.code))
+  )
+    return new OssError('OSS_REQUEST_FAILED', fallback, 'timeout');
+  if (
+    ['ECONNRESET', 'ECONNREFUSED', 'ENOTFOUND', 'EAI_AGAIN'].includes(
+      String(possible.code ?? possible.cause?.code),
+    )
+  )
+    return new OssError('OSS_REQUEST_FAILED', fallback, 'connection');
   return new OssError('OSS_REQUEST_FAILED', fallback);
 }
 

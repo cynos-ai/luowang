@@ -298,7 +298,13 @@ export function selectLiveFacts(queue: LiveQueueFact[], runs: LiveRunFact[]): Li
       run.result === 'passed' &&
       (run.scenarioProgress?.total ?? 0) > 0 &&
       run.scenarioProgress?.completed === run.scenarioProgress?.total &&
-      run.activities?.some((activity) => activity.message?.startsWith('开始场景 ')) &&
+      run.activities?.some(
+        (activity) =>
+          activity.message?.startsWith('开始场景 ') ||
+          (activity.message?.startsWith('场景 ') &&
+            (activity.message.endsWith('：开始浏览器操作') ||
+              activity.message.endsWith('：开始受控命令'))),
+      ) &&
       run.activities?.some((activity) => activity.message?.startsWith('完成场景 ')),
   );
   assertLive(progressRun?.runId, '缺少 Harness 实时场景开始/完成活动事实');
@@ -693,6 +699,15 @@ function isSha(value: unknown): value is string {
 
 function sameValues(left: string[], right: string[]): boolean {
   return left.length === right.length && left.every((value, index) => value === right[index]);
+}
+
+export function hasVerifiedCleanupReport(report: string | undefined): boolean {
+  return (
+    report?.includes('## Harness 清理收尾') === true &&
+    report.includes('测试数据清理完成') &&
+    report.includes('全部登记测试数据均已独立核验清理') &&
+    /独立核验：[^\n]+absent=true/.test(report)
+  );
 }
 
 function asRecord(value: unknown): Record<string, unknown> {
@@ -1340,8 +1355,8 @@ async function validateCompletedLiveAcceptance(environment: NodeJS.ProcessEnv): 
   const scenarioReview = detailById.get(selection.scenarioReviewRunId);
   assertLive(passed && failed && blocked && scenarioReview, '无法读取一个或多个权威 Run 明细');
   assertLive(
-    passed.artifacts?.['review.md']?.includes('verified-cleaned') === true,
-    'passed Run 缺少 Reviewer verified-cleaned 事实',
+    hasVerifiedCleanupReport(passed.artifacts?.['report.md']),
+    'passed Run 缺少 Harness 独立清理核验事实',
   );
   const bugKeys = failed.confirmedBugs?.map((bug) => bug.key).filter(Boolean) ?? [];
   const succeededIssues = failed.issues?.filter(

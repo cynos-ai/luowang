@@ -181,6 +181,22 @@ export interface ScenarioResultSummary {
   result: RunResult;
 }
 
+export interface ScreenshotInspection {
+  status: 'detected' | 'not_detected' | 'unknown';
+  scope: 'page';
+  sha256: string;
+}
+
+export function screenshotInspectionLabel(
+  inspection: Pick<ScreenshotInspection, 'status'>,
+): string {
+  return inspection.status === 'detected'
+    ? '页面含可见表单值'
+    : inspection.status === 'not_detected'
+      ? '范围内未检测到可见表单值'
+      : '字段检测未完成';
+}
+
 export interface EvidenceReference {
   id: string;
   filename: string;
@@ -190,6 +206,7 @@ export interface EvidenceReference {
   sizeBytes: number;
   sha256: string;
   uploadedAt: string;
+  screenshotInspection?: ScreenshotInspection;
 }
 
 export interface ConfirmedBugSummary {

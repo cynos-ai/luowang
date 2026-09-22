@@ -1,4 +1,5 @@
 import { randomBytes } from 'node:crypto';
+import { appendScreenshotLabels } from './screenshot-inspection.js';
 import type { Logger } from 'pino';
 import { Type } from 'typebox';
 import type { InlineExtension, ToolDefinition } from '@earendil-works/pi-coding-agent';
@@ -19,7 +20,7 @@ import {
   type ParsedReport,
 } from '../repository/markdown.js';
 import type { GitChangedFile, GitRepository } from '../repository/git-repository.js';
-import { RepositoryError } from '../repository/errors.js';
+import { GitCommandError, RepositoryError } from '../repository/errors.js';
 import type { RepositoryIndexer } from '../repository/indexer.js';
 import type { RepositoryService } from '../repository/service.js';
 import type { ConfigurationStore } from '../configuration.js';
@@ -32,6 +33,7 @@ import {
 import { contentTypeFor, createOssAdapter, type OssAdapter } from '../storage/oss.js';
 import {
   buildSessionInput,
+  AgentSessionTerminationError,
   createArtifactWriterTool,
   createPlanWriterTool,
   createPiAgentSessionFactory,
@@ -59,6 +61,7 @@ import { createScenarioProgressController, type ProgressScenario } from './scena
 import { scenarioReviewSummary } from './scenario-review-summary.js';
 import { snapshotSelectedScenarios, type SelectedScenarioSource } from './selected-scenarios.js';
 import { createReviewReadOrder } from './review-order.js';
+import { createBrowserObservationExtension } from './browser-observation.js';
 import {
   assertScenarioResultsMatchPlan,
   ExecutionPlanError,
@@ -928,6 +931,31 @@ class DefaultRunOrchestrator implements RunOrchestrator {
             allowedScenarios: await this.progressScenarios(workspace, repository, context, true),
             now: this.now,
           });
+    const operationContext = () =>
+      progress?.operationContext() ?? { scope: 'initialization-reconnaissance', scenarioId: null };
+    const progressTools = (progress?.tools ?? []).map((tool): ToolDefinition => ({
+      ...tool,
+      execute: async (...args) => {
+        const result = await tool.execute(...args);
+        if (
+          !(result.details as Record<string, unknown> | undefined)?.error &&
+          (state.scenarioProgress?.total ?? 0) > 0 &&
+          evidenceStore?.captureObservation
+        ) {
+          try {
+            await evidenceStore.captureObservation(context.targetCommit, {
+              source: 'scenario-progress',
+              event: tool.name,
+              at: this.now().toISOString(),
+              ...operationContext(),
+            });
+          } catch {
+            this.addBlockingReason(context, '场景进度证据保存失败');
+          }
+        }
+        return result;
+      },
+    }));
     const tools = [
       ...createTargetContextTools(this.targetToolOptions(repository, context, 'runner')),
       ...createWorkingScenarioTools({
@@ -936,6 +964,10 @@ class DefaultRunOrchestrator implements RunOrchestrator {
       }),
       createReadArtifactTool((name) => readAllowedArtifact(workspace, name, ['plan.md'])),
       createRunnerCommandTool(async (command, signal) => {
+        const execution = {
+          ...(progress?.recordOperation('command') ?? operationContext()),
+          startedAt: this.now().toISOString(),
+        };
         // Obtain redaction values before execution; failure must not persist raw output.
         let secrets: string[];
         try {
@@ -954,6 +986,7 @@ class DefaultRunOrchestrator implements RunOrchestrator {
               context.targetCommit,
               result,
               secrets,
+              { ...execution, finishedAt: this.now().toISOString() },
             );
           } catch {
             this.addBlockingReason(context, '受控命令结果保存失败，不能确认执行结果');
@@ -981,13 +1014,28 @@ class DefaultRunOrchestrator implements RunOrchestrator {
         this.options.secretStore,
       ),
       ...createTestDataTools(this.options.testData ?? createTestDataManager(), context.runId),
-      ...(progress?.tools ?? []),
+      ...progressTools,
       ...(evidenceStore ? createRunnerEvidenceTools(evidenceStore) : []),
       createArtifactWriterTool(
         'write_execution',
         '写入执行记录',
         '写入本次 Run 的完整 execution.md，记录命令、观察、失败和清理情况。',
-        (content) => workspace.writer('runner').writeExecution(content),
+        (content) => {
+          // Never persist raw output when the Secret Store is unavailable.
+          let clean: string;
+          try {
+            if (evidenceStore?.redactText) clean = evidenceStore.redactText(content);
+            else {
+              const secrets = SECRET_KEYS.map((key) => this.options.secretStore?.get(key)).filter(
+                (value): value is string => Boolean(value),
+              );
+              clean = redactCommandText(content, secrets, Number.MAX_SAFE_INTEGER);
+            }
+          } catch {
+            throw new Error('执行记录脱敏不可用，未写入工件');
+          }
+          return workspace.writer('runner').writeExecution(clean);
+        },
       ),
     ];
     const browserExtension =
@@ -1004,7 +1052,20 @@ class DefaultRunOrchestrator implements RunOrchestrator {
       runnerUserMessage(context, purpose),
       runnerOutputContract(),
       false,
-      browserExtension ? [browserExtension] : [],
+      browserExtension && evidenceStore
+        ? [
+            browserExtension,
+            createBrowserObservationExtension({
+              store: evidenceStore,
+              targetCommit: context.targetCommit,
+              now: this.now,
+              operationContext: () => progress?.recordOperation('browser') ?? operationContext(),
+              onEvidenceFailure: () => this.addBlockingReason(context, 'MCP 操作证据捕获失败'),
+            }),
+          ]
+        : browserExtension
+          ? [browserExtension]
+          : [],
     );
     const progressError = progress?.completionError();
     if (progressError) {
@@ -1151,6 +1212,12 @@ class DefaultRunOrchestrator implements RunOrchestrator {
           context.evidence = references;
           state.evidence = references;
           uploaded = references.length > 0;
+          notes.push(
+            ...result.receipts.map(
+              (receipt) =>
+                `evidence 上传收据：${receipt.filename} · attempt ${receipt.attempt}/${receipt.maxAttempts} · ${receipt.status}${receipt.failureKind ? ` · ${receipt.failureKind}` : ''}${receipt.retryScheduled ? ' · 将重试' : ''}`,
+            ),
+          );
           if (result.failures.length > 0) {
             uploadFailed = true;
             for (const failure of result.failures) {
@@ -1317,29 +1384,40 @@ class DefaultRunOrchestrator implements RunOrchestrator {
     const tools = [
       createReadArtifactTool(readOrder.readArtifact),
       ...(evidenceStore
-        ? createReviewerEvidenceTools(evidenceStore, async () => {
-            let visionAvailable = false;
-            try {
-              const model = await this.options.provider?.resolveModel('reviewer');
-              visionAvailable = model ? supportsVision(model) : false;
-            } catch {
-              /* Unknown capability is not permission to deliver images. */
-            }
-            if (!visionAvailable) {
-              this.addBlockingReason(
-                context,
-                'Reviewer 模型不支持或无法确认图像输入，不能审核图片证据',
+        ? createReviewerEvidenceTools(
+            evidenceStore,
+            async () => {
+              let visionAvailable = false;
+              try {
+                const model = await this.options.provider?.resolveModel('reviewer');
+                visionAvailable = model ? supportsVision(model) : false;
+              } catch {
+                /* Unknown capability is not permission to deliver images. */
+              }
+              if (!visionAvailable) {
+                this.addBlockingReason(
+                  context,
+                  'Reviewer 模型不支持或无法确认图像输入，不能审核图片证据',
+                );
+              }
+              return visionAvailable;
+            },
+            ({ filename, kind, durationMs }) => {
+              this.setPhase(
+                state,
+                state.phase,
+                `证据读取失败：${filename}；类别=${kind}；耗时=${durationMs}ms`,
+                'warning',
               );
-            }
-            return visionAvailable;
-          }).map(readOrder.wrap)
+            },
+          ).map(readOrder.wrap)
         : []),
       createArtifactWriterTool(
         'write_review',
         '写入独立审核',
-        '写入本次 Run 的完整 review.md。必须独立核对执行证据；仅当 execution_scenarios 为空时审核零执行场景的理由。',
+        '写入本次 Run 的完整 review.md。必须独立核对执行证据，并通过 read_run_artifact 成功读取 execution.md 后再提交；仅当 execution_scenarios 为空时审核零执行场景的理由。',
         (content) => {
-          readOrder.assertReady();
+          readOrder.assertReviewReady();
           return workspace.writer('reviewer').writeReview(content);
         },
       ),
@@ -1417,7 +1495,9 @@ class DefaultRunOrchestrator implements RunOrchestrator {
               `最终报告格式无效，请修正后重新调用 write_report：${safeMessage(error)}`,
             );
           }
-          await workspace.writer('main-b').writeReport(normalized);
+          await workspace
+            .writer('main-b')
+            .writeReport(appendScreenshotLabels(normalized, context.evidence));
         },
       ),
       ...(context.initialization
@@ -2226,6 +2306,25 @@ function normalizeFinalReportFrontmatter(content: string): string {
 }
 
 function safeMessage(error: unknown): string {
+  if (error instanceof AgentSessionTerminationError) {
+    return new AgentSessionTerminationError(error.reason).message;
+  }
+  if (error instanceof GitCommandError) {
+    // Command arguments, stderr and even a custom message can contain credentials.
+    const operation = error.command[0];
+    const safeOperation = [
+      'clone',
+      'fetch',
+      'checkout',
+      'rev-parse',
+      'log',
+      'merge',
+      'ls-remote',
+    ].includes(operation ?? '')
+      ? ` ${operation}`
+      : '';
+    return `Git${safeOperation} 操作失败；请检查仓库连接、访问权限和工作树状态。原始错误未公开。`;
+  }
   if (error instanceof MarkdownValidationError) return error.safeDiagnostic;
   if (
     error instanceof RunOrchestratorError ||
@@ -2347,13 +2446,16 @@ function finalizationPromptContext(context: RunContext): Record<string, unknown>
     scenarioMode: context.scenarioMode,
     initialization: context.initialization,
     scenarioChanges: context.scenarioChanges ?? null,
-    evidence: context.evidence.map(({ filename, url, contentType, sizeBytes, sha256 }) => ({
-      filename,
-      url,
-      contentType,
-      sizeBytes,
-      sha256,
-    })),
+    evidence: context.evidence.map(
+      ({ filename, url, contentType, sizeBytes, sha256, screenshotInspection }) => ({
+        filename,
+        url,
+        contentType,
+        sizeBytes,
+        sha256,
+        screenshotInspection,
+      }),
+    ),
     blockingReasons: context.blockingReasons,
   };
 }

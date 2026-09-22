@@ -21,7 +21,10 @@ RUN sed -i \
   && rm -rf /var/lib/apt/lists/*
 
 COPY package.json package-lock.json ./
-RUN npm ci --registry=${NPM_REGISTRY}
+COPY scripts/patch-playwright-request-headers.mjs ./scripts/patch-playwright-request-headers.mjs
+COPY scripts/patch-playwright-screenshot-guard.mjs ./scripts/patch-playwright-screenshot-guard.mjs
+RUN npm ci --registry=${NPM_REGISTRY} \
+  && node scripts/patch-playwright-request-headers.mjs
 
 FROM dependencies AS browsers
 

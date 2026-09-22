@@ -15,6 +15,8 @@ export interface ProgressScenario {
 export interface ScenarioProgressController {
   tools: ToolDefinition[];
   completionError(): string | null;
+  operationContext(): Record<string, unknown>;
+  recordOperation(kind: 'command' | 'browser'): Record<string, unknown>;
 }
 
 export function createScenarioProgressController(options: {
@@ -93,6 +95,23 @@ class DefaultScenarioProgressController {
         },
       ],
       completionError: () => this.completionError(),
+      operationContext: () => this.operationContext(),
+      recordOperation: (kind) => {
+        this.addActivity(
+          `${this.active ? `场景 ${this.active}` : '辅助操作（无当前场景）'}：开始${kind === 'command' ? '受控命令' : '浏览器操作'}`,
+          'info',
+        );
+        return this.operationContext();
+      },
+    };
+  }
+
+  private operationContext(): Record<string, unknown> {
+    return {
+      scenarioId: this.active,
+      scope: this.active ? 'scenario' : 'auxiliary',
+      declared: this.declared !== undefined,
+      completed: [...this.completed],
     };
   }
 

@@ -64,6 +64,26 @@ describe('Closure 1 built-in role instructions', () => {
     }
   });
 
+  it('pins the current browser target contract for Runner recovery', async () => {
+    const loaded = await createRoleInstructionLoader().load('runner-execution', false);
+    assert.match(loaded.content, /browser_fill_form/);
+    assert.match(loaded.content, /browser_type/);
+    assert.match(loaded.content, /schema 的 `target` 参数/);
+    assert.match(loaded.content, /不得传 `ref` 参数/);
+    assert.match(loaded.content, /按当前工具 schema 修正后继续/);
+  });
+
+  it('keeps Reviewer applicability judgments attributed during finalization', async () => {
+    const loaded = await createRoleInstructionLoader().load('main-finalization', false);
+    assert.match(loaded.content, /期望适用性、范围解释和结论依据仍归 Reviewer/);
+    assert.match(loaded.content, /不能声称 Reviewer 未作该判断/);
+    assert.match(loaded.content, /不重新决定期望是否适用/);
+    assert.match(loaded.content, /不得把“没有某类证据”改写为“证据列表为空”/);
+    assert.match(loaded.content, /证据文件数量与类别须和 review\.md 的清单一致/);
+    assert.match(loaded.content, /不得遗漏或反转“不代表、仅限、未验证、无法确认”等限定/);
+    assert.match(loaded.content, /须先修正一致再调用 write_report/);
+  });
+
   it('ignores ambient target, host and user resources outside the fixed allowlist', async () => {
     const root = await mkdtemp(join(tmpdir(), 'luowang-closure1-ambient-'));
     cleanup.push(async () => rm(root, { recursive: true, force: true }));
