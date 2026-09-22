@@ -77,6 +77,28 @@ describe('Closure 6 local production Pi path', () => {
     ]);
     assertSessionSequence(context.model, ['main-a', 'runner', 'reviewer', 'main-b']);
     assert.deepEqual(
+      context.model.sessions.map((session) => session.tools.includes('query_source_reads')),
+      [true, false, true, false],
+    );
+    const sourceReads = JSON.parse(
+      await readFile(
+        join(context.reportDir, 'completed', result.runId, 'source-reads.json'),
+        'utf8',
+      ),
+    );
+    assert.equal(sourceReads.runId, result.runId);
+    assert.ok(
+      sourceReads.receipts.some(
+        (receipt: { tool: string; category: string; stage: string; targetCommit: string }) =>
+          receipt.tool === 'list_target_files' &&
+          receipt.category === 'paths' &&
+          receipt.stage === 'main-planning' &&
+          receipt.targetCommit === result.targetCommit,
+      ),
+    );
+    assert.equal(Object.keys(result.artifacts).includes('source-reads.json'), false);
+    assert.ok(![...context.evidence.objects.keys()].some((key) => key.includes('source-reads')));
+    assert.deepEqual(
       context.model.sessions.map((session) => session.thinking),
       ['low', 'off', 'low', 'off'],
     );

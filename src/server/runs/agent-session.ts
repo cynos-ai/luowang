@@ -13,6 +13,11 @@ import { Type, type Static } from 'typebox';
 import type { AgentConfig } from '../../shared/types.js';
 import {
   createTargetChangeEvidenceTools,
+  createSourceListTools,
+  createSourceTextTool,
+  type SourceToolOptions,
+  type TargetSearchResult,
+  type TargetTextReadResult,
   type TargetChangeEvidenceOptions,
 } from './change-evidence.js';
 import { effectiveStageThinking, type ProviderAdapter } from './provider.js';
@@ -233,19 +238,15 @@ export function createReadArtifactTool(read: (name: string) => Promise<string>):
   };
 }
 
-export function createTargetContextTools(options: {
-  readFile: (path: string) => Promise<string>;
-  listFiles: () => Promise<string[]>;
-  search: (query: string) => Promise<string>;
-  context: () => string;
-  changeEvidence?: TargetChangeEvidenceOptions;
-}): ToolDefinition[] {
-  const readParameters = Type.Object({
-    path: Type.String({ description: '仓库相对路径' }),
-  });
-  const searchParameters = Type.Object({
-    query: Type.String({ description: '要搜索的文本' }),
-  });
+export function createTargetContextTools(
+  options: SourceToolOptions & {
+    readFile: (path: string) => Promise<TargetTextReadResult>;
+    listFiles: () => Promise<string[]>;
+    search: (query: string) => Promise<TargetSearchResult>;
+    context: () => string;
+    changeEvidence?: TargetChangeEvidenceOptions;
+  },
+): ToolDefinition[] {
   const tools: ToolDefinition[] = [
     {
       name: 'get_run_context',
@@ -254,45 +255,8 @@ export function createTargetContextTools(options: {
       parameters: Type.Object({}),
       execute: async () => createTextResult(options.context()),
     },
-    {
-      name: 'list_target_files',
-      label: '列出目标文件',
-      description: '列出固定 target commit 中的文件路径，只读。',
-      parameters: Type.Object({}),
-      execute: async () => {
-        try {
-          return createTextResult((await options.listFiles()).join('\n'));
-        } catch (error) {
-          return createTextResult(errorMessage(error), { error: true });
-        }
-      },
-    },
-    {
-      name: 'read_target_file',
-      label: '读取目标文件',
-      description: '从固定 target commit 读取一个非敏感文件，不能读取 .env、密钥或凭据文件。',
-      parameters: readParameters,
-      execute: async (_toolCallId, params: Static<typeof readParameters>) => {
-        try {
-          return createTextResult(await options.readFile(params.path));
-        } catch (error) {
-          return createTextResult(errorMessage(error), { error: true });
-        }
-      },
-    },
-    {
-      name: 'search_target_files',
-      label: '搜索目标文件',
-      description: '在固定 target commit 的文本文件中搜索关键词，只读。',
-      parameters: searchParameters,
-      execute: async (_toolCallId, params: Static<typeof searchParameters>) => {
-        try {
-          return createTextResult(await options.search(params.query));
-        } catch (error) {
-          return createTextResult(errorMessage(error), { error: true });
-        }
-      },
-    },
+    ...createSourceListTools(options),
+    createSourceTextTool(options, 'read_target_file', (_version, path) => options.readFile(path)),
   ];
   if (options.changeEvidence)
     tools.push(...createTargetChangeEvidenceTools(options.changeEvidence));

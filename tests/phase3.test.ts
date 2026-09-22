@@ -867,13 +867,32 @@ describe('Phase 3 agent run', () => {
     await git(['mv', 'public-old.txt', 'secret-new.txt'], fixture.sourceDir);
     await writeFile(join(fixture.sourceDir, 'public-new.txt'), common + 'replacement\n');
     await commitAndPush(fixture.sourceDir, 'rename checks', 'scenario-testing');
+    const responses: string[] = [];
+    const originalCreate = context.sessions.create.bind(context.sessions);
+    context.sessions.create = async (input) => {
+      const session = await originalCreate(input);
+      if (input.role !== 'main-a') return session;
+      return {
+        ...session,
+        prompt: async (message) => {
+          for (const path of [
+            'public-new.txt',
+            'credentials.txt',
+            'public-old.txt',
+            'secret-new.txt',
+          ]) {
+            responses.push(commandText(await invokeTool(input, 'read_target_diff', { path })));
+          }
+          await session.prompt(message);
+        },
+      };
+    };
     assert.equal(
       (await context.orchestrator.run({ request: 'target', trigger: 'manual' })).result,
       'passed',
     );
-    const main = context.sessions.inputs[4] as AgentSessionInput;
-    for (const path of ['public-new.txt', 'credentials.txt', 'public-old.txt', 'secret-new.txt']) {
-      const response = commandText(await invokeTool(main, 'read_target_diff', { path }));
+    assert.equal(responses.length, 4);
+    for (const response of responses) {
       assert.match(response, /"status":"unreadable"/);
       assert.doesNotMatch(response, /SYNTHETIC_PRIVATE_VALUE/);
     }

@@ -213,6 +213,30 @@ export class RunWorkspace implements RunArtifactReader {
     });
   }
 
+  /** Harness-owned local metadata; excluded from artifact/evidence readers and Git archive. */
+  async writeSourceReads(content: string): Promise<void> {
+    if (Buffer.byteLength(content) > MAX_ARTIFACT_BYTES)
+      throw new RunWorkspaceError('ARTIFACT_INVALID', '源码回执超出大小限制');
+    const path = resolve(this.directory, 'source-reads.json');
+    try {
+      const info = await lstat(path);
+      if (!info.isFile() || info.isSymbolicLink())
+        throw new RunWorkspaceError('ARTIFACT_INVALID', '源码回执不是普通文件');
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    }
+    const temporary = resolve(
+      this.directory,
+      `.source-reads-${randomBytes(16).toString('hex')}.tmp`,
+    );
+    try {
+      await writeFile(temporary, content, { flag: 'wx', mode: 0o600 });
+      await rename(temporary, path);
+    } finally {
+      await rm(temporary, { force: true });
+    }
+  }
+
   /** Harness-only sanitization of the pinned MCP's automatic text files. */
   async replaceBrowserEvidence(name: string, content: string): Promise<void> {
     if (
