@@ -2,6 +2,11 @@ import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { contentTypeFor, type OssAdapter } from '../../src/server/storage/oss.js';
 
+export const TEST_PNG = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aX9sAAAAASUVORK5CYII=',
+  'base64',
+);
+
 /** Offline transport for production evidence tests; no synthetic missing-object fallback. */
 export function localEvidenceTransport() {
   const objects = new Map<string, Buffer>();

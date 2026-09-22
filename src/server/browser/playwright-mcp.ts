@@ -14,6 +14,7 @@ import {
 import type { InlineExtension } from '@earendil-works/pi-coding-agent';
 import type { ConnectivityResult } from '../../shared/types.js';
 import type { ConfigurationStore } from '../configuration.js';
+import { assertBrowserEvidenceCoverage } from './evidence-policy.js';
 
 export const PI_MCP_ADAPTER_VERSION = '2.31.0';
 export const PLAYWRIGHT_MCP_VERSION = '0.0.79';
@@ -214,6 +215,18 @@ class DefaultPlaywrightMcpAdapter implements BrowserMcpAdapter {
         Math.max(definition.requestTimeoutMs, this.options.timeoutMs ?? 15_000),
       );
       const names = new Set(result.toolNames);
+      try {
+        assertBrowserEvidenceCoverage(
+          result.toolNames.filter((name) => !definition.excludeTools.includes(name)),
+        );
+      } catch {
+        return {
+          status: 'failed',
+          message: 'Playwright MCP 存在未配置证据采集/读取规则的工具',
+          checkedAt: this.now().toISOString(),
+          latencyMs: Date.now() - startedAt,
+        };
+      }
       const missing = [...REQUIRED_TOOL_NAMES, ...SESSION_REPLAY_TOOL_NAMES].filter(
         (name) => !names.has(name),
       );

@@ -1,25 +1,42 @@
-import { createHash } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { Type, type Static } from 'typebox';
 import type { AgentToolResult, ToolDefinition } from '@earendil-works/pi-coding-agent';
 
-import type { EvidenceReference } from '../../shared/types.js';
+import {
+  screenshotInspectionLabel,
+  type EvidenceReference,
+  type ScreenshotInspection,
+} from '../../shared/types.js';
 import { createTextResult } from './agent-session.js';
 import { redactSensitiveText } from './test-data.js';
 import type { CommandRunResult } from './command-runner.js';
 import type { OssAdapter } from '../storage/oss.js';
-import { contentTypeFor, uploadEvidenceBody } from '../storage/oss.js';
+import { contentTypeFor, uploadEvidenceBody, OssError } from '../storage/oss.js';
 import { RunWorkspace, isBrowserRecordName, type RunEvidenceFile } from './workspace.js';
+import { readBrowserSnapshotText } from './browser-snapshot.js';
 
 const MAX_REVIEW_IMAGE_BYTES = 16 * 1024 * 1024;
+const MAX_UPLOAD_ATTEMPTS = 3;
+const DISCARDED_BROWSER_SNAPSHOT = '- note: browser snapshot discarded after capture failure\n';
 
 export interface EvidenceUploadResult {
   references: EvidenceReference[];
   failures: EvidenceUploadFailure[];
+  receipts: EvidenceUploadReceipt[];
 }
 
 export interface EvidenceUploadFailure {
   filename: string;
   message: string;
+}
+
+export interface EvidenceUploadReceipt {
+  filename: string;
+  attempt: number;
+  maxAttempts: number;
+  status: 'succeeded' | 'failed';
+  failureKind?: OssError['failureKind'];
+  retryScheduled: boolean;
 }
 
 export interface EvidenceCleanupResult {
@@ -44,12 +61,24 @@ export interface RunEvidenceStore {
     targetCommit: string,
     result: CommandRunResult | { error: string },
     secrets: readonly string[],
+    execution?: Record<string, unknown>,
   ): Promise<string>;
   commandEvidenceIds(): string[];
   readCommandEvidence(filename: string): Promise<string>;
+  registerSensitiveValue?(value: string): void;
+  redactText?(value: string): string;
+  identifySensitiveValue?(value: string): string;
+  captureObservation?(targetCommit: string, observation: Record<string, unknown>): Promise<string>;
   allowBrowserRecords?(): void;
   browserEvidenceIds?(): string[];
   readBrowserEvidence?(filename: string): Promise<string>;
+  captureScreenshot?(filename: string, inspection: ScreenshotInspection): Promise<void>;
+  captureBrowserSnapshot?(filename: string): Promise<{
+    filename: string;
+    capturedSha256: string;
+    status: 'sanitized-local';
+    readTool: 'read_browser_evidence';
+  }>;
 }
 
 export interface EvidenceReadResult {
@@ -58,6 +87,7 @@ export interface EvidenceReadResult {
   contentType: string;
   source: 'oss' | 'local';
   url: string | null;
+  screenshotInspection?: ScreenshotInspection;
 }
 
 export function createRunEvidenceStore(
@@ -74,7 +104,98 @@ class DefaultRunEvidenceStore implements RunEvidenceStore {
   private reviewReads = 0;
   private readonly commandEvidence = new Map<string, { sha256: string; sizeBytes: number }>();
   private commandSequence = 0;
+  private observationSequence = 0;
+  private captureSequence = 0;
   private browserRecordsAllowed = false;
+  private readonly runtimeSecrets = new Set<string>();
+  private readonly credentialReferences = new Map<string, string>();
+  private readonly screenshots = new Map<string, ScreenshotInspection>();
+  private readonly snapshotHashes = new Map<string, string>();
+  private readonly failedSnapshots = new Set<string>();
+  private readonly uploadReceipts: EvidenceUploadReceipt[] = [];
+
+  async captureBrowserSnapshot(filename: string) {
+    if (!filename.startsWith('page-') || !isBrowserRecordName(filename))
+      throw new Error('快照文件名无效');
+    this.failedSnapshots.add(filename);
+    try {
+      const body = await this.workspace.readEvidence(filename);
+      const known = this.snapshotHashes.get(filename);
+      if (known) {
+        if (createHash('sha256').update(body).digest('hex') !== known)
+          throw new Error('快照文件内容已改变');
+      } else {
+        const snapshot = readBrowserSnapshotText(decodeBrowserRecord(body));
+        for (const value of snapshot.fieldValues) this.registerSensitiveValue(value);
+        const clean = this.redactText(snapshot.text);
+        await this.workspace.replaceBrowserEvidence(filename, clean);
+        this.snapshotHashes.set(filename, createHash('sha256').update(clean).digest('hex'));
+      }
+    } catch {
+      this.snapshotHashes.delete(filename);
+      try {
+        await this.workspace.replaceBrowserEvidence(filename, DISCARDED_BROWSER_SNAPSHOT);
+      } catch {
+        try {
+          await this.workspace.removeBrowserEvidence(filename);
+        } catch {
+          throw new Error('浏览器快照采集失败且原始内容清理失败');
+        }
+      }
+      throw new Error('浏览器快照采集失败，原始内容已丢弃');
+    }
+    this.failedSnapshots.delete(filename);
+    return {
+      filename,
+      capturedSha256: this.snapshotHashes.get(filename)!,
+      status: 'sanitized-local' as const,
+      readTool: 'read_browser_evidence' as const,
+    };
+  }
+
+  async captureScreenshot(filename: string, inspection: ScreenshotInspection): Promise<void> {
+    const body = await this.workspace.readEvidence(filename);
+    if (
+      !isRasterImage(body, contentTypeFor(filename)) ||
+      createHash('sha256').update(body).digest('hex') !== inspection.sha256
+    )
+      throw new Error('截图采集字节校验失败');
+    if (this.references.has(filename) || this.screenshots.has(filename))
+      throw new Error('截图证据文件名不可重用');
+    this.screenshots.set(filename, { ...inspection });
+  }
+
+  private screenshotFor(filename: string, body: Buffer): ScreenshotInspection | undefined {
+    if (!contentTypeFor(filename).startsWith('image/')) return undefined;
+    const sha256 = createHash('sha256').update(body).digest('hex');
+    const inspection =
+      this.screenshots.get(filename) ?? this.references.get(filename)?.screenshotInspection;
+    if (inspection && inspection.sha256 !== sha256)
+      throw new Error('截图内容已改变，检测标签不能复用');
+    return inspection ?? { status: 'unknown', scope: 'page', sha256 };
+  }
+
+  registerSensitiveValue(value: string): void {
+    if (value) this.runtimeSecrets.add(value);
+  }
+
+  identifySensitiveValue(value: string): string {
+    this.registerSensitiveValue(value);
+    let reference = this.credentialReferences.get(value);
+    if (!reference) {
+      reference = `credential-${randomBytes(16).toString('hex')}`;
+      this.credentialReferences.set(value, reference);
+    }
+    return reference;
+  }
+
+  private secrets(): string[] {
+    return [...this.reviewSecrets(), ...this.runtimeSecrets];
+  }
+
+  redactText(value: string): string {
+    return redactCommandText(value, this.secrets(), Number.MAX_SAFE_INTEGER);
+  }
 
   constructor(
     private readonly workspace: RunWorkspace,
@@ -102,45 +223,109 @@ class DefaultRunEvidenceStore implements RunEvidenceStore {
     for (const [name, captured] of this.commandEvidence) {
       if (!byName.has(name)) byName.set(name, { name, path: '', sizeBytes: captured.sizeBytes });
     }
-    return [...byName.values()].sort((left, right) => left.name.localeCompare(right.name));
+    return [...byName.values()]
+      .map((file) => ({
+        ...file,
+        screenshotInspection:
+          this.screenshots.get(file.name) ?? this.references.get(file.name)?.screenshotInspection,
+      }))
+      .sort((left, right) => left.name.localeCompare(right.name));
   }
 
   async upload(filename: string): Promise<EvidenceReference> {
     const existing = this.references.get(filename);
     if (existing) return existing;
+    if (
+      !this.commandEvidence.has(filename) &&
+      !isBrowserRecordName(filename) &&
+      !['image/png', 'image/jpeg', 'image/gif', 'image/webp'].includes(contentTypeFor(filename))
+    ) {
+      throw new Error('未获准的文本或二进制证据不能上传；请使用 Harness 捕获的命令/MCP 记录或截图');
+    }
     const files = await this.workspace.listEvidence();
     const file = files.find((item) => item.name === filename);
     if (!file) throw new Error(`证据文件不存在：${filename}`);
     let browserBody: Buffer | undefined;
     if (isBrowserRecordName(filename)) {
+      if (this.failedSnapshots.has(filename)) throw new Error('快照采集失败，拒绝上传');
+      if (filename.startsWith('page-') && !this.snapshotHashes.has(filename))
+        await this.captureBrowserSnapshot(filename);
       const original = await this.workspace.readEvidence(filename);
+      const capturedHash = this.snapshotHashes.get(filename);
+      if (capturedHash && createHash('sha256').update(original).digest('hex') !== capturedHash)
+        throw new Error('快照文件内容已改变');
       const text = decodeBrowserRecord(original);
-      const clean = redactCommandText(text, this.reviewSecrets(), Number.MAX_SAFE_INTEGER);
+      const clean = redactCommandText(text, this.secrets(), Number.MAX_SAFE_INTEGER);
       if (Buffer.byteLength(clean) > 1024 * 1024) throw new Error('脱敏浏览器记录超过大小限制');
       if (clean !== text) await this.workspace.replaceBrowserEvidence(filename, clean);
+      if (capturedHash)
+        this.snapshotHashes.set(filename, createHash('sha256').update(clean).digest('hex'));
       browserBody = Buffer.from(clean);
     }
     if (this.commandEvidence.has(filename)) {
-      this.assertCommandIntegrity(filename, await this.workspace.readEvidence(filename));
+      browserBody = await this.workspace.readEvidence(filename);
+      this.assertCommandIntegrity(filename, browserBody);
     }
-    const reference = browserBody
-      ? await uploadEvidenceBody(this.oss, this.workspace.runId, filename, browserBody)
-      : await this.oss.uploadFile(this.workspace.runId, filename, file.path);
+    if (!browserBody) {
+      browserBody = await this.workspace.readEvidence(filename);
+      if (!isRasterImage(browserBody, contentTypeFor(filename)))
+        throw new Error('截图格式与文件名不符，拒绝上传');
+    }
+    const screenshotInspection = this.screenshotFor(filename, browserBody);
+    const reference = await this.uploadBody(filename, browserBody);
+    reference.screenshotInspection = screenshotInspection;
     this.references.set(filename, reference);
     return reference;
+  }
+
+  private async uploadBody(filename: string, body: Buffer): Promise<EvidenceReference> {
+    const uploadedAt = new Date();
+    for (let attempt = 1; attempt <= MAX_UPLOAD_ATTEMPTS; attempt += 1) {
+      try {
+        const reference = await uploadEvidenceBody(
+          this.oss,
+          this.workspace.runId,
+          filename,
+          body,
+          uploadedAt,
+        );
+        this.uploadReceipts.push({
+          filename,
+          attempt,
+          maxAttempts: MAX_UPLOAD_ATTEMPTS,
+          status: 'succeeded',
+          retryScheduled: false,
+        });
+        return reference;
+      } catch (error) {
+        const failureKind = uploadFailureKind(error);
+        const retryScheduled = attempt < MAX_UPLOAD_ATTEMPTS && isRetryableUploadFailure(error);
+        this.uploadReceipts.push({
+          filename,
+          attempt,
+          maxAttempts: MAX_UPLOAD_ATTEMPTS,
+          status: 'failed',
+          failureKind,
+          retryScheduled,
+        });
+        if (!retryScheduled) throw error;
+      }
+    }
+    throw new Error('Unreachable upload retry state');
   }
 
   async uploadAll(): Promise<EvidenceUploadResult> {
     const references: EvidenceReference[] = [];
     const failures: EvidenceUploadFailure[] = [];
+    const receiptOffset = this.uploadReceipts.length;
     for (const file of await this.list()) {
       try {
         references.push(await this.upload(file.name));
       } catch (error) {
-        failures.push({ filename: file.name, message: safeMessage(error) });
+        failures.push({ filename: file.name, message: uploadFailureMessage(error) });
       }
     }
-    return { references, failures };
+    return { references, failures, receipts: this.uploadReceipts.slice(receiptOffset) };
   }
 
   async read(filename: string): Promise<EvidenceReadResult> {
@@ -154,6 +339,7 @@ class DefaultRunEvidenceStore implements RunEvidenceStore {
           contentType: object.contentType || reference.contentType,
           source: 'oss',
           url: reference.url,
+          screenshotInspection: this.screenshotFor(filename, object.body),
         };
       }
       const body = await this.workspace.readEvidence(filename);
@@ -163,6 +349,7 @@ class DefaultRunEvidenceStore implements RunEvidenceStore {
         contentType: contentTypeFor(filename),
         source: 'local',
         url: null,
+        screenshotInspection: this.screenshotFor(filename, body),
       };
     } catch (error) {
       this.readFailures += 1;
@@ -184,6 +371,7 @@ class DefaultRunEvidenceStore implements RunEvidenceStore {
         contentType: object.contentType || reference.contentType,
         source: 'oss',
         url: reference.url,
+        screenshotInspection: this.screenshotFor(filename, object.body),
       };
     } catch (error) {
       this.readFailures += 1;
@@ -231,12 +419,16 @@ class DefaultRunEvidenceStore implements RunEvidenceStore {
     targetCommit: string,
     result: CommandRunResult | { error: string },
     secrets: readonly string[],
+    execution?: Record<string, unknown>,
   ): Promise<string> {
-    const clean = (value: string, limit?: number) => redactCommandText(value, secrets, limit);
+    const clean = (value: string, limit?: number) =>
+      redactCommandText(value, [...secrets, ...this.secrets()], limit);
     const content = `${JSON.stringify(
       {
         runId: this.workspace.runId,
         targetCommit,
+        sequence: ++this.captureSequence,
+        ...(execution ? { execution } : {}),
         command: clean(command, 16 * 1024),
         result:
           'error' in result
@@ -250,7 +442,29 @@ class DefaultRunEvidenceStore implements RunEvidenceStore {
       null,
       2,
     )}\n`;
-    const filename = `command-${++this.commandSequence}.json`;
+    return this.writeCommandRecord(content, `command-${++this.commandSequence}.json`);
+  }
+
+  async captureObservation(
+    targetCommit: string,
+    observation: Record<string, unknown>,
+  ): Promise<string> {
+    const secrets = this.secrets();
+    const sanitize = (value: unknown): unknown => {
+      if (typeof value === 'string') return redactCommandText(value, secrets);
+      if (Array.isArray(value)) return value.map(sanitize);
+      if (value && typeof value === 'object')
+        return Object.fromEntries(
+          Object.entries(value).map(([key, item]) => [key, sanitize(item)]),
+        );
+      return value;
+    };
+    const content = `${JSON.stringify({ runId: this.workspace.runId, targetCommit, sequence: ++this.captureSequence, observation: sanitize(observation) }, null, 2)}\n`;
+    return this.writeCommandRecord(content, `operation-${++this.observationSequence}.json`);
+  }
+
+  private async writeCommandRecord(content: string, filename: string): Promise<string> {
+    if (Buffer.byteLength(content) > 1024 * 1024) throw new Error('受控证据超过大小限制');
     await this.workspace.writeHarnessEvidence(filename, content);
     this.commandEvidence.set(filename, {
       sha256: createHash('sha256').update(content).digest('hex'),
@@ -275,10 +489,10 @@ class DefaultRunEvidenceStore implements RunEvidenceStore {
       throw new Error('不是本 Run 已上传的浏览器记录');
     const evidence = await this.readUploaded(filename);
     if (createHash('sha256').update(evidence.body).digest('hex') !== reference.sha256) {
-      throw new Error('浏览器记录内容已改变');
+      throw new EvidenceIntegrityError('浏览器记录内容已改变');
     }
     const text = decodeBrowserRecord(evidence.body);
-    const clean = redactCommandText(text, this.reviewSecrets(), Number.MAX_SAFE_INTEGER);
+    const clean = redactCommandText(text, this.secrets(), Number.MAX_SAFE_INTEGER);
     const bytes = Buffer.from(clean);
     const content =
       bytes.length <= 64 * 1024
@@ -302,7 +516,7 @@ class DefaultRunEvidenceStore implements RunEvidenceStore {
       body.byteLength > 1024 * 1024 ||
       createHash('sha256').update(body).digest('hex') !== expected.sha256
     ) {
-      throw new Error('命令证据不属于本 Run 的 Harness 捕获记录或内容已改变');
+      throw new EvidenceIntegrityError('命令证据不属于本 Run 的 Harness 捕获记录或内容已改变');
     }
   }
 
@@ -321,6 +535,19 @@ function decodeBrowserRecord(body: Buffer): string {
   const text = new TextDecoder('utf-8', { fatal: true }).decode(body);
   if (text.includes('\u0000')) throw new Error('浏览器记录不是有效文本');
   return text;
+}
+
+function isRasterImage(body: Buffer, contentType: string): boolean {
+  if (contentType === 'image/png')
+    return body.subarray(0, 8).equals(Buffer.from('89504e470d0a1a0a', 'hex'));
+  if (contentType === 'image/jpeg') return body.subarray(0, 3).equals(Buffer.from('ffd8ff', 'hex'));
+  if (contentType === 'image/gif')
+    return ['GIF87a', 'GIF89a'].includes(body.subarray(0, 6).toString('ascii'));
+  return (
+    contentType === 'image/webp' &&
+    body.subarray(0, 4).toString('ascii') === 'RIFF' &&
+    body.subarray(8, 12).toString('ascii') === 'WEBP'
+  );
 }
 
 function invalidEvidenceRequest() {
@@ -376,7 +603,20 @@ export function createRunnerEvidenceTools(store: RunEvidenceStore): ToolDefiniti
         try {
           const files = await store.list();
           return createTextResult(
-            JSON.stringify(files.map(({ name, sizeBytes }) => ({ name, sizeBytes }))),
+            JSON.stringify(
+              files.map(({ name, sizeBytes, screenshotInspection }) => ({
+                name,
+                sizeBytes,
+                screenshotInspection,
+                ...(contentTypeFor(name).startsWith('image/')
+                  ? {
+                      screenshotLabel: screenshotInspectionLabel(
+                        screenshotInspection ?? { status: 'unknown' },
+                      ),
+                    }
+                  : {}),
+              })),
+            ),
           );
         } catch (error) {
           return createTextResult(safeMessage(error), { error: true });
@@ -417,9 +657,40 @@ export function createRunnerEvidenceTools(store: RunEvidenceStore): ToolDefiniti
   ];
 }
 
+export interface EvidenceReadFailureDiagnostic {
+  filename: string;
+  kind: 'timeout' | 'authentication' | 'not-found' | 'connection' | 'unknown' | 'integrity';
+  durationMs: number;
+}
+
+class EvidenceIntegrityError extends Error {}
+
+function readFailureDiagnostic(
+  filename: string,
+  error: unknown,
+  startedAt: number,
+): EvidenceReadFailureDiagnostic {
+  const kind =
+    error instanceof EvidenceIntegrityError
+      ? 'integrity'
+      : error instanceof OssError &&
+          ['timeout', 'authentication', 'not-found', 'connection'].includes(error.failureKind)
+        ? error.failureKind
+        : 'unknown';
+  return {
+    filename:
+      /^(?:operation|command)-\d+\.json$/.test(filename) || isBrowserRecordName(filename)
+        ? filename
+        : '[known evidence]',
+    kind,
+    durationMs: Math.max(0, Date.now() - startedAt),
+  };
+}
+
 export function createReviewerEvidenceTools(
   store: RunEvidenceStore,
   canReadImage: () => Promise<boolean> = async () => true,
+  onReadFailure: (diagnostic: EvidenceReadFailureDiagnostic) => void = () => {},
 ): ToolDefinition[] {
   const filenameParameters = Type.Object({
     filename: Type.String({ description: '已上传截图的相对文件名' }),
@@ -435,23 +706,40 @@ export function createReviewerEvidenceTools(
         try {
           const commandIds = store.commandEvidenceIds();
           const browserIds = store.browserEvidenceIds?.() ?? [];
-          const files = (await store.list()).flatMap(({ name, sizeBytes }) => {
-            const kind = commandIds.includes(name)
-              ? 'command'
-              : browserIds.includes(name)
-                ? 'browser'
-                : contentTypeFor(name).startsWith('image/')
-                  ? 'image'
-                  : null;
-            if (!kind) return [];
-            const readTool =
-              kind === 'command'
-                ? 'read_command_evidence'
-                : kind === 'browser'
-                  ? 'read_browser_evidence'
-                  : 'read_evidence_image';
-            return [{ name, sizeBytes, kind, readTool }];
-          });
+          const files = (await store.list()).flatMap(
+            ({ name, sizeBytes, screenshotInspection }) => {
+              const kind = commandIds.includes(name)
+                ? 'command'
+                : browserIds.includes(name)
+                  ? 'browser'
+                  : contentTypeFor(name).startsWith('image/')
+                    ? 'image'
+                    : null;
+              if (!kind) return [];
+              const readTool =
+                kind === 'command'
+                  ? 'read_command_evidence'
+                  : kind === 'browser'
+                    ? 'read_browser_evidence'
+                    : 'read_evidence_image';
+              return [
+                {
+                  name,
+                  sizeBytes,
+                  kind,
+                  readTool,
+                  screenshotInspection,
+                  ...(kind === 'image'
+                    ? {
+                        screenshotLabel: screenshotInspectionLabel(
+                          screenshotInspection ?? { status: 'unknown' },
+                        ),
+                      }
+                    : {}),
+                },
+              ];
+            },
+          );
           return createTextResult(JSON.stringify(files));
         } catch (error) {
           return createTextResult(safeMessage(error), { error: true });
@@ -462,19 +750,22 @@ export function createReviewerEvidenceTools(
       name: 'read_command_evidence',
       label: '读取受控命令结果',
       description:
-        '按本 Run 的证据 ID 只读查询 Harness 捕获的命令、退出码和脱敏输出；截断会标注，不执行命令，不读取任意文本、路径或其他 Session。',
+        '按本 Run 的证据 ID 只读查询 Harness 捕获的命令结果、MCP 操作或场景进度记录；按 source、sequence 和时间区分来源与顺序。截断会标注，不执行命令，不读取任意文本、路径或其他 Session。',
       parameters: Type.Object({
         filename: Type.String({ description: 'list_evidence_files 返回的 command 证据 ID' }),
       }),
       execute: async (_toolCallId: string, params: { filename: string }) => {
         if (!store.commandEvidenceIds().includes(params.filename)) return invalidEvidenceRequest();
+        const startedAt = Date.now();
         try {
           return createTextResult(await store.readCommandEvidence(params.filename));
-        } catch {
+        } catch (error) {
           store.recordReadFailure?.();
+          const diagnostic = readFailureDiagnostic(params.filename, error, startedAt);
+          onReadFailure(diagnostic);
           return createTextResult(
             '受控命令证据不可用或校验失败；请核对本 Run 的证据 ID，不能确认相关结果',
-            { error: true },
+            { error: true, readFailure: diagnostic },
           );
         }
       },
@@ -492,12 +783,16 @@ export function createReviewerEvidenceTools(
       execute: async (_toolCallId: string, params: { filename: string }) => {
         if (!store.readBrowserEvidence || !store.browserEvidenceIds?.().includes(params.filename))
           return invalidEvidenceRequest();
+        const startedAt = Date.now();
         try {
           return createTextResult(await store.readBrowserEvidence(params.filename));
-        } catch {
+        } catch (error) {
           store.recordReadFailure?.();
+          const diagnostic = readFailureDiagnostic(params.filename, error, startedAt);
+          onReadFailure(diagnostic);
           return createTextResult('浏览器原始记录不可用、内容无效或校验失败，不能确认相关结果', {
             error: true,
+            readFailure: diagnostic,
           });
         }
       },
@@ -549,6 +844,10 @@ export function createReviewerEvidenceTools(
                   contentType: evidence.contentType,
                   source: evidence.source,
                   stableUrl: evidence.url,
+                  screenshotInspection: evidence.screenshotInspection,
+                  screenshotLabel: screenshotInspectionLabel(
+                    evidence.screenshotInspection ?? { status: 'unknown' },
+                  ),
                 }),
               },
               {
@@ -569,16 +868,42 @@ export function createReviewerEvidenceTools(
 
 export function evidenceReferenceContext(references: readonly EvidenceReference[]): string {
   return JSON.stringify(
-    references.map(({ filename, url, contentType, sizeBytes, sha256 }) => ({
+    references.map(({ filename, url, contentType, sizeBytes, sha256, screenshotInspection }) => ({
       filename,
       url,
       contentType,
       sizeBytes,
       sha256,
+      screenshotInspection,
     })),
   );
 }
 
 function safeMessage(error: unknown): string {
   return error instanceof Error ? error.message : '证据操作失败';
+}
+
+function uploadFailureKind(error: unknown): OssError['failureKind'] {
+  return error instanceof OssError ? error.failureKind : 'unknown';
+}
+
+function isRetryableUploadFailure(error: unknown): boolean {
+  return (
+    error instanceof OssError &&
+    error.code === 'OSS_REQUEST_FAILED' &&
+    ['timeout', 'connection', 'unknown'].includes(error.failureKind)
+  );
+}
+
+function uploadFailureMessage(error: unknown): string {
+  if (!(error instanceof OssError)) return '证据处理或上传失败';
+  if (error.code !== 'OSS_REQUEST_FAILED') return '证据不满足上传条件';
+  const messages: Record<OssError['failureKind'], string> = {
+    timeout: 'OSS 上传超时',
+    authentication: 'OSS 上传认证失败',
+    'not-found': 'OSS 上传目标不存在',
+    connection: 'OSS 上传连接失败',
+    unknown: 'OSS 上传失败',
+  };
+  return messages[error.failureKind];
 }

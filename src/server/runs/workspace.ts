@@ -56,6 +56,7 @@ export interface RunEvidenceFile {
   name: string;
   path: string;
   sizeBytes: number;
+  screenshotInspection?: import('../../shared/types.js').ScreenshotInspection;
 }
 
 export class RunWorkspace implements RunArtifactReader {
@@ -196,7 +197,7 @@ export class RunWorkspace implements RunArtifactReader {
   }
 
   async writeHarnessEvidence(name: string, content: string): Promise<void> {
-    if (!/^command-[1-9][0-9]*\.json$/.test(name)) {
+    if (!/^(?:command|operation)-[1-9][0-9]*\.json$/.test(name)) {
       throw new RunWorkspaceError('ARTIFACT_NOT_ALLOWED', 'Harness 证据文件名无效');
     }
     if (typeof content !== 'string' || content.includes('\u0000')) {
@@ -229,6 +230,14 @@ export class RunWorkspace implements RunArtifactReader {
     } finally {
       await rm(temporary, { force: true });
     }
+  }
+
+  /** Remove one pinned MCP browser record when it cannot be sanitized safely. */
+  async removeBrowserEvidence(name: string): Promise<void> {
+    if (!isBrowserRecordName(name)) {
+      throw new RunWorkspaceError('ARTIFACT_INVALID', '浏览器记录文件名无效');
+    }
+    await rm(this.evidencePath(name), { force: true });
   }
 
   async readEvidence(name: string): Promise<Buffer> {

@@ -11,6 +11,7 @@
 
 - 语义判断与客观事实的最新规则以 `docs/changes/luowang-model-semantic-decisions/spec.md` 为准：Main 显式声明浏览器执行需要，不用正则判断计划含义；安全和格式校验保留。
 - MCP启动、工件可重写和审核证据读取的最新规则以 `docs/changes/luowang-retest-followup/spec.md` 为准：Reviewer可受控读取本Run的浏览器快照/日志，不开放任意文本；工具路由错误不冒充证据损坏，真实读取或完整性失败仍阻塞。
+- 截图采集与取证状态的最新规则以 `docs/changes/luowang-screenshot-capture-integrity/spec.md` 为准：禁止为截图清空/覆盖表单或隐去待验证内容；合成测试截图按新计划改为警告和检测标签，文字保护复用 run-evidence-followup。报告保持自动归档、人工事后审核，不新增发布门禁；具体实现进度见新目录 plan.md，不把需求写成已完成事实。
 
 ## 仓库与分支
 
@@ -25,6 +26,7 @@
 ## 本计划固定测试目标
 
 - `docs/changes/luowang-harness-mvp/plan.md` 的全部阶段统一使用外部 GitHub 仓库 [`cynos-ai/cynos-website`](https://github.com/cynos-ai/cynos-website) 作为 Cynos 官网非生产测试项目；除非用户明确更换目标，不新建或切换其他测试项目，也不把 `cynos-ai/luowang` 当作被测产品。
+- 用户已于 2026-09-22 明确授权将正式 Closure 7 的固定目标更换为独立公开仓库 [`cynos-ai/luowang-closure7-fixture`](https://github.com/cynos-ai/luowang-closure7-fixture)。该仓库的 `main` 固定在 `6405a45b6889ad92cf7cfbce12d8ec22b5040f23`，开始 live 验收前不存在 `scenario-testing`；该分支必须由同一个持久候选实例首次创建。历史验收仍按原目标记录，不改写为新仓库事实。
 - 目标仓库默认使用 `scenario-testing` 保存长期场景和正式报告；LuoWang 自身的代码仍按本仓库的 `develop`、`feat/*` 和 PR 规则开发。每个 Run 必须固定并记录不可变的 `target_commit`，不能把移动中的分支 HEAD 当作测试事实。
 - 官网测试只使用非生产环境、合成数据和通过 Harness Secret Store 提供的预置测试账号；允许覆盖登录/注册等官网功能，但禁止触碰生产数据、把测试账号密码写入文档/日志/报告，且临时数据必须按 Run 标记并清理。
 - 本计划当前模型约定为：Main/Runner 使用文本模型 `deepseek-v4-flash`；Reviewer 使用视觉模型 `deepseek-v4-flash-vision-exp`。模型 API Key、GitHub Token、OSS 凭据和测试账号信息只进入受控 Secret Store，不写入本文件或 Git。

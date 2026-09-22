@@ -1,4 +1,5 @@
 import { useEffect, useState, type FormEvent } from 'react';
+import { screenshotInspectionLabel } from '../shared/types';
 
 import { requestJson, toUserMessage } from './api';
 import { Field } from './components/FormControls';
@@ -1339,6 +1340,8 @@ function RunDetailPanel({
             {run.evidence.map((item) => (
               <a href={item.url} target="_blank" rel="noreferrer" key={item.id}>
                 {item.filename} · {item.contentType}
+                {item.contentType.startsWith('image/') &&
+                  ` · ${screenshotInspectionLabel(item.screenshotInspection ?? { status: 'unknown' })}（非图片安全审核）`}
               </a>
             ))}
           </div>

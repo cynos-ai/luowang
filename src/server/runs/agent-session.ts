@@ -29,6 +29,13 @@ export interface PiAgentSessionFactoryOptions {
   provider: ProviderAdapter;
 }
 
+export class AgentSessionTerminationError extends Error {
+  constructor(readonly reason: 'error' | 'aborted' | 'length') {
+    super(`Agent Session 未正常完成（${reason}）；原始模型错误未公开。`);
+    this.name = 'AgentSessionTerminationError';
+  }
+}
+
 export function createPiAgentSessionFactory(
   options: PiAgentSessionFactoryOptions,
 ): AgentSessionFactory {
@@ -93,6 +100,7 @@ class ManagedAgentSession implements AgentSession {
   constructor(
     private readonly session: {
       sessionId: string;
+      readonly messages: ReadonlyArray<{ role: string; stopReason?: string }>;
       prompt(message: string): Promise<void>;
       dispose(): void;
       extensionRunner: {
@@ -103,9 +111,18 @@ class ManagedAgentSession implements AgentSession {
     this.sessionId = session.sessionId;
   }
 
-  prompt(message: string): Promise<void> {
-    if (this.disposed) return Promise.reject(new Error('Agent session 已释放'));
-    return this.session.prompt(message);
+  async prompt(message: string): Promise<void> {
+    if (this.disposed) throw new Error('Agent session 已释放');
+    await this.session.prompt(message);
+    // Pi may resolve prompt() after a failed response. Inspect its final state
+    // after retries; never expose errorMessage or assistant content.
+    const last = this.session.messages.at(-1);
+    if (
+      last?.role === 'assistant' &&
+      (last.stopReason === 'error' || last.stopReason === 'aborted' || last.stopReason === 'length')
+    ) {
+      throw new AgentSessionTerminationError(last.stopReason);
+    }
   }
 
   async dispose(): Promise<void> {

@@ -15,6 +15,8 @@ import type {
 } from '../../src/server/runs/types.js';
 
 export type LocalModelBehavior =
+  | 'model-error'
+  | 'missing-plan'
   | 'normal'
   | 'revise-final-patch'
   | 'invalid-tool'
@@ -241,6 +243,11 @@ async function handleRequest(
     (message) => message.tool_calls?.map((tool) => tool.function?.name ?? '') ?? [],
   );
   const next = nextTool(toolNames, called, `${systemPrompt}\n${userPrompt}`, behavior);
+  if (behavior === 'model-error') {
+    response.writeHead(400, { 'content-type': 'application/json' });
+    response.end(JSON.stringify({ error: { message: 'private-model-error-sentinel' } }));
+    return;
+  }
   response.writeHead(200, {
     'content-type': 'text/event-stream; charset=utf-8',
     'cache-control': 'no-cache',
@@ -309,6 +316,7 @@ function nextTool(
   prompt: string,
   behavior: LocalModelBehavior,
 ): NextTool | null {
+  if (behavior === 'missing-plan' || behavior === 'model-error') return null;
   if (behavior === 'invalid-tool') {
     if (called.length === 0) {
       return { name: 'write_outside_allowlist', arguments: { path: '/tmp/forbidden' } };

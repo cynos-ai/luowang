@@ -12,6 +12,7 @@ export function createReviewReadOrder(
 ) {
   let planRead = false;
   let patchRead = false;
+  let executionRead = false;
   const attemptedImages = new Set<string>();
   const assertReady = () => {
     if (!planRead || (requirePatch && !patchRead))
@@ -26,11 +27,17 @@ export function createReviewReadOrder(
   };
   return {
     assertReady,
+    assertReviewReady() {
+      assertReady();
+      if (!executionRead)
+        throw new Error('Reviewer 必须通过 read_run_artifact 成功读取 execution.md，再提交审核');
+    },
     async readArtifact(name: string): Promise<string> {
       if (name === 'execution.md') assertReady();
       const content = await read(name);
       if (name === 'plan.md') planRead = true;
       if (name === 'scenario-changes.patch') patchRead = true;
+      if (name === 'execution.md') executionRead = true;
       return content;
     },
     wrap(tool: ToolDefinition): ToolDefinition {
