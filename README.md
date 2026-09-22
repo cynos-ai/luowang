@@ -41,6 +41,8 @@ Compose 将数据保存到 `luowang-data` 卷，并把宿主机端口绑定到 `
 
 负责人随后批准第十轮并要求先用本机继续；同一容器路径已恢复为 TLS `authorized=true`，无鉴权请求返回 401。新轮 SOURCE-P、SOURCE-N 通过；TIME-P 的 Reviewer 正确换算合成时间并保留服务器时钟未校准的限制，但最终 Main 把“不代表真实产品执行”误写为“为代表真实产品执行”，本轮在 29/120 次后按规则停止，TIME-N 与 COUNT-P/N 未运行。现已要求最终汇总在落盘前保留范围否定和限定关系，并检查报告内部矛盾；定向 40 项及完整 40 文件 / 309 项本地测试通过，修订后的模型复验尚未运行。
 
+第十一轮在同一标准 TLS 路径完成六例复验，12 个隔离 Session 共使用 50/120 次请求，SOURCE-P、SOURCE-N、TIME-P、TIME-N、COUNT-P、COUNT-N 全部通过独立工件核对。TIME-P 正确保留 `2026-09-21T00:00:01.250Z` 的合成时钟依据及“不代表官网执行、不证明真实服务器时钟”的限制；COUNT 两例都保留一个场景内的 3 项 confirmed + 1 项 unverified，负例还指出 Runner 摘要与明细冲突。Writer 原始输入与落盘工件哈希一致，score 绑定 result、sessions 和工件哈希。该六例模型语义验证已完成；`humanScoring=not_run`，完整外部联合验收与正式发布状态仍为 blocked。
+
 内联快照现会把明确的文本字段值登记到本 Run 脱敏集合，返回文本、受控快照正文和后续 execution 复用同一保护；只有时序的回执明确标示不含页面正文。格式或登记失败不回传原始结果。两个真实 MCP 入口及完整本地验收通过（37 文件 / 273 测试）；保护限于已解析字段，模型复验尚未运行，原失败记录和 blocked 状态保留。
 
 v0.4.0 的固定提交 Quality CI 已通过，真实非生产样本已检出注入的会话缺陷；该发布轮的正常样本仍因重放证据不可供独立审核而 blocked（[#68](https://github.com/cynos-ai/luowang/issues/68)）。场景进度时序（[#64](https://github.com/cynos-ai/luowang/issues/64)）和执行记录披露（[#65](https://github.com/cynos-ai/luowang/issues/65)）也仍有待复验，独立人工质量评分未完成。这些结果不表示全站、当前部署或总体模型质量已验收。后续修复与实际验证结果见 [实施计划](docs/changes/luowang-run-evidence-followup/plan.md)；代码修复不会改写旧 Run 的结论。

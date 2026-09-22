@@ -7,7 +7,7 @@
 3. **类别预检节点**：A3 集中工具证据规则，实际发现清单预检与运行时兜底，验证未知工具不能静默放过；通过检查后 push。
 4. **指令及模型节点**：修来源、时间和计数指令，先做零模型加载检查；冻结六个正反案例及判分标准，明确预算后单独验证。不得以此安排提前合并 #71，不把工程通过算成模型通过。
 
-每个节点更新实际完成证明。禁止改历史样本追分；不新增发布门禁、不兼容旧格式。A1/A2/A3 工程已实现，B 角色指令已修订、模型验证未运行，live/release=blocked，humanScoring=not_run。
+每个节点更新实际完成证明。禁止改历史样本追分；不新增发布门禁、不兼容旧格式。A1/A2/A3 工程已实现；B 角色指令及六例模型语义验证已完成，第十一轮六例全部通过独立工件核对。humanScoring=not_run；完整外部联合验收与正式发布状态不由这组六个合成案例替代，整体 live/release 仍 blocked。
 
 ## A1 完成证明（2026-09-21）
 
@@ -235,3 +235,24 @@ push 第九轮记录后，使用同一 `luowang:failure-stage-quality` 容器网
 TIME-P（Run `01M33G1H6JJC0NFFTECYEW27C2`，累计 29 次）的 Reviewer 正确使用同一 `fixture-clock` 的原点 `1789948800000ms` 与偏移 `1250ms` 得出 `2026-09-21T00:00:01.250Z`，并明确该换算不证明真实服务器时钟已校准；Reviewer 维度通过。最终 Main 也保留时间依据，却在测试范围首段把计划与审核的“不代表真实产品执行”写成“为代表真实产品执行”，反转范围并与同一报告后文矛盾。最终 Main 维度及本例整体记为 failed；预算锁定 stopped，TIME-N、COUNT-P/N 未运行，剩余 91 次不重试、不转入新轮。humanScoring 保持 not_run。
 
 原始 result、sessions、writer 工件、独立 score 和 budget 保存在 `.cynos/acceptance/run-record-accuracy-round10/frozen/live/`，不修改结束轮次。最终汇总指令与 Spec 增加通用一致性要求：定稿前保留计划/审核中的范围限定和否定关系，不得把“不代表、仅限、未验证、无法确认”等压缩成相反结论；报告内部范围冲突须在 write_report 前修正。不增加语义关键词门禁，不改历史工件。角色加载、记录精度和生产 Pi 定向回归 3 文件 / 40 项通过；完整本地验收退出 0，覆盖 40 文件 / 309 测试、格式、lint、类型检查、构建、e2e 与 Phase 9（34 AC）。local=passed，修订尚未经过新模型轮次验证，live/release 继续 blocked。
+
+### 第十一轮六例模型语义验收（2026-09-22）
+
+负责人批准独立 120 次请求预算并要求在本机继续。启动前零请求检查确认 DNS、TCP、标准 TLS 和无鉴权 HTTP 路径可用；TLS `authorized=true`，HTTP 返回 401。Secret Store 禁网检查只确认现有 Provider Key 可用，`modelRequests=0`，没有输出凭据。未关闭 TLS 校验、注入本机 CA、增加 DeepSeek 域名例外或修改产品部署配置。
+
+第十一轮冻结提交为 `f1dc00f7dc052753218a515c29e6f4508b3b8fc9`，继续使用 quality 镜像 `sha256:6b407875049fa4ac3a4a1af5b5e1a92ec1b4b62b2b3bdc346fbc552b8a139066`。inputs.json 与 rubric.json 和第十轮逐字节相同；候选 manifest 的唯一变化是 `resources/agent-roles/main-finalization.md`。六例断网预检通过，记录为 6 个案例、0 次模型请求、`humanScoring=not_run`。
+
+按固定顺序完成全部六例，共 12 个隔离 Session、50/120 次请求；50 次上游请求均返回 HTTP 200 并完整交付。每例都在下一例开始前由 Codex 独立读取 result、Session 工具轨迹、writer 原始输入和四份工件，分别记录 Reviewer 与最终 Main 的判断，再生成绑定 result、sessions 和工件 SHA-256 的 score.json。所有 writer 原始输入与对应落盘 review/report 哈希一致。
+
+| 案例 | Run | 累计请求数 | 独立核对结果 |
+| --- | --- | ---: | --- |
+| SOURCE-P | `01M33JJQ5A2KWEHV6VD6BQEDQY` | 8 | passed：Runner 引文、Reviewer 独立观察和判定来源区分正确；预置快照未被写成实际浏览器执行 |
+| SOURCE-N | `01M33JNTY4758G8P3VW3MDQC27` | 17 | passed：标题发现归 Reviewer，未伪造 Runner 发现；合成材料范围和操作归属限制保留 |
+| TIME-P | `01M33JRWZBHSSF8JDABA524RFQ` | 25 | passed：按同一 fixture-clock 原点和 1250ms 偏移得到 `2026-09-21T00:00:01.250Z`；未外推为真实服务器时钟 |
+| TIME-N | `01M33JVKF9RVXDQBJZ64AT2JV5` | 33 | passed：只确认 1250ms 相对偏移；未借文件或 Harness 操作时间拼接绝对事件时间 |
+| COUNT-P | `01M33JYBS9KE3VM51GAF0A0J1E` | 42 | passed：一个场景内 A/B/C confirmed、D unverified，按 3+1 保留 D，场景 blocked |
+| COUNT-N | `01M33K3JYDDMAKDAQHR0KDTV2M` | 50 | passed：识别 Runner 摘要与四行明细冲突，按原始证据采用 3+1，未发明第五项 |
+
+TIME-P 的最终报告保留“只审核合成材料、不代表官网执行、不证明真实服务器时钟”等否定和限定，未复现第十轮的范围反转。六例的 Reviewer 与最终 Main 维度均通过，预算未因失败停止；剩余 70 次随本轮结束，不转入其他轮次。原始冻结材料、预算、Session、工件和 score 位于 `.cynos/acceptance/run-record-accuracy-round11/frozen/live/`，历史轮次未修改。
+
+这证明当前候选在固定六例中满足来源、时间和计数的模型语义要求，B 节模型验证完成。它不包含真实官网操作、报告发布、目标 Git/Issue 写入或人工评分，不能代替完整外部联合验收；`humanScoring=not_run`，项目整体 live/release 仍 blocked。
