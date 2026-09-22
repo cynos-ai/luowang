@@ -7,7 +7,7 @@
 3. **类别预检节点**：A3 集中工具证据规则，实际发现清单预检与运行时兜底，验证未知工具不能静默放过；通过检查后 push。
 4. **指令及模型节点**：修来源、时间和计数指令，先做零模型加载检查；冻结六个正反案例及判分标准，明确预算后单独验证。不得以此安排提前合并 #71，不把工程通过算成模型通过。
 
-每个节点更新实际完成证明。禁止改历史样本追分；不新增发布门禁、不兼容旧格式。A1/A2/A3 工程已实现；B 角色指令及六例模型语义验证已完成，第十一轮六例全部通过独立工件核对。humanScoring=not_run；完整外部联合验收与正式发布状态不由这组六个合成案例替代，整体 live/release 仍 blocked。
+每个节点更新实际完成证明。禁止改历史样本追分；不新增发布门禁、不兼容旧格式。A1/A2/A3 工程已实现；B 角色指令及六例模型语义验证已完成，第十一轮六例全部通过独立工件核对。Closure 7 的完整外部联合验收现已得到 `local=passed`、`live=passed`、`release=passed`；未发布新 SemVer tag，因此发布 AC 单独保持 blocked。`humanScoring=not_run`，不由工程或联合验收替代。
 
 ## A1 完成证明（2026-09-21）
 
@@ -409,3 +409,27 @@ Harness 清理收尾与独立查询均返回 remaining=0，目标数据库 users
 驱动最后用 `runs.get()` 上未暴露的 `scenarioResults` 做断言，写出 `blocked-verification.json valid=false` 并以 1 退出。SQLite 权威记录实际包含 `[AUTH-LOGIN-001=blocked]`，队列、Run、归档、四 Session、8 次受控读取失败、零 confirmed Bug、零 Issue、清理和远端字节核对均成立。原 false 记录保留，另存 `blocked-independent-verification.json`，没有重跑或修改原 Run。
 
 持久数据库现在有四条 queue，initialization、含截图 passed、双 Bug/双 Issue failed 和不推进 blocked 四类事实均在同一实例。整体 live/release 仍为 blocked；下一步执行三 Session 特殊场景审核 PR Run，合并该 PR 后完成 `manual-current-head` passed 重测，再运行正式 live/release 检查。`humanScoring=not_run`。
+
+### Closure 7 三 Session 场景审核 PR（2026-09-22）
+
+同一持久实例的队列 `5` 固定 `scenario-testing@3d32c2a72f79f35c29bc7e51b8c8c6df87254e1a`。Run `01M34P70YXB7VR1R5K94Z4CBJS` 严格使用 Main · 规划 → Runner → Main · 修订三个 Session；72/180 次请求全部使用 `deepseek-v4-flash`，均为 HTTP 200 且响应流完整。Run 以 blocked 完成，`progressed=false`，completed 目录只有 `scenario-changes.patch` 和 Harness `report.md`，没有正式场景进度、confirmed Bug 或 Issue。临时 OSS evidence 删除 64 个、失败 0；清理后 users=0、sessions=0，Markdown 披露扫描无命中。
+
+Archiver 创建场景 PR [#3](https://github.com/cynos-ai/luowang-closure7-fixture/pull/3)，base 为 `scenario-testing`，只新增 `docs/scenario-testing/scenarios/AUTH-ORIGIN-001.md`，状态为 draft。PR CI 通过后用 merge commit `f287add3d4054491f2ed5714cbb044a38a133f50` 合并，短期 head 分支已删除。该场景记录本轮真实观察到 opaque `Origin: null` 被拒；具名跨站 Origin、无 Origin 头和 `CYNOS_ALLOWED_ORIGIN` 配置分支仍明确列为未覆盖，不据此外推。
+
+### Closure 7 current-head 重测与归档卫生（2026-09-22）
+
+PR #3 合并后的前两次 passed Run 原样保留。队列 `6` / Run `01M34Q8BNDF8YAMHGEKH5QRQ7S` 的 `review.md` 复述合成邮箱，外部验收驱动在归档前披露扫描处停止；队列 `7` / Run `01M34QS6B81CCJ2CYYG88SZ1CH` 的四份 Markdown 没有邮箱命中，但驱动把 Harness 清理回执中的 Run-scoped 数据 ID 误判成 Secret，也停止了当次归档。两次 Run 功能结果均为 passed，历史与数据库未被手工修改；两条队列当时仍停留在待归档状态，这一状态在后续正式服务恢复时产生了续跑行为，见下一节。
+
+队列 `8` / Run `01M34RAG4DRS860QH6S9BHR95W` 是最终 current-head 重测，固定 target 为 `f287add3d4054491f2ed5714cbb044a38a133f50`，使用 Main · 规划、Runner、Reviewer、Main · 最终汇总四个隔离 Session。结果为 passed，`AUTH-LOGIN-001=passed`；新合并的 `AUTH-ORIGIN-001` 仍为 draft，没有执行。88/180 次请求中 `deepseek-v4-flash` 74 次、`deepseek-v4-flash-vision-exp` 14 次，全部 HTTP 200 且响应流完整。
+
+completed 目录含 65 个 JSON、3 个日志、4 份 Markdown、7 张 PNG 和 11 个 YAML。7 张截图已逐图核对：三张填写态保留合成邮箱和掩码密码，没有清空、覆盖或遮挡；其余截图与刷新后仍登录、退出后回登录页、删除成功、旧凭据被拒的报告叙述一致。Markdown 披露扫描无命中。队列与归档均 completed，`progressed=true`，归档提交为 `ab3d738a5af8fe59e1bf9ba3094c2896f0d10174`；远端 report/review 与本地逐字节一致，SHA-256 分别为 `d62da60abbf0025cf66247d733a6f49157795d8c5a7f65135465c669e5fd1d50` 和 `3aed8696d50bcc1db5820d6c01c91c93f44141f87ca94307d013f3e3b4e4e89e`。临时证据清理 remaining=0，目标数据库 users=0、sessions=0。
+
+### Closure 7 正式 live/release 验收（2026-09-22）
+
+正式 `live` 首次执行暴露了验收器自身的两处事实选择错误。第一处只接受 `开始场景` 活动，但 Run 只保留最近 20 条活动，真实长流程会保留场景内的“开始浏览器操作”和“完成场景”，较早的 `开始场景` 已被淘汰；验收器现接受仍与 active scenario 绑定的浏览器或受控命令开始活动。第二处要求 Reviewer 工件包含 `verified-cleaned`，但当前收尾顺序是 Reviewer 完成后由 Harness 执行独立清理并追加 `report.md`；验收器现核对最终报告中的 Harness 清理区、完成声明、全部独立核验和 `absent=true` receipt。两项定向回归均通过。
+
+恢复生产服务还使队列 `6`、`7` 从待归档状态继续执行，分别生成提交 `626e608` 和 `fa350375`。第二个 Run 的公开 Markdown 没有合成邮箱；第一个 Run 的 `review.md` 含 1 个已删除合成账号邮箱。修正 PR [#4](https://github.com/cynos-ai/luowang-closure7-fixture/pull/4) 只将这一处替换为 `[REDACTED]`，不改变 Run 结果、证据引用或清理结论；quality CI 通过后合并为 `fa6242b3105f1c01d7b82f363d145aca7e25ba16`。最终 Indexer commit 与 GitHub `scenario-testing` HEAD 均为该提交。
+
+最终正式报告保存在本地忽略目录 `.cynos/acceptance/run-closure7-persistent-07e8989/live-data/formal-release-final/`。`local=passed`、`live=passed`、`release=passed`，42 条命令全部通过，零失败；其中包括 format、lint、typecheck、全量单测、生产构建、两组 E2E、Phase 9、全部 Closure 专项证明和最终 live 复核。live 同时核对首次创建 Run、含 UI 与独立清理的 passed Run、双 Bug/双 Issue failed Run、不推进 blocked Run、三 Session 场景 PR Run、current-head 重测、实时活动、私有截图网关、PR #3、Issue #1/#2、五项外部连接和 Secret 值扫描，共 12 条脱敏事实。
+
+报告中的 `release=passed` 表示发布前 local/live 验收链通过；`AC-CLOSURE-RELEASE-01` 单独保持 blocked，因为本轮没有创建或验证新的 SemVer tag。除这一发布动作外，报告有 0 个 failed AC、1 个 blocked AC。`humanScoring=not_run`，不把工程与真实联合验收结果冒充独立人工质量评分。

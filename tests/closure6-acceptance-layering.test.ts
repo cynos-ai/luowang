@@ -7,6 +7,7 @@ import { describe, it } from 'vitest';
 import {
   LIVE_INPUT_NAMES,
   createLayeredReport,
+  hasVerifiedCleanupReport,
   isNewSemVerTag,
   localOnlyEnvironment,
   missingLiveInputs,
@@ -19,6 +20,19 @@ import {
 } from './acceptance/closure.js';
 
 describe('Closure 6 acceptance status layering', () => {
+  it('requires Harness cleanup evidence from the final report instead of Reviewer prose', () => {
+    const report = `## Harness 清理收尾
+
+测试数据清理完成；不改变本次功能验证结果。
+
+全部登记测试数据均已独立核验清理
+
+独立核验：synthetic-id · run-scoped-http-cleanup · absent=true · sha256 abc`;
+    assert.equal(hasVerifiedCleanupReport(report), true);
+    assert.equal(hasVerifiedCleanupReport('Reviewer says verified-cleaned'), false);
+    assert.equal(hasVerifiedCleanupReport(report.replace('absent=true', 'absent=false')), false);
+  });
+
   it('lists every missing live input by name without exposing configured values', () => {
     const environment: NodeJS.ProcessEnv = {
       LUOWANG_LIVE_REPOSITORY: 'https://github.com/example/private-target',
@@ -140,7 +154,10 @@ describe('Closure 6 acceptance status layering', () => {
         result: 'passed',
         scenarioProgress: { completed: 1, total: 1 },
         evidence: [{ contentType: 'image/png' }],
-        activities: [{ message: '开始场景 AUTH-001' }, { message: '完成场景 AUTH-001' }],
+        activities: [
+          { message: '场景 AUTH-001：开始浏览器操作' },
+          { message: '完成场景 AUTH-001' },
+        ],
       },
       {
         runId: 'failed-run',

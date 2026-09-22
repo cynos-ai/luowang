@@ -47,6 +47,10 @@ Reviewer 读取 7 张截图和原始浏览器证据，确认登录与刷新使�
 
 归档提交 [`3d32c2a`](https://github.com/cynos-ai/luowang-closure7-fixture/commit/3d32c2a72f79f35c29bc7e51b8c8c6df87254e1a) 只新增该 Run 的 report/review，两份远端文件与本地工件逐字节一致。最终截图保留合成邮箱和掩码密码，登录被拒状态清楚可见。驱动最后用 `runs.get()` 上未暴露的 `scenarioResults` 做断言，因此原验证文件仍为 `valid=false`；SQLite 权威记录含一条 `AUTH-LOGIN-001=blocked`，独立核对通过，没有重跑或改写历史 Run。Closure 7 现在还缺三 Session 场景审核 PR、合并后的 current-head passed 重测和最终 live/release 检查。
 
+后续工作仍复用同一数据库。三 Session Run `01M34P70YXB7VR1R5K94Z4CBJS` 以 `blocked` 结束，只交付 `scenario-changes.patch` 和 Harness `report.md`；场景 PR [#3](https://github.com/cynos-ai/luowang-closure7-fixture/pull/3) 通过 CI 后合并为 `f287add3d4054491f2ed5714cbb044a38a133f50`，新增的 `AUTH-ORIGIN-001` 保持 draft。最终 current-head Run `01M34RAG4DRS860QH6S9BHR95W` 固定该 merge commit，使用 Main、Runner、Reviewer、Main 四个隔离 Session，88/180 次模型请求全部成功，`AUTH-LOGIN-001` 为 passed。7 张截图已逐张检查；三张填写态保留合成邮箱和掩码密码，刷新、退出、删除和旧凭据拒绝状态与报告一致。清理后 remaining=0、users=0、sessions=0，归档提交为 [`ab3d738`](https://github.com/cynos-ai/luowang-closure7-fixture/commit/ab3d738a5af8fe59e1bf9ba3094c2896f0d10174)。
+
+正式验收恢复生产服务时，数据库中两个曾被外部披露扫描拦下、但仍处于待归档状态的 passed 队列被正常续跑，生成 `626e608` 和 `fa350375`。其中一个旧 `review.md` 含已删除合成账号的邮箱；修正 PR [#4](https://github.com/cynos-ai/luowang-closure7-fixture/pull/4) 只把这一处替换为 `[REDACTED]`，CI 通过后以 `fa6242b3105f1c01d7b82f363d145aca7e25ba16` 合并。最终正式报告在该 HEAD 上得到 `local=passed`、`live=passed`、`release=passed`，42 条命令零失败；Provider、Playwright MCP、私有 OSS、GitHub 和非生产应用连接均为 ok，Indexer 与 GitHub HEAD 一致，Secret 值扫描无命中。`AC-CLOSURE-RELEASE-01` 仍为 blocked，因为本轮没有发布新的 SemVer tag；这不影响发布前验收链已经通过。
+
 以下按发生顺序保留验证过程，其中“待完成”描述当时状态。
 
 统一定向流程已通过五例离线检查。Reviewer 曾漏写审核，随后成功交付但仍把缺少原 Session 请求关联的场景判 passed。修正后的负例用 5/30 次请求正确判 blocked。2026-09-21 补齐删除证据的正向对照用 8/30 次请求通过：同一 Reviewer 指令保留了合成功能通过的结论，同时指出进度补报与错误归属，未外推为官网通过。披露声明对照随后用 5/30 次请求通过，Reviewer 正确指出单文件公开常量扫描不能证明全部凭据及截图安全；报告仍有一处无依据的问题标题，单列质量瑕疵。首次正向对照因材料缺口仍保留无结论；Runner 随后用 13/30 次请求通过公开常量省略及两条合成命令时序验证，写入前后均未复述常量；截图稳定状态案例随后用 21/30 次请求完成：最终图片的输入框为空，但 execution 又复述两个合成字段值并声称未记录，独立评估判失败；后续案例停止。真实浏览器多场景、截图处理与披露仍未整体验收，整体状态保持 blocked。
