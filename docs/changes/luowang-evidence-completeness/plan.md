@@ -222,6 +222,6 @@ TIME-N 的第 30 次 attempt 记录 `status=failed`、`failureCategory=upstream-
 
 push 第九轮记录后，使用同一 `luowang:failure-stage-quality` 容器网络路径做无凭据诊断，只访问 `api.deepseek.com`，不调用 `/chat/completions`，modelRequests=0。三次收窄检查得到一致边界：DNS 解析成功且返回 IPv4，TCP 443 建连成功，TLS 握手失败；仅读取标准错误 code 后确认 `SELF_SIGNED_CERT_IN_CHAIN`。断网环境检查同时确认容器未设置 HTTP/HTTPS/ALL proxy、`NODE_EXTRA_CA_CERTS` 或 `NODE_TLS_REJECT_UNAUTHORIZED`。
 
-该结果说明第八轮 TIME-N 和第九轮 SOURCE-P 的 `upstream-connect` 在当前环境中可进一步定位为容器不信任所见证书链。诊断没有保存错误消息、证书正文、请求内容或凭据。不得通过关闭 TLS 校验继续验收，也不自动提取或信任未知自签名 CA；修复 Docker 网络信任链或让 `api.deepseek.com` 使用公开可信证书链属于下一次模型轮次的前置条件。
+该结果说明第八轮 TIME-N 和第九轮 SOURCE-P 的 `upstream-connect` 在当前环境中可进一步定位为容器不信任所见证书链。后续宿主机检查确认这是当前开发机的本地 HTTPS 拦截，不是 DeepSeek 服务、罗网代码或服务器部署的证书链缺陷。诊断没有保存错误消息、证书正文、请求内容或凭据。不得通过关闭 TLS 校验、给 DeepSeek 域名单独跳过校验或把开发机拦截证书注入产品镜像继续验收；生产部署保持标准 TLS 校验。下一次模型轮次应在没有本地 HTTPS 拦截的服务器或干净网络环境中执行，并重新申请独立预算。
 
 评估代理增加安全的固定分类：从异常及最多四层 cause 中只读取标准 `code`，将 `ENOTFOUND/EAI_AGAIN` 记为 `upstream-dns`，已知证书错误及 `ERR_TLS_`/`ERR_SSL_` 记为 `upstream-tls`，超时保持 `upstream-timeout`，其余建连异常保持 `upstream-connect`。预算仍在首次失败后锁定，原始异常不进入记录。新增 DNS、TLS 和普通连接三项回归后，record-accuracy 19 项测试、格式和 lint 通过；新 quality 镜像为 `sha256:6b407875049fa4ac3a4a1af5b5e1a92ec1b4b62b2b3bdc346fbc552b8a139066`。完整本地验收退出 0，覆盖 40 个测试文件 / 309 项测试、格式、lint、类型检查、构建、e2e 和 Phase 9（34 AC）；local=passed，live/release=blocked。该分类修订尚未调用真实模型验证。
