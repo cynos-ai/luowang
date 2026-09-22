@@ -102,9 +102,17 @@ export async function cancel(session, id) {
     'bug-fix',
     '订单失败后的残留写入已修复，判断维护和验证。',
     {
-      'src/orders.mjs': shared['src/orders.mjs']
-        .replace('return db.transaction(async tx => {', 'const tx = db; return (async () => {')
-        .replace(' });', ' })();'),
+      'src/orders.mjs': `import { db } from './store.mjs';
+export async function submit(session, body) {
+ const tx = db;
+ if (!(await tx.reserve(body.sku, body.count))) throw new Error('stock');
+ return tx.insert({ ...body, tenant: session.tenant });
+}
+export async function get(session, id) {
+ const order = await db.find(id);
+ if (order.tenant !== session.tenant) throw new Error('forbidden');
+ return order;
+}`,
     },
     { 'src/orders.mjs': shared['src/orders.mjs'] },
     {
