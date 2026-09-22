@@ -381,3 +381,17 @@ Harness 清理收尾记录 1 项测试数据已独立核验不存在；驱动再
 归档提交为 `e09b0f377d1414fa3da2c65bcbbc2406421dec4d`，父提交正是 prepared merge commit。提交只新增 `docs/scenario-testing/reports/01M34GE6SGXEQZYHN3Y4HMW4BX/report.md` 和 `review.md`；远端文件与本地 completed 工件逐字节一致，SHA-256 分别为 `42d392244b0c956c7dc616568e80537c41d794b45c13348f716597820762e703` 和 `4b41c28050d3ee48784baead88dadcb376c519a5b3dd5a5c363dc36884ee8264`。
 
 持久数据库现有两条 queue 和两个 passed Run。按 `finished_at DESC` 排序，普通 Run 是更晚且含 7 张图片的 passed 记录，满足 Closure 7 对含 UI 截图 passed Run 的选择条件；initialization queue/run 仍保持唯一且不变。整体 live/release 继续 blocked，剩余工作依次为：同一实例中的双缺陷 failed Run 和两个成功 Issue 动作、不推进的 blocked Run、三 Session 特殊场景 PR Run、合并 PR、`manual-current-head` passed 重测，以及最终 live/release 检查。
+
+### Closure 7 双缺陷 failed Run（2026-09-22）
+
+同一持久实例的队列 `3` 以 `manual-current-head` 固定 `scenario-testing@e09b0f377d1414fa3da2c65bcbbc2406421dec4d`。一次性目标容器注入两个可逆缺陷：退出接口不撤销服务端 Session；删除接口返回成功但不删除账号或 Session。远端产品代码和长期场景均未修改。Run `01M34KTXNGH0M305H03PBYHMPB` 创建 Main · 规划、Runner、Reviewer、Main · 最终汇总四个不同 Session，结果为 failed，进度为 1/1，队列与归档均 completed。
+
+Reviewer 独立确认两个不同缺陷。退出后恢复退出前真实 `cynos_session`，携带该 Cookie 的 `GET /api/me` 返回 200；删除接口返回 `deleted:true` 后，恢复删除前 Session 的 `GET /api/me` 仍返回 200，清除 Cookie 后原凭据也能重新登录。最终报告写入两个不同 bug key，Archiver 在 fixture 仓库创建 [Issue #1](https://github.com/cynos-ai/luowang-closure7-fixture/issues/1) 和 [Issue #2](https://github.com/cynos-ai/luowang-closure7-fixture/issues/2)，两条 `run_store_issues` 均为 succeeded、attempts=1。Issue #2 标题中的 `cy nos_session` 错字在归档后单独改为 `cynos_session`；Run 报告原文保持不变。
+
+本轮使用 89/300 次模型请求：`deepseek-v4-flash` 72 次，`deepseek-v4-flash-vision-exp` 17 次；全部 HTTP 200、响应流完整，`budget.stopped=false`。completed 目录含 67 个 JSON、4 份 Markdown、4 张 PNG 和 11 个 YAML。4 张截图已逐图核对：登录刷新和删除后重新登录均显示同一合成账号；退出后和删除后重放 Session 的两张 `/api/me` JSON 图像像素相同，但各自有独立请求头、响应与时序记录，因此不混为同一次观察。截图保留真实现场，没有为取证清空或覆盖页面。
+
+Harness 清理收尾记录测试数据已独立核验不存在；驱动再次 cleanup 时 attempted=0，独立查询 remaining=0，目标数据库停止前 users=0、sessions=0。当前 Run Markdown 的已知凭据和账号值精确扫描无命中。归档提交 `ca5839b97713aba1fb556c17a0ce458414d21001` 只新增当前 Run 的 report/review；远端与本地逐字节一致，SHA-256 分别为 `d4766a55f8b3298b3bf4ec6686c84298b18ad3de49059ec6078fcac30f143004` 和 `a64aa112c5b425f30aabd6a7e4afef30d6630905ac79059b1589461fa3775a1c`。
+
+驱动在 Run 完成后用 `runs.get()` 上不存在的直接 `confirmedBugs/issues` 字段做最后断言，因而写出 `dual-verification.json valid=false` 并以 1 退出；RunStore 的权威字段实际已写入 `run_store_runs.confirmed_bugs_json` 和 `run_store_issues`。原 false 记录保留，另存 `dual-independent-verification.json`，只读核对两个不同 bug key、两个不同 succeeded Issue URL、四 Session、failed 结果和 completed 归档均成立。没有重跑、补写或修改原 Run。
+
+持久数据库现在有三条 queue，Closure 7 的 initialization、含截图 passed 和双 Bug/双 Issue failed 选择条件均有同库事实。整体 live/release 仍为 blocked；下一步继续在同一实例完成依赖不可达且不推进的 blocked Run，然后执行三 Session 特殊场景 PR、合并、`manual-current-head` passed 重测和最终 live/release 检查。`humanScoring=not_run`。

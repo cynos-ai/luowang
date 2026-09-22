@@ -39,7 +39,9 @@ Compose 将数据保存到 `luowang-data` 卷，并把宿主机端口绑定到 `
 
 Reviewer 读取 7 张截图和原始浏览器证据，确认登录与刷新使用同一 Session、退出后旧 Session 返回 401、删除后旧 Session 和原凭据均失效。逐图核对确认表单现场保留，最后一张含合成邮箱和掩码密码。测试数据独立查询为 remaining=0，目标数据库停止前 users=0、sessions=0。归档提交 [`e09b0f3`](https://github.com/cynos-ai/luowang-closure7-fixture/commit/e09b0f377d1414fa3da2c65bcbbc2406421dec4d) 只新增该 Run 的 report/review，两份远端文件与本地工件逐字节一致。
 
-Closure 7 的 initialization 和普通 passed 单项已经留在同一个持久实例，整体 live/release 仍为 blocked。后续还要在该实例完成双缺陷 failed Run 和两个 Issue、blocked Run、三 Session 场景审核 PR、PR 合并后的 `manual-current-head` passed 重测，以及最终 live/release 检查。完整记录见 [证据完整性计划](docs/changes/luowang-evidence-completeness/plan.md#closure-7-普通-merge-source-passed-run2026-09-22)。
+同一实例的双缺陷 Run `01M34KTXNGH0M305H03PBYHMPB` 随后以 `failed` 完成。Reviewer 独立确认退出不撤销服务端 Session、删除接口返回成功但账号与 Session 仍可用；Archiver 在 fixture 仓库创建 Issue [#1](https://github.com/cynos-ai/luowang-closure7-fixture/issues/1) 和 [#2](https://github.com/cynos-ai/luowang-closure7-fixture/issues/2)。89/300 次模型请求全部 HTTP 200 且响应流完整；4 张截图、清理和远端归档均已核对。归档提交 [`ca5839b`](https://github.com/cynos-ai/luowang-closure7-fixture/commit/ca5839b97713aba1fb556c17a0ce458414d21001) 只新增当前 Run 的 report/review。
+
+该轮驱动的最后一道内存断言误读了已落入 SQLite 的 Bug/Issue 字段，因此退出码为 1，原 `valid=false` 记录保留。独立数据库核对确认两个不同 bug key、两个 `succeeded` Issue 动作、四 Session、归档和清理全部成立，没有重跑或改写原 Run。Closure 7 的 initialization、普通 passed 和双缺陷 failed 已留在同一持久实例；整体 live/release 仍为 blocked，剩余 blocked Run、三 Session 场景审核 PR、PR 合并后的 `manual-current-head` passed 重测及最终检查。完整记录见 [证据完整性计划](docs/changes/luowang-evidence-completeness/plan.md#closure-7-双缺陷-failed-run2026-09-22)。
 
 以下按发生顺序保留验证过程，其中“待完成”描述当时状态。
 
