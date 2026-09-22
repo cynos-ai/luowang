@@ -43,6 +43,10 @@ Reviewer 读取 7 张截图和原始浏览器证据，确认登录与刷新使�
 
 该轮驱动的最后一道内存断言误读了已落入 SQLite 的 Bug/Issue 字段，因此退出码为 1，原 `valid=false` 记录保留。独立数据库核对确认两个不同 bug key、两个 `succeeded` Issue 动作、四 Session、归档和清理全部成立，没有重跑或改写原 Run。Closure 7 的 initialization、普通 passed 和双缺陷 failed 已留在同一持久实例；整体 live/release 仍为 blocked，剩余 blocked Run、三 Session 场景审核 PR、PR 合并后的 `manual-current-head` passed 重测及最终检查。完整记录见 [证据完整性计划](docs/changes/luowang-evidence-completeness/plan.md#closure-7-双缺陷-failed-run2026-09-22)。
 
+同一实例的受控依赖 Run `01M34MZ8NNP1CJTAHZAF5XN0PQ` 已以 `blocked` 完成。Reviewer 对 8 份 operation 证据的读取均遇到受控依赖停止，只保留页面能够直接支持的 A、B 两项；需要关联原 Cookie、请求头和响应的 C、D 两项保持 blocked。Run 没有 confirmed Bug，也没有创建或关联 Issue，队列归档完成且 `progressed=false`。79/180 次模型请求全部 HTTP 200、响应流完整；清理后 remaining=0，目标数据库 users=0、sessions=0。
+
+归档提交 [`3d32c2a`](https://github.com/cynos-ai/luowang-closure7-fixture/commit/3d32c2a72f79f35c29bc7e51b8c8c6df87254e1a) 只新增该 Run 的 report/review，两份远端文件与本地工件逐字节一致。最终截图保留合成邮箱和掩码密码，登录被拒状态清楚可见。驱动最后用 `runs.get()` 上未暴露的 `scenarioResults` 做断言，因此原验证文件仍为 `valid=false`；SQLite 权威记录含一条 `AUTH-LOGIN-001=blocked`，独立核对通过，没有重跑或改写历史 Run。Closure 7 现在还缺三 Session 场景审核 PR、合并后的 current-head passed 重测和最终 live/release 检查。
+
 以下按发生顺序保留验证过程，其中“待完成”描述当时状态。
 
 统一定向流程已通过五例离线检查。Reviewer 曾漏写审核，随后成功交付但仍把缺少原 Session 请求关联的场景判 passed。修正后的负例用 5/30 次请求正确判 blocked。2026-09-21 补齐删除证据的正向对照用 8/30 次请求通过：同一 Reviewer 指令保留了合成功能通过的结论，同时指出进度补报与错误归属，未外推为官网通过。披露声明对照随后用 5/30 次请求通过，Reviewer 正确指出单文件公开常量扫描不能证明全部凭据及截图安全；报告仍有一处无依据的问题标题，单列质量瑕疵。首次正向对照因材料缺口仍保留无结论；Runner 随后用 13/30 次请求通过公开常量省略及两条合成命令时序验证，写入前后均未复述常量；截图稳定状态案例随后用 21/30 次请求完成：最终图片的输入框为空，但 execution 又复述两个合成字段值并声称未记录，独立评估判失败；后续案例停止。真实浏览器多场景、截图处理与披露仍未整体验收，整体状态保持 blocked。

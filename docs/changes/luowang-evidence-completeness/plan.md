@@ -395,3 +395,17 @@ Harness 清理收尾记录测试数据已独立核验不存在；驱动再次 cl
 驱动在 Run 完成后用 `runs.get()` 上不存在的直接 `confirmedBugs/issues` 字段做最后断言，因而写出 `dual-verification.json valid=false` 并以 1 退出；RunStore 的权威字段实际已写入 `run_store_runs.confirmed_bugs_json` 和 `run_store_issues`。原 false 记录保留，另存 `dual-independent-verification.json`，只读核对两个不同 bug key、两个不同 succeeded Issue URL、四 Session、failed 结果和 completed 归档均成立。没有重跑、补写或修改原 Run。
 
 持久数据库现在有三条 queue，Closure 7 的 initialization、含截图 passed 和双 Bug/双 Issue failed 选择条件均有同库事实。整体 live/release 仍为 blocked；下一步继续在同一实例完成依赖不可达且不推进的 blocked Run，然后执行三 Session 特殊场景 PR、合并、`manual-current-head` passed 重测和最终 live/release 检查。`humanScoring=not_run`。
+
+### Closure 7 受控依赖 blocked Run（2026-09-22）
+
+同一持久实例的队列 `4` 以 `manual-current-head` 固定 `scenario-testing@ca5839b97713aba1fb556c17a0ce458414d21001`。目标应用保持正常，Reviewer 读取 operation 原始证据时由驱动注入受控依赖停止。Run `01M34MZ8NNP1CJTAHZAF5XN0PQ` 创建 Main · 规划、Runner、Reviewer、Main · 最终汇总四个不同 Session，结果为 blocked，进度为 1/1；队列与归档均 completed，`progressed=false`。
+
+Runner 完成登录、刷新、退出、删除和原凭据重试。Reviewer 能读取 11 份页面快照、3 份控制台日志和 1 张最终截图；对 8 份 operation 证据的实际读取全部返回受控依赖停止。页面证据支持刷新后仍显示同一用户和退出后回到登录页，但不能把 401 与退出、删除前的原 Cookie 及真实请求头关联，因此需要服务端 Session 证据的两项期望保持 blocked。最终报告没有 confirmed Bug，RunStore 没有该 Run 的 Issue 记录；远端 fixture 仍只有双缺陷 Run 创建的 Issue #1 和 #2。
+
+本轮使用 79/180 次模型请求：`deepseek-v4-flash` 71 次，`deepseek-v4-flash-vision-exp` 8 次；全部 HTTP 200、响应流完整，`budget.stopped=false`。最终截图 `auth-login-001-final-deleted-login-rejected.png` 已人工核对：登录拒绝提示可见，合成邮箱和掩码密码仍保留在表单中，没有为了截图删除、清空、覆盖或遮挡字段。当前 Run 的 Markdown 对已知凭据和账号值精确扫描无命中。
+
+Harness 清理收尾与独立查询均返回 remaining=0，目标数据库 users=0、sessions=0。归档提交 `3d32c2a72f79f35c29bc7e51b8c8c6df87254e1a` 只新增当前 Run 的 report/review；本地和远端 SHA-256 分别为 `1e1c1a297698bdc7491f6bc7f872bbde518d371ab868b812426702cd6074e61a`、`59bdacb354b9fe3fa60d9bc67edc7c5daa3fe5b7e4b9ebb7de480ec69c18e6f9`，逐字节一致。
+
+驱动最后用 `runs.get()` 上未暴露的 `scenarioResults` 做断言，写出 `blocked-verification.json valid=false` 并以 1 退出。SQLite 权威记录实际包含 `[AUTH-LOGIN-001=blocked]`，队列、Run、归档、四 Session、8 次受控读取失败、零 confirmed Bug、零 Issue、清理和远端字节核对均成立。原 false 记录保留，另存 `blocked-independent-verification.json`，没有重跑或修改原 Run。
+
+持久数据库现在有四条 queue，initialization、含截图 passed、双 Bug/双 Issue failed 和不推进 blocked 四类事实均在同一实例。整体 live/release 仍为 blocked；下一步执行三 Session 特殊场景审核 PR Run，合并该 PR 后完成 `manual-current-head` passed 重测，再运行正式 live/release 检查。`humanScoring=not_run`。
