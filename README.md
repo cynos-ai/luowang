@@ -1,6 +1,6 @@
 # LuoWang
 
-罗网（LuoWang）是一个独立部署的 AI 场景测试 Harness。当前仓库已实现 Phase 0–9 的主要模块：安全配置控制台、唯一 GitHub 目标仓库索引、Main → Runner → Reviewer → Main 的 Run、受控 Playwright MCP UI 执行、S3-compatible OSS 证据 Gateway、幂等归档、持久 FIFO 自动化队列、长期场景生命周期、三种场景维护模式、陌生项目初始化和运维控制台。当前已发布版本为 v0.4.0；v0.1.0、v0.2.0、v0.2.1 与 v0.3.1 均保持既有不可变指向。
+罗网（LuoWang）是一个独立部署的 AI 场景测试 Harness。当前仓库已实现 Phase 0–9 的主要模块：安全配置控制台、唯一 GitHub 目标仓库索引、Main → Runner → Reviewer → Main 的 Run、受控 Playwright MCP UI 执行、S3-compatible OSS 证据 Gateway、幂等归档、持久 FIFO 自动化队列、长期场景生命周期、三种场景维护模式、陌生项目初始化和运维控制台。当前版本为 v0.5.0；v0.1.0、v0.2.0、v0.2.1、v0.3.0、v0.3.1 与 v0.4.0 均保持既有不可变指向。
 
 ## 本地启动
 
