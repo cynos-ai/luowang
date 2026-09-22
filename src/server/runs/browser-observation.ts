@@ -2,7 +2,7 @@ import type { InlineExtension } from '@earendil-works/pi-coding-agent';
 import { redactCommandText, type RunEvidenceStore } from './evidence.js';
 import { readBrowserSnapshotFile, readInlineBrowserSnapshot } from './browser-snapshot.js';
 import { readScreenshotReceipt } from './screenshot-inspection.js';
-import { registerBrowserInput } from './browser-input.js';
+import { BrowserInputValidationError, registerBrowserInput } from './browser-input.js';
 import { browserEvidencePolicy } from '../browser/evidence-policy.js';
 
 const isReplayTool = (tool: string) => browserEvidencePolicy(tool)?.capture === 'replay';
@@ -13,7 +13,7 @@ export function createBrowserObservationExtension(options: {
   targetCommit: string;
   now: () => Date;
   operationContext: () => Record<string, unknown>;
-  onFailure: () => void;
+  onEvidenceFailure: () => void;
 }): InlineExtension {
   const credentials = new Map<string, string>();
   const identify = (value: string) => {
@@ -51,7 +51,6 @@ export function createBrowserObservationExtension(options: {
         if (event.input.server !== undefined && event.input.server !== 'playwright') return;
         const policy = browserEvidencePolicy(tool);
         if (!policy) {
-          options.onFailure();
           return { block: true, reason: '该工具没有受控证据采集/读取规则，未执行操作。' };
         }
         const args = parseArguments(event.input.args);
@@ -59,9 +58,11 @@ export function createBrowserObservationExtension(options: {
         if (policy.capture === 'filling') {
           try {
             fillingInput = registerBrowserInput(tool, args, options.store);
-          } catch {
-            options.onFailure();
-            return { block: true, reason: '填写参数校验或敏感值登记失败，未执行填写。' };
+          } catch (error) {
+            if (error instanceof BrowserInputValidationError)
+              return { block: true, reason: '填写参数无效，未执行填写。' };
+            options.onEvidenceFailure();
+            return { block: true, reason: '填写敏感值保护不可用，未执行填写。' };
           }
         }
         if (tool === 'browser_take_screenshot' && typeof args?.filename === 'string') {
@@ -73,7 +74,7 @@ export function createBrowserObservationExtension(options: {
                 reason: '截图文件已存在，请使用新的相对文件名，不覆盖原始证据。',
               };
           } catch {
-            options.onFailure();
+            options.onEvidenceFailure();
             return { block: true, reason: '截图证据目录检查失败，未执行截图。' };
           }
         }
@@ -218,7 +219,7 @@ export function createBrowserObservationExtension(options: {
             ],
           };
         } catch {
-          options.onFailure();
+          options.onEvidenceFailure();
           return {
             content: [
               {

@@ -22,12 +22,14 @@ it.each(['mcp', 'mcp__playwright'])(
     const f = await fixture(gateway);
     const blocked = await f.call('browser_future_tool', {}, 'must not run');
     assert.equal((blocked as { block: boolean }).block, true);
+    assert.match((blocked as { reason: string }).reason, /没有受控证据采集/);
+    assert.equal(f.failures(), 0);
     assert.equal(f.store.commandEvidenceIds().length, 0);
     const mismatch = await f.call('browser_click', {}, 'untrusted-result', {
       details: { mode: 'call', server: 'playwright', tool: 'browser_future_tool' },
     });
     assert.doesNotMatch(JSON.stringify(mismatch), /untrusted-result/);
-    assert.equal(f.failures(), 2);
+    assert.equal(f.failures(), 1);
     assert.equal(f.store.commandEvidenceIds().length, 0);
     await f.call('browser_click', {}, 'not persisted as content');
     const record = (await f.records())[0].observation;
@@ -152,18 +154,23 @@ it('blocks malformed batches and registration failures before the filling tool r
       ],
     },
     { fields: 'bad' },
+    { fields: [{ name: 'A', ref: 'e1', type: 'textbox', value: 'old-contract' }] },
   ]) {
     const result = await f.call('browser_fill_form', args, 'must not run');
     assert.equal((result as { block: boolean }).block, true);
+    assert.match((result as { reason: string }).reason, /填写参数无效/);
   }
   assert.equal(f.store.redactText!('good'), 'good');
+  assert.equal(f.store.redactText!('old-contract'), 'old-contract');
+  assert.equal(f.failures(), 0);
   f.store.identifySensitiveValue = () => {
     throw new Error('private failure');
   };
   const result = await f.call('browser_type', { target: 'e1', text: randomUUID() }, 'must not run');
   assert.equal((result as { block: boolean }).block, true);
+  assert.match((result as { reason: string }).reason, /敏感值保护不可用/);
   assert.doesNotMatch(JSON.stringify(result), /private failure/);
-  assert.equal(f.failures(), 3);
+  assert.equal(f.failures(), 1);
   assert.equal(f.store.commandEvidenceIds().length, 0);
 });
 it('decodes nested and multiline snapshot field values without treating headings as credentials', () => {
@@ -299,7 +306,7 @@ async function fixture(gateway = 'mcp', operationContext?: () => Record<string, 
     targetCommit: 'fixed-target',
     now: () => new Date('2026-09-19T00:00:00Z'),
     operationContext: operationContext ?? (() => ({ scenarioId })),
-    onFailure: () => {
+    onEvidenceFailure: () => {
       failures++;
     },
   });

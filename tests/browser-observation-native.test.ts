@@ -105,7 +105,7 @@ it.each(['mcp', 'mcp__playwright'])(
             targetCommit: 'fixed-native-target',
             now: () => new Date(),
             operationContext: () => ({ scenarioId: 'SESSION' }),
-            onFailure: () => {
+            onEvidenceFailure: () => {
               failures++;
             },
           }),

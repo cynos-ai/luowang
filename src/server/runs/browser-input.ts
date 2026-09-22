@@ -1,26 +1,33 @@
 import type { RunEvidenceStore } from './evidence.js';
 
+export class BrowserInputValidationError extends Error {
+  constructor() {
+    super('Invalid browser filling input');
+    this.name = 'BrowserInputValidationError';
+  }
+}
+
 /** Register the entire batch before MCP can execute even its first field. */
 export function registerBrowserInput(
   tool: string,
   args: Record<string, unknown> | undefined,
   store: RunEvidenceStore,
 ): Record<string, unknown> {
-  if (!args || !store.identifySensitiveValue || !store.redactText)
+  if (!args) throw new BrowserInputValidationError();
+  if (!store.identifySensitiveValue || !store.redactText)
     throw new Error('Filling protection unavailable');
   const object = (value: unknown): Record<string, unknown> => {
     if (!value || typeof value !== 'object' || Array.isArray(value))
-      throw new Error('Invalid filling field');
+      throw new BrowserInputValidationError();
     return value as Record<string, unknown>;
   };
   const target = (field: Record<string, unknown>) => {
-    if (typeof field.target !== 'string' || !field.target)
-      throw new Error('Invalid filling target');
+    if (typeof field.target !== 'string' || !field.target) throw new BrowserInputValidationError();
     if (field.element !== undefined && typeof field.element !== 'string')
-      throw new Error('Invalid filling element description');
+      throw new BrowserInputValidationError();
   };
   const fields = tool === 'browser_fill_form' ? args.fields : [args];
-  if (!Array.isArray(fields)) throw new Error('Invalid filling fields');
+  if (!Array.isArray(fields)) throw new BrowserInputValidationError();
   const checked = fields.map((value) => {
     const field = object(value);
     target(field);
@@ -32,13 +39,13 @@ export function registerBrowserInput(
         (['checkbox', 'radio'].includes(String(field.type)) &&
           !['true', 'false'].includes(field.value))
       )
-        throw new Error('Invalid filling field');
+        throw new BrowserInputValidationError();
     } else if (
       typeof field.text !== 'string' ||
       (field.submit !== undefined && typeof field.submit !== 'boolean') ||
       (field.slowly !== undefined && typeof field.slowly !== 'boolean')
     )
-      throw new Error('Invalid typing input');
+      throw new BrowserInputValidationError();
     return field;
   });
   const references = checked.map((field) => {

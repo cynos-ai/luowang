@@ -1060,7 +1060,7 @@ class DefaultRunOrchestrator implements RunOrchestrator {
               targetCommit: context.targetCommit,
               now: this.now,
               operationContext: () => progress?.recordOperation('browser') ?? operationContext(),
-              onFailure: () => this.addBlockingReason(context, 'MCP 操作证据捕获失败'),
+              onEvidenceFailure: () => this.addBlockingReason(context, 'MCP 操作证据捕获失败'),
             }),
           ]
         : browserExtension
