@@ -29,7 +29,7 @@ Compose 将数据保存到 `luowang-data` 卷，并把宿主机端口绑定到 `
 
 ## 验收状态
 
-截至 2026-09-20，修复分支工程检查已通过（37 个测试文件 / 268 项测试），但整体 live/release 仍 blocked，独立人工评分未完成。正常重放、注入缺陷识别和证据受阻已有不同候选版本上的证明；最新候选只完成了受阻样本，不能将这些结果合并为最新版本全部通过。仍需验证多场景进度、模型省略公开单测口令、截图被拒后的处理，以及当前候选正常重放。逐项依据和执行顺序见 [当前验收结论与剩余工作](docs/changes/luowang-run-evidence-followup/plan.md#当前验收结论与剩余工作2026-09-20)。
+截至 2026-09-22，候选 `6c93037` 已在同一 runtime 上完成 normal、defect、blocked 三例联合验收，共 12 个隔离 Session、233/400 次模型请求。三例均完成归档和清理，但结果都是 blocked：normal 的业务期望由 Reviewer 判为 passed，Harness 因表单快照采集失败阻塞；defect 没有建立登录态，未观察到注入缺陷；blocked 正确保留证据不足结论。逐图核对确认截图没有为取证清空表单，但 2 份未上传的失败快照在本地保留了密码字段明文。固定 quality 镜像的 local acceptance 通过，正式 live/release 仍 blocked，独立人工评分未完成。根因和后续顺序见 [当前候选完整联合验收与后续计划](docs/changes/luowang-evidence-completeness/plan.md#当前候选完整联合验收与后续计划2026-09-22)。
 
 以下按发生顺序保留验证过程，其中“待完成”描述当时状态。
 

@@ -256,3 +256,30 @@ TIME-P（Run `01M33G1H6JJC0NFFTECYEW27C2`，累计 29 次）的 Reviewer 正确�
 TIME-P 的最终报告保留“只审核合成材料、不代表官网执行、不证明真实服务器时钟”等否定和限定，未复现第十轮的范围反转。六例的 Reviewer 与最终 Main 维度均通过，预算未因失败停止；剩余 70 次随本轮结束，不转入其他轮次。原始冻结材料、预算、Session、工件和 score 位于 `.cynos/acceptance/run-record-accuracy-round11/frozen/live/`，历史轮次未修改。
 
 这证明当前候选在固定六例中满足来源、时间和计数的模型语义要求，B 节模型验证完成。它不包含真实官网操作、报告发布、目标 Git/Issue 写入或人工评分，不能代替完整外部联合验收；`humanScoring=not_run`，项目整体 live/release 仍 blocked。
+
+### 当前候选完整联合验收与后续计划（2026-09-22）
+
+负责人批准后，以提交 `6c93037c6ed10b24bb6a79cbcc3508a9edf0f084` 和 runtime 镜像 `sha256:5f0f68d60af23ace9c3cf14764931f11da4aaa221df687df691d47df3eb13436` 执行 normal、defect、blocked 三例。固定官网 target 为 `6405a45b6889ad92cf7cfbce12d8ec22b5040f23`，目标镜像为 `sha256:8acf63fd25d73e71bf4d73edfa8755d6a6d4a0bda8e70ee4954a7f5ea8a537cd`。启动前的零模型预检通过：原生 MCP、浏览器、Cookie 读取/恢复、截图、只读容器和六个 tmpfs 均可用；候选源码、镜像内六份角色资源及驱动哈希一致。
+
+三例共使用 12 个隔离 Session 和 233/400 次模型请求，其中 `deepseek-v4-flash` 209 次、`deepseek-v4-flash-vision-exp` 24 次；全部请求返回 HTTP 200 并完整结束。三例 Run 都完成四阶段交付、自动归档和清理，但最终结果均为 blocked：
+
+| 样本 | Run | 请求数 | 结果及独立核对 | 报告提交 |
+| --- | --- | ---: | --- | --- |
+| normal | `01M33MYN0YAMPNW5PA50VQSDSZ` | 93 | Reviewer 依据原 Cookie、恢复值、真实 request headers 和 401 判定 A–D 全部 passed；7 份表单快照采集失败及通用 MCP 证据失败使 Run 聚合为 blocked | `5daa84ab0d8240721e7a89b60049f55a764e229d` |
+| defect | `01M33NBRWACRX2E37GAHXJ7069` | 48 | 目标已注入退出不撤销 Session；Runner 的填表调用在执行前因参数形态错误被拒，未建立登录态，只得到匿名 401，未观察到注入缺陷 | `096da26563e6b4745267e29b8256fc030bdca100` |
+| blocked | `01M33NKSTFC65HNKBE222P7JV0` | 92 | Reviewer 实际遇到 23 次注入的 operation 读取失败，保留 A/B passed，C/D 因无法核对原 Cookie 与请求头保持 blocked，没有用普通 401 替代 | `5d21614623253bb4c6886a7b9c34bade559f925f` |
+
+本地共有 7 张 PNG，6 张成功上传；逐张查看确认拒绝登录截图保留已填邮箱和掩码密码，删除后截图保留邮箱，没有为截图清空或覆盖表单。`after-delete.png` 遇到一次 OSS 上传失败，只保留在本地。已上传对象与本地 SHA-256 一致；远端六份 report/review Git blob 与本地字节一致。三个目标数据库停止前均为 `users=0、sessions=0`，三个清理接口均返回 `remaining=0`。
+
+本轮发现两个必须先修的问题。第一，`browser-snapshot.ts` 不接受 Playwright 在真实表单快照中使用的嵌套 textbox 节点，解析报 `Unsupported field value`；失败文件不上传，但未完成本地脱敏。27 份页面快照中有 2 份失败快照保留了密码输入框明文值，未进入 OSS 或 Git，对应合成账号和 Session 已清理。第二，执行前的填表参数校验失败也调用通用证据失败回调，使没有执行的无效调用永久增加 `MCP 操作证据捕获失败`；这与工具路由/参数错误不能冒充证据损坏的规则不符。defect 样本因此没有验证到注入缺陷。
+
+固定 quality 镜像内的 `test:acceptance:local` 通过。宿主机第一次运行因 `better-sqlite3` Node ABI 与 Node 24 不一致失败，不计为代码失败。官方 `test:acceptance:live` 仍 blocked：它要求首次 initialization、passed、包含两个独立 confirmed Bugs/Issues 的 failed、blocked、场景审核 PR 和当前 HEAD 重测等完整 Closure 7 历史事实；本轮三例不满足这组门禁，不能称 release passed。`humanScoring=not_run`。
+
+后续按以下顺序执行，每一项形成独立可 push 节点：
+
+1. **表单快照与失败路径**：支持真实 Playwright 嵌套 textbox 结构，在保存前登记并脱敏字段；捕获或解析失败时也不得留下可恢复的原字段值。增加邮箱、密码、空值、placeholder、格式错误和失败清理回归。截图仍保留原页面状态，不清空表单，不兼容旧快照格式。
+2. **错误分类**：把执行前参数/路由拒绝与真实证据捕获、完整性、上传和读取失败分开。无效调用返回具体错误但不增加证据损坏阻塞；真实证据失败继续阻塞并保留受控诊断。
+3. **Runner 与上传稳定性**：按当前工具合同明确只使用 `target`，不接受旧 `ref` 形态；补模型执行回归，确保被拒后能按现行 schema 恢复。OSS 上传增加有界重试和每次尝试的受控收据，重试后仍失败才阻塞。
+4. **工程验收**：先跑快照、browser observation、Evidence Store、截图标签和上传专项，再在当前提交的 quality 镜像运行完整 `test:acceptance:local`。任何未脱敏本地快照、标签/图片哈希不一致或 evidence 失败都不得进入模型轮次。
+5. **三例复验**：重新申请独立模型预算，仍按 normal → defect → blocked 顺序。验收线为 normal=passed；defect 能确认退出缺陷并只关联既有 issue #5；blocked 因注入读取失败保持 blocked；三例归档、清理、图片读取和远端字节核对全部通过。
+6. **正式门禁决策**：三例通过后，再处理 Closure 7 要求两个独立 Issue 与当前“不创建新 Issue、只关联 #5”之间的冲突。在负责人决定修改门禁或准备第二个既有 Issue 前，不运行 release 验收。
