@@ -37,6 +37,34 @@ afterEach(async () => {
 });
 
 describe('Closure 6 local production Pi path', () => {
+  it('rejects a forged replacement and accepts corrected references in the same production Pi Session', async () => {
+    const context = await createContext('review-all', 'repair-source-reference');
+    const result = await context.orchestrator.run({ request: '验证引用修正', trigger: 'manual' });
+    assert.equal(result.status, 'completed', JSON.stringify(result));
+    assert.equal(result.result, 'passed');
+    assertSessionSequence(context.model, ['main-a', 'runner', 'reviewer', 'main-b']);
+    assert.ok(
+      [...context.model.observedToolResults].some((value) => value.includes('旧计划未修改')),
+    );
+    assert.doesNotMatch(result.artifacts['plan.md']!, /REJECTED-PLAN-SENTINEL|00000000-0000/);
+    const metadata = JSON.parse(result.artifacts['plan.md']!.split('\n')[1]!);
+    assert.equal(metadata.requiresBrowser, false);
+    assert.equal(metadata.sourceReferences.length, 1);
+    assert.ok(
+      [...context.model.observedToolResults].some((value) => {
+        try {
+          const query = JSON.parse(value);
+          return (
+            query.planHash === metadata.planHash &&
+            query.receipts[0].planCoverage === 'returned-range'
+          );
+        } catch {
+          return false;
+        }
+      }),
+      'Reviewer must receive the accepted plan references',
+    );
+  });
   it('reports terminal SDK errors instead of a missing plan without exposing model text', async () => {
     const context = await createContext('review-all', 'model-error');
     const result = await context.orchestrator.run({ request: '模型异常诊断', trigger: 'manual' });
@@ -97,6 +125,16 @@ describe('Closure 6 local production Pi path', () => {
       ),
     );
     assert.equal(Object.keys(result.artifacts).includes('source-reads.json'), false);
+    const sourceMetadata = JSON.parse(result.artifacts['plan.md']!.split('\n')[1]!);
+    assert.ok(
+      sourceMetadata.sourceReferences.length > 0,
+      'production Pi must submit a returned receipt ID',
+    );
+    assert.ok(
+      sourceReads.receipts.some(
+        (receipt: { id: string }) => receipt.id === sourceMetadata.sourceReferences[0].receiptId,
+      ),
+    );
     assert.ok(![...context.evidence.objects.keys()].some((key) => key.includes('source-reads')));
     assert.deepEqual(
       context.model.sessions.map((session) => session.thinking),
@@ -296,6 +334,20 @@ describe('Closure 6 local production Pi path', () => {
       'main-b',
     ]);
     assert.equal(new Set(context.model.sessions.map((session) => session.id)).size, 6);
+    const metadata = JSON.parse(result.artifacts['plan.md']!.split('\n')[1]!);
+    const reads = JSON.parse(
+      await readFile(
+        join(context.reportDir, 'completed', result.runId, 'source-reads.json'),
+        'utf8',
+      ),
+    );
+    assert.ok(metadata.sourceReferences.length > 0);
+    for (const reference of metadata.sourceReferences) {
+      assert.equal(
+        reads.receipts.find((receipt: { id: string }) => receipt.id === reference.receiptId)?.stage,
+        'initialization-static',
+      );
+    }
     // Check the actual dynamic task as well as the loaded role resources.
     const candidateTask = context.model.sessions[2]?.prompts[0] ?? '';
     assert.match(candidateTask, /尽可能全面地整理项目所需的候选场景并更新验证计划，不追求绝对穷尽/);

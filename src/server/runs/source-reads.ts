@@ -43,6 +43,34 @@ export interface SourceReadReceipt extends SourceReadFact {
 export interface SourceReadSession {
   record(toolCallId: string, fact: SourceReadFact): Promise<SourceReadReceipt>;
 }
+export interface SourceReference {
+  receiptId: string;
+  coverage: 'returned-range' | 'full-file';
+}
+export class SourceReferenceError extends Error {
+  constructor() {
+    super(
+      'sourceReferences 必须引用当前 Run 允许 Main 阶段的成功回执；full-file 需要本次引用的全部正文页完整覆盖。旧计划未修改。',
+    );
+  }
+}
+export function assertSourceReferences(value: unknown): asserts value is SourceReference[] {
+  if (
+    !Array.isArray(value) ||
+    value.length > 2000 ||
+    value.some(
+      (item) =>
+        !item ||
+        typeof item !== 'object' ||
+        Object.keys(item).some((key) => !['receiptId', 'coverage'].includes(key)) ||
+        typeof item.receiptId !== 'string' ||
+        !/^[0-9a-f-]{36}$/.test(item.receiptId) ||
+        !['returned-range', 'full-file'].includes(item.coverage),
+    ) ||
+    new Set(value.map((r) => r.receiptId)).size !== value.length
+  )
+    throw new SourceReferenceError();
+}
 export function sourceHash(value: string): string {
   return createHash('sha256').update(value, 'utf8').digest('hex');
 }
@@ -51,6 +79,7 @@ export function sourceHash(value: string): string {
 export class SourceReadStore {
   private receipts: SourceReadReceipt[] = [];
   private pending: Promise<unknown> = Promise.resolve();
+  private plan: { hash: string; references: SourceReference[] } | null = null;
   constructor(
     readonly runId: string,
     readonly repositoryId: string,
@@ -91,6 +120,67 @@ export class SourceReadStore {
     };
   }
 
+  writePlan(
+    content: string,
+    requiresBrowser: boolean,
+    references: SourceReference[],
+    allowedStages: readonly SourceStage[],
+    write: (value: string) => Promise<void>,
+  ): Promise<void> {
+    const operation = this.pending.then(async () => {
+      assertSourceReferences(references);
+      // A candidate Main may copy the prior plan. Ignore its old metadata; only
+      // this call's independently validated structured references are authoritative.
+      if (typeof content === 'string')
+        content = content.replace(
+          /^<!-- luowang-source-references-v1\r?\n[^\r\n]*\r?\n-->\r?\n\r?\n/,
+          '',
+        );
+      if (
+        typeof content !== 'string' ||
+        !content.trim() ||
+        /<!--\s*luowang-source-references/i.test(content)
+      )
+        throw new SourceReferenceError();
+      const selected = references.map((reference) => {
+        const receipt = this.receipts.find((r) => r.id === reference.receiptId);
+        if (
+          !receipt ||
+          receipt.runId !== this.runId ||
+          !allowedStages.includes(receipt.stage) ||
+          !['ok', 'empty', 'partial'].includes(receipt.status) ||
+          !receipt.range ||
+          !receipt.contentHash
+        )
+          throw new SourceReferenceError();
+        return receipt;
+      });
+      references.forEach((reference, index) => {
+        if (reference.coverage === 'full-file') {
+          const receipt = selected[index];
+          if (
+            receipt.category !== 'file' ||
+            !sourceCoverage(selected.filter((r) => sourceObjectKey(r) === sourceObjectKey(receipt)))
+              .fullSafeText
+          )
+            throw new SourceReferenceError();
+        }
+      });
+      const hash = sourceHash(content);
+      // One atomic plan file owns both body and references. No two-file commit window.
+      const metadata = JSON.stringify({
+        runId: this.runId,
+        planHash: hash,
+        requiresBrowser,
+        sourceReferences: references,
+      });
+      await write(`<!-- luowang-source-references-v1\n${metadata}\n-->\n\n${content}`);
+      this.plan = { hash, references: structuredClone(references) };
+    });
+    this.pending = operation.catch(() => undefined);
+    return operation;
+  }
+
   queryTool(sanitize: (value: string) => string): ToolDefinition {
     const cursors = new SourceCursors();
     const parameters = Type.Object(
@@ -100,6 +190,7 @@ export class SourceReadStore {
         ),
         path: Type.Optional(Type.String({ maxLength: 2048 })),
         cursor: Type.Optional(Type.String({ maxLength: 128 })),
+        scope: Type.Optional(Type.Union([Type.Literal('all'), Type.Literal('plan')])),
       },
       { additionalProperties: false },
     );
@@ -111,7 +202,11 @@ export class SourceReadStore {
       parameters,
       execute: async (_id, params: Static<typeof parameters>) => {
         try {
-          if (Object.keys(params).some((key) => !['stage', 'path', 'cursor'].includes(key)))
+          if (
+            Object.keys(params).some((key) => !['stage', 'path', 'cursor', 'scope'].includes(key))
+          )
+            throw new SourceInputError();
+          if (params.scope !== undefined && params.scope !== 'all' && params.scope !== 'plan')
             throw new SourceInputError();
           if (
             params.stage !== undefined &&
@@ -125,14 +220,24 @@ export class SourceReadStore {
           )
             throw new SourceInputError();
           await this.pending;
+          const references = new Map(
+            this.plan?.references.map((r) => [r.receiptId, r.coverage]) ?? [],
+          );
           const matches = this.receipts.filter(
             (item) =>
+              (params.scope !== 'plan' || references.has(item.id)) &&
               (!params.stage || params.stage === 'all' || item.stage === params.stage) &&
               (params.path === undefined || item.path === params.path),
           );
           // Freeze the result set into the cursor identity. New reads require a new query.
           const identity = sourceHash(
-            JSON.stringify([params.stage ?? 'all', params.path ?? null, matches.map((r) => r.id)]),
+            JSON.stringify([
+              params.scope ?? 'all',
+              this.plan?.hash,
+              params.stage ?? 'all',
+              params.path ?? null,
+              matches.map((r) => r.id),
+            ]),
           );
           const start = cursors.offset(params.cursor, identity);
           const receipts: SourceReadReceipt[] = [];
@@ -148,7 +253,17 @@ export class SourceReadStore {
           const coverage = [...fileKeys].map((key) =>
             sourceCoverage(matches.filter((r) => sourceObjectKey(r) === key)),
           );
-          const body = { status: 'ok', runId: this.runId, receipts, coverage, nextCursor };
+          const body = {
+            status: 'ok',
+            runId: this.runId,
+            planHash: this.plan?.hash ?? null,
+            receipts: receipts.map((r) => ({
+              ...r,
+              ...(references.has(r.id) ? { planCoverage: references.get(r.id) } : {}),
+            })),
+            coverage,
+            nextCursor,
+          };
           // Recheck at disclosure time if the operator changed secrets during the Run.
           if (
             sanitize(JSON.stringify(receipts.map((r) => r.path))) !==

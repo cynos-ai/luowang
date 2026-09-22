@@ -313,7 +313,17 @@ export class RunWorkspace implements RunArtifactReader {
       if (error instanceof RunWorkspaceError) throw error;
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
     }
-    await writeFile(path, content, { encoding: 'utf8', mode: 0o600 });
+    if (name === 'plan.md') {
+      const temporary = resolve(this.directory, `.plan-${randomBytes(16).toString('hex')}.tmp`);
+      try {
+        await writeFile(temporary, content, { encoding: 'utf8', flag: 'wx', mode: 0o600 });
+        await rename(temporary, path);
+      } finally {
+        await rm(temporary, { force: true });
+      }
+    } else {
+      await writeFile(path, content, { encoding: 'utf8', mode: 0o600 });
+    }
   }
 
   private artifactPath(name: RunArtifactName): string {

@@ -1727,7 +1727,7 @@ async function invokeTool(
   assert.ok(tool, `missing fixture tool ${name}`);
   return tool.execute(
     'phase9-fixture-call',
-    params as never,
+    (name === 'write_plan' ? { sourceReferences: [], ...params } : params) as never,
     undefined,
     undefined,
     {} as never,

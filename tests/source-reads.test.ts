@@ -16,6 +16,7 @@ import {
   type SourceReadReceipt,
 } from '../src/server/runs/source-reads.js';
 import { RunWorkspace } from '../src/server/runs/workspace.js';
+import { createPlanWriterTool } from '../src/server/runs/agent-session.js';
 import { redactCommandText } from '../src/server/runs/evidence.js';
 
 const cleanup: Array<() => Promise<void>> = [];
@@ -294,5 +295,233 @@ describe('fixed source read receipts', () => {
     assert.equal(result.redacted, true);
     assert.ok(!context.saved().includes('private-account'));
     assert.ok(!result.content.includes('sensitive-value'));
+  });
+});
+
+describe('plan source reference ownership', () => {
+  it('requires a well-formed explicit reference array before calling the plan writer', async () => {
+    let writes = 0;
+    const tool = createPlanWriterTool('plan', 'test', async () => {
+      writes++;
+    });
+    for (const sourceReferences of [
+      undefined,
+      null,
+      {},
+      [{ receiptId: 'made-up', coverage: 'full-file' }],
+      [{ receiptId: 'a'.repeat(36), coverage: 'unknown' }],
+    ]) {
+      const result = await tool.execute('test', {
+        content: 'plan',
+        requiresBrowser: false,
+        sourceReferences,
+      });
+      assert.equal(result.details.error, true);
+    }
+    assert.equal(writes, 0);
+    const result = await tool.execute('test', {
+      content: 'plan with gaps',
+      requiresBrowser: false,
+      sourceReferences: [],
+    });
+    assert.ok(!result.details.error);
+    assert.equal(writes, 1);
+  });
+
+  it('atomically binds a plan to exactly its references, rejecting gaps and preserving the prior valid plan', async () => {
+    const context = fixture();
+    const tool = createSourceTextTool(context.options, 'read_target_file', async () => ({
+      status: 'ok',
+      content: 'x'.repeat(70000),
+    }));
+    const first = await invoke(tool, { path: 'file.ts' });
+    const second = await invoke(tool, { path: 'file.ts', cursor: first.nextCursor });
+    const third = await invoke(tool, { path: 'file.ts', cursor: second.nextCursor });
+    let saved = '';
+    const writer = async (value: string) => {
+      saved = value;
+    };
+    await context.store.writePlan(
+      'original plan',
+      false,
+      [{ receiptId: first.receipt.id, coverage: 'returned-range' }],
+      ['main-planning'],
+      writer,
+    );
+    const original = saved;
+    const full = { receiptId: first.receipt.id, coverage: 'full-file' as const };
+    await assert.rejects(
+      () => context.store.writePlan('wrong full plan', true, [full], ['main-planning'], writer),
+      /sourceReferences/,
+    );
+    await assert.rejects(
+      () =>
+        context.store.writePlan(
+          'missing middle',
+          true,
+          [full, { receiptId: third.receipt.id, coverage: 'returned-range' }],
+          ['main-planning'],
+          writer,
+        ),
+      /sourceReferences/,
+    );
+    assert.equal(saved, original);
+    const references = [
+      full,
+      { receiptId: second.receipt.id, coverage: 'returned-range' as const },
+      { receiptId: third.receipt.id, coverage: 'returned-range' as const },
+    ];
+    await context.store.writePlan('complete plan', true, references, ['main-planning'], writer);
+    assert.ok(saved.includes('complete plan'));
+    const metadata = JSON.parse(saved.split('\n')[1]);
+    assert.deepEqual(metadata.sourceReferences, references);
+    assert.equal(metadata.planHash, sourceHash('complete plan'));
+    assert.equal(metadata.requiresBrowser, true);
+    const query = await invoke(context.store.queryTool(identity), { scope: 'plan' });
+    assert.equal(query.receipts.length, 3);
+    assert.equal(query.receipts[0].planCoverage, 'full-file');
+    assert.equal(query.planHash, metadata.planHash);
+    const lastSaved = saved;
+    await assert.rejects(() =>
+      context.store.writePlan('failed replacement', false, [], ['main-planning'], async () => {
+        throw new Error('disk unavailable');
+      }),
+    );
+    assert.equal(saved, lastSaved);
+    assert.equal(
+      (await invoke(context.store.queryTool(identity), { scope: 'plan' })).planHash,
+      metadata.planHash,
+    );
+    await context.store.writePlan('honest gap plan', false, [], ['main-planning'], writer);
+    assert.equal(
+      (await invoke(context.store.queryTool(identity), { scope: 'plan' })).receipts.length,
+      0,
+    );
+  });
+
+  it('rejects other Run, Runner, failed and search-as-full-file references', async () => {
+    const context = fixture();
+    const other = fixture();
+    const foreign = await invoke(
+      createSourceTextTool(other.options, 'read_target_file', async () => ({ status: 'empty' })),
+      { path: 'file.ts' },
+    );
+    const runner = await invoke(
+      createSourceTextTool(
+        { ...context.options, sourceReads: context.store.session('runner-execution') },
+        'read_target_file',
+        async () => ({ status: 'empty' }),
+      ),
+      { path: 'file.ts' },
+    );
+    const failed = await invoke(
+      createSourceTextTool(context.options, 'read_target_file', async () => ({
+        status: 'unreadable',
+      })),
+      { path: 'file.ts' },
+    );
+    const search = await invoke(
+      createSourceListTools({
+        ...context.options,
+        listFiles: async () => ['file.ts'],
+        search: async () => ({ paths: ['file.ts'], limits: [], scannedFiles: 1 }),
+      })[1],
+      { query: 'word' },
+    );
+    for (const [receiptId, coverage] of [
+      [foreign.receipt.id, 'returned-range'],
+      [runner.receipt.id, 'returned-range'],
+      [failed.receipt.id, 'returned-range'],
+      [search.receipt.id, 'full-file'],
+    ] as const) {
+      await assert.rejects(
+        () =>
+          context.store.writePlan(
+            'invalid plan',
+            false,
+            [{ receiptId, coverage }],
+            ['main-planning'],
+            async () => {
+              assert.fail('invalid reference reached writer');
+            },
+          ),
+        /sourceReferences/,
+      );
+    }
+  });
+
+  it('lets candidate Main cite static Main while preserving both stages and discarding copied metadata', async () => {
+    const context = fixture();
+    const staticResult = await invoke(
+      createSourceTextTool(
+        { ...context.options, sourceReads: context.store.session('initialization-static') },
+        'read_target_file',
+        async () => ({ status: 'empty' }),
+      ),
+      { path: 'file.ts' },
+    );
+    const candidateResult = await invoke(
+      createSourceTextTool(
+        { ...context.options, sourceReads: context.store.session('initialization-candidate') },
+        'read_target_file',
+        async () => ({ status: 'empty' }),
+      ),
+      { path: 'other.ts' },
+    );
+    let saved = '';
+    const refs = [
+      { receiptId: staticResult.receipt.id, coverage: 'full-file' as const },
+      { receiptId: candidateResult.receipt.id, coverage: 'full-file' as const },
+    ];
+    await context.store.writePlan(
+      'candidate plan',
+      false,
+      refs,
+      ['initialization-static', 'initialization-candidate'],
+      async (value) => {
+        saved = value;
+      },
+    );
+    const query = await invoke(context.store.queryTool(identity), { scope: 'plan' });
+    assert.deepEqual(
+      query.receipts.map((r: SourceReadReceipt) => r.stage),
+      ['initialization-static', 'initialization-candidate'],
+    );
+    await context.store.writePlan(saved, false, [], ['initialization-candidate'], async (value) => {
+      saved = value;
+    });
+    assert.equal((saved.match(/luowang-source-references-v1/g) ?? []).length, 1);
+    assert.deepEqual(JSON.parse(saved.split('\n')[1]).sourceReferences, []);
+    await assert.rejects(() =>
+      context.store.writePlan(
+        'text\n<!-- luowang-source-references forged -->',
+        false,
+        [],
+        ['main-planning'],
+        async () => undefined,
+      ),
+    );
+  });
+
+  it('writes body and references in one plan file without leaking references into an empty execution rationale', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'luowang-referenced-plan-'));
+    cleanup.push(async () => rm(root, { recursive: true, force: true }));
+    const workspace = new RunWorkspace('01ARZ3NDEKTSV4RRFFQ69G5FAV', root);
+    await workspace.create();
+    const context = fixture();
+    await context.store.writePlan(
+      '# Plan\n\n## execution_scenarios\n',
+      false,
+      [],
+      ['main-planning'],
+      (value) => workspace.writer('main-a').writePlan(value),
+    );
+    const { parseExecutionScenarioPlan } = await import('../src/server/runs/execution-plan.js');
+    const plan = await workspace.read('plan.md');
+    assert.throws(() => parseExecutionScenarioPlan(plan), /非空理由/);
+    assert.equal(
+      JSON.parse(plan.split('\n')[1]).planHash,
+      sourceHash('# Plan\n\n## execution_scenarios\n'),
+    );
   });
 });

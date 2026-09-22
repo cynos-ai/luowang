@@ -1445,7 +1445,7 @@ async function invokeTool(
   assert.ok(tool, `missing tool ${name}`);
   return tool.execute(
     'test-tool-call',
-    params as never,
+    (name === 'write_plan' ? { sourceReferences: [], ...params } : params) as never,
     undefined,
     undefined,
     {} as never,

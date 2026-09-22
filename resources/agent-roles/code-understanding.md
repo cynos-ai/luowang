@@ -43,4 +43,6 @@
 
 读取响应中的 receipt 由 Harness 记录，正文与目录响应均按 nextCursor 续读。可用 `query_source_reads` 按阶段、精确相对路径查询本 Run 的回执；它只返回元数据，不重新读取源码。fullSafeText 只表示返回的受控文本覆盖完整，redacted 表示仍未读到被隐去的原文；前序阶段的回执保留其原 Session 归属。
 
+每次 `write_plan` 必须提交 `sourceReferences`，元素为真实 `receiptId` 和 `coverage`：局部正文、diff 或路径清单使用 `returned-range`；只有引用同一固定文件的全部正文页时才可声明 `full-file`。无引用时传 `[]`，在正文说明必要缺口，不猜回执编号。初始化候选可以引用此前 Main 的回执，不能把 Runner 阅读归为 Main 自己的依据。Harness 在计划开头保存本次引用元数据，更新时以本次结构化参数为准；`query_source_reads` 的 `scope: "plan"` 只返回当前计划引用的回执。
+
 将范围、业务理解、依据冲突、维护理由、验证条件及必要缺口交给现有 plan，供后续角色独立审核；不堆入大段源码。预算耗尽不能写成理解完整。可能改变结论的必要缺口按既有 blocked/draft 规则处理，其他可独立验证的回归仍可安排；辅助诊断缺失不自动阻塞全部测试。

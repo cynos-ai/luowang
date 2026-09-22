@@ -17,7 +17,13 @@ it('uses the explicit planning decision rather than keywords, negations or quote
     },
   ];
   for (const example of examples) {
-    const result = await tool.execute('fixture', example, undefined, undefined, {} as never);
+    const result = await tool.execute(
+      'fixture',
+      { ...example, sourceReferences: [] },
+      undefined,
+      undefined,
+      {} as never,
+    );
     assert.ok(!(result.details as { error?: boolean }).error);
   }
   assert.deepEqual(writes, examples);

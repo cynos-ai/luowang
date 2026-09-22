@@ -581,8 +581,14 @@ class DefaultRunOrchestrator implements RunOrchestrator {
       createPlanWriterTool(
         '写入测试计划',
         '写入本次 Run 唯一的 plan.md。必须写完整 Markdown，不得写其他文件。',
-        async (content, requiresBrowser) => {
-          await workspace.writer('main-a').writePlan(content);
+        async (content, requiresBrowser, sourceReferences) => {
+          await this.sourceReads(context, workspace).writePlan(
+            content,
+            requiresBrowser,
+            sourceReferences,
+            [context.initialization ? 'initialization-static' : 'main-planning'],
+            (value) => workspace.writer('main-a').writePlan(value),
+          );
           context.browserRequired = requiresBrowser;
         },
       ),
@@ -674,8 +680,14 @@ class DefaultRunOrchestrator implements RunOrchestrator {
       createPlanWriterTool(
         '更新候选测试计划',
         '更新本次 Run 同一个 plan.md；必须保留静态依据和侦察事实，只能写计划 Markdown。',
-        async (content, requiresBrowser) => {
-          await workspace.writer('main-a').writePlan(content);
+        async (content, requiresBrowser, sourceReferences) => {
+          await this.sourceReads(context, workspace).writePlan(
+            content,
+            requiresBrowser,
+            sourceReferences,
+            ['initialization-static', 'initialization-candidate'],
+            (value) => workspace.writer('main-a').writePlan(value),
+          );
           context.browserRequired = requiresBrowser;
           planWriteSucceeded = true;
         },
