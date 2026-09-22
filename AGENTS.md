@@ -17,6 +17,8 @@
 
 ## 仓库与分支
 
+- v0.6.0 代码深读的实现与验收遵循 `docs/changes/luowang-code-understanding/`。它扩展 Main 的内置角色资源、固定版本读取回执与计划引用；不启用 Pi Skills，不新增角色 Session。v0.6.1 多项目独立延期，不能与本版混合实现。
+
 - 正式仓库是公开的 `cynos-ai/luowang`；许可证为 GNU Affero General Public License v3.0（`AGPL-3.0`）。它允许商业使用，但分发衍生作品或通过网络提供修改版时必须按 AGPL 提供对应源码。
 - `main` 只保存正式发布历史；`develop` 是日常开发集成分支。两者都禁止直接提交和 force-push，通过 Pull Request 合并。
 - 功能从最新 `develop` 创建 `feat/<short-kebab-name>`，完成后向 `develop` 提交 PR。

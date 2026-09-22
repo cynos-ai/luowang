@@ -2,6 +2,8 @@
 
 罗网（LuoWang）是一个独立部署的 AI 场景测试 Harness。当前仓库已实现 Phase 0–9 的主要模块：安全配置控制台、唯一 GitHub 目标仓库索引、Main → Runner → Reviewer → Main 的 Run、受控 Playwright MCP UI 执行、S3-compatible OSS 证据 Gateway、幂等归档、持久 FIFO 自动化队列、长期场景生命周期、三种场景维护模式、陌生项目初始化和运维控制台。当前版本为 v0.5.0；v0.1.0、v0.2.0、v0.2.1、v0.3.0、v0.3.1 与 v0.4.0 均保持既有不可变指向。
 
+v0.6.0 开发分支已加入随版本维护的代码深读方法：Main 追踪业务规则与相关调用，并在计划中引用固定版本的读取回执；Reviewer 可以核对引用来源和阅读范围。回执只说明材料返回过，模型是否理解正确仍需单独评测。[实施与验收进度](docs/changes/luowang-code-understanding/plan.md)记录实际完成项；多项目支持留在 v0.6.1。
+
 ## 本地启动
 
 优先使用下文的 Docker Compose 或固定 quality/runtime 镜像复现。原生运行需要 Node.js 24 和 npm；当 `better-sqlite3` 没有匹配的预编译包时，还需要 `python3`、`make` 和 `g++`。生产模式：
