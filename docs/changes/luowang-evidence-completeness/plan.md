@@ -351,3 +351,17 @@ GitHub 远端仍保留三条以 `scenario-testing` 为 base 的真实场景审�
 远端复核结果：仓库为 public，默认分支为 `main`，Issues 已启用；heads 列表只有 `main`，`scenario-testing` ref 返回 HTTP 404。新仓库满足 Closure 7 首次 `initial-create` 的 Git 前置条件。首次分支创建仍必须由新持久候选实例通过 `manual-merge-source` 队列完成，不能提前手工创建 `scenario-testing`。
 
 本轮只准备仓库，没有启动 Harness、模型请求或 initialization Run，live/release 继续为 blocked。下一步使用新的数据目录启动单一持久候选实例，保存固定仓库、模型、MCP、OSS、清理地址和测试账号配置；零模型预检通过后，再从 `main@6405a45b6889ad92cf7cfbce12d8ec22b5040f23` 发起首次分支请求。后续 passed、双缺陷 failed、依赖 blocked、场景审核 PR、合并后 current-head passed 重测和最终只读 live 检查都必须留在该实例中。
+
+### Closure 7 initialization 真实联合验收（2026-09-22）
+
+本轮使用候选提交 `07e898901f0604c63740ca1ff21e44737349eb9c`，在新的持久数据目录 `.cynos/acceptance/run-closure7-persistent-07e8989/live-data/` 启动单一实例。零模型 runtime 预检通过；同一路径对 DeepSeek 的 DNS、TCP 443 和标准 TLS 检查通过，无鉴权请求返回 HTTP 401，预检模型请求为 0。第一次驱动执行在 Git 远端读取阶段遇到一次临时 `ls-remote` 失败，尚未创建 `scenario-testing`，也没有模型请求。失败记录原样保存在 proof 目录；驱动只增加三次有界远端读取重试，随后重新执行成功，没有删除或改写首次失败事实。
+
+队列 `1` 以 `manual-merge-source + initialization=true` 从 `main@6405a45b6889ad92cf7cfbce12d8ec22b5040f23` 首次创建此前不存在的 `scenario-testing`。`preparedMergeMode=initial-create`，prepared、resolved 和 Run target commit 都是该固定 source；队列最终为 completed，archiveStatus=completed，只创建一个 initialization Run `01M348D1DVD9S0J9YTJ6Y8JTSB`。该 Run 复用目标中已有的 approved 场景 `AUTH-LOGIN-001`，没有生成 `scenario-changes.patch`。
+
+Run 按 Main · 规划 → Runner → Main · 规划 → Runner → Reviewer → Main · 最终汇总创建六个不同 Session，结果为 passed，进度为 1/1。四份工件 `plan.md`、`execution.md`、`review.md`、`report.md` 已进入 completed 目录。完整证据共 111 个 JSON、6 个日志、9 张 PNG 和 26 个 YAML；Reviewer 实际读取截图并核对登录、刷新、退出、删除和拒绝登录状态。9 张截图保留真实页面现场和合成邮箱字段，密码保持掩码，没有为了截图清空、覆盖或遮挡表单。
+
+本轮使用 152/180 次模型请求：`deepseek-v4-flash` 137 次，`deepseek-v4-flash-vision-exp` 15 次；152 次均为 HTTP 200、响应流完整，`budget.stopped=false`。Harness 清理收尾记录两项测试数据均已独立核验不存在，因此驱动再次调用 cleanup 时 attempted=0；独立清理查询返回 remaining=0，目标数据库停止前 users=0、sessions=0。当前 Run 的 Markdown 对已知凭据和账号值做精确扫描，无命中。`review.md` 在 Harness 清理前生成，清理事实由 Harness 追加到 `report.md`，不回写审核工件。
+
+归档提交为 `2c4684c50a58cf7728041b4cba50ca46b54d6723`，父提交正是 `6405a45b6889ad92cf7cfbce12d8ec22b5040f23`。提交只新增 `docs/scenario-testing/reports/01M348D1DVD9S0J9YTJ6Y8JTSB/report.md` 和 `review.md`；远端两份文件与本地 completed 工件逐字节一致，SHA-256 分别为 `3e670b4b74b001ab6c6d062db698f68b53b3f52e9a9cf88c1bca5e022da63a4d` 和 `55f02ea1380b729ea4aecd91fa9a4b55ced4e94a5c7a9ba56aedfc3dcf095ed9`。
+
+该持久数据库现在只有这一条 queue，已补齐首次 initial-create、唯一 initialization Run、六 Session、带截图 passed、进度活动、清理和归档事实。整体 live/release 仍为 blocked；后续必须继续使用同一数据目录，依次完成已有 `scenario-testing` 的普通 merge-source passed Run、双缺陷 failed Run并创建或关联两个 Issue、不推进的 blocked Run、三 Session 场景审核 PR、合并 PR、`manual-current-head` passed 重测，最后执行正式 live/release 检查。普通 passed Run 会成为数据库中更晚的 passed 记录，必须实际确认 Closure 7 的筛选仍能选中所需事实，不能提前把 initialization 结果当作最终门禁通过。

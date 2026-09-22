@@ -31,9 +31,11 @@ Compose 将数据保存到 `luowang-data` 卷，并把宿主机端口绑定到 `
 
 截至 2026-09-22，修复候选 `0c696f0` 已完成 normal、defect、blocked 三例复验，结果分别为 `passed`、`failed`、`blocked`；归档、清理、截图读取和远端工件核对均完成。负责人随后批准在测试项目中补齐第二条 Issue。双缺陷 Run `01M342XE5V39VTB8AQSSARMMFC` 使用四个隔离 Session 和 80 次模型请求，确认退出未撤销 Session 与删除接口虚假成功两项独立问题；Archiver 成功关联既有 Issue [#5](https://github.com/cynos-ai/cynos-website/issues/5)，并创建新 Issue [#12](https://github.com/cynos-ai/cynos-website/issues/12)。报告提交 `f4800046e7797109527371504d97f778926ca957` 只新增该 Run 的 report/review，本地与 Git blob 一致；4 张截图保持页面现场，清理后 users=0、sessions=0。这个 Run 已补齐“双 Bug、双 Issue”的单项事实。
 
-正式 Closure 7 仍为 blocked。对本机 127 份 `luowang.db` 的只读审计表明，所有真实联合验收数据库的 `test_request_queue` 都为空；passed、failed、blocked 事实分散在不同临时数据库，没有 initialization、三 Session 场景 PR、current-head passed 重测或带开始/完成活动的 passed Run。原目标仓库虽保留了真实场景审核 PR [#4](https://github.com/cynos-ai/cynos-website/pull/4)、[#7](https://github.com/cynos-ai/cynos-website/pull/7) 和 [#8](https://github.com/cynos-ai/cynos-website/pull/8)，但对应本地 Run/queue 已不存在，不能补进当前候选实例。原目标的 `scenario-testing` 已存在，也不能在不删除历史分支的情况下重做首次 `initial-create`。
+正式 Closure 7 已切换到独立公开仓库 [`cynos-ai/luowang-closure7-fixture`](https://github.com/cynos-ai/luowang-closure7-fixture)，并在同一个持久候选实例完成首次 initialization。队列从 `main@6405a45b6889ad92cf7cfbce12d8ec22b5040f23` 以 `manual-merge-source + initialization=true` 创建原先不存在的 `scenario-testing`，prepared、resolved 和 target commit 均固定为该提交。Run `01M348D1DVD9S0J9YTJ6Y8JTSB` 按 Main · 规划 → Runner → Main · 规划 → Runner → Reviewer → Main · 最终汇总创建六个隔离 Session，结果为 `passed`，场景进度为 `1/1`。
 
-负责人已授权把正式 Closure 7 切换到独立公开仓库 [`cynos-ai/luowang-closure7-fixture`](https://github.com/cynos-ai/luowang-closure7-fixture)。新仓库只建立了 `main`，固定提交仍为 `6405a45b6889ad92cf7cfbce12d8ec22b5040f23`，没有 `scenario-testing`，Issues 已启用。下一轮从一个新的持久候选实例执行首次建分支和后续门禁；当前尚未产生 initialization Run，live/release 状态不变。完整记录见 [证据完整性计划](docs/changes/luowang-evidence-completeness/plan.md#closure-7-独立目标准备2026-09-22)。
+本轮共使用 152/180 次模型请求，其中 `deepseek-v4-flash` 137 次、`deepseek-v4-flash-vision-exp` 15 次；全部取得 HTTP 200 且响应流完整。Reviewer 实际读取 9 张截图，表单保留合成邮箱，密码保持掩码，没有为截图清空、覆盖或遮挡字段。测试数据独立查询为 remaining=0，目标数据库停止前 users=0、sessions=0。归档提交 [`2c4684c`](https://github.com/cynos-ai/luowang-closure7-fixture/commit/2c4684c50a58cf7728041b4cba50ca46b54d6723) 的父提交是固定 source，只新增该 Run 的 report/review，两份远端文件与本地工件逐字节一致。
+
+Closure 7 的 initialization 单项已完成，整体 live/release 仍为 blocked。同一实例还需要完成已有分支的普通 passed Run、双缺陷 failed Run 和两个 Issue、blocked Run、三 Session 场景审核 PR、PR 合并后的 `manual-current-head` passed 重测，以及最终 live/release 检查。完整记录见 [证据完整性计划](docs/changes/luowang-evidence-completeness/plan.md#closure-7-initialization-真实联合验收2026-09-22)。
 
 以下按发生顺序保留验证过程，其中“待完成”描述当时状态。
 
