@@ -71,6 +71,8 @@ describe('Closure 1 built-in role instructions', () => {
     assert.match(loaded.content, /不重新决定期望是否适用/);
     assert.match(loaded.content, /不得把“没有某类证据”改写为“证据列表为空”/);
     assert.match(loaded.content, /证据文件数量与类别须和 review\.md 的清单一致/);
+    assert.match(loaded.content, /不得遗漏或反转“不代表、仅限、未验证、无法确认”等限定/);
+    assert.match(loaded.content, /须先修正一致再调用 write_report/);
   });
 
   it('ignores ambient target, host and user resources outside the fixed allowlist', async () => {

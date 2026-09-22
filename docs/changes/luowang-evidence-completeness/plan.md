@@ -225,3 +225,13 @@ push 第九轮记录后，使用同一 `luowang:failure-stage-quality` 容器网
 该结果说明第八轮 TIME-N 和第九轮 SOURCE-P 的 `upstream-connect` 在当前环境中可进一步定位为容器不信任所见证书链。后续宿主机检查确认这是当前开发机的本地 HTTPS 拦截，不是 DeepSeek 服务、罗网代码或服务器部署的证书链缺陷。诊断没有保存错误消息、证书正文、请求内容或凭据。不得通过关闭 TLS 校验、给 DeepSeek 域名单独跳过校验或把开发机拦截证书注入产品镜像继续验收；生产部署保持标准 TLS 校验。下一次模型轮次应在没有本地 HTTPS 拦截的服务器或干净网络环境中执行，并重新申请独立预算。
 
 评估代理增加安全的固定分类：从异常及最多四层 cause 中只读取标准 `code`，将 `ENOTFOUND/EAI_AGAIN` 记为 `upstream-dns`，已知证书错误及 `ERR_TLS_`/`ERR_SSL_` 记为 `upstream-tls`，超时保持 `upstream-timeout`，其余建连异常保持 `upstream-connect`。预算仍在首次失败后锁定，原始异常不进入记录。新增 DNS、TLS 和普通连接三项回归后，record-accuracy 19 项测试、格式和 lint 通过；新 quality 镜像为 `sha256:6b407875049fa4ac3a4a1af5b5e1a92ec1b4b62b2b3bdc346fbc552b8a139066`。完整本地验收退出 0，覆盖 40 个测试文件 / 309 项测试、格式、lint、类型检查、构建、e2e 和 Phase 9（34 AC）；local=passed，live/release=blocked。该分类修订尚未调用真实模型验证。
+
+### 第十轮本机复验与范围否定反转（2026-09-22）
+
+负责人批准独立 120 次请求预算并明确先用本机继续。启动前从同一 quality 容器做无凭据检查：DNS 与 TCP 443 成功，TLS `authorized=true`，无鉴权请求返回 HTTP 401，modelRequests=0；没有关闭证书校验、增加额外 CA 或修改产品/部署配置。第十轮冻结提交 `9bbc4db7f3c8975c5fda3f018812c1cd4c4ceb79` 与 quality 镜像 `sha256:6b407875049fa4ac3a4a1af5b5e1a92ec1b4b62b2b3bdc346fbc552b8a139066`。inputs.json、rubric.json 与第九轮逐字节相同，候选 manifest 只变化 `tests/acceptance/record-accuracy/proxy.mjs`；六例零模型预检和 Secret Store 禁网检查通过。
+
+按固定顺序执行 SOURCE-P、SOURCE-N 与 TIME-P，共 6 个隔离 Session、29/120 次请求，全部取得 HTTP 200 且响应流完成。SOURCE-P（Run `01M33FQTW491REW0TQ5DYKR08R`，累计 10 次）和 SOURCE-N（Run `01M33FX2D7B9GF8DCNT7VHFQTC`，累计 19 次）均通过独立核对：Reviewer 区分 Runner 陈述与自身快照观察，最终 Main 保留判定来源、证据数量和无实际浏览器操作归属的限制。每份 writer 原始输入与落盘工件 SHA-256 相同。
+
+TIME-P（Run `01M33G1H6JJC0NFFTECYEW27C2`，累计 29 次）的 Reviewer 正确使用同一 `fixture-clock` 的原点 `1789948800000ms` 与偏移 `1250ms` 得出 `2026-09-21T00:00:01.250Z`，并明确该换算不证明真实服务器时钟已校准；Reviewer 维度通过。最终 Main 也保留时间依据，却在测试范围首段把计划与审核的“不代表真实产品执行”写成“为代表真实产品执行”，反转范围并与同一报告后文矛盾。最终 Main 维度及本例整体记为 failed；预算锁定 stopped，TIME-N、COUNT-P/N 未运行，剩余 91 次不重试、不转入新轮。humanScoring 保持 not_run。
+
+原始 result、sessions、writer 工件、独立 score 和 budget 保存在 `.cynos/acceptance/run-record-accuracy-round10/frozen/live/`，不修改结束轮次。最终汇总指令与 Spec 增加通用一致性要求：定稿前保留计划/审核中的范围限定和否定关系，不得把“不代表、仅限、未验证、无法确认”等压缩成相反结论；报告内部范围冲突须在 write_report 前修正。不增加语义关键词门禁，不改历史工件。角色加载、记录精度和生产 Pi 定向回归 3 文件 / 40 项通过；完整本地验收退出 0，覆盖 40 文件 / 309 测试、格式、lint、类型检查、构建、e2e 与 Phase 9（34 AC）。local=passed，修订尚未经过新模型轮次验证，live/release 继续 blocked。
