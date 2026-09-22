@@ -81,6 +81,7 @@ it('rejects missing, escaping, malformed and overwritten navigation snapshots', 
   assert.equal(f.failures(), 3);
   await writeFile(join(f.workspace.evidenceDirectory, filename), '- textbox "A": [unsupported]');
   await f.call('browser_navigate', {}, `### Snapshot\n- [Snapshot](${filename})\n`);
+  assert.doesNotMatch((await f.workspace.readEvidence(filename)).toString(), /unsupported/);
   await assert.rejects(() => f.store.upload(filename));
   assert.equal(f.transport.objects.size, 0);
   const other = await fixture();
@@ -170,12 +171,62 @@ it('decodes nested and multiline snapshot field values without treating headings
     '### Snapshot\n```yaml\n- generic:\n  - heading "Public label"\n  - textbox "Notes": |-\n      first line\n      second line\n  - spinbutton "Code": 12345\n```',
   );
   assert.deepEqual(snapshot?.fieldValues, ['first line\nsecond line', '12345']);
+  const playwrightForm = readInlineBrowserSnapshot(
+    '### Snapshot\n```yaml\n- textbox "Email" [ref=e1]:\n  - /placeholder: name@example.com\n  - text: synthetic@example.test\n- textbox "Password" [ref=e2]:\n  - /placeholder: Password\n  - text: synthetic-password\n- textbox "Empty" [ref=e3]:\n  - /placeholder: Optional\n```',
+  );
+  assert.deepEqual(playwrightForm?.fieldValues, ['synthetic@example.test', 'synthetic-password']);
   for (const text of [
     '- textbox "A": &value secret\n- textbox "B": *value',
     '- textbox "A": [secret]',
+    '- textbox "A":\n  - text: [secret]',
+    '- textbox "A":\n  - unknown: secret',
     '- textbox "A": secret\n  textbox "A": other',
   ])
     assert.throws(() => readInlineBrowserSnapshot(`### Snapshot\n\`\`\`yaml\n${text}\n\`\`\``));
+});
+
+it('sanitizes nested Playwright form snapshots and discards raw values on capture failure', async () => {
+  const filename = 'page-2026-09-21T00-00-00-001Z.yml';
+  const form = (email: string, password: string) =>
+    `- textbox "Email" [ref=e1]:\n  - /placeholder: name@example.com\n  - text: ${email}\n- textbox "Password" [ref=e2]:\n  - /placeholder: Password\n  - text: ${password}\n`;
+  const f = await fixture();
+  const email = `account-${randomUUID()}@example.test`;
+  const password = randomUUID();
+  await writeFile(join(f.workspace.evidenceDirectory, filename), form(email, password));
+  await f.call('browser_navigate', {}, `### Snapshot\n- [Snapshot](${filename})\n`);
+  const sanitized = (await f.workspace.readEvidence(filename)).toString();
+  assert.match(sanitized, /name@example\.com|Password/);
+  assert.ok(!sanitized.includes(email));
+  assert.ok(!sanitized.includes(password));
+  assert.equal(f.store.redactText!(email), '[REDACTED]');
+  assert.equal(f.store.redactText!(password), '[REDACTED]');
+
+  const failed = await fixture();
+  const failedSecret = randomUUID();
+  await writeFile(
+    join(failed.workspace.evidenceDirectory, filename),
+    form(`failed-${randomUUID()}@example.test`, failedSecret),
+  );
+  failed.store.registerSensitiveValue = () => {
+    throw new Error('registration failed');
+  };
+  await failed.call('browser_navigate', {}, `### Snapshot\n- [Snapshot](${filename})\n`);
+  const discarded = (await failed.workspace.readEvidence(filename)).toString();
+  assert.match(discarded, /snapshot discarded/);
+  assert.ok(!discarded.includes(failedSecret));
+  await assert.rejects(() => failed.store.upload(filename), /采集失败/);
+
+  const removed = await fixture();
+  const removedSecret = randomUUID();
+  await writeFile(
+    join(removed.workspace.evidenceDirectory, filename),
+    form(`removed-${randomUUID()}@example.test`, removedSecret),
+  );
+  removed.workspace.replaceBrowserEvidence = async () => {
+    throw new Error('replacement failed');
+  };
+  await removed.call('browser_navigate', {}, `### Snapshot\n- [Snapshot](${filename})\n`);
+  await assert.rejects(() => removed.workspace.readEvidence(filename), /不存在/);
 });
 afterEach(async () => {
   for (const directory of directories.splice(0))

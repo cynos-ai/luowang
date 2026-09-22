@@ -38,6 +38,30 @@ export function readBrowserSnapshotText(text: string): { text: string; fieldValu
   const tree: unknown = document.toJS({ maxAliasCount: 0 });
   const values: string[] = [];
   const field = /^(?:textbox|searchbox|spinbutton|combobox)(?:\s|$)/;
+  const addFieldValue = (value: unknown) => {
+    if (typeof value !== 'string' && typeof value !== 'number')
+      throw new Error('Unsupported field value');
+    if (String(value)) values.push(String(value));
+  };
+  const visitField = (node: unknown) => {
+    if (typeof node === 'string' || typeof node === 'number') {
+      addFieldValue(node);
+      return;
+    }
+    if (node === null) return;
+    if (!Array.isArray(node)) throw new Error('Unsupported field value');
+    for (const entry of node) {
+      if (!entry || typeof entry !== 'object' || Array.isArray(entry))
+        throw new Error('Unsupported field child');
+      for (const [key, value] of Object.entries(entry)) {
+        if (key === 'text') addFieldValue(value);
+        else if (key.startsWith('/')) {
+          if (typeof value !== 'string' && typeof value !== 'number' && value !== null)
+            throw new Error('Unsupported field metadata');
+        } else throw new Error('Unsupported field child');
+      }
+    }
+  };
   const visit = (node: unknown, depth: number) => {
     if (depth > 64) throw new Error('Snapshot too deep');
     if (typeof node === 'string') return;
@@ -47,11 +71,8 @@ export function readBrowserSnapshotText(text: string): { text: string; fieldValu
       if (!entry || typeof entry !== 'object' || Array.isArray(entry))
         throw new Error('Unsupported snapshot entry');
       for (const [key, value] of Object.entries(entry)) {
-        if (field.test(key)) {
-          if (typeof value !== 'string' && typeof value !== 'number')
-            throw new Error('Unsupported field value');
-          if (String(value)) values.push(String(value));
-        } else if (Array.isArray(value)) visit(value, depth + 1);
+        if (field.test(key)) visitField(value);
+        else if (Array.isArray(value)) visit(value, depth + 1);
         else if (typeof value !== 'string' && typeof value !== 'number' && value !== null)
           throw new Error('Unsupported snapshot value');
       }

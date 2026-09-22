@@ -16,6 +16,7 @@ import { RunWorkspace, isBrowserRecordName, type RunEvidenceFile } from './works
 import { readBrowserSnapshotText } from './browser-snapshot.js';
 
 const MAX_REVIEW_IMAGE_BYTES = 16 * 1024 * 1024;
+const DISCARDED_BROWSER_SNAPSHOT = '- note: browser snapshot discarded after capture failure\n';
 
 export interface EvidenceUploadResult {
   references: EvidenceReference[];
@@ -105,17 +106,31 @@ class DefaultRunEvidenceStore implements RunEvidenceStore {
     if (!filename.startsWith('page-') || !isBrowserRecordName(filename))
       throw new Error('快照文件名无效');
     this.failedSnapshots.add(filename);
-    const body = await this.workspace.readEvidence(filename);
-    const known = this.snapshotHashes.get(filename);
-    if (known) {
-      if (createHash('sha256').update(body).digest('hex') !== known)
-        throw new Error('快照文件内容已改变');
-    } else {
-      const snapshot = readBrowserSnapshotText(decodeBrowserRecord(body));
-      for (const value of snapshot.fieldValues) this.registerSensitiveValue(value);
-      const clean = this.redactText(snapshot.text);
-      await this.workspace.replaceBrowserEvidence(filename, clean);
-      this.snapshotHashes.set(filename, createHash('sha256').update(clean).digest('hex'));
+    try {
+      const body = await this.workspace.readEvidence(filename);
+      const known = this.snapshotHashes.get(filename);
+      if (known) {
+        if (createHash('sha256').update(body).digest('hex') !== known)
+          throw new Error('快照文件内容已改变');
+      } else {
+        const snapshot = readBrowserSnapshotText(decodeBrowserRecord(body));
+        for (const value of snapshot.fieldValues) this.registerSensitiveValue(value);
+        const clean = this.redactText(snapshot.text);
+        await this.workspace.replaceBrowserEvidence(filename, clean);
+        this.snapshotHashes.set(filename, createHash('sha256').update(clean).digest('hex'));
+      }
+    } catch {
+      this.snapshotHashes.delete(filename);
+      try {
+        await this.workspace.replaceBrowserEvidence(filename, DISCARDED_BROWSER_SNAPSHOT);
+      } catch {
+        try {
+          await this.workspace.removeBrowserEvidence(filename);
+        } catch {
+          throw new Error('浏览器快照采集失败且原始内容清理失败');
+        }
+      }
+      throw new Error('浏览器快照采集失败，原始内容已丢弃');
     }
     this.failedSnapshots.delete(filename);
     return {

@@ -39,7 +39,7 @@ it.each(['mcp', 'mcp__playwright'])(
       }
       response.setHeader('content-type', 'text/html');
       response.end(
-        '<h1>Local replay fixture</h1><input aria-label="Account" value="native-form-account"><input aria-label="Passphrase" type="password" value="native-form-passphrase">',
+        '<h1>Local replay fixture</h1><input aria-label="Account" placeholder="name@example.com" value="native-form-account"><input aria-label="Passphrase" placeholder="Password" type="password" value="native-form-passphrase">',
       );
     });
     let session: Awaited<ReturnType<typeof createAgentSession>>['session'] | undefined;
