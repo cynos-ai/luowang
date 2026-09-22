@@ -35,7 +35,11 @@ Compose 将数据保存到 `luowang-data` 卷，并把宿主机端口绑定到 `
 
 本轮共使用 152/180 次模型请求，其中 `deepseek-v4-flash` 137 次、`deepseek-v4-flash-vision-exp` 15 次；全部取得 HTTP 200 且响应流完整。Reviewer 实际读取 9 张截图，表单保留合成邮箱，密码保持掩码，没有为截图清空、覆盖或遮挡字段。测试数据独立查询为 remaining=0，目标数据库停止前 users=0、sessions=0。归档提交 [`2c4684c`](https://github.com/cynos-ai/luowang-closure7-fixture/commit/2c4684c50a58cf7728041b4cba50ca46b54d6723) 的父提交是固定 source，只新增该 Run 的 report/review，两份远端文件与本地工件逐字节一致。
 
-Closure 7 的 initialization 单项已完成，整体 live/release 仍为 blocked。同一实例还需要完成已有分支的普通 passed Run、双缺陷 failed Run 和两个 Issue、blocked Run、三 Session 场景审核 PR、PR 合并后的 `manual-current-head` passed 重测，以及最终 live/release 检查。完整记录见 [证据完整性计划](docs/changes/luowang-evidence-completeness/plan.md#closure-7-initialization-真实联合验收2026-09-22)。
+同一实例随后完成普通 existing-branch merge-source Run `01M34GE6SGXEQZYHN3Y4HMW4BX`。目标仓库 `main` 只澄清“刷新继续使用原 Session，恢复资料与登录响应一致”，队列生成 merge commit `6a07377`，其两个父提交分别为上一归档 HEAD `2c4684c` 和 source `ef468e7`。Run 使用 Main · 规划、Runner、Reviewer、Main · 最终汇总四个隔离 Session，结果为 `passed`，进度为 `1/1`；110/180 次模型请求全部 HTTP 200 且响应流完整。
+
+Reviewer 读取 7 张截图和原始浏览器证据，确认登录与刷新使用同一 Session、退出后旧 Session 返回 401、删除后旧 Session 和原凭据均失效。逐图核对确认表单现场保留，最后一张含合成邮箱和掩码密码。测试数据独立查询为 remaining=0，目标数据库停止前 users=0、sessions=0。归档提交 [`e09b0f3`](https://github.com/cynos-ai/luowang-closure7-fixture/commit/e09b0f377d1414fa3da2c65bcbbc2406421dec4d) 只新增该 Run 的 report/review，两份远端文件与本地工件逐字节一致。
+
+Closure 7 的 initialization 和普通 passed 单项已经留在同一个持久实例，整体 live/release 仍为 blocked。后续还要在该实例完成双缺陷 failed Run 和两个 Issue、blocked Run、三 Session 场景审核 PR、PR 合并后的 `manual-current-head` passed 重测，以及最终 live/release 检查。完整记录见 [证据完整性计划](docs/changes/luowang-evidence-completeness/plan.md#closure-7-普通-merge-source-passed-run2026-09-22)。
 
 以下按发生顺序保留验证过程，其中“待完成”描述当时状态。
 

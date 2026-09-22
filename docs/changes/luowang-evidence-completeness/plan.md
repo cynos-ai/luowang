@@ -365,3 +365,19 @@ Run 按 Main · 规划 → Runner → Main · 规划 → Runner → Reviewer →
 归档提交为 `2c4684c50a58cf7728041b4cba50ca46b54d6723`，父提交正是 `6405a45b6889ad92cf7cfbce12d8ec22b5040f23`。提交只新增 `docs/scenario-testing/reports/01M348D1DVD9S0J9YTJ6Y8JTSB/report.md` 和 `review.md`；远端两份文件与本地 completed 工件逐字节一致，SHA-256 分别为 `3e670b4b74b001ab6c6d062db698f68b53b3f52e9a9cf88c1bca5e022da63a4d` 和 `55f02ea1380b729ea4aecd91fa9a4b55ced4e94a5c7a9ba56aedfc3dcf095ed9`。
 
 该持久数据库现在只有这一条 queue，已补齐首次 initial-create、唯一 initialization Run、六 Session、带截图 passed、进度活动、清理和归档事实。整体 live/release 仍为 blocked；后续必须继续使用同一数据目录，依次完成已有 `scenario-testing` 的普通 merge-source passed Run、双缺陷 failed Run并创建或关联两个 Issue、不推进的 blocked Run、三 Session 场景审核 PR、合并 PR、`manual-current-head` passed 重测，最后执行正式 live/release 检查。普通 passed Run 会成为数据库中更晚的 passed 记录，必须实际确认 Closure 7 的筛选仍能选中所需事实，不能提前把 initialization 结果当作最终门禁通过。
+
+### Closure 7 普通 merge-source passed Run（2026-09-22）
+
+为验证已有分支的 merge-source 路径，目标仓库 `main` 新增需求提交 `ef468e7c94d023d36da1e88254af90cdcc934b21`。该提交只修改 `docs/changes/cynos-website-auth/spec.md`，明确“登录后刷新继续使用原 Session；恢复的用户 ID、邮箱和昵称与登录响应一致”，没有修改应用源码。Harness 继续复用 `.cynos/acceptance/run-closure7-persistent-07e8989/live-data/`，没有新建或拼接数据库。
+
+队列 `2` 以 `manual-merge-source + initialization=false` 合并 `main`。`preparedMergeMode=existing-branch`，prepared 与 resolved 均为 `6a07377a4f41880f8869ccd8b4106acc5b4aa321`；该 merge commit 的两个父提交分别为上一轮 `scenario-testing@2c4684c50a58cf7728041b4cba50ca46b54d6723` 和 `main@ef468e7c94d023d36da1e88254af90cdcc934b21`。普通 Run `01M34GE6SGXEQZYHN3Y4HMW4BX` 固定使用该 merge commit，队列与归档均 completed。
+
+Run 创建 Main · 规划、Runner、Reviewer、Main · 最终汇总四个不同 Session，只执行 approved 场景 `AUTH-LOGIN-001`，没有生成 `scenario-changes.patch`。结果为 passed，进度为 1/1；completed 目录含 `plan.md`、`execution.md`、`review.md`、`report.md`，以及 78 个 JSON、3 个日志、7 张 PNG 和 15 个 YAML。Reviewer 依据真实 Cookie、请求头、响应和截图确认：刷新沿用登录后的同一 Session，用户 ID、昵称和创建时间一致；退出后恢复旧 Session 访问 `/api/me` 返回 401；删除后恢复旧 Session 和使用原凭据登录均返回 401。
+
+本轮使用 110/180 次模型请求：`deepseek-v4-flash` 93 次，`deepseek-v4-flash-vision-exp` 17 次；110 次均为 HTTP 200、响应流完整，`budget.stopped=false`。7 张截图已逐图核对：登录和刷新画面一致，退出和删除提示与报告一致，最后一张保留合成邮箱和掩码密码，没有为截图清空、覆盖或遮挡表单。当前 Run 的 Markdown 对已知凭据和账号值精确扫描无命中。
+
+Harness 清理收尾记录 1 项测试数据已独立核验不存在；驱动再次 cleanup 时 attempted=0，独立查询 remaining=0，目标数据库停止前 users=0、sessions=0。Reviewer 指出 `execution.md` 有一处 operation 编号引用不精确，且正式场景前两次辅助 CLI 侦察失败；原始浏览器证据仍完整支持结论，这两项没有改变 passed 结果。`humanScoring=not_run`。
+
+归档提交为 `e09b0f377d1414fa3da2c65bcbbc2406421dec4d`，父提交正是 prepared merge commit。提交只新增 `docs/scenario-testing/reports/01M34GE6SGXEQZYHN3Y4HMW4BX/report.md` 和 `review.md`；远端文件与本地 completed 工件逐字节一致，SHA-256 分别为 `42d392244b0c956c7dc616568e80537c41d794b45c13348f716597820762e703` 和 `4b41c28050d3ee48784baead88dadcb376c519a5b3dd5a5c363dc36884ee8264`。
+
+持久数据库现有两条 queue 和两个 passed Run。按 `finished_at DESC` 排序，普通 Run 是更晚且含 7 张图片的 passed 记录，满足 Closure 7 对含 UI 截图 passed Run 的选择条件；initialization queue/run 仍保持唯一且不变。整体 live/release 继续 blocked，剩余工作依次为：同一实例中的双缺陷 failed Run 和两个成功 Issue 动作、不推进的 blocked Run、三 Session 特殊场景 PR Run、合并 PR、`manual-current-head` passed 重测，以及最终 live/release 检查。
