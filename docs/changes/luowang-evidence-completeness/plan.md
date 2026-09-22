@@ -283,3 +283,23 @@ TIME-P 的最终报告保留“只审核合成材料、不代表官网执行、�
 4. **工程验收**：先跑快照、browser observation、Evidence Store、截图标签和上传专项，再在当前提交的 quality 镜像运行完整 `test:acceptance:local`。任何未脱敏本地快照、标签/图片哈希不一致或 evidence 失败都不得进入模型轮次。
 5. **三例复验**：重新申请独立模型预算，仍按 normal → defect → blocked 顺序。验收线为 normal=passed；defect 能确认退出缺陷并只关联既有 issue #5；blocked 因注入读取失败保持 blocked；三例归档、清理、图片读取和远端字节核对全部通过。
 6. **正式门禁决策**：三例通过后，再处理 Closure 7 要求两个独立 Issue 与当前“不创建新 Issue、只关联 #5”之间的冲突。在负责人决定修改门禁或准备第二个既有 Issue 前，不运行 release 验收。
+
+### 修复候选三例复验（2026-09-22）
+
+负责人批准继续后，冻结提交 `0c696f09112101b7d6cf41c874c04d49dea27a47`，构建 quality 镜像 `sha256:9241c483838f0e8ea61354a8db8e9b1b5947e6c6f2711cf8bf68610e98159e30` 和 runtime 镜像 `sha256:35cb71fc92af3fcc7cebeacdc429905154fea0449094999ec7250e7cf5bcb24f`。固定官网 target 与目标镜像保持为 `6405a45b6889ad92cf7cfbce12d8ec22b5040f23` 和 `sha256:8acf63fd25d73e71bf4d73edfa8755d6a6d4a0bda8e70ee4954a7f5ea8a537cd`。断网、只读 runtime 预检通过，六份镜像内角色资源与源码 SHA-256 一致；同容器网络路径的 DNS、TCP 443 和标准 TLS 通过，无鉴权请求返回 HTTP 401，预检阶段模型请求为 0。没有关闭 TLS 校验、增加额外 CA 或设置域名例外。
+
+当前 quality 镜像的 `test:acceptance:local` 退出 0，结果为 local=passed、live=blocked、release=blocked。live/release 的状态来自正式 Closure 7 外部事实未齐，不是本地工程检查失败。随后按 normal → defect → blocked 完成三例，共 12 个隔离 Session、240/400 次请求；`deepseek-v4-flash` 205 次，`deepseek-v4-flash-vision-exp` 35 次，全部取得 HTTP 200 并完整交付。
+
+| 样本 | Run | 累计请求数 | 结果及独立核对 | 报告提交 |
+| --- | --- | ---: | --- | --- |
+| normal | `01M33ZHXAK5DEB9TPFVDJ47AEH` | 82 | `passed`。四条适用期望均由 Reviewer 依据原 Cookie、恢复值、真实请求头和响应闭合；`after-refresh.png` 第一次上传注入 connection 故障，第二次重试成功，Run 无上传阻塞 | `1f157d819815fdfa0981535301348d65d4cd46fd` |
+| defect | `01M33ZSFV2TZMX698355WGZ6MX` | 164 | `failed`。Runner 使用当前 `target` 参数建立登录态；退出后恢复原 Cookie，状态接口仍返回 authenticated=true，同一会话还能删除账号，Reviewer 确认退出未撤销 Session，只选择 link 既有 Issue #5，不创建新 Issue | `2abafffe804647862b3c6b0ef618b8ccae8bf014` |
+| blocked | `01M3402YTEJ8TJ6RW2ZPHQS397` | 240 | `blocked`。Reviewer 遇到 13 次受控 operation 读取失败，只保留可从页面快照和日志直接观察的事实；原 Cookie 与真实请求头无法关联的期望 C/D 继续 blocked，没有用普通 401 替代 | `df6b038d0b17d7558c1a908a325dc8b464a3b186` |
+
+三例共保留 152 份 command/operation 记录，Reviewer 发起的成功 OSS 读取均与本地文件 SHA-256 一致；blocked 的 13 次读取故障按注入保留。normal 和 defect 共 4 张 PNG，Reviewer 全部实际读取。逐图检查确认两张欢迎页保持登录现场；删除后登录拒绝图保留已填邮箱和掩码密码；没有为了截图清空、覆盖或遮挡表单。图片包含的合成字段值按已批准规则保留并进入 OSS。32 份本地页面快照没有原账号邮箱命中，没有 `Unsupported field value`、采集失败文件或未清理的原表单值迹象。三例共有 9 次 `browser_fill_form`/`browser_type` 记录，全部使用 `target`，旧 `ref` 调用为 0，参数记录中的邮箱值均已脱敏。
+
+normal 的上传收据明确记录 `after-refresh.png` attempt 1/3 failed connection 并安排重试，attempt 2/3 succeeded；最终没有 `证据上传失败` 或 `MCP 操作证据捕获失败` 阻塞。全部三次归档只新增当前 Run 的 report/review，远端六个 Git blob 与本地最终工件一致；`scenario-testing` 远端 HEAD 为 `df6b038d0b17d7558c1a908a325dc8b464a3b186`。三套目标数据库停止前均为 users=0、sessions=0，三个独立清理查询均返回 remaining=0。当前 Run 的 Markdown 在发布前使用当轮 API Key、Token、OSS 凭据、随机账号和口令做精确扫描，均无命中；`humanScoring=not_run`。
+
+三例复验达到本计划第 5 步的验收线。仍有两项范围限制：defect 没有直接取得计划字面要求的 `GET /api/me` 401/非 401，但原 Session 在状态接口继续认证且能执行删除账号，Reviewer 据此确认同一退出缺陷；blocked 没有像素截图，因此除了命令证据读取失败外还存在 UI 截图缺口。两项均已写入各自正式报告，不改写本轮结果。
+
+下一步进入第 6 步正式门禁决策。现有授权只允许关联 Issue #5、不创建新 Issue，而 Closure 7 live 门禁要求 failed 历史中存在两个独立 confirmed Bugs/Issues。负责人决定调整门禁口径或指定第二个既有 Issue 前，不运行 release 验收，也不把本轮三例通过扩大成正式发布结论。

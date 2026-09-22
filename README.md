@@ -29,7 +29,7 @@ Compose 将数据保存到 `luowang-data` 卷，并把宿主机端口绑定到 `
 
 ## 验收状态
 
-截至 2026-09-22，候选 `6c93037` 已在同一 runtime 上完成 normal、defect、blocked 三例联合验收，共 12 个隔离 Session、233/400 次模型请求。三例均完成归档和清理，但结果都是 blocked：normal 的业务期望由 Reviewer 判为 passed，Harness 因表单快照采集失败阻塞；defect 没有建立登录态，未观察到注入缺陷；blocked 正确保留证据不足结论。逐图核对确认截图没有为取证清空表单，但 2 份未上传的失败快照在本地保留了密码字段明文。固定 quality 镜像的 local acceptance 通过，正式 live/release 仍 blocked，独立人工评分未完成。根因和后续顺序见 [当前候选完整联合验收与后续计划](docs/changes/luowang-evidence-completeness/plan.md#当前候选完整联合验收与后续计划2026-09-22)。
+截至 2026-09-22，修复候选 `0c696f0` 已按 normal、defect、blocked 顺序完成三例复验，共 12 个隔离 Session、240/400 次模型请求，结果分别为 `passed`、`failed`、`blocked`。normal 在一次受控 OSS 连接失败后按同一字节重试成功，没有形成阻塞；defect 建立了真实登录态并确认退出后原 Session 仍有效，只选择关联既有 Issue #5；blocked 在命令证据读取故障下保留未确认项，没有用普通 401 补结论。三例均完成自动归档和清理，远端报告与本地工件一致。4 张截图全部由 Reviewer 读取并逐图核对，包含表单值的拒绝登录截图保持原现场，没有为了取证清空表单；32 份页面快照无原账号邮箱或解析失败残留。固定 quality 镜像的 local acceptance 通过。正式 Closure 7 仍缺第二个独立 Issue 的决策，live/release 保持 blocked，独立人工评分未完成。完整证据见 [修复候选三例复验](docs/changes/luowang-evidence-completeness/plan.md#修复候选三例复验2026-09-22)。
 
 以下按发生顺序保留验证过程，其中“待完成”描述当时状态。
 
