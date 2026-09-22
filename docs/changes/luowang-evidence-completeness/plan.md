@@ -303,3 +303,24 @@ normal 的上传收据明确记录 `after-refresh.png` attempt 1/3 failed connec
 三例复验达到本计划第 5 步的验收线。仍有两项范围限制：defect 没有直接取得计划字面要求的 `GET /api/me` 401/非 401，但原 Session 在状态接口继续认证且能执行删除账号，Reviewer 据此确认同一退出缺陷；blocked 没有像素截图，因此除了命令证据读取失败外还存在 UI 截图缺口。两项均已写入各自正式报告，不改写本轮结果。
 
 下一步进入第 6 步正式门禁决策。现有授权只允许关联 Issue #5、不创建新 Issue，而 Closure 7 live 门禁要求 failed 历史中存在两个独立 confirmed Bugs/Issues。负责人决定调整门禁口径或指定第二个既有 Issue 前，不运行 release 验收，也不把本轮三例通过扩大成正式发布结论。
+
+### Closure 7 双缺陷 Run 与第二条 Issue（2026-09-22）
+
+负责人确认目标项目本身用于测试，同意通过真实 Run 创建第二条 Issue。测试仍固定使用官网 target `6405a45b6889ad92cf7cfbce12d8ec22b5040f23`，Main/Runner 使用 `deepseek-v4-flash`，Reviewer 使用 `deepseek-v4-flash-vision-exp`。专用目标同时注入两个独立缺陷：退出接口不撤销服务端 Session；删除接口返回成功，但不删除账号或 Session。第一个缺陷应关联既有 Issue #5，第二个缺陷没有同类 Issue 时由 Archiver 创建新 Issue。
+
+首轮 Run `01M3427WNHX1EX4PWWF9PMK6MG` 在 160/160 次请求时停止。160 次请求均返回 HTTP 200，但 Runner 在 `start_scenario` 前重复调用 `browser_cookie_list` 136 次，并在未读取真实 Cookie 前调用 `cookie_set`，未进入正式场景，也未启动 Reviewer。该 Run 没有业务结论、没有归档、没有创建 Issue；收尾后目标数据库为 users=0、sessions=0，清理查询 remaining=0。首轮余额不转入后续轮次。
+
+第二轮增加明确的执行顺序和重复限制：Runner 首项必须是 `start_scenario AUTH-LOGIN-001`；Cookie 只能使用本轮真实读回值，同一状态不得重复轮询；完成验证后立即写 execution 并结束。Run `01M342XE5V39VTB8AQSSARMMFC` 创建四个隔离 Session，使用 80/300 次请求，其中 `deepseek-v4-flash` 68 次、`deepseek-v4-flash-vision-exp` 12 次；全部请求返回 HTTP 200 并完整交付。Runner 按要求先开始场景，两个登录状态下各调用一次 `cookie_list` 和 `cookie_get`，没有再次出现轮询。
+
+Reviewer 依据真实请求头、响应和页面状态确认两项独立缺陷：
+
+1. 退出页面返回登录态且接口返回 200，但恢复退出前 Session 后，携带该 Session 的 `GET /api/me` 仍返回 200。最终报告选择 link Issue [#5](https://github.com/cynos-ai/cynos-website/issues/5)。
+2. 删除接口返回 200，页面提示账号及会话已删除；恢复删除前 Session 后 `GET /api/me` 仍返回同一用户，原邮箱和口令也能再次登录。最终报告选择 create，Archiver 创建 [#12](https://github.com/cynos-ai/cynos-website/issues/12)。
+
+两条 confirmed bug 的 key、标题和 Issue URL 均不同，两个归档动作均为 `succeeded`。Issue #12 为 open，正文包含 `luowang-run:01M342XE5V39VTB8AQSSARMMFC`、`luowang-bug:delete-account-ineffective`、target commit 和场景 ID。Run 结果为 failed，自动归档提交为 `f4800046e7797109527371504d97f778926ca957`；提交只新增该 Run 的 report/review，两份本地工件与 Git blob 一致。
+
+Reviewer 成功读取 70 份证据，包括 52 条操作收据、14 份页面快照和 4 张截图，没有受控读取失败。人工逐图核对确认登录、退出、删除提示和删除后重新登录状态与报告一致；删除提示截图保留邮箱字段，没有为了取证清空或覆盖表单。登录刷新与删除后重新登录两张截图字节相同，Reviewer 已将后一张降为辅助材料，删除后仍可登录的结论以场景内页面快照和 HTTP 200 为主。发布前的当轮 Secret/账号精确扫描无命中。
+
+归档后清理查询 remaining=0，目标数据库停止前为 users=0、sessions=0。当前 HEAD `94e4205a5d097bdae9c2098e88358e7447abdeef` 相比 runtime 来源 `0c696f09112101b7d6cf41c874c04d49dea27a47` 只增加 README 和本计划的验收记录，没有代码或角色指令差异。
+
+这次 Run 补齐了“同一个 failed Run 有两个独立 confirmed Bugs，并成功归档到两个不同 Issue”的单项事实。正式 Closure 7 仍未通过：现有 initialization、passed、failed、blocked 事实分布在不同的临时数据库里，且尚未在同一持久候选实例完成首次 initialization、三 Session 场景审核 PR、PR 合并后的 current-head passed 重测及最终 live/release 检查。下一步应先建立一个持久候选实例，把这些事实按门禁顺序完整跑出，再执行 `test:acceptance:live`；不能把本次双 Issue 成功写成 release passed。`humanScoring=not_run`。
