@@ -343,3 +343,11 @@ Reviewer 成功读取 70 份证据，包括 52 条操作收据、14 份页面快
 GitHub 远端仍保留三条以 `scenario-testing` 为 base 的真实场景审核 PR：[#4](https://github.com/cynos-ai/cynos-website/pull/4) 对应 Run `01M1G225V3E3GZY46RW0CG5KR1`，已合并；[#7](https://github.com/cynos-ai/cynos-website/pull/7) 对应 Run `01M1GNA28DD9HJ1F7PN71V9ZD0`，已关闭未合并；[#8](https://github.com/cynos-ai/cynos-website/pull/8) 对应 Run `01M1H4F72HSFS5MHE41M894RKE`，已合并。这些 PR 能证明远端曾发生场景审核，不能替代候选实例已经丢失的 Run、工件契约和 queue 关联。远端 `scenario-testing` 当前 HEAD 为 `f4800046e7797109527371504d97f778926ca957`，分支已存在；在不删除现有分支和历史报告的前提下，无法重新产生 `preparedMergeMode=initial-create` 的首次创建事实。
 
 因此，当前固定目标 `cynos-ai/cynos-website` 无法用现有历史合法完成 Closure 7。继续重复普通 Run 只能增加 passed、failed 或 blocked 事实，补不回 initialization queue。正式 live/release 保持 blocked；下一步需要负责人明确更换一个尚无 `scenario-testing` 的独立测试仓库，之后从首次创建开始在同一个持久候选实例按门禁顺序执行。现有目标分支、报告和数据库均保持原样。
+
+### Closure 7 独立目标准备（2026-09-22）
+
+负责人明确授权更换固定测试目标。本轮创建公开仓库 [`cynos-ai/luowang-closure7-fixture`](https://github.com/cynos-ai/luowang-closure7-fixture)，并且只推送 `main`。`main` 直接指向原官网固定提交 `6405a45b6889ad92cf7cfbce12d8ec22b5040f23`，因此产品代码、需求和已有文件树没有重新打包或改写；新仓库没有继承原仓库的其他分支、PR、Issue 或候选数据库事实。
+
+远端复核结果：仓库为 public，默认分支为 `main`，Issues 已启用；heads 列表只有 `main`，`scenario-testing` ref 返回 HTTP 404。新仓库满足 Closure 7 首次 `initial-create` 的 Git 前置条件。首次分支创建仍必须由新持久候选实例通过 `manual-merge-source` 队列完成，不能提前手工创建 `scenario-testing`。
+
+本轮只准备仓库，没有启动 Harness、模型请求或 initialization Run，live/release 继续为 blocked。下一步使用新的数据目录启动单一持久候选实例，保存固定仓库、模型、MCP、OSS、清理地址和测试账号配置；零模型预检通过后，再从 `main@6405a45b6889ad92cf7cfbce12d8ec22b5040f23` 发起首次分支请求。后续 passed、双缺陷 failed、依赖 blocked、场景审核 PR、合并后 current-head passed 重测和最终只读 live 检查都必须留在该实例中。
