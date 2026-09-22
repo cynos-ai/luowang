@@ -20,7 +20,7 @@ import type { ProviderAdapter } from '../src/server/runs/provider.js';
 import type { AgentSessionFactory, AgentSessionInput } from '../src/server/runs/types.js';
 import { createRepositoryService } from '../src/server/repository/service.js';
 import { GitCommandError } from '../src/server/repository/errors.js';
-import type { OssAdapter } from '../src/server/storage/oss.js';
+import { OssError, type OssAdapter } from '../src/server/storage/oss.js';
 import type { SecretStore } from '../src/server/security/secret-store.js';
 
 const execFileAsync = promisify(execFile);
@@ -82,6 +82,23 @@ describe('Phase 4 Run blocking boundaries', () => {
         true,
       );
     }
+  });
+
+  it('keeps a Run unblocked when a transient OSS upload succeeds within the retry bound', async () => {
+    const fixture = await createGitFixture();
+    const context = await createRunContext(fixture, 'upload-retry');
+    const result = await context.orchestrator.run({
+      request: '验证 OSS 瞬时失败恢复',
+      trigger: 'manual',
+    });
+    assert.equal(result.status, 'completed', JSON.stringify(result));
+    assert.equal(result.result, 'passed', JSON.stringify(result));
+    assert.ok(!result.blockingReasons?.some((reason) => /证据上传失败/.test(reason)));
+    assert.match(
+      result.artifacts['execution.md'] ?? '',
+      /attempt 1\/3 · failed · connection · 将重试/,
+    );
+    assert.match(result.artifacts['execution.md'] ?? '', /attempt 2\/3 · succeeded/);
   });
 
   it.each(['cleanup-review', 'cleanup-failure'] as const)(
@@ -169,6 +186,7 @@ describe('Phase 4 Run blocking boundaries', () => {
 
 type FailureMode =
   | 'upload-failure'
+  | 'upload-retry'
   | 'cleanup-failure'
   | 'cleanup-review'
   | 'browser-missing'
@@ -251,6 +269,7 @@ class FailureBoundarySessionFactory implements AgentSessionFactory {
           assert.ok(!input.customTools.some((t) => t.name === 'verify_test_data_cleanup'));
           if (
             this.mode === 'review-read-failure' ||
+            this.mode === 'upload-retry' ||
             this.mode === 'review-without-execution' ||
             this.mode === 'vision-reviewer' ||
             this.mode === 'vision-unavailable' ||
@@ -448,6 +467,7 @@ function fakeBrowser(enabled: boolean): BrowserMcpAdapter {
 
 function fakeOss(mode: FailureMode): OssAdapter {
   const objects = new Map<string, Buffer>();
+  let uploadAttempts = 0;
   return {
     isConfigured: () => true,
     objectKey: (runId, filename) => `${runId}/${filename}`,
@@ -469,7 +489,11 @@ function fakeOss(mode: FailureMode): OssAdapter {
       };
     },
     putObject: async (key, body) => {
-      if (mode === 'upload-failure') throw new Error('fixture upload failed');
+      uploadAttempts += 1;
+      if (mode === 'upload-failure')
+        throw new OssError('OSS_REQUEST_FAILED', 'fixture upload failed', 'timeout');
+      if (mode === 'upload-retry' && uploadAttempts === 1)
+        throw new OssError('OSS_REQUEST_FAILED', 'fixture transient failure', 'connection');
       objects.set(key, Buffer.from(body));
     },
     getObject: async (key) => {

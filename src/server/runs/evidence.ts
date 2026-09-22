@@ -16,16 +16,27 @@ import { RunWorkspace, isBrowserRecordName, type RunEvidenceFile } from './works
 import { readBrowserSnapshotText } from './browser-snapshot.js';
 
 const MAX_REVIEW_IMAGE_BYTES = 16 * 1024 * 1024;
+const MAX_UPLOAD_ATTEMPTS = 3;
 const DISCARDED_BROWSER_SNAPSHOT = '- note: browser snapshot discarded after capture failure\n';
 
 export interface EvidenceUploadResult {
   references: EvidenceReference[];
   failures: EvidenceUploadFailure[];
+  receipts: EvidenceUploadReceipt[];
 }
 
 export interface EvidenceUploadFailure {
   filename: string;
   message: string;
+}
+
+export interface EvidenceUploadReceipt {
+  filename: string;
+  attempt: number;
+  maxAttempts: number;
+  status: 'succeeded' | 'failed';
+  failureKind?: OssError['failureKind'];
+  retryScheduled: boolean;
 }
 
 export interface EvidenceCleanupResult {
@@ -101,6 +112,7 @@ class DefaultRunEvidenceStore implements RunEvidenceStore {
   private readonly screenshots = new Map<string, ScreenshotInspection>();
   private readonly snapshotHashes = new Map<string, string>();
   private readonly failedSnapshots = new Set<string>();
+  private readonly uploadReceipts: EvidenceUploadReceipt[] = [];
 
   async captureBrowserSnapshot(filename: string) {
     if (!filename.startsWith('page-') || !isBrowserRecordName(filename))
@@ -260,28 +272,60 @@ class DefaultRunEvidenceStore implements RunEvidenceStore {
         throw new Error('截图格式与文件名不符，拒绝上传');
     }
     const screenshotInspection = this.screenshotFor(filename, browserBody);
-    const reference = await uploadEvidenceBody(
-      this.oss,
-      this.workspace.runId,
-      filename,
-      browserBody,
-    );
+    const reference = await this.uploadBody(filename, browserBody);
     reference.screenshotInspection = screenshotInspection;
     this.references.set(filename, reference);
     return reference;
   }
 
+  private async uploadBody(filename: string, body: Buffer): Promise<EvidenceReference> {
+    const uploadedAt = new Date();
+    for (let attempt = 1; attempt <= MAX_UPLOAD_ATTEMPTS; attempt += 1) {
+      try {
+        const reference = await uploadEvidenceBody(
+          this.oss,
+          this.workspace.runId,
+          filename,
+          body,
+          uploadedAt,
+        );
+        this.uploadReceipts.push({
+          filename,
+          attempt,
+          maxAttempts: MAX_UPLOAD_ATTEMPTS,
+          status: 'succeeded',
+          retryScheduled: false,
+        });
+        return reference;
+      } catch (error) {
+        const failureKind = uploadFailureKind(error);
+        const retryScheduled = attempt < MAX_UPLOAD_ATTEMPTS && isRetryableUploadFailure(error);
+        this.uploadReceipts.push({
+          filename,
+          attempt,
+          maxAttempts: MAX_UPLOAD_ATTEMPTS,
+          status: 'failed',
+          failureKind,
+          retryScheduled,
+        });
+        if (!retryScheduled) throw error;
+      }
+    }
+    throw new Error('Unreachable upload retry state');
+  }
+
   async uploadAll(): Promise<EvidenceUploadResult> {
     const references: EvidenceReference[] = [];
     const failures: EvidenceUploadFailure[] = [];
+    const receiptOffset = this.uploadReceipts.length;
     for (const file of await this.list()) {
       try {
         references.push(await this.upload(file.name));
       } catch (error) {
-        failures.push({ filename: file.name, message: safeMessage(error) });
+        failures.push({ filename: file.name, message: uploadFailureMessage(error) });
       }
     }
-    return { references, failures };
+    return { references, failures, receipts: this.uploadReceipts.slice(receiptOffset) };
   }
 
   async read(filename: string): Promise<EvidenceReadResult> {
@@ -837,4 +881,29 @@ export function evidenceReferenceContext(references: readonly EvidenceReference[
 
 function safeMessage(error: unknown): string {
   return error instanceof Error ? error.message : '证据操作失败';
+}
+
+function uploadFailureKind(error: unknown): OssError['failureKind'] {
+  return error instanceof OssError ? error.failureKind : 'unknown';
+}
+
+function isRetryableUploadFailure(error: unknown): boolean {
+  return (
+    error instanceof OssError &&
+    error.code === 'OSS_REQUEST_FAILED' &&
+    ['timeout', 'connection', 'unknown'].includes(error.failureKind)
+  );
+}
+
+function uploadFailureMessage(error: unknown): string {
+  if (!(error instanceof OssError)) return '证据处理或上传失败';
+  if (error.code !== 'OSS_REQUEST_FAILED') return '证据不满足上传条件';
+  const messages: Record<OssError['failureKind'], string> = {
+    timeout: 'OSS 上传超时',
+    authentication: 'OSS 上传认证失败',
+    'not-found': 'OSS 上传目标不存在',
+    connection: 'OSS 上传连接失败',
+    unknown: 'OSS 上传失败',
+  };
+  return messages[error.failureKind];
 }

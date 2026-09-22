@@ -64,6 +64,15 @@ describe('Closure 1 built-in role instructions', () => {
     }
   });
 
+  it('pins the current browser target contract for Runner recovery', async () => {
+    const loaded = await createRoleInstructionLoader().load('runner-execution', false);
+    assert.match(loaded.content, /browser_fill_form/);
+    assert.match(loaded.content, /browser_type/);
+    assert.match(loaded.content, /schema 的 `target` 参数/);
+    assert.match(loaded.content, /不得传 `ref` 参数/);
+    assert.match(loaded.content, /按当前工具 schema 修正后继续/);
+  });
+
   it('keeps Reviewer applicability judgments attributed during finalization', async () => {
     const loaded = await createRoleInstructionLoader().load('main-finalization', false);
     assert.match(loaded.content, /期望适用性、范围解释和结论依据仍归 Reviewer/);

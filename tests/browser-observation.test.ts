@@ -173,6 +173,35 @@ it('blocks malformed batches and registration failures before the filling tool r
   assert.equal(f.failures(), 1);
   assert.equal(f.store.commandEvidenceIds().length, 0);
 });
+
+it.each(['mcp', 'mcp__playwright'])(
+  'accepts a current target retry after %s rejects a legacy ref without blocking evidence',
+  async (gateway) => {
+    const f = await fixture(gateway);
+    const value = randomUUID();
+    const rejected = await f.call(
+      'browser_fill_form',
+      { fields: [{ name: 'Account', ref: 'e1', type: 'textbox', value }] },
+      'must not run',
+    );
+    assert.equal((rejected as { block: boolean }).block, true);
+    assert.match((rejected as { reason: string }).reason, /填写参数无效/);
+    assert.equal(f.failures(), 0);
+    assert.equal(f.store.redactText!(value), value);
+
+    await f.call(
+      'browser_fill_form',
+      { fields: [{ name: 'Account', target: 'e1', type: 'textbox', value }] },
+      `Filled ${value}`,
+    );
+    assert.equal(f.failures(), 0);
+    assert.equal(f.store.redactText!(value), '[REDACTED]');
+    const records = await f.records();
+    assert.equal(records.length, 1);
+    assert.equal(records[0].observation.arguments.fields[0].target, 'e1');
+    assert.equal(records[0].observation.arguments.fields[0].value, '[REDACTED]');
+  },
+);
 it('decodes nested and multiline snapshot field values without treating headings as credentials', () => {
   const snapshot = readInlineBrowserSnapshot(
     '### Snapshot\n```yaml\n- generic:\n  - heading "Public label"\n  - textbox "Notes": |-\n      first line\n      second line\n  - spinbutton "Code": 12345\n```',

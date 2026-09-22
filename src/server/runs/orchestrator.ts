@@ -1212,6 +1212,12 @@ class DefaultRunOrchestrator implements RunOrchestrator {
           context.evidence = references;
           state.evidence = references;
           uploaded = references.length > 0;
+          notes.push(
+            ...result.receipts.map(
+              (receipt) =>
+                `evidence 上传收据：${receipt.filename} · attempt ${receipt.attempt}/${receipt.maxAttempts} · ${receipt.status}${receipt.failureKind ? ` · ${receipt.failureKind}` : ''}${receipt.retryScheduled ? ' · 将重试' : ''}`,
+            ),
+          );
           if (result.failures.length > 0) {
             uploadFailed = true;
             for (const failure of result.failures) {

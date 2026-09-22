@@ -12,6 +12,7 @@ import {
 import { createReviewReadOrder } from '../src/server/runs/review-order.js';
 import { RunWorkspace } from '../src/server/runs/workspace.js';
 import { localEvidenceTransport, TEST_PNG } from './acceptance/local-evidence.js';
+import { OssError } from '../src/server/storage/oss.js';
 
 const snapshot = 'page-2026-09-08T05-59-05-339Z.yml';
 const consoleFile = 'console-2026-09-08T05-58-41-973Z.log';
@@ -192,6 +193,71 @@ it('defers Runner text uploads and sends a sanitized immutable byte snapshot, no
   assert.doesNotMatch(read, /synthetic-secret|late producer/);
   assert.match(read, /原始状态/);
 });
+
+it('retries transient OSS failures with controlled receipts and the same sanitized bytes', async () => {
+  const { workspace, store, transport } = await fixture();
+  await writeFile(join(workspace.evidenceDirectory, snapshot), '- heading "Original"');
+  const put = transport.oss.putObject.bind(transport.oss);
+  const bodies: Buffer[] = [];
+  transport.oss.putObject = async (key, body, type) => {
+    bodies.push(Buffer.from(body));
+    if (bodies.length === 1) {
+      await writeFile(join(workspace.evidenceDirectory, snapshot), '- heading "Changed"');
+      throw new OssError('OSS_REQUEST_FAILED', 'private transient diagnostic', 'connection');
+    }
+    return put(key, body, type);
+  };
+  const result = await store.uploadAll();
+  assert.deepEqual(result.failures, []);
+  assert.equal(result.references.length, 1);
+  assert.equal(bodies.length, 2);
+  assert.ok(bodies[0]!.equals(bodies[1]!));
+  assert.match(bodies[1]!.toString(), /Original/);
+  assert.doesNotMatch(bodies[1]!.toString(), /Changed/);
+  assert.deepEqual(result.receipts, [
+    {
+      filename: snapshot,
+      attempt: 1,
+      maxAttempts: 3,
+      status: 'failed',
+      failureKind: 'connection',
+      retryScheduled: true,
+    },
+    {
+      filename: snapshot,
+      attempt: 2,
+      maxAttempts: 3,
+      status: 'succeeded',
+      retryScheduled: false,
+    },
+  ]);
+  assert.doesNotMatch(JSON.stringify(result), /private transient diagnostic/);
+});
+
+it.each([
+  ['timeout', 3, 'OSS 上传超时'],
+  ['authentication', 1, 'OSS 上传认证失败'],
+] as const)(
+  'bounds %s OSS upload failures and exposes only controlled diagnostics',
+  async (failureKind, expectedAttempts, expectedMessage) => {
+    const { workspace, store, transport } = await fixture();
+    await writeFile(join(workspace.evidenceDirectory, snapshot), '- heading "Upload"');
+    transport.oss.putObject = async () => {
+      throw new OssError('OSS_REQUEST_FAILED', 'private upload diagnostic', failureKind);
+    };
+    const result = await store.uploadAll();
+    assert.equal(result.references.length, 0);
+    assert.equal(result.failures.length, 1);
+    assert.equal(result.failures[0]!.message, expectedMessage);
+    assert.equal(result.receipts.length, expectedAttempts);
+    assert.deepEqual(
+      result.receipts.map((receipt) => receipt.attempt),
+      Array.from({ length: expectedAttempts }, (_, index) => index + 1),
+    );
+    assert.equal(result.receipts.at(-1)!.retryScheduled, false);
+    assert.doesNotMatch(JSON.stringify(result), /private upload diagnostic/);
+  },
+);
 
 it('validates the requested image ID before consulting vision metadata and never delivers an unsupported image', async () => {
   const { workspace, store, transport } = await fixture();
