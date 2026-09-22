@@ -1,16 +1,23 @@
 # 代码深读与测试判断 Plan
 
 - 目标版本：v0.6.0；依据 [spec](spec.md)。
-- 状态：计划已编写，以下实施阶段均未执行。2026-09-23 已同步 develop `c51e5c1`，保留 #74 发布后独立审核记录。
+- 状态：阶段 1 已实现并通过对应工程检查；阶段 2–5 尚未开始。2026-09-23 从最新 develop `c51e5c1` 创建 `feat/code-understanding` 并带入已确认规格，保留 #74 发布后独立审核记录。
 - 顺序：本版本单独实现、验收和发布，之后才启动 v0.6.1 多项目实现。
 
 ## 阶段 1：内置方法与资源加载
 
-- [ ] 新增 code-understanding 方法资源，按 engineer onboard 的阅读方法改写为测试用途；核对规格与实现冲突、未知及测试能力描述。
-- [ ] 扩展 `src/server/runs/role-instructions.ts`、类型、资源复制脚本及对应角色指令；复用现有版本/哈希和构建路径，不启用 Pi Skill 发现。
-- [ ] 检查普通及初始化两个 Main 的资源集合、其余角色隔离、缺失/错误资源和干净镜像打包。
+- [x] 新增 code-understanding 方法资源，按 engineer onboard 的阅读方法改写为测试用途；核对规格与实现冲突、未知及测试能力描述。
+- [x] 扩展 `src/server/runs/role-instructions.ts`、资源复制脚本及对应角色指令；现有类型可直接保存新增资源 ID，复用版本/哈希和构建路径，不启用 Pi Skill 发现。
+- [x] 检查普通及初始化两个 Main 的资源集合、其余角色隔离、缺失/错误资源和干净镜像打包。
 
 完成证明：AC-CU-01；资源加载测试、角色工具断言及 quality/runtime 资源核对。风险是把新方法误装入最终 Main，或新增资源没有进入生产镜像。
+
+2026-09-23 阶段证明：
+
+- 新方法只加入 `main-planning` 资源集合，覆盖普通规划、初始化静态及候选 Main；Runner、Reviewer 和最终 Main 不加载该方法。Reviewer 仅补充来源与范围审核要求，未增加工具。`RoleInstructionVersion` 现有字段和加载器推导类型可直接使用，无需另建类型或配置。
+- 干净 Git 源码叠加本次变更构建 `luowang:code-understanding-stage1-quality`，容器内 `format:check`、`lint`、`typecheck`、`build` 通过；`closure1-role-instructions`、`phase3`、`closure6-production-pi`、`closure6-acceptance-layering` 四个测试文件共 71 项通过。包括缺失/空白/错误标记/symlink/不可读资源拒绝，方法缺失时零 Session 启动，原文完整加载及版本哈希变化，四/六/三 Session 交接。
+- 同一源码构建 `luowang:code-understanding-stage1-runtime`；quality 编译产物与 runtime 均通过默认加载路径核对，普通/初始化的四类角色共八种组合正确。方法 SHA-256 为 `6cbcf8dba753fdb01b6b44fd4d937c6e0f678e0ca4f4f7693c28772b5c83ac40`，与源码一致。
+- 本机日志保存在被忽略的 `.cynos/code-understanding-stage1/`。测试容器关闭外部网络，生产 Pi 使用本地协议样例，外部模型请求为零。未运行完整 local/live/release 验收、模型效果对照或人工评分；以上结果只证明阶段 1 的工程行为，不证明理解质量已经改善。
 
 ## 阶段 2：固定版本读取回执
 
@@ -52,6 +59,6 @@
 
 ## 提交与执行边界
 
-各阶段做到对应测试通过后形成可 push 的提交节点；实施分支从最新 develop 创建 `feat/code-understanding`。本轮只提交 intent/spec/plan 及工作入口说明，不实现功能、不升级 package 版本、不执行模型评测、不发布。
+各阶段做到对应测试通过后形成可 push 的提交节点；实施分支从最新 develop 创建 `feat/code-understanding`。规格编写节点只提交 intent/spec/plan 及工作入口说明；后续按负责人“继续”授权分阶段实施，未到发布阶段不升级 package 版本、不发布。模型效果评测按阶段 4 执行。
 
 v0.6.1 不作为本版本完成条件。深读记录先使用现有仓库身份和固定提交，后续多项目版本在其外层增加项目归属，不提前引入多项目架构。

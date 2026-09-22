@@ -1,7 +1,7 @@
 import { strict as assert } from 'node:assert';
 import { localEvidenceTransport } from './acceptance/local-evidence.js';
 import { execFile } from 'node:child_process';
-import { lstat, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { cp, lstat, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -17,6 +17,10 @@ import { initializeDatabase } from '../src/server/db/migrate.js';
 import { createRunOrchestrator, type RunOrchestrator } from '../src/server/runs/orchestrator.js';
 import { createControlledCommandRunner } from '../src/server/runs/command-runner.js';
 import type { ProviderAdapter } from '../src/server/runs/provider.js';
+import {
+  createRoleInstructionLoader,
+  type RoleInstructionLoader,
+} from '../src/server/runs/role-instructions.js';
 import type { AgentSessionFactory, AgentSessionInput } from '../src/server/runs/types.js';
 import { RunWorkspace } from '../src/server/runs/workspace.js';
 import { parseExecutionScenarioPlan } from '../src/server/runs/execution-plan.js';
@@ -34,6 +38,40 @@ afterEach(async () => {
 });
 
 describe('Phase 3 agent run', () => {
+  it.each([false, true])(
+    'does not start a Session if the built-in method is missing (initialization=%s)',
+    async (initialization) => {
+      const fixture = await createGitFixture();
+      const resources = await mkdtemp(join(tmpdir(), 'luowang-missing-method-'));
+      cleanup.push(async () => rm(resources, { recursive: true, force: true }));
+      await cp('resources/agent-roles', resources, { recursive: true });
+      await rm(join(resources, 'code-understanding.md'));
+      const context = await createRunContext(
+        fixture,
+        ['passed'],
+        undefined,
+        undefined,
+        '',
+        '\n',
+        false,
+        false,
+        {
+          roleInstructions: createRoleInstructionLoader({ resourceDirectory: resources }),
+        },
+      );
+      const result = await context.orchestrator.run({
+        request: '验证内置深读方法缺失时停止启动',
+        trigger: 'manual',
+        initialization,
+      });
+      assert.equal(result.status, 'failed');
+      assert.equal(result.result, null);
+      assert.deepEqual(context.sessions.created, []);
+      assert.equal(result.artifacts['plan.md'], undefined);
+      assert.match(result.errorMessage ?? '', /code-understanding/);
+      assert.equal((result.errorMessage ?? '').includes(resources), false);
+    },
+  );
   it('does not write execution when redaction secrets are unavailable', async () => {
     const fixture = await createGitFixture(true);
     const context = await createRunContext(
@@ -318,7 +356,7 @@ describe('Phase 3 agent run', () => {
     assert.deepEqual(
       context.sessions.inputs.map((input) => input.roleInstructionVersions.map((item) => item.id)),
       [
-        ['common', 'main-planning'],
+        ['common', 'main-planning', 'code-understanding'],
         ['common', 'runner-execution'],
         ['common', 'reviewer-audit'],
         ['common', 'main-finalization'],
@@ -615,6 +653,12 @@ describe('Phase 3 agent run', () => {
       JSON.stringify(result),
     );
     assert.equal(new Set(context.sessions.sessionObjects).size, 6);
+    assert.deepEqual(
+      context.sessions.inputs.map((input) =>
+        input.roleInstructionVersions.some((item) => item.id === 'code-understanding'),
+      ),
+      [true, false, true, false, false, false],
+    );
     assert.deepEqual(
       context.sessions.inputs.map((input) => input.sessionKind),
       [
@@ -1084,6 +1128,7 @@ async function createRunContext(
     candidate?: CandidateTestOptions;
     testData?: import('../src/server/runs/test-data.js').TestDataManager;
     secretStore?: SecretStore;
+    roleInstructions?: RoleInstructionLoader;
   } = {},
 ): Promise<TestContext> {
   const dataDir = await mkdtemp(join(tmpdir(), 'luowang-phase3-data-'));
@@ -1136,6 +1181,7 @@ async function createRunContext(
     indexer: options.indexer,
     testData: options.testData,
     secretStore: options.secretStore,
+    roleInstructions: options.roleInstructions,
     reportDir,
     sessions,
     provider: {} as ProviderAdapter,

@@ -1,6 +1,6 @@
 # 代码深读与测试判断 Intent
 
-- 状态：v0.6.0 需求基线。负责人已确认 Skill 由罗网内置、随版本维护，参考 cynos-ai/engineer onboard，并于 2026-09-23 授权编写 [spec](spec.md) 与 [plan](plan.md)；功能尚未实现。
+- 状态：v0.6.0 需求基线。负责人已确认 Skill 由罗网内置、随版本维护，参考 cynos-ai/engineer onboard，并于 2026-09-23 授权编写 [spec](spec.md) 与 [plan](plan.md)，随后授权继续实施；完成范围见 plan，版本尚未发布。
 - 日期：2026-09-23
 - 基线：v0.5.0；本版独立完成代码深读，[多项目管理](../luowang-multi-project/intent.md) 后移至 v0.6.1，不作为本版前置条件。
 

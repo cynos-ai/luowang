@@ -4,6 +4,7 @@ import { resolve } from 'node:path';
 const resourceNames = [
   'common.md',
   'main-planning.md',
+  'code-understanding.md',
   'runner-execution.md',
   'reviewer-audit.md',
   'main-finalization.md',

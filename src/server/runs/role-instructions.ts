@@ -12,6 +12,7 @@ const MAX_INSTRUCTION_BYTES = 256 * 1024;
 const RESOURCE_FILES = {
   common: 'common.md',
   'main-planning': 'main-planning.md',
+  'code-understanding': 'code-understanding.md',
   'runner-execution': 'runner-execution.md',
   'reviewer-audit': 'reviewer-audit.md',
   'main-finalization': 'main-finalization.md',
@@ -21,7 +22,7 @@ const RESOURCE_FILES = {
 type RoleInstructionId = keyof typeof RESOURCE_FILES;
 
 const SESSION_RESOURCE_IDS: Record<AgentSessionKind, readonly RoleInstructionId[]> = {
-  'main-planning': ['common', 'main-planning'],
+  'main-planning': ['common', 'main-planning', 'code-understanding'],
   'runner-execution': ['common', 'runner-execution'],
   'reviewer-audit': ['common', 'reviewer-audit'],
   'main-finalization': ['common', 'main-finalization'],

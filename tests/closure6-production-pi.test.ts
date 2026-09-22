@@ -110,11 +110,13 @@ describe('Closure 6 local production Pi path', () => {
     // Prove complete, single delivery per role, not semantic quality from slogan matching.
     const resources = ['main-planning', 'runner-execution', 'reviewer-audit', 'main-finalization'];
     const common = (await readFile('resources/agent-roles/common.md', 'utf8')).trim();
+    const method = (await readFile('resources/agent-roles/code-understanding.md', 'utf8')).trim();
     for (const [index, resource] of resources.entries()) {
       const prompt = context.model.sessions[index]?.systemPrompt ?? '';
       const content = (await readFile(`resources/agent-roles/${resource}.md`, 'utf8')).trim();
       assert.equal(prompt.split(common).length - 1, 1);
       assert.equal(prompt.split(content).length - 1, 1);
+      assert.equal(prompt.split(method).length - 1, index === 0 ? 1 : 0);
       for (const other of resources.filter((id) => id !== resource)) {
         assert.ok(!prompt.includes(`luowang-role-id: ${other};`));
       }
@@ -655,6 +657,7 @@ function assertSessionSequence(
       const expectedIds = [
         'common',
         roleIds[session.sessionKind as string] as string,
+        ...(session.sessionKind === 'main-planning' ? ['code-understanding'] : []),
         ...(expectsInitialization ? ['scenario-initialization'] : []),
       ];
       assert.deepEqual(ids, expectedIds);
@@ -675,6 +678,7 @@ function assertSessionSequence(
         'reviewer-audit',
         'main-finalization',
         'scenario-initialization',
+        'code-understanding',
       ]) {
         assert.equal(
           session.systemPrompt.includes(`luowang-role-id: ${roleId};`),
