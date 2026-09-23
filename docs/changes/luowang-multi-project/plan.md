@@ -63,6 +63,8 @@ Run 归属的待执行离线迁移已实现：旧 Run、队列请求、中断记
 
 项目绑定的 Run Store 已加入独立创建入口：导入时写入 projectId，历史和待归档列表按项目筛选，跨项目 Run ID 导入或状态修改拒绝，推进位置按项目主键维护。合成双项目验证 A/B 历史互不可见、A 归档推进不影响 B；原有 Run 回归通过。Run 工作目录、队列、归档服务和 API 仍须与该归属贯通。
 
+自动化状态存储也已按项目绑定：轮询和调度可使用相同状态键而不互相覆盖或删除；合成双项目及原有调度测试通过。项目级状态访问器仍待接入 poller/scheduler，队列合并和认领尚未改造。
+
 ## 阶段 2：绑定项目的服务与副作用
 
 - [ ] 逐条改造 Repository Service、Indexer、Orchestrator、Run Store、Archiver、Operations 与 Connectivity 的调用链，使用明确项目上下文，不引入全局 selectedProject。
