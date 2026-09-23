@@ -163,6 +163,15 @@ describe('offline legacy project cutover', () => {
           'INSERT INTO run_store_progress (id, last_completed_target, run_id, updated_at) VALUES (1, ?, NULL, ?)',
         )
         .run('a'.repeat(40), '2026-01-01');
+      database
+        .prepare(
+          `INSERT INTO test_request_queue
+           (request_id, trigger, request, trigger_sources_json, request_ids_json,
+            status, request_kind, created_at, updated_at)
+           VALUES (?, 'manual', 'historical request', '["manual"]', '["old-request"]',
+                   'queued', 'manual-current-head', '2026-01-01', '2026-01-01')`,
+        )
+        .run('old-request');
       await createLegacyBackup({
         database,
         databasePath,
@@ -188,6 +197,20 @@ describe('offline legacy project cutover', () => {
         ).project_id,
         projectId,
       );
+      const queued = database
+        .prepare(
+          'SELECT project_id, config_revision, github_repository_id, config_snapshot_json FROM test_request_queue',
+        )
+        .get() as {
+        project_id: string;
+        config_revision: number;
+        github_repository_id: string;
+        config_snapshot_json: string;
+      };
+      assert.equal(queued.project_id, projectId);
+      assert.equal(queued.config_revision, 1);
+      assert.equal(queued.github_repository_id, '101');
+      assert.equal(typeof JSON.parse(queued.config_snapshot_json), 'object');
     } finally {
       database.close();
       await rm(root, { recursive: true, force: true });

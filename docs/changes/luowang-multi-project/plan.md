@@ -65,6 +65,8 @@ Run 归属的待执行离线迁移已实现：旧 Run、队列请求、中断记
 
 自动化状态存储也已按项目绑定：轮询和调度可使用相同状态键而不互相覆盖或删除；合成双项目及原有调度测试通过。项目级状态访问器仍待接入 poller/scheduler，队列合并和认领尚未改造。
 
+队列上下文迁移与项目绑定访问器已开始：旧 queued 请求从明确归属的项目回填稳定 GitHub 仓库 ID、配置修订和非 Secret 项目配置快照；新请求同事务读取项目状态与配置，暂停时拒绝入队；自动请求只在本项目、相同配置修订和请求语义下合并。项目认领在同一 SQLite 事务内检查 active、全局已有 running 和本项目 waiting_archive，跨项目 ID 读取／修改拒绝。合成双项目、旧 queued 迁移及原有调度回归通过。持久轮转、公用部署配置快照和完整恢复调用链仍未实现。
+
 ## 阶段 2：绑定项目的服务与副作用
 
 - [ ] 逐条改造 Repository Service、Indexer、Orchestrator、Run Store、Archiver、Operations 与 Connectivity 的调用链，使用明确项目上下文，不引入全局 selectedProject。

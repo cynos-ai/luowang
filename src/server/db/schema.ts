@@ -242,6 +242,9 @@ export const runStoreProgress = sqliteTable('run_store_progress', {
 export const testRequestQueue = sqliteTable('test_request_queue', {
   queueId: integer('queue_id').primaryKey({ autoIncrement: true }),
   projectId: text('project_id').references(() => projects.projectId),
+  configRevision: integer('config_revision'),
+  githubRepositoryId: text('github_repository_id'),
+  configSnapshotJson: text('config_snapshot_json'),
   requestId: text('request_id').notNull().unique(),
   trigger: text('trigger').notNull(),
   request: text('request').notNull(),

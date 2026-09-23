@@ -24,6 +24,10 @@ export interface TestRequestInput {
 
 export interface TestRequestRecord {
   queueId: number;
+  projectId: string | null;
+  configRevision: number | null;
+  githubRepositoryId: string | null;
+  configSnapshotJson: string | null;
   requestId: string;
   trigger: RunTrigger;
   triggerSources: RunTrigger[];
@@ -100,6 +104,23 @@ export function createTestRequestQueue(
     database,
     options.now ?? (() => new Date().toISOString()),
     options.requestId ?? randomUUID,
+    null,
+  );
+}
+
+export function createProjectTestRequestQueue(
+  database: Database.Database,
+  projectId: string,
+  options: { now?: () => string; requestId?: () => string } = {},
+): TestRequestQueue {
+  if (!database.prepare('SELECT 1 FROM projects WHERE project_id = ?').get(projectId)) {
+    throw new TestRequestQueueError('QUEUE_REQUEST_INVALID', '队列项目不存在');
+  }
+  return new SqliteTestRequestQueue(
+    database,
+    options.now ?? (() => new Date().toISOString()),
+    options.requestId ?? randomUUID,
+    projectId,
   );
 }
 
@@ -111,6 +132,7 @@ class SqliteTestRequestQueue implements TestRequestQueue {
     private readonly database: Database.Database,
     private readonly now: () => string,
     private readonly requestId: () => string,
+    private readonly projectId: string | null,
   ) {}
 
   enqueue(input: TestRequestInput): TestRequestRecord {
@@ -118,14 +140,15 @@ class SqliteTestRequestQueue implements TestRequestQueue {
     const timestamp = this.now();
     const requestId = normalizeRequestId(this.requestId());
     const transaction = this.database.transaction(() => {
+      const context = this.projectId === null ? null : this.requireProjectContext();
       const tail = this.database
         .prepare(
           `SELECT * FROM test_request_queue
-           WHERE status = 'queued'
+           WHERE status = 'queued'${this.projectId === null ? '' : ' AND project_id = ?'}
            ORDER BY queue_id DESC
            LIMIT 1`,
         )
-        .get() as QueueRow | undefined;
+        .get(...(this.projectId === null ? [] : [this.projectId])) as QueueRow | undefined;
 
       if (
         tail &&
@@ -133,6 +156,7 @@ class SqliteTestRequestQueue implements TestRequestQueue {
         normalized.requestKind === 'automatic-head' &&
         isAutomatic(tail.trigger) &&
         isAutomatic(normalized.trigger) &&
+        (context === null || tail.config_revision === context.configRevision) &&
         tail.initialization === (normalized.initialization ? 1 : 0)
       ) {
         const sources = uniqueTriggers([
@@ -165,16 +189,24 @@ class SqliteTestRequestQueue implements TestRequestQueue {
       const result = this.database
         .prepare(
           `INSERT INTO test_request_queue
-           (request_id, trigger, request, target_ref, request_kind, source_ref,
+           (request_id, ${context === null ? '' : 'project_id, config_revision, github_repository_id, config_snapshot_json, '}trigger, request, target_ref, request_kind, source_ref,
             prepared_merge_commit, prepared_merge_mode, resolved_target_commit,
             trigger_sources_json, request_ids_json, status, run_id, claimed_at,
             waiting_archive_at, completed_at, error_message, archive_status, progressed,
             created_at, updated_at, initialization)
-           VALUES (?, ?, ?, NULL, ?, ?, NULL, NULL, NULL, ?, ?, 'queued', NULL, NULL, NULL, NULL,
+           VALUES (?, ${context === null ? '' : '?, ?, ?, ?, '}?, ?, NULL, ?, ?, NULL, NULL, NULL, ?, ?, 'queued', NULL, NULL, NULL, NULL,
                    NULL, NULL, NULL, ?, ?, ?)`,
         )
         .run(
           requestId,
+          ...(context === null
+            ? []
+            : [
+                this.projectId,
+                context.configRevision,
+                context.githubRepositoryId,
+                context.snapshotJson,
+              ]),
           normalized.trigger,
           normalized.request,
           normalized.requestKind,
@@ -197,14 +229,31 @@ class SqliteTestRequestQueue implements TestRequestQueue {
   claimNext(): TestRequestRecord | null {
     const timestamp = this.now();
     const queueId = this.database.transaction(() => {
+      if (this.projectId !== null) {
+        const project = this.database
+          .prepare('SELECT status FROM projects WHERE project_id = ?')
+          .get(this.projectId) as { status: string } | undefined;
+        if (project?.status !== 'active') return null;
+        const active = this.database
+          .prepare("SELECT 1 FROM test_request_queue WHERE status = 'running' LIMIT 1")
+          .get();
+        if (active) return null;
+        const waiting = this.database
+          .prepare(
+            "SELECT 1 FROM test_request_queue WHERE project_id = ? AND status = 'waiting_archive' LIMIT 1",
+          )
+          .get(this.projectId);
+        if (waiting) return null;
+      }
       const row = this.database
         .prepare(
           `SELECT queue_id FROM test_request_queue
-           WHERE status = 'queued'
+           WHERE status = 'queued'${this.projectId === null ? '' : ' AND project_id = ?'}
            ORDER BY queue_id ASC
            LIMIT 1`,
         )
-        .get() as { queue_id: number } | undefined;
+        .get(...(this.projectId === null ? [] : [this.projectId])) as
+        { queue_id: number } | undefined;
       if (!row) return null;
       const result = this.database
         .prepare(
@@ -219,6 +268,7 @@ class SqliteTestRequestQueue implements TestRequestQueue {
   }
 
   markPrepared(queueId: number, commit: string, mode: PreparedMergeMode): TestRequestRecord {
+    this.assertOwned(queueId);
     const normalized = normalizeCommit(commit, 'prepared commit');
     if (!['existing-branch', 'initial-create'].includes(mode)) {
       throw new TestRequestQueueError('QUEUE_REQUEST_INVALID', 'prepared merge mode 无效');
@@ -296,6 +346,7 @@ class SqliteTestRequestQueue implements TestRequestQueue {
   }
 
   requeue(queueId: number): TestRequestRecord {
+    this.assertOwned(queueId);
     const timestamp = this.now();
     const result = this.database
       .prepare(
@@ -314,6 +365,7 @@ class SqliteTestRequestQueue implements TestRequestQueue {
   }
 
   markWaitingArchive(queueId: number, runId: string): TestRequestRecord {
+    this.assertOwned(queueId);
     this.assertRunId(runId);
     const timestamp = this.now();
     const result = this.database
@@ -331,6 +383,7 @@ class SqliteTestRequestQueue implements TestRequestQueue {
   }
 
   complete(queueId: number, completion: QueueCompletion = {}): TestRequestRecord {
+    this.assertOwned(queueId);
     const timestamp = this.now();
     const result = this.database
       .prepare(
@@ -369,6 +422,7 @@ class SqliteTestRequestQueue implements TestRequestQueue {
     message: string,
     status: 'failed' | 'interrupted' = 'failed',
   ): TestRequestRecord {
+    this.assertOwned(queueId);
     const normalizedMessage = normalizeErrorMessage(message);
     const timestamp = this.now();
     const result = this.database
@@ -386,16 +440,20 @@ class SqliteTestRequestQueue implements TestRequestQueue {
 
   get(queueId: number): TestRequestRecord | null {
     const row = this.database
-      .prepare('SELECT * FROM test_request_queue WHERE queue_id = ?')
-      .get(queueId) as QueueRow | undefined;
+      .prepare(
+        `SELECT * FROM test_request_queue WHERE queue_id = ?${this.projectId === null ? '' : ' AND project_id = ?'}`,
+      )
+      .get(queueId, ...(this.projectId === null ? [] : [this.projectId])) as QueueRow | undefined;
     return row ? toRecord(row) : null;
   }
 
   list(): TestRequestRecord[] {
     return (
       this.database
-        .prepare('SELECT * FROM test_request_queue ORDER BY queue_id ASC')
-        .all() as QueueRow[]
+        .prepare(
+          `SELECT * FROM test_request_queue ${this.projectId === null ? '' : 'WHERE project_id = ?'} ORDER BY queue_id ASC`,
+        )
+        .all(...(this.projectId === null ? [] : [this.projectId])) as QueueRow[]
     ).map(toRecord);
   }
 
@@ -404,10 +462,10 @@ class SqliteTestRequestQueue implements TestRequestQueue {
       this.database
         .prepare(
           `SELECT * FROM test_request_queue
-         WHERE status IN ('queued', 'running', 'waiting_archive')
+         WHERE status IN ('queued', 'running', 'waiting_archive')${this.projectId === null ? '' : ' AND project_id = ?'}
          ORDER BY queue_id ASC`,
         )
-        .all() as QueueRow[]
+        .all(...(this.projectId === null ? [] : [this.projectId])) as QueueRow[]
     ).map(toRecord);
   }
 
@@ -416,10 +474,10 @@ class SqliteTestRequestQueue implements TestRequestQueue {
       this.database
         .prepare(
           `SELECT * FROM test_request_queue
-         WHERE status IN ('running', 'waiting_archive')
+         WHERE status IN ('running', 'waiting_archive')${this.projectId === null ? '' : ' AND project_id = ?'}
          ORDER BY queue_id ASC`,
         )
-        .all() as QueueRow[]
+        .all(...(this.projectId === null ? [] : [this.projectId])) as QueueRow[]
     ).map(toRecord);
   }
 
@@ -427,6 +485,42 @@ class SqliteTestRequestQueue implements TestRequestQueue {
     const record = this.get(queueId);
     if (!record) throw new TestRequestQueueError('QUEUE_NOT_FOUND', `队列请求不存在：${queueId}`);
     return record;
+  }
+
+  private assertOwned(queueId: number): void {
+    if (this.projectId !== null) this.require(queueId);
+  }
+
+  private requireProjectContext(): {
+    configRevision: number;
+    githubRepositoryId: string;
+    snapshotJson: string;
+  } {
+    const row = this.database
+      .prepare(
+        `SELECT p.status, p.config_revision, p.github_repository_id, c.value AS snapshot_json
+         FROM projects p LEFT JOIN project_config c ON c.project_id = p.project_id
+         WHERE p.project_id = ?`,
+      )
+      .get(this.projectId) as
+      | {
+          status: string;
+          config_revision: number;
+          github_repository_id: string;
+          snapshot_json: string | null;
+        }
+      | undefined;
+    if (row?.status !== 'active') {
+      throw new TestRequestQueueError('QUEUE_STATE_INVALID', '项目已暂停，不能接受新测试请求');
+    }
+    if (!row.snapshot_json) {
+      throw new TestRequestQueueError('QUEUE_REQUEST_INVALID', '项目配置尚未完成');
+    }
+    return {
+      configRevision: row.config_revision,
+      githubRepositoryId: row.github_repository_id,
+      snapshotJson: row.snapshot_json,
+    };
   }
 
   private assertRunId(runId: string): void {
@@ -438,6 +532,10 @@ class SqliteTestRequestQueue implements TestRequestQueue {
 
 interface QueueRow {
   queue_id: number;
+  project_id?: string | null;
+  config_revision?: number | null;
+  github_repository_id?: string | null;
+  config_snapshot_json?: string | null;
   request_id: string;
   trigger: string;
   request: string;
@@ -590,6 +688,10 @@ function uniqueTriggers(values: RunTrigger[]): RunTrigger[] {
 function toRecord(row: QueueRow): TestRequestRecord {
   return {
     queueId: row.queue_id,
+    projectId: row.project_id ?? null,
+    configRevision: row.config_revision ?? null,
+    githubRepositoryId: row.github_repository_id ?? null,
+    configSnapshotJson: row.config_snapshot_json ?? null,
     requestId: row.request_id,
     trigger: row.trigger as RunTrigger,
     triggerSources: uniqueTriggers(
