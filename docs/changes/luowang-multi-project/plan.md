@@ -35,6 +35,8 @@ GitHub 身份读取新增独立的只读校验：必须收到正整数稳定仓�
 
 离线升级预检的只读部分已开始：统计待归属数据，并交叉比较当前仓库配置、索引状态、轮询状态与历史 Issue/PR 链接。无项目数据的空库保持空库；仓库信号冲突、已有数据却缺仓库、仍在运行的队列请求，以及含 Run/请求/推进历史但无法逐条证明仓库归属，均报告阻塞，不自动创建“旧项目”。后续仍需补外部稳定 ID 验证、历史归属核对方式、备份、Secret 重加密和完整事务迁移，不能把只读预检当成升级完成。
 
+Secret 作用域的独立实现已开始：部署级只接受 Provider/OSS 凭据，项目级访问器创建时绑定 projectId 且只接受 GitHub/测试账号/清理凭据；存储键与 AES-GCM AAD 均包含 scope、projectId 和 Secret 名。测试证明旧全局键不会回退到新项目，项目间调换密文会解密失败。旧运行路径暂未改用新访问器，只有离线升级完成并在服务调用链绑定项目后才能删除旧接口。
+
 ## 阶段 2：绑定项目的服务与副作用
 
 - [ ] 逐条改造 Repository Service、Indexer、Orchestrator、Run Store、Archiver、Operations 与 Connectivity 的调用链，使用明确项目上下文，不引入全局 selectedProject。
