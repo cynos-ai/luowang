@@ -71,6 +71,8 @@ Run 归属的待执行离线迁移已实现：旧 Run、队列请求、中断记
 
 项目配置写入现已检查同项目的 queued/running/waiting_archive 请求：生成语言、场景分支/模式/标签、环境与数据库说明等语义字段发生变化时拒绝保存并给出待处理数量；轮询频率等调度字段可修改，修订号增加后新自动请求不会与旧修订请求合并。合成队列与配置测试通过。测试账号、清理凭据和部署配置的冲突规则仍待接入。
 
+项目绑定的 Run 工作目录入口已加入：新 Run 写入受控 `reportRoot/projects/<projectId>/running|completed/<runId>`，创建时核对项目存在且目录未越界；已有 Run 的完成目录继续按原存储记录读取，不批量迁移。合成双项目验证同名工件与证据文件互不覆盖、单项目删除不影响另一项目，旧完成目录仍可读；服务调用链尚未切换到此入口，浏览器状态和 OSS 前缀仍待隔离。
+
 ## 阶段 2：绑定项目的服务与副作用
 
 - [ ] 逐条改造 Repository Service、Indexer、Orchestrator、Run Store、Archiver、Operations 与 Connectivity 的调用链，使用明确项目上下文，不引入全局 selectedProject。

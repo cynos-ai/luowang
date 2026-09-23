@@ -1,6 +1,10 @@
 import { randomBytes } from 'node:crypto';
 import { lstat, mkdir, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises';
-import { dirname, isAbsolute, relative, resolve } from 'node:path';
+import { dirname, isAbsolute, relative, resolve, sep } from 'node:path';
+
+import type Database from 'better-sqlite3';
+
+import { createProjectStore } from '../projects/store.js';
 
 import {
   RUN_ARTIFACT_NAMES,
@@ -423,6 +427,27 @@ export class RunWorkspaceStore {
   get root(): string {
     return this.reportRoot;
   }
+}
+
+/** New runs live below a fixed project root. Historical runs keep their stored directory. */
+export function createProjectRunWorkspaceStore(
+  database: Database.Database,
+  reportRoot: string,
+  projectId: string,
+): RunWorkspaceStore {
+  const project = createProjectStore(database).get(projectId);
+  if (!project) throw new Error('Run 工作目录所属项目不存在');
+  const root = resolve(reportRoot);
+  const projectRoot = resolve(root, 'projects', project.projectId);
+  const pathWithinRoot = relative(root, projectRoot);
+  if (
+    isAbsolute(pathWithinRoot) ||
+    pathWithinRoot === '..' ||
+    pathWithinRoot.startsWith(`..${sep}`)
+  ) {
+    throw new Error('项目 Run 工作目录越界');
+  }
+  return new RunWorkspaceStore(projectRoot);
 }
 
 export function assertRunId(runId: string): void {
