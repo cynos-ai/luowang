@@ -1,4 +1,4 @@
-import { integer, sqliteTable, text } from 'drizzle-orm/sqlite-core';
+import { integer, primaryKey, sqliteTable, text, uniqueIndex } from 'drizzle-orm/sqlite-core';
 
 export const schemaMigrations = sqliteTable('schema_migrations', {
   version: text('version').primaryKey(),
@@ -64,49 +64,75 @@ export const connectivityCheckResults = sqliteTable('connectivity_check_results'
 });
 
 export const repositoryIndexState = sqliteTable('repository_index_state', {
-  id: integer('id').primaryKey(),
+  projectId: text('project_id')
+    .primaryKey()
+    .references(() => projects.projectId),
   repository: text('repository').notNull(),
   scenarioBranch: text('scenario_branch').notNull(),
   commitSha: text('commit_sha'),
   syncedAt: text('synced_at'),
 });
 
-export const indexedScenarios = sqliteTable('indexed_scenarios', {
-  path: text('path').primaryKey(),
-  scenarioId: text('scenario_id').notNull().unique(),
-  name: text('name').notNull(),
-  description: text('description').notNull(),
-  status: text('status').notNull(),
-  tagsJson: text('tags_json').notNull(),
-  content: text('content').notNull(),
-  commitSha: text('commit_sha').notNull(),
-  indexedAt: text('indexed_at').notNull(),
-});
+export const indexedScenarios = sqliteTable(
+  'indexed_scenarios',
+  {
+    projectId: text('project_id')
+      .notNull()
+      .references(() => projects.projectId),
+    path: text('path').notNull(),
+    scenarioId: text('scenario_id').notNull(),
+    name: text('name').notNull(),
+    description: text('description').notNull(),
+    status: text('status').notNull(),
+    tagsJson: text('tags_json').notNull(),
+    content: text('content').notNull(),
+    commitSha: text('commit_sha').notNull(),
+    indexedAt: text('indexed_at').notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.projectId, table.path] }),
+    uniqueIndex('indexed_scenarios_project_scenario_idx').on(table.projectId, table.scenarioId),
+  ],
+);
 
-export const indexedReports = sqliteTable('indexed_reports', {
-  runId: text('run_id').primaryKey(),
-  path: text('path').notNull().unique(),
-  trigger: text('trigger').notNull(),
-  baseCommit: text('base_commit'),
-  targetCommit: text('target_commit').notNull(),
-  includedCommitsJson: text('included_commits_json').notNull(),
-  result: text('result').notNull(),
-  startedAt: text('started_at').notNull(),
-  finishedAt: text('finished_at').notNull(),
-  scenarioResultsJson: text('scenario_results_json').notNull(),
-  confirmedBugsJson: text('confirmed_bugs_json').notNull(),
-  filesJson: text('files_json').notNull(),
-  content: text('content').notNull(),
-  commitSha: text('commit_sha').notNull(),
-  indexedAt: text('indexed_at').notNull(),
-});
+export const indexedReports = sqliteTable(
+  'indexed_reports',
+  {
+    runId: text('run_id').primaryKey(),
+    projectId: text('project_id')
+      .notNull()
+      .references(() => projects.projectId),
+    path: text('path').notNull(),
+    trigger: text('trigger').notNull(),
+    baseCommit: text('base_commit'),
+    targetCommit: text('target_commit').notNull(),
+    includedCommitsJson: text('included_commits_json').notNull(),
+    result: text('result').notNull(),
+    startedAt: text('started_at').notNull(),
+    finishedAt: text('finished_at').notNull(),
+    scenarioResultsJson: text('scenario_results_json').notNull(),
+    confirmedBugsJson: text('confirmed_bugs_json').notNull(),
+    filesJson: text('files_json').notNull(),
+    content: text('content').notNull(),
+    commitSha: text('commit_sha').notNull(),
+    indexedAt: text('indexed_at').notNull(),
+  },
+  (table) => [uniqueIndex('indexed_reports_project_path_idx').on(table.projectId, table.path)],
+);
 
-export const repositoryIndexErrors = sqliteTable('repository_index_errors', {
-  path: text('path').primaryKey(),
-  message: text('message').notNull(),
-  commitSha: text('commit_sha').notNull(),
-  indexedAt: text('indexed_at').notNull(),
-});
+export const repositoryIndexErrors = sqliteTable(
+  'repository_index_errors',
+  {
+    projectId: text('project_id')
+      .notNull()
+      .references(() => projects.projectId),
+    path: text('path').notNull(),
+    message: text('message').notNull(),
+    commitSha: text('commit_sha').notNull(),
+    indexedAt: text('indexed_at').notNull(),
+  },
+  (table) => [primaryKey({ columns: [table.projectId, table.path] })],
+);
 
 export const runStoreRuns = sqliteTable('run_store_runs', {
   runId: text('run_id').primaryKey(),
