@@ -40,6 +40,42 @@ export const projects = sqliteTable('projects', {
   updatedAt: text('updated_at').notNull(),
 });
 
+export const projectConfig = sqliteTable('project_config', {
+  projectId: text('project_id')
+    .primaryKey()
+    .references(() => projects.projectId),
+  value: text('value').notNull(),
+  updatedAt: text('updated_at').notNull(),
+});
+
+export const projectAutomationState = sqliteTable(
+  'project_automation_state',
+  {
+    projectId: text('project_id')
+      .notNull()
+      .references(() => projects.projectId),
+    key: text('key').notNull(),
+    value: text('value').notNull(),
+    updatedAt: text('updated_at').notNull(),
+  },
+  (table) => [primaryKey({ columns: [table.projectId, table.key] })],
+);
+
+export const projectConnectivityCheckResults = sqliteTable(
+  'project_connectivity_check_results',
+  {
+    projectId: text('project_id')
+      .notNull()
+      .references(() => projects.projectId),
+    checkId: text('check_id').notNull(),
+    status: text('status').notNull(),
+    message: text('message').notNull(),
+    checkedAt: text('checked_at').notNull(),
+    latencyMs: integer('latency_ms'),
+  },
+  (table) => [primaryKey({ columns: [table.projectId, table.checkId] })],
+);
+
 export const appConfig = sqliteTable('app_config', {
   key: text('key').primaryKey(),
   value: text('value').notNull(),
