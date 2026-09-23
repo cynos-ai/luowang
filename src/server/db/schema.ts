@@ -136,6 +136,7 @@ export const repositoryIndexErrors = sqliteTable(
 
 export const runStoreRuns = sqliteTable('run_store_runs', {
   runId: text('run_id').primaryKey(),
+  projectId: text('project_id').references(() => projects.projectId),
   status: text('status').notNull(),
   trigger: text('trigger').notNull(),
   request: text('request').notNull(),
@@ -194,7 +195,9 @@ export const runStoreIssues = sqliteTable('run_store_issues', {
 });
 
 export const runStoreProgress = sqliteTable('run_store_progress', {
-  id: integer('id').primaryKey(),
+  projectId: text('project_id')
+    .primaryKey()
+    .references(() => projects.projectId),
   lastCompletedTarget: text('last_completed_target'),
   runId: text('run_id'),
   updatedAt: text('updated_at'),
@@ -202,6 +205,7 @@ export const runStoreProgress = sqliteTable('run_store_progress', {
 
 export const testRequestQueue = sqliteTable('test_request_queue', {
   queueId: integer('queue_id').primaryKey({ autoIncrement: true }),
+  projectId: text('project_id').references(() => projects.projectId),
   requestId: text('request_id').notNull().unique(),
   trigger: text('trigger').notNull(),
   request: text('request').notNull(),
@@ -234,6 +238,7 @@ export const automationState = sqliteTable('automation_state', {
 
 export const interruptedRunRecords = sqliteTable('interrupted_run_records', {
   runId: text('run_id').primaryKey(),
+  projectId: text('project_id').references(() => projects.projectId),
   trigger: text('trigger').notNull(),
   request: text('request').notNull(),
   baseCommit: text('base_commit'),
