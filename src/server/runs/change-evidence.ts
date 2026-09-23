@@ -1,12 +1,18 @@
 import { Type, type Static } from 'typebox';
-import type { AgentToolResult, ToolDefinition } from '@earendil-works/pi-coding-agent';
-
-const MAX_CHANGED_FILES_PER_PAGE = 100;
-const MAX_DIFF_PAGE_BYTES = 32 * 1024;
-const CURSOR_VERSION = 1;
+import type { ToolDefinition } from '@earendil-works/pi-coding-agent';
+import {
+  assertSourcePath,
+  recordedSourceResult,
+  sourceHash,
+  sourceTextPage,
+  SourceCursors,
+  SourceInputError,
+  type SourceReadFact,
+  type SourceReadSession,
+  type SourceTool,
+} from './source-reads.js';
 
 export type TargetChangeKind = 'added' | 'modified' | 'deleted' | 'renamed';
-
 export interface TargetChangeDescriptor {
   oldPath: string | null;
   newPath: string | null;
@@ -18,361 +24,327 @@ export interface TargetChangeDescriptor {
   readable: boolean;
   unreadableReason?: string;
 }
-
 export interface TargetTextReadResult {
   status: 'ok' | 'empty' | 'no_baseline' | 'unreadable' | 'unavailable';
   content?: string;
   reason?: string;
 }
-
-export interface TargetDiffReadResult {
-  status: 'ok' | 'empty' | 'no_baseline' | 'unreadable' | 'unavailable';
-  content?: string;
-  reason?: string;
+export type TargetDiffReadResult = TargetTextReadResult;
+export interface TargetSearchResult {
+  paths: string[];
+  limits: string[];
+  scannedFiles: number;
 }
-
-export interface TargetChangeEvidenceOptions {
+export interface SourceToolOptions {
   baseCommit: string | null;
   targetCommit: string;
+  sourceReads?: SourceReadSession;
+  sanitize?: (value: string) => string;
+}
+export interface TargetChangeEvidenceOptions extends SourceToolOptions {
   listChanges: () => Promise<readonly TargetChangeDescriptor[]>;
   readDiff: (path: string) => Promise<TargetDiffReadResult>;
   readFile: (version: 'base' | 'target', path: string) => Promise<TargetTextReadResult>;
 }
 
+const cursorSchema = Type.Optional(
+  Type.String({
+    maxLength: 128,
+    description: '使用本工具上次返回的续读游标；不能跨文件、版本或 Session 使用。',
+  }),
+);
 export function createTargetChangeEvidenceTools(
   options: TargetChangeEvidenceOptions,
 ): ToolDefinition[] {
-  const listParameters = Type.Object(
-    { cursor: Type.Optional(Type.String({ description: '上一次响应返回的续读游标' })) },
-    { additionalProperties: false },
-  );
-  const diffParameters = Type.Object(
-    {
-      path: Type.String({ description: '变更清单中的新路径或旧路径' }),
-      cursor: Type.Optional(Type.String({ description: '上一次 diff 响应返回的续读游标' })),
+  const parameters = Type.Object({ cursor: cursorSchema }, { additionalProperties: false });
+  const cursors = new SourceCursors();
+  const changes: ToolDefinition = {
+    name: 'list_target_changes',
+    label: '列出固定变化',
+    description:
+      '分页列出固定 base/target 的变化，每页最多 100 项。目录和变化清单不算正文阅读；无 base、空变化和失败分别返回。',
+    parameters,
+    execute: async (id, params: Static<typeof parameters>) => {
+      const fact = sourceFact(options, 'list_target_changes', 'changes', null, null);
+      try {
+        if (options.baseCommit === null)
+          return respond(options, id, fact, {
+            status: 'no_baseline',
+            changes: [],
+            nextCursor: null,
+          });
+        const raw = [...(await options.listChanges())].sort((a, b) =>
+          (a.newPath ?? a.oldPath ?? '').localeCompare(b.newPath ?? b.oldPath ?? ''),
+        );
+        const sanitize = options.sanitize ?? ((value: string) => value);
+        const rows = raw.map((row) => ({
+          kind: row.kind,
+          oldPath: row.oldPath === null ? null : sanitize(row.oldPath),
+          newPath: row.newPath === null ? null : sanitize(row.newPath),
+          readable: row.readable,
+          ...(row.unreadableReason ? { unreadableReason: sanitize(row.unreadableReason) } : {}),
+        }));
+        fact.redacted = rows.some(
+          (row, i) => row.oldPath !== raw[i].oldPath || row.newPath !== raw[i].newPath,
+        );
+        return listPage(options, cursors, id, fact, rows, params.cursor, 'changes');
+      } catch (error) {
+        return failed(options, id, fact, error);
+      }
     },
-    { additionalProperties: false },
-  );
-  const fileParameters = Type.Object(
-    {
-      version: Type.Union([Type.Literal('base'), Type.Literal('target')]),
-      path: Type.String({ description: '固定版本中的仓库相对路径' }),
-      cursor: Type.Optional(Type.String({ description: '上一次固定版本文件响应的续读游标' })),
-    },
-    { additionalProperties: false },
-  );
-
+  };
   return [
-    {
-      name: 'list_target_changes',
-      label: '列出固定变化',
-      description:
-        '只读列出固定 base 到 target 的净文件变化；每页最多 100 项，必须使用返回游标续读。base 不存在、空变化、不可读变化和依赖失败会明确区分。',
-      parameters: listParameters,
-      execute: async (
-        _toolCallId: string,
-        params: Static<typeof listParameters>,
-      ): Promise<AgentToolResult<Record<string, unknown>>> => {
-        try {
-          const cursor = decodeCursor(params.cursor, 'changes', options);
-          if (options.baseCommit === null) {
-            return textResult(
-              JSON.stringify({
-                status: 'no_baseline',
-                baseCommit: null,
-                targetCommit: options.targetCommit,
-                changes: [],
-                nextCursor: null,
-                message: '本 Run 没有可比较的 base commit；请按当前 target 理解基线。',
-              }),
-            );
-          }
-          const changes = [...(await options.listChanges())].sort(compareChanges);
-          const start = cursor?.offset ?? 0;
-          const page = changes.slice(start, start + MAX_CHANGED_FILES_PER_PAGE);
-          const nextOffset = start + page.length;
-          const nextCursor =
-            nextOffset < changes.length
-              ? encodeCursor({
-                  version: CURSOR_VERSION,
-                  kind: 'changes',
-                  baseCommit: options.baseCommit,
-                  targetCommit: options.targetCommit,
-                  offset: nextOffset,
-                })
-              : null;
-          return textResult(
-            JSON.stringify({
-              status: page.length === 0 ? 'empty' : nextCursor === null ? 'ok' : 'partial',
-              baseCommit: options.baseCommit,
-              targetCommit: options.targetCommit,
-              changes: page.map((change) => serializeChange(change)),
-              nextCursor,
-            }),
-          );
-        } catch (error) {
-          return unavailableResult(error, '固定变化清单当前不可读取');
-        }
-      },
-    },
-    {
-      name: 'read_target_diff',
-      label: '读取固定文本 diff',
-      description:
-        '读取变化清单中一个文件的固定 base/target 文本 diff；每页最多 32 KiB，返回游标必须续读。二进制、符号链接、子模块和不可读内容不会伪装成文本。',
-      parameters: diffParameters,
-      execute: async (
-        _toolCallId: string,
-        params: Static<typeof diffParameters>,
-      ): Promise<AgentToolResult<Record<string, unknown>>> => {
-        try {
-          const path = assertPath(params.path);
-          const cursor = decodeCursor(params.cursor, 'diff', options, path);
-          const result = await options.readDiff(path);
-          if (result.status === 'unavailable') {
-            return unavailableResult(
-              new Error(result.reason ?? '固定 diff 依赖不可用'),
-              '固定 diff 依赖不可用',
-            );
-          }
-          if (result.status === 'no_baseline') {
-            return textResult(
-              JSON.stringify({
-                status: 'no_baseline',
-                baseCommit: null,
-                targetCommit: options.targetCommit,
-                path: safePath(path),
-                content: '',
-                nextCursor: null,
-                reason: result.reason ?? '本 Run 没有可比较的 base commit',
-              }),
-            );
-          }
-          if (result.status === 'unreadable') {
-            return textResult(
-              JSON.stringify({
-                status: 'unreadable',
-                baseCommit: options.baseCommit,
-                targetCommit: options.targetCommit,
-                path: safePath(path),
-                reason: result.reason ?? '固定文件不是可读文本',
-                nextCursor: null,
-              }),
-            );
-          }
-          const content = result.content ?? '';
-          if (content === '') {
-            return textResult(
-              JSON.stringify({
-                status: 'empty',
-                baseCommit: options.baseCommit,
-                targetCommit: options.targetCommit,
-                path: safePath(path),
-                content: '',
-                nextCursor: null,
-              }),
-            );
-          }
-          const page = paginateUtf8(content, cursor?.offset ?? 0);
-          const nextCursor =
-            page.nextOffset < page.totalBytes
-              ? encodeCursor({
-                  version: CURSOR_VERSION,
-                  kind: 'diff',
-                  baseCommit: options.baseCommit,
-                  targetCommit: options.targetCommit,
-                  path,
-                  offset: page.nextOffset,
-                })
-              : null;
-          return textResult(
-            JSON.stringify({
-              status: nextCursor === null ? 'ok' : 'partial',
-              baseCommit: options.baseCommit,
-              targetCommit: options.targetCommit,
-              path: safePath(path),
-              content: page.content,
-              bytes: Buffer.byteLength(page.content, 'utf8'),
-              nextCursor,
-            }),
-          );
-        } catch (error) {
-          return unavailableResult(error, '固定 diff 当前不可读取');
-        }
-      },
-    },
-    {
-      name: 'read_target_file_version',
-      label: '读取固定版本文件',
-      description:
-        '按 base 或 target 分页读取固定版本的非敏感文本文件，每页最多 32 KiB；使用返回游标续读，不能指定任意 ref、SHA 或路径范围。',
-      parameters: fileParameters,
-      execute: async (
-        _toolCallId: string,
-        params: Static<typeof fileParameters>,
-      ): Promise<AgentToolResult<Record<string, unknown>>> => {
-        try {
-          const path = assertPath(params.path);
-          const kind = params.version === 'base' ? 'file-base' : 'file-target';
-          const cursor = decodeCursor(params.cursor, kind, options, path);
-          const result = await options.readFile(params.version, path);
-          if (result.status === 'unavailable') {
-            return unavailableResult(
-              new Error(result.reason ?? '固定版本文件依赖不可用'),
-              '固定版本文件依赖不可用',
-            );
-          }
-          const page =
-            result.status === 'ok' || result.status === 'empty'
-              ? paginateUtf8(result.content ?? '', cursor?.offset ?? 0)
-              : null;
-          const nextCursor =
-            page && page.nextOffset < page.totalBytes
-              ? encodeCursor({
-                  version: CURSOR_VERSION,
-                  kind,
-                  baseCommit: options.baseCommit,
-                  targetCommit: options.targetCommit,
-                  path,
-                  offset: page.nextOffset,
-                })
-              : null;
-          return textResult(
-            JSON.stringify({
-              status: nextCursor ? 'partial' : result.status,
-              version: params.version,
-              baseCommit: options.baseCommit,
-              targetCommit: options.targetCommit,
-              path: safePath(path),
-              ...(page
-                ? { content: page.content, bytes: Buffer.byteLength(page.content, 'utf8') }
-                : {}),
-              nextCursor,
-              ...(result.reason ? { reason: result.reason } : {}),
-            }),
-          );
-        } catch (error) {
-          return unavailableResult(error, '固定版本文件当前不可读取');
-        }
-      },
-    },
+    changes,
+    createSourceTextTool(options, 'read_target_diff', async (_version, path) =>
+      options.readDiff(path),
+    ),
+    createSourceTextTool(options, 'read_target_file_version', options.readFile),
   ];
 }
 
-interface Cursor {
-  version: number;
-  kind: 'changes' | 'diff' | 'file-base' | 'file-target';
-  baseCommit: string | null;
-  targetCommit: string;
-  path?: string;
-  offset: number;
-}
-
-function decodeCursor(
-  value: string | undefined,
-  kind: Cursor['kind'],
-  options: TargetChangeEvidenceOptions,
-  path?: string,
-): Cursor | null {
-  if (value === undefined) return null;
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(Buffer.from(value, 'base64url').toString('utf8'));
-  } catch {
-    throw new Error('固定变化续读游标无效');
-  }
-  if (!isRecord(parsed)) throw new Error('固定变化续读游标无效');
-  const cursor = parsed as Partial<Cursor>;
-  if (
-    cursor.version !== CURSOR_VERSION ||
-    cursor.kind !== kind ||
-    cursor.baseCommit !== options.baseCommit ||
-    cursor.targetCommit !== options.targetCommit ||
-    !Number.isSafeInteger(cursor.offset) ||
-    (cursor.offset as number) < 0
-  ) {
-    throw new Error('固定变化续读游标与当前 base/target 不匹配');
-  }
-  if (kind !== 'changes' && (typeof cursor.path !== 'string' || cursor.path !== path)) {
-    throw new Error('固定 diff 续读游标与当前路径不匹配');
-  }
-  return cursor as Cursor;
-}
-
-function encodeCursor(cursor: Cursor): string {
-  return Buffer.from(JSON.stringify(cursor), 'utf8').toString('base64url');
-}
-
-function paginateUtf8(
-  value: string,
-  offset: number,
-): {
-  content: string;
-  nextOffset: number;
-  totalBytes: number;
-} {
-  const bytes = Buffer.from(value, 'utf8');
-  if (offset > bytes.byteLength || (offset < bytes.byteLength && (bytes[offset] & 0xc0) === 0x80)) {
-    throw new Error('固定文本续读游标超出内容范围或不在 UTF-8 字符边界');
-  }
-  let end = Math.min(offset + MAX_DIFF_PAGE_BYTES, bytes.byteLength);
-  while (end > offset && end < bytes.byteLength && (bytes[end] & 0xc0) === 0x80) end -= 1;
-  if (end === offset && offset < bytes.byteLength)
-    end = Math.min(offset + MAX_DIFF_PAGE_BYTES, bytes.byteLength);
+export function createSourceTextTool(
+  options: SourceToolOptions,
+  name: 'read_target_file' | 'read_target_file_version' | 'read_target_diff',
+  read: (version: 'base' | 'target', path: string) => Promise<TargetTextReadResult>,
+): ToolDefinition {
+  const parameters = Type.Object(
+    {
+      path: Type.String({ maxLength: 2048, description: '固定版本中的非敏感仓库相对路径' }),
+      ...(name === 'read_target_file_version'
+        ? { version: Type.Union([Type.Literal('base'), Type.Literal('target')]) }
+        : {}),
+      cursor: cursorSchema,
+    },
+    { additionalProperties: false },
+  );
+  const cursors = new SourceCursors();
   return {
-    content: bytes.subarray(offset, end).toString('utf8'),
-    nextOffset: end,
-    totalBytes: bytes.byteLength,
+    name,
+    label: name === 'read_target_diff' ? '读取固定文本 diff' : '读取固定版本文件',
+    description:
+      '只读固定版本普通文本，先脱敏再按 UTF-8 分页，每页最多 32 KiB；使用返回游标续读。回执记录实际返回范围，diff 不算全文。不能读取敏感路径、symlink、子模块或二进制。',
+    parameters,
+    execute: async (id, params: { path: string; version?: 'base' | 'target'; cursor?: string }) => {
+      const version = name === 'read_target_file_version' ? params.version : 'target';
+      const commit =
+        name === 'read_target_diff'
+          ? null
+          : version === 'base'
+            ? options.baseCommit
+            : options.targetCommit;
+      const fact = sourceFact(
+        options,
+        name,
+        name === 'read_target_diff' ? 'diff' : 'file',
+        null,
+        commit,
+      );
+      try {
+        if (version !== 'base' && version !== 'target') throw new SourceInputError();
+        const path = assertSourcePath(params.path);
+        const sanitize = options.sanitize ?? ((value: string) => value);
+        const safePath = sanitize(path);
+        fact.path = safePath === path ? path : null;
+        const result = await read(version, path);
+        if (!['ok', 'empty'].includes(result.status))
+          return respond(options, id, fact, {
+            status: result.status,
+            path: fact.path,
+            nextCursor: null,
+            reason: result.status,
+          });
+        const raw = result.content ?? '';
+        const content = sanitize(raw);
+        fact.redacted = content !== raw || safePath !== path;
+        fact.contentHash = sourceHash(content);
+        const identity = sourceHash(
+          JSON.stringify([
+            name,
+            options.baseCommit,
+            options.targetCommit,
+            path,
+            version,
+            fact.contentHash,
+          ]),
+        );
+        const page = sourceTextPage(content, cursors.offset(params.cursor, identity));
+        fact.range = page.range;
+        fact.pageHash = sourceHash(page.content);
+        const nextCursor = cursors.next(identity, page.range.end, page.range.total);
+        return respond(options, id, fact, {
+          status: nextCursor ? 'partial' : content === '' ? 'empty' : 'ok',
+          version,
+          path: fact.path,
+          content: page.content,
+          bytes: Buffer.byteLength(page.content),
+          range: page.range,
+          redacted: fact.redacted,
+          nextCursor,
+        });
+      } catch (error) {
+        return failed(options, id, fact, error);
+      }
+    },
   };
 }
 
-function serializeChange(change: TargetChangeDescriptor): Record<string, unknown> {
+export function createSourceListTools(
+  options: SourceToolOptions & {
+    listFiles: () => Promise<string[]>;
+    search: (query: string) => Promise<TargetSearchResult>;
+  },
+): ToolDefinition[] {
+  return (['list_target_files', 'search_target_files'] as const).map((name) => {
+    const parameters = Type.Object(
+      {
+        ...(name === 'search_target_files'
+          ? { query: Type.String({ minLength: 1, maxLength: 1024 }) }
+          : {}),
+        cursor: cursorSchema,
+      },
+      { additionalProperties: false },
+    );
+    const cursors = new SourceCursors();
+    return {
+      name,
+      label: name === 'list_target_files' ? '列出目标文件' : '搜索目标文件',
+      description:
+        '只返回固定 target 的受控文件路径，每页最多 100 项，不返回正文。搜索限制单独列出，不能将未命中视为全仓不存在；返回游标需续读。',
+      parameters,
+      execute: async (id: string, params: { query?: string; cursor?: string }) => {
+        const fact = sourceFact(
+          options,
+          name,
+          name === 'list_target_files' ? 'paths' : 'search',
+          null,
+          options.targetCommit,
+        );
+        try {
+          const sanitize = options.sanitize ?? ((value: string) => value);
+          let raw: string[];
+          let queryScope = '';
+          if (name === 'search_target_files') {
+            if (
+              typeof params.query !== 'string' ||
+              !params.query.trim() ||
+              params.query.length > 1024
+            )
+              throw new SourceInputError();
+            queryScope = sourceHash(params.query);
+            const result = await options.search(params.query);
+            raw = result.paths;
+            fact.limits = result.limits;
+          } else {
+            raw = await options.listFiles();
+            fact.limits = ['regular_non_sensitive_paths_only'];
+          }
+          const paths = raw.map((path) => sanitize(path));
+          fact.redacted = paths.some((path, i) => path !== raw[i]);
+          return listPage(options, cursors, id, fact, paths, params.cursor, 'paths', queryScope);
+        } catch (error) {
+          return failed(options, id, fact, error);
+        }
+      },
+    };
+  });
+}
+
+function sourceFact(
+  options: SourceToolOptions,
+  tool: SourceTool,
+  category: SourceReadFact['category'],
+  path: string | null,
+  commit: string | null,
+): SourceReadFact {
   return {
-    kind: change.kind,
-    oldPath: safePath(change.oldPath),
-    newPath: safePath(change.newPath),
-    readable: change.readable,
-    ...(change.unreadableReason ? { unreadableReason: change.unreadableReason } : {}),
+    tool,
+    category,
+    status: 'unavailable',
+    path,
+    commit,
+    baseCommit: options.baseCommit,
+    targetCommit: options.targetCommit,
+    contentHash: null,
+    pageHash: null,
+    range: null,
+    redacted: false,
+    limits: [],
   };
 }
-
-function compareChanges(left: TargetChangeDescriptor, right: TargetChangeDescriptor): number {
-  return (left.newPath ?? left.oldPath ?? '').localeCompare(right.newPath ?? right.oldPath ?? '');
-}
-
-function assertPath(value: string): string {
-  if (
-    typeof value !== 'string' ||
-    value.trim() === '' ||
-    value.includes('\\') ||
-    value.startsWith('/') ||
-    value.includes('\u0000') ||
-    value.split('/').some((part) => part === '' || part === '.' || part === '..')
-  ) {
-    throw new Error('固定变化文件路径无效');
+async function listPage(
+  options: SourceToolOptions,
+  cursors: SourceCursors,
+  id: string,
+  fact: SourceReadFact,
+  rows: unknown[],
+  cursor: string | undefined,
+  field: 'paths' | 'changes',
+  scope = '',
+) {
+  fact.contentHash = sourceHash(JSON.stringify(rows));
+  const identity = sourceHash(
+    JSON.stringify([
+      fact.tool,
+      options.baseCommit,
+      options.targetCommit,
+      fact.contentHash,
+      scope,
+      fact.limits,
+    ]),
+  );
+  const start = cursors.offset(cursor, identity);
+  const page: unknown[] = [];
+  for (const row of rows.slice(start, start + 100)) {
+    if (Buffer.byteLength(JSON.stringify([...page, row])) > 32 * 1024) break;
+    page.push(row);
   }
-  return value.trim();
+  if (page.length === 0 && start < rows.length) throw new SourceInputError();
+  fact.range = { unit: 'items', start, end: start + page.length, total: rows.length };
+  fact.pageHash = sourceHash(JSON.stringify(page));
+  const nextCursor = cursors.next(identity, fact.range.end, rows.length);
+  return respond(options, id, fact, {
+    status: nextCursor ? 'partial' : page.length === 0 ? 'empty' : 'ok',
+    [field]: page,
+    range: fact.range,
+    limits: fact.limits,
+    redacted: fact.redacted,
+    nextCursor,
+  });
 }
-
-function safePath(value: string | null): string | null {
-  return value;
+async function respond(
+  options: SourceToolOptions,
+  id: string,
+  fact: SourceReadFact,
+  body: Record<string, unknown>,
+) {
+  fact.status = body.status as SourceReadFact['status'];
+  return recordedSourceResult(options.sourceReads, id, fact, {
+    baseCommit: options.baseCommit,
+    targetCommit: options.targetCommit,
+    ...body,
+  });
 }
-
-function unavailableResult(
+async function failed(
+  options: SourceToolOptions,
+  id: string,
+  fact: SourceReadFact,
   error: unknown,
-  fallback: string,
-): AgentToolResult<Record<string, unknown>> {
-  const message = error instanceof Error && error.message.trim() !== '' ? error.message : fallback;
-  return textResult(JSON.stringify({ status: 'unavailable', message }), { error: true });
-}
-
-function textResult(
-  text: string,
-  details: Record<string, unknown> = {},
-): AgentToolResult<Record<string, unknown>> {
-  return { content: [{ type: 'text', text }], details };
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
+) {
+  return respond(
+    options,
+    id,
+    {
+      ...fact,
+      path: null,
+      contentHash: null,
+      pageHash: null,
+      range: null,
+      limits: [error instanceof SourceInputError ? 'invalid_request' : 'read_failed'],
+    },
+    {
+      status: 'unavailable',
+      reason: error instanceof SourceInputError ? 'invalid_request' : 'read_failed',
+      nextCursor: null,
+    },
+  );
 }

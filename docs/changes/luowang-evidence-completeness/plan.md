@@ -433,3 +433,15 @@ completed 目录含 65 个 JSON、3 个日志、4 份 Markdown、7 张 PNG 和 1
 最终正式报告保存在本地忽略目录 `.cynos/acceptance/run-closure7-persistent-07e8989/live-data/formal-release-final/`。`local=passed`、`live=passed`、`release=passed`，42 条命令全部通过，零失败；其中包括 format、lint、typecheck、全量单测、生产构建、两组 E2E、Phase 9、全部 Closure 专项证明和最终 live 复核。live 同时核对首次创建 Run、含 UI 与独立清理的 passed Run、双 Bug/双 Issue failed Run、不推进 blocked Run、三 Session 场景 PR Run、current-head 重测、实时活动、私有截图网关、PR #3、Issue #1/#2、五项外部连接和 Secret 值扫描，共 12 条脱敏事实。
 
 报告中的 `release=passed` 表示发布前 local/live 验收链通过；`AC-CLOSURE-RELEASE-01` 单独保持 blocked，因为本轮没有创建或验证新的 SemVer tag。除这一发布动作外，报告有 0 个 failed AC、1 个 blocked AC。`humanScoring=not_run`，不把工程与真实联合验收结果冒充独立人工质量评分。
+
+### 发布后独立 AI 记录级复核（2026-09-23）
+
+v0.5.0 发布后，项目负责人请求的终评由独立 AI（非本项目工作会话）以记录级审计方式完成。范围为外部可验证事实与记录链一致性，不覆盖原始模型输出盲评；完整报告保存在本地忽略目录 `.cynos/acceptance/final-audit-v0.5.0.md`。
+
+外部核验（逐字比对）：
+
+- v0.5.0 为 annotated tag（tag 对象 `96131ca` → 提交 `817a1b1`），main HEAD 一致；PR #71/#72/#73 均已合并，无开放 PR；#64/#65/#68 已关闭，关闭说明含版本、合并提交与证据位置。
+- 跨仓库事实：cynos-website #5 CLOSED 且标题与注销缺陷一致；#12 OPEN 且正文含 `luowang-run:01M342XE5V39VTB8AQSSARMMFC`、`luowang-bug:delete-account-ineffective`、`target_commit:6405a45b...`；closure7 fixture 仓库 PR #3、PR #4 均已合并，Issues #1/#2 与双缺陷一致；`scenario-testing` HEAD `fa6242b3...` 与记录哈希逐字一致。
+- 记录链自洽审查：十一轮记录含 run ID、请求数与停止规则，失败轮原样保留、无追分痕迹；三例复验的成功与残余限制（defect 未取字面 `GET /api/me` 401、blocked 无像素截图）如实保留；Closure 7 报告 0 failed AC、1 blocked AC（SemVer tag 验证），tag 现已存在，其正式复核属于下一次验收运行。
+
+结论：可独立核验范围内不一致项为零，未发现夸大或未支撑的声明。`humanScoring` 保持 `not_run`——本复核为独立 AI 记录级审计，按 Spec 不冒充人工终评；如需清除该字段，须由真人盲评或显式修订项目政策。

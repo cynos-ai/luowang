@@ -37,6 +37,34 @@ afterEach(async () => {
 });
 
 describe('Closure 6 local production Pi path', () => {
+  it('rejects a forged replacement and accepts corrected references in the same production Pi Session', async () => {
+    const context = await createContext('review-all', 'repair-source-reference');
+    const result = await context.orchestrator.run({ request: '验证引用修正', trigger: 'manual' });
+    assert.equal(result.status, 'completed', JSON.stringify(result));
+    assert.equal(result.result, 'passed');
+    assertSessionSequence(context.model, ['main-a', 'runner', 'reviewer', 'main-b']);
+    assert.ok(
+      [...context.model.observedToolResults].some((value) => value.includes('旧计划未修改')),
+    );
+    assert.doesNotMatch(result.artifacts['plan.md']!, /REJECTED-PLAN-SENTINEL|00000000-0000/);
+    const metadata = JSON.parse(result.artifacts['plan.md']!.split('\n')[1]!);
+    assert.equal(metadata.requiresBrowser, false);
+    assert.equal(metadata.sourceReferences.length, 1);
+    assert.ok(
+      [...context.model.observedToolResults].some((value) => {
+        try {
+          const query = JSON.parse(value);
+          return (
+            query.planHash === metadata.planHash &&
+            query.receipts[0].planCoverage === 'returned-range'
+          );
+        } catch {
+          return false;
+        }
+      }),
+      'Reviewer must receive the accepted plan references',
+    );
+  });
   it('reports terminal SDK errors instead of a missing plan without exposing model text', async () => {
     const context = await createContext('review-all', 'model-error');
     const result = await context.orchestrator.run({ request: '模型异常诊断', trigger: 'manual' });
@@ -77,6 +105,38 @@ describe('Closure 6 local production Pi path', () => {
     ]);
     assertSessionSequence(context.model, ['main-a', 'runner', 'reviewer', 'main-b']);
     assert.deepEqual(
+      context.model.sessions.map((session) => session.tools.includes('query_source_reads')),
+      [true, false, true, false],
+    );
+    const sourceReads = JSON.parse(
+      await readFile(
+        join(context.reportDir, 'completed', result.runId, 'source-reads.json'),
+        'utf8',
+      ),
+    );
+    assert.equal(sourceReads.runId, result.runId);
+    assert.ok(
+      sourceReads.receipts.some(
+        (receipt: { tool: string; category: string; stage: string; targetCommit: string }) =>
+          receipt.tool === 'list_target_files' &&
+          receipt.category === 'paths' &&
+          receipt.stage === 'main-planning' &&
+          receipt.targetCommit === result.targetCommit,
+      ),
+    );
+    assert.equal(Object.keys(result.artifacts).includes('source-reads.json'), false);
+    const sourceMetadata = JSON.parse(result.artifacts['plan.md']!.split('\n')[1]!);
+    assert.ok(
+      sourceMetadata.sourceReferences.length > 0,
+      'production Pi must submit a returned receipt ID',
+    );
+    assert.ok(
+      sourceReads.receipts.some(
+        (receipt: { id: string }) => receipt.id === sourceMetadata.sourceReferences[0].receiptId,
+      ),
+    );
+    assert.ok(![...context.evidence.objects.keys()].some((key) => key.includes('source-reads')));
+    assert.deepEqual(
       context.model.sessions.map((session) => session.thinking),
       ['low', 'off', 'low', 'off'],
     );
@@ -110,11 +170,13 @@ describe('Closure 6 local production Pi path', () => {
     // Prove complete, single delivery per role, not semantic quality from slogan matching.
     const resources = ['main-planning', 'runner-execution', 'reviewer-audit', 'main-finalization'];
     const common = (await readFile('resources/agent-roles/common.md', 'utf8')).trim();
+    const method = (await readFile('resources/agent-roles/code-understanding.md', 'utf8')).trim();
     for (const [index, resource] of resources.entries()) {
       const prompt = context.model.sessions[index]?.systemPrompt ?? '';
       const content = (await readFile(`resources/agent-roles/${resource}.md`, 'utf8')).trim();
       assert.equal(prompt.split(common).length - 1, 1);
       assert.equal(prompt.split(content).length - 1, 1);
+      assert.equal(prompt.split(method).length - 1, index === 0 ? 1 : 0);
       for (const other of resources.filter((id) => id !== resource)) {
         assert.ok(!prompt.includes(`luowang-role-id: ${other};`));
       }
@@ -272,6 +334,20 @@ describe('Closure 6 local production Pi path', () => {
       'main-b',
     ]);
     assert.equal(new Set(context.model.sessions.map((session) => session.id)).size, 6);
+    const metadata = JSON.parse(result.artifacts['plan.md']!.split('\n')[1]!);
+    const reads = JSON.parse(
+      await readFile(
+        join(context.reportDir, 'completed', result.runId, 'source-reads.json'),
+        'utf8',
+      ),
+    );
+    assert.ok(metadata.sourceReferences.length > 0);
+    for (const reference of metadata.sourceReferences) {
+      assert.equal(
+        reads.receipts.find((receipt: { id: string }) => receipt.id === reference.receiptId)?.stage,
+        'initialization-static',
+      );
+    }
     // Check the actual dynamic task as well as the loaded role resources.
     const candidateTask = context.model.sessions[2]?.prompts[0] ?? '';
     assert.match(candidateTask, /尽可能全面地整理项目所需的候选场景并更新验证计划，不追求绝对穷尽/);
@@ -655,6 +731,7 @@ function assertSessionSequence(
       const expectedIds = [
         'common',
         roleIds[session.sessionKind as string] as string,
+        ...(session.sessionKind === 'main-planning' ? ['code-understanding'] : []),
         ...(expectsInitialization ? ['scenario-initialization'] : []),
       ];
       assert.deepEqual(ids, expectedIds);
@@ -675,6 +752,7 @@ function assertSessionSequence(
         'reviewer-audit',
         'main-finalization',
         'scenario-initialization',
+        'code-understanding',
       ]) {
         assert.equal(
           session.systemPrompt.includes(`luowang-role-id: ${roleId};`),

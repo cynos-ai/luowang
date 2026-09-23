@@ -583,7 +583,13 @@ async function invokeTool(
 ): Promise<unknown> {
   const tool = input.customTools.find((candidate) => candidate.name === name);
   assert.ok(tool, `missing tool ${name}`);
-  return tool.execute('phase4-fixture', params as never, undefined, undefined, {} as never);
+  return tool.execute(
+    'phase4-fixture',
+    (name === 'write_plan' ? { sourceReferences: [], ...params } : params) as never,
+    undefined,
+    undefined,
+    {} as never,
+  );
 }
 
 function parsePromptContext(prompt: string): {
