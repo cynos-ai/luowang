@@ -73,6 +73,8 @@ Run 归属的待执行离线迁移已实现：旧 Run、队列请求、中断记
 
 项目绑定的 Run 工作目录入口已加入：新 Run 写入受控 `reportRoot/projects/<projectId>/running|completed/<runId>`，创建时核对项目存在且目录未越界；已有 Run 的完成目录继续按原存储记录读取，不批量迁移。合成双项目验证同名工件与证据文件互不覆盖、单项目删除不影响另一项目，旧完成目录仍可读；服务调用链尚未切换到此入口，浏览器状态和 OSS 前缀仍待隔离。
 
+项目绑定的 OSS 入口已加入：使用部署级凭据，在部署前缀下为新证据生成 `projects/<projectId>/runs/<runId>/...`；项目入口的 URL 生成、读取和删除拒绝其他项目及旧格式的对象键。合成双项目验证同一 Run ID/文件名生成不同对象键、跨项目访问被拒，旧 OSS 入口的回归测试通过。历史证据仍保留原键和 URL，后续网关必须先核对迁移后的 Run 所有者，再选择历史读取路径；当前运行服务尚未调用新入口。
+
 ## 阶段 2：绑定项目的服务与副作用
 
 - [ ] 逐条改造 Repository Service、Indexer、Orchestrator、Run Store、Archiver、Operations 与 Connectivity 的调用链，使用明确项目上下文，不引入全局 selectedProject。
