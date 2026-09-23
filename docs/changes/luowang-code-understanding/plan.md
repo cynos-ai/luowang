@@ -1,7 +1,7 @@
 # 代码深读与测试判断 Plan
 
 - 目标版本：v0.6.0；依据 [spec](spec.md)。
-- 状态：阶段 1–3 已实现；完整 local 与普通四 Session 真实联合 Run 通过。阶段 4 发现关键错误，修正后的完整模型对照仍未完成；阶段 5 未发布。300 次模型调用已用完，PR #75 保持 draft。2026-09-23 从最新 develop `c51e5c1` 创建 `feat/code-understanding` 并带入已确认规格，保留 #74 发布后独立审核记录。
+- 状态：阶段 1–3 已实现；完整 local、普通四 Session、真实六 Session 初始化及维护/defect/blocked 代表验证完成。修正候选的八类三组配对已完成，关键遗漏仍劣于基线并出现关键错误期望，AC-CU-07 未满足；阶段 5 未发布，PR #75 保持 draft，汇总待负责人审阅。旧轮 300 次、本轮新增 617 次调用，失败均保留。2026-09-23 从 develop `c51e5c1` 创建 `feat/code-understanding`。
 - 顺序：本版本单独实现、验收和发布，之后才启动 v0.6.1 多项目实现。
 
 ## 阶段 1：内置方法与资源加载
@@ -46,6 +46,7 @@
 2026-09-23 阶段证明：`write_plan` 必填结构化引用，校验成功后将正文、内容哈希、浏览器需要声明及引用集合写入同一原子 plan；拒绝假引用、跨 Run、Runner 来源、失败读取及缺页全文声明。初始化候选可引用前序 Main 回执，归属保持不变。Reviewer 可分页查询当前有效 plan 的引用，最终 Main 权限不变。
 
 干净质量容器内格式、lint、类型、完整 336 项单测及构建通过；补充生产 Pi 同 Session 错误替换后修正、Reviewer 实际查询、初始化来源归属后，两个相关测试文件 30 项通过（全库现有 337 项）。旧有效计划保留、写入失败、空正文、复制旧元数据、特殊两工件及最终修订 blocked 均有覆盖。本机日志 `.cynos/code-understanding-stage3/`；外部调用累计 0/300。以上仍是工程验证，不代表模型效果达标。
+
 ## 阶段 4：冻结模型对照并验证效果
 
 - [ ] 复用 `tests/acceptance/` 中现有模型与工件驱动模式，准备八类固定样本；输入、关键风险、允许维护决定和禁止期望在执行前冻结并记录哈希。
@@ -94,12 +95,12 @@ v0.6.1 不作为本版本完成条件。深读记录先使用现有仓库身份�
 
 round3 冻结标识为 `dcc865554284c909d47b93971645899db605c4276192680856135862821c3116`。48 个案例已尝试，47 个 Session 正常结束；`deprecation-2-candidate` 触及四响应上限，即使已写 plan 也计未完成。Bug 修复样本的六个结果全部因样本错误排除。余下有 20 组完整有效配对，按预先 rubric 做 AI 逐项审核，`humanScoring=not_run`。
 
-| 指标（20 组配对） | v0.5.0 基线 | 冻结旧候选 |
-| --- | --- | --- |
-| 关键风险缺口，含未说清（各 60 项标准） | 5 | 2 |
-| 含无依据或弱化期望的案例 | 3 | 2 |
-| 无谓维护变更案例 | 0 | 0 |
-| 来源或范围描述错误案例 | 1 | 2 |
+| 指标（20 组配对）                      | v0.5.0 基线 | 冻结旧候选 |
+| -------------------------------------- | ----------- | ---------- |
+| 关键风险缺口，含未说清（各 60 项标准） | 5           | 2          |
+| 含无依据或弱化期望的案例               | 3           | 2          |
+| 无谓维护变更案例                       | 0           | 0          |
+| 来源或范围描述错误案例                 | 1           | 2          |
 
 来源错误包含基线短 SHA 写错、候选把完整返回误述为截断；后者属于低估阅读范围，不是假称全文已读。候选新增了“取消后回到取消前库存”的关键错误，不能以其他指标下降抵消。此次成绩不满足 AC-CU-07，也不能证明修正后候选已经改善。
 
@@ -127,3 +128,88 @@ round3 冻结标识为 `dcc865554284c909d47b93971645899db605c4276192680856135862
 2. 完成本候选真实六 Session 初始化及尚缺的维护/defect/blocked 代表验证；现有工程模拟通过不能替代真实模型行为。
 3. 汇总结果交负责人审阅；人工评分继续明确标识未运行，不能把本轮 AI 审核写为人工盲评。
 4. 满足 spec 后再完成 develop PR、main 发布 PR、版本号/tag 与发布后核对；不提前启动 v0.6.1。
+
+## 2026-09-23 继续授权后的完整验收（round4）
+
+负责人已授权继续完成完整配对、六 Session 初始化、维护/defect/blocked 代表验证及验收汇报。原 300 次账本保持不变；新增调用单独记账，不把旧失败清零。产品候选仍为 `9f77bd508f524e80b7abcb350307318d966a8ffc`。
+
+### 完整配对及全部失败
+
+- 使用修正后的 Bug 样本重新冻结八类各三组配对。正式轮 48 次尝试中 47 次交付计划；`spec-conflict-0-baseline` 把计划写在最终回复中，没有调用 `write_plan`，因此未完成。保留原始响应和费用，不把文本当成有效 plan。
+- 单独冻结并追加该类完整的一组 baseline/candidate 配对（repeat=3）；两边各 3 次调用完成。最终共 50 次尝试，24 组完整有效配对，每类三组。原正式轮依然记为不完整，补充轮不覆盖旧结果。
+- 协议 schema=3：每案例硬上限 6 次，pilot 上限 12，正式轮上限 288。冻结驱动的提示文字仍写“4 次响应”，两边相同，实际每案例均未超过 4 次；事后已将提示改为读取协议值，但该修正未参与本轮模型评测。冻结驱动保留在本机 evaluator 目录，不追溯修改历史。
+- 评测向两边提供相同的整批冻结材料，衡量基于材料的规划判断，不证明自主导航深度。逐计划 AI 核对冻结 rubric，保存原句、判分理由和 plan 哈希；`humanScoring=not_run`。
+
+| 指标                       | v0.5.0 基线 | v0.6.0 候选 |
+| -------------------------- | ----------: | ----------: |
+| 有效配对案例               |          24 |          24 |
+| 固定关键风险条目           |          72 |          72 |
+| 关键风险遗漏/不明确        |           4 |           6 |
+| 存在无依据或弱化期望的案例 |           3 |           2 |
+| 无谓场景变更               |           0 |           0 |
+| 来源归属错误案例           |           3 |           2 |
+| 全部正式及补充尝试的请求数 |          76 |          75 |
+| 输入 Token                 |     543,255 |     979,672 |
+| 输出 Token                 |      76,196 |      99,196 |
+| 累计耗时（ms）             |     415,685 |     493,880 |
+
+质量指标按 24 组有效配对计算；费用覆盖原正式轮失败及补充轮两边，不剔除失败成本。未换算货币费用，不能将 Token 数当成账单金额。
+
+发布判断仍为 **不通过**：关键遗漏由 4 增至 6，且候选包含关键错误期望。
+
+- `capability-0-candidate` 将“重复取消返回同一订单”写为 approved 期望；规格只约束库存不重复归还，没有规定返回形状。同组基线把返回形状作为观察项。
+- `bug-fix-2-candidate` 写“无法注入时用库存不足路径代替”；前置库存拒绝无法证明库存预留成功后订单插入失败的回滚。`bug-fix-1-candidate` 也缺少实际故障点验证。
+- 三个 permission-persistence 候选都缺少冷缓存的拒绝对照；refactor-1 候选没有明确本租户读取回归。
+- 改善也保留：三个 no-docs 候选均保持 draft，而三个基线均错误标为 approved；此前取消库存基数错误本轮未复现。但这些改善不足以抵消发布阻断项。
+
+原始材料与逐项判分：本机 `.cynos/code-understanding-round4/frozen/`、`supplement/`、`audit-notes.json`、`audit.mjs` 和 `frozen/audit-with-supplement.json`。AC-CU-07 尚未满足，不能宣称质量提升。
+
+### 真实六 Session 初始化
+
+- Run `01M35T3EEN58NDQY8B66E72AQZ`，142 次调用，结果 passed；序列为静态 Main → 侦察 Runner → 候选 Main → 正式 Runner → Reviewer → 最终 Main。
+- 使用此前授权的非生产样例仓库 `cynos-ai/luowang-closure7-fixture`，固定源提交 `ef468e7c94d023d36da1e88254af90cdcc934b21`，独立验收分支 `scenario-cu060-acceptance-20260923`；原 scenario-testing 未改动。目标镜像源码与该源提交仅有认证规格文档差异，已核对。
+- 初次自动建分支、队列与归档均完成；归档提交 `77036184fa1930ac50821bf0b1bc00cd2984cbc1`。远程仅新增当前 report/review，Git blob 哈希分别为 `2a5d83d2a6c9d8866547fa99fee78136a34a0613`、`e72d707aedd7b13e0516fb2f7fddd407c2008008`，与本地一致。
+- 独立核对 planHash、28 个回执与 28 个引用；25 个来自静态 Main，3 个来自候选 Main，固定 target 和两个 Session 归属成立。Reviewer 实际查询来源并核对计划；代码深读资源只进入两次规划 Main。
+- 实际浏览器、视觉审核、OSS、GitHub、清理执行完成。原图填写内容保留，密码由页面自身显示圆点；没有为截图删除表单值。独立查询数据库 users=0、sessions=0，容器和网络已收尾。
+- 证明：本机 `.cynos/code-understanding-round4/initialization/`，独立核对写入 `independent-checks.json`。
+
+### 真实维护与三 Session 场景审核
+
+- 首轮 Run `01M35TNXK9RQ2248STP7G9GQBQ` 用满预设 70 次调用，Runner 仍在侦察 Origin/网络证据，未交付有效执行结果；Run failed、result=null、无归档/PR，远程目标不变。所有请求与工件保留在本机 `special/`；不记为产品缺陷或预期 blocked 通过。
+- 新建独立重跑目录 `special-retry/`，固定同一 target `77036184fa1930ac50821bf0b1bc00cd2984cbc1`，上限提高为 180；没有覆盖旧 Run。Run `01M35V3YWV6PNDW30AY9CJFPMY` 用 75 次完成。
+- 三 Session 顺序 Main → 侦察 Runner → 候选 Main；review-all 按预期以 blocked 结束，queue/archive completed。没有额外正式 Runner、Reviewer 或最终 Main；completed 对外交付严格为 report.md 与 scenario-changes.patch。
+- [样例仓库 PR #5](https://github.com/cynos-ai/luowang-closure7-fixture/pull/5) 以独立验收分支为 base，只新增 `AUTH-ORIGIN-001.md` draft。PR 场景 blob 与本地 patch 字节一致，目标分支不被提前推进；未创建产品 Issue。
+- 侦察没有拿到跨站 Origin 拒绝的必要运行证据，候选明确保留缺口和 draft。这证明人工审核交接边界，不意味着该新增场景已经通过，或全部维护判断正确。场景 PR 保持待审，不自动合并。
+- 两次尝试均完成清理，独立数据库 users=0、sessions=0；验收容器和网络已收尾。
+
+### 真实双缺陷代表验证
+
+- Run `01M35VFNC1B56CH42BPCSMTPNS`，94 次调用，固定 target `77036184fa1930ac50821bf0b1bc00cd2984cbc1`。在一次性非生产目标注入 logout 不撤销 Session、deleteAccount 返回成功但不删除数据两个缺陷；它们是验收夹具，不是罗网或正式官网的新缺陷。
+- 四 Session 完成，AUTH-LOGIN-001 failed，Reviewer 独立核对旧会话引用、真实请求头与响应，以及删除后的原凭据重新登录；最终报告保存两个不同 bug key，并成功关联已有样例 Issue [#1](https://github.com/cynos-ai/luowang-closure7-fixture/issues/1)、[#2](https://github.com/cynos-ai/luowang-closure7-fixture/issues/2)，未重复新建。
+- 初始验收驱动误报失败：它从 `RunDetailSnapshot` 读取并不存在的 confirmedBugs/issues 字段，得到空数组。只读 RunStore、正式 report frontmatter 和远程 Issue 后确认真实副作用正确；保留原 `dual-verification.json` 和 exit=1，另写 `store-independent.json`、`dual-corrected-verification.json`。没有修改 Run、覆写失败或为脚本错误重复请求模型。
+- 独立复核角色隔离、计划哈希及 10 条当前 Run 引用。归档提交 `271b7265eda2bd230472bbe4b5bf4146586705a6` 仅新增本 Run report/review，blob 哈希为 `bf0eaa0049c3122f740ec2bac532bb0612801fec`、`79ca61f71cc403678dd80d5729e30206c9a17745`，与本地一致。
+- 数据库独立核验 users=0、sessions=0，容器与网络已清理。证据与证明在本机 `round4/dual/`。本轮证明缺陷识别及已存在 Issue 的关联路径，不冒充本轮新建 Issue 验证。
+
+### 真实证据依赖不可用 blocked 验证
+
+- Run `01M35VR5JYPYJTXEV5V4PYDX4Q`，79 次调用，固定 target `271b7265eda2bd230472bbe4b5bf4146586705a6`，目标应用正常。受控适配器只拒绝读取 operation 原始证据，不把工具路由错误伪装成证据损坏。
+- 四 Session 完成，Reviewer 遇到 8 次证据读取阻断后保持 blocked；正式存储 scenarioResults=blocked、confirmedBugs=[]、issues=[]、progressed=false。实际浏览器执行和 OSS 上传照常完成，未凭 execution 或截图补造必要的请求关联。
+- 首次报告归档遇到 Git fetch exit=128，archiveStatus=partial；merge --abort 的 exit=128 是无 merge 可中止时的正常收尾，不是本轮失败根因。保留原 trace、queue、verification 及重试前存储证明。
+- 使用同一 runtime 的既有 `Archiver.retry` 重试同一 Run，无模型调用、不重跑测试、不重写报告。重试后 archiveStatus=completed、reportStatus=published，result 仍 blocked、progressed 仍 false、Issue 仍零。原队列快照的 partial 没有覆写，最终状态以重试结果与 RunStore 为准。
+- 原验收驱动也存在从运行快照误读 scenarioResults 的问题；最终验证改从正式 RunStore 读取，另存 corrected-verification，原失败保留。归档提交 `a6fd6d64dc89c304293f1fb76d0d3b60311e7025` 只新增本 Run report/review，blob 分别为 `df13141f154331e694644ab124b8cd729023e2be`、`3e37377c5ef5d490c619c913b7d63e9a7d7f6dcb`，独立核对与本地一致。
+- 计划哈希及 17 条当前 Run 来源引用、角色资源隔离成立。数据库 users=0、sessions=0，容器及网络已清理。证明在本机 `round4/blocked/`；重试记录为 `blocked-archive-retry.json`。
+
+### 本轮成本、检查与发布决定
+
+新增共 **617 次模型调用**：pilot 6 + 正式配对 145 + 补充配对 6 + 六 Session 初始化 142 + 维护失败 70 + 维护重跑 75 + 双缺陷 94 + blocked 79。全部失败计入；原账本 300/300 未变，两轮累计 917 次。新账本为 `.cynos/code-understanding-v060-round2-budget.json`。负责人授权继续完成这些验证，未指定新的数字额度；600→800 是执行中自设上限调整，不表述为负责人明确授权 800 次。初始化的独立预留账本只合并一次。
+
+本轮没有修改产品资源或实现，只调整评测脚本的预算读取和协议提示，以及补充验收记录。最后一次提示修正后，16 项零模型 preflight 通过；评测脚本 ESLint 通过。前述候选完整 local 338 项与干净 quality/runtime、普通四 Session 真实 Run 的证明仍有效，但不替代本轮的语义结果。格式与提交后 CI 状态以最新提交检查为准。
+
+**发布决定：暂不合并、不打 v0.6.0 标签。** 工程与真实代表流程已验证，AC-CU-07 的不退化和关键错误约束仍未满足；人工评分未运行，本汇总待负责人审阅。PR #75 保持 draft，v0.6.1 实施仍未开始。
+
+下一轮建议在审阅本报告后按以下顺序推进：
+
+1. 修正 Main 的通用判断方法：每条硬性期望对应明确契约，区分返回格式观察与业务必须条件；不能把实现或惯例升级为规格。
+2. 将错误发生时点与共享状态作为验证计划的一部分：前置拒绝不能替代副作用发生后的失败回滚；必要故障点不可构造就保留缺口。权限/缓存覆盖同时说明冷、暖状态和允许、拒绝对照。以通用方法表达，不写死本轮样本答案。
+3. 控制提示成本并先做小规模排错，修正后重新冻结候选、协议和八类三组完整配对；继续保留所有失败，不以定向小样本代替完整验收。
+4. 产品指令若改变，重建并核对资源哈希，运行受影响工程与真实流程回归；满足 spec 后再次汇总审阅，再走 develop/main PR、版本号和标签检查，之后启动 v0.6.1。

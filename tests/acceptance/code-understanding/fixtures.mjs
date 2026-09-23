@@ -253,15 +253,15 @@ export const setCached = (id, value) => cache.set(id, value);`,
 ];
 
 export const protocol = {
-  schema: 2,
+  schema: 3,
   cases: 8,
   pairedRepeats: 3,
   officialRuns: 48,
   models: { main: 'deepseek-v4-flash', thinking: 'low' },
   pilotCases: ['no-docs', 'permission-persistence'],
-  maxRequestsPerCase: 4,
-  maxPilotRequests: 8,
-  maxFormalRequests: 192,
+  maxRequestsPerCase: 6,
+  maxPilotRequests: 12,
+  maxFormalRequests: 288,
   delivery:
     'Both revisions receive the same evaluation-only batch read tool, implemented by their production fixed-source tools. Measures reasoning over delivered materials, not autonomous source navigation. Previous unbundled round is retained separately.',
   scope:

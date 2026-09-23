@@ -160,10 +160,11 @@ if (mode === 'freeze') {
     let server;
     const ledger = json(ledgerPath);
     if (
-      ledger.authorizedCalls !== 300 ||
+      !Number.isSafeInteger(ledger.authorizedCalls) ||
+      ledger.authorizedCalls <= 0 ||
       !Number.isInteger(ledger.usedCalls) ||
       ledger.usedCalls < 0 ||
-      ledger.usedCalls > 300
+      ledger.usedCalls > ledger.authorizedCalls
     )
       throw new Error('Invalid authorization ledger');
     const credentials = json(0);
@@ -198,7 +199,8 @@ if (mode === 'freeze') {
         persist();
       },
       async request(label, action) {
-        if (globallyStopped || ledger.usedCalls >= 300) throw new Error('Global budget stopped');
+        if (globallyStopped || ledger.usedCalls >= ledger.authorizedCalls)
+          throw new Error('Global budget stopped');
         if (current.requests >= protocol.maxRequestsPerCase) {
           caseStopped = true;
           throw new Error('Case budget exhausted');

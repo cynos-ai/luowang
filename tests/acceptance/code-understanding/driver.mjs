@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { randomUUID } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
+import { protocol } from './fixtures.mjs';
 
 // Both revisions run their own production resource loader, Pi factory and tools.
 // Repository primitives are fixed Git reads; no external target or executable fixture is installed.
@@ -200,7 +201,7 @@ export async function runCase(root, input, repository, out, options = {}) {
     }).load('main-planning', input.initialization);
     save('resources.json', instructions.versions);
     // Paths and immutable revisions are supplied equally; no expected decisions or rubric is supplied.
-    const prompt = `这是隔离的 Main 规划评测，不执行测试、不写 patch、不发布报告。请先调用 read_evaluation_fixture 一次取得全部冻结材料，再用 write_plan 交付理解、依据、维护决定、关键验证和缺口；没有实际执行，不得声明产品通过。用中文，正文尽量不超过 1800 字。\n本案例最多 4 次模型响应；完整材料已由 read_evaluation_fixture 覆盖，不必重复目录与正文读取，给提交计划和结束留出响应。\n${JSON.stringify(context)}\n完整目标路径清单：${JSON.stringify(files)}\n固定变化路径：${JSON.stringify(baseCommit ? changes.map((c) => ({ oldPath: c.oldPath, newPath: c.newPath, kind: c.kind })) : { status: 'no_baseline' })}\n只需在计划描述场景维护决定，不要求生成 patch；这是局部规划评测而不是完整 Run。`;
+    const prompt = `这是隔离的 Main 规划评测，不执行测试、不写 patch、不发布报告。请先调用 read_evaluation_fixture 一次取得全部冻结材料，再用 write_plan 交付理解、依据、维护决定、关键验证和缺口；没有实际执行，不得声明产品通过。用中文，正文尽量不超过 1800 字。\n本案例最多 ${protocol.maxRequestsPerCase} 次模型响应；完整材料已由 read_evaluation_fixture 覆盖，不必重复目录与正文读取，给提交计划和结束留出响应。\n${JSON.stringify(context)}\n完整目标路径清单：${JSON.stringify(files)}\n固定变化路径：${JSON.stringify(baseCommit ? changes.map((c) => ({ oldPath: c.oldPath, newPath: c.newPath, kind: c.kind })) : { status: 'no_baseline' })}\n只需在计划描述场景维护决定，不要求生成 patch；这是局部规划评测而不是完整 Run。`;
     writeFileSync(join(out, 'prompt.txt'), prompt);
     if (options.live) {
       session = await createPiAgentSessionFactory({
