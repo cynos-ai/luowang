@@ -6,7 +6,7 @@ const OWNER_KEY = 'legacy_run_owner_project_id';
 /** Staged offline migration. The final cutover must wrap this and the index migration together. */
 export function migrateLegacyRunOwnership(
   database: Database.Database,
-  legacyProjectId: string,
+  legacyProjectId: string | null,
 ): boolean {
   const applied = database
     .prepare('SELECT 1 FROM schema_migrations WHERE version = ?')
@@ -15,10 +15,27 @@ export function migrateLegacyRunOwnership(
     const owner = database
       .prepare('SELECT value FROM system_metadata WHERE key = ?')
       .get(OWNER_KEY) as { value: string } | undefined;
-    if (owner?.value !== legacyProjectId) throw new Error('旧 Run 迁移归属与已有记录不一致');
+    if (owner?.value !== (legacyProjectId ?? ''))
+      throw new Error('旧 Run 迁移归属与已有记录不一致');
     return false;
   }
-  if (!database.prepare('SELECT 1 FROM projects WHERE project_id = ?').get(legacyProjectId)) {
+  if (legacyProjectId === null) {
+    for (const table of [
+      'run_store_runs',
+      'test_request_queue',
+      'interrupted_run_records',
+      'run_store_progress',
+    ]) {
+      if (
+        (database.prepare(`SELECT count(*) AS count FROM ${table}`).get() as { count: number })
+          .count > 0
+      ) {
+        throw new Error('空实例包含不能归属的旧 Run 数据');
+      }
+    }
+  } else if (
+    !database.prepare('SELECT 1 FROM projects WHERE project_id = ?').get(legacyProjectId)
+  ) {
     throw new Error('旧 Run 迁移的项目不存在');
   }
   database.transaction(() => {
@@ -35,7 +52,8 @@ export function migrateLegacyRunOwnership(
       'test_request_queue',
       'interrupted_run_records',
     ] as const) {
-      database.prepare(`UPDATE ${table} SET project_id = ?`).run(legacyProjectId);
+      if (legacyProjectId !== null)
+        database.prepare(`UPDATE ${table} SET project_id = ?`).run(legacyProjectId);
       // SQLite cannot add a dynamic NOT NULL default to populated tables.
       // These triggers require a valid owner and prevent later reassignment.
       database.exec(`
@@ -80,7 +98,7 @@ export function migrateLegacyRunOwnership(
         `INSERT INTO system_metadata (key, value, created_at, updated_at)
          VALUES (?, ?, ?, ?)`,
       )
-      .run(OWNER_KEY, legacyProjectId, now, now);
+      .run(OWNER_KEY, legacyProjectId ?? '', now, now);
     database
       .prepare('INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)')
       .run(VERSION, now);

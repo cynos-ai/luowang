@@ -15,6 +15,7 @@ import { inspectLegacyProject } from './legacy-preflight.js';
 import { createProjectStore } from './store.js';
 
 const CUTOVER_KEY = 'v061_legacy_cutover_project_id';
+const EMPTY_CUTOVER_KEY = 'v061_empty_cutover';
 const HISTORY_BLOCKER = '旧 Run/请求没有逐条仓库 ID，数据库本身无法证明全部历史的唯一归属';
 
 export interface LegacyCutoverInput {
@@ -53,21 +54,7 @@ export async function applyLegacyProjectCutover(input: LegacyCutoverInput): Prom
     return previous.value;
   }
 
-  await verifyLegacyBackup(input.backupDir);
-  const backup = new Database(join(resolve(input.backupDir), 'luowang.db'), {
-    readonly: true,
-    fileMustExist: true,
-  });
-  let backupFingerprint: string;
-  try {
-    backupFingerprint = fingerprintLegacyDatabase(backup);
-  } finally {
-    backup.close();
-  }
-  const currentFingerprint = fingerprintLegacyDatabase(input.database);
-  if (currentFingerprint !== backupFingerprint) {
-    throw new Error('当前数据库与已核验备份内容不一致');
-  }
+  const currentFingerprint = await verifyBackupMatches(input.database, input.backupDir);
   const preflight = inspectLegacyProject(input.database);
   if (!preflight.configuredRepository || preflight.status === 'empty') {
     throw new Error('此升级入口需要唯一且已配置的旧仓库');
@@ -114,4 +101,65 @@ export async function applyLegacyProjectCutover(input: LegacyCutoverInput): Prom
       .run(CUTOVER_KEY, project.projectId, now, now);
     return project.projectId;
   })();
+}
+
+/** Offline empty-instance upgrade. It retains zero projects and never invents a repository. */
+export async function applyEmptyLegacyCutover(input: {
+  database: Database.Database;
+  databasePath: string;
+  backupDir: string;
+  masterKey: string | undefined;
+}): Promise<void> {
+  if (
+    input.database.name === ':memory:' ||
+    resolve(input.database.name) !== resolve(input.databasePath)
+  ) {
+    throw new Error('离线升级数据库路径不匹配');
+  }
+  if (
+    input.database.prepare('SELECT 1 FROM system_metadata WHERE key = ?').get(EMPTY_CUTOVER_KEY)
+  ) {
+    return;
+  }
+  const fingerprint = await verifyBackupMatches(input.database, input.backupDir);
+  const preflight = inspectLegacyProject(input.database);
+  if (preflight.status !== 'empty') throw new Error('数据库不是可升级的空实例');
+  input.database.transaction(() => {
+    if (fingerprintLegacyDatabase(input.database) !== fingerprint)
+      throw new Error('升级期间旧数据库已变化');
+    runMigrations(input.database, [projectIdentityMigration]);
+    migrateLegacyIndexOwnership(input.database, null);
+    migrateLegacyRunOwnership(input.database, null);
+    migrateLegacyConfigurationOwnership(input.database, null);
+    migrateLegacySecretOwnership(input.database, input.masterKey, null);
+    if ((input.database.pragma('foreign_key_check') as unknown[]).length > 0) {
+      throw new Error('升级后的数据库外键检查失败');
+    }
+    const now = new Date().toISOString();
+    input.database
+      .prepare(
+        'INSERT INTO system_metadata (key, value, created_at, updated_at) VALUES (?, ?, ?, ?)',
+      )
+      .run(EMPTY_CUTOVER_KEY, 'complete', now, now);
+  })();
+}
+
+async function verifyBackupMatches(
+  database: Database.Database,
+  backupDir: string,
+): Promise<string> {
+  await verifyLegacyBackup(backupDir);
+  const backup = new Database(join(resolve(backupDir), 'luowang.db'), {
+    readonly: true,
+    fileMustExist: true,
+  });
+  let backupFingerprint: string;
+  try {
+    backupFingerprint = fingerprintLegacyDatabase(backup);
+  } finally {
+    backup.close();
+  }
+  const currentFingerprint = fingerprintLegacyDatabase(database);
+  if (currentFingerprint !== backupFingerprint) throw new Error('当前数据库与已核验备份内容不一致');
+  return currentFingerprint;
 }

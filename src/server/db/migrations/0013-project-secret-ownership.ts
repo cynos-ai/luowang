@@ -19,7 +19,7 @@ const DEPLOYMENT_KEYS = new Set<DeploymentSecretKey>([
 export function migrateLegacySecretOwnership(
   database: Database.Database,
   masterKey: string | undefined,
-  legacyProjectId: string,
+  legacyProjectId: string | null,
 ): boolean {
   const applied = database
     .prepare('SELECT 1 FROM schema_migrations WHERE version = ?')
@@ -28,10 +28,14 @@ export function migrateLegacySecretOwnership(
     const owner = database
       .prepare('SELECT value FROM system_metadata WHERE key = ?')
       .get(OWNER_KEY) as { value: string } | undefined;
-    if (owner?.value !== legacyProjectId) throw new Error('旧 Secret 迁移归属与已有记录不一致');
+    if (owner?.value !== (legacyProjectId ?? ''))
+      throw new Error('旧 Secret 迁移归属与已有记录不一致');
     return false;
   }
-  if (!database.prepare('SELECT 1 FROM projects WHERE project_id = ?').get(legacyProjectId)) {
+  if (
+    legacyProjectId !== null &&
+    !database.prepare('SELECT 1 FROM projects WHERE project_id = ?').get(legacyProjectId)
+  ) {
     throw new Error('旧 Secret 迁移的项目不存在');
   }
   const legacyKeys = (
@@ -39,6 +43,12 @@ export function migrateLegacySecretOwnership(
   ).map((row) => row.key);
   if (legacyKeys.some((key) => !isSecretKey(key))) {
     throw new Error('旧 Secret 表包含未知或已作用域化的键');
+  }
+  if (
+    legacyProjectId === null &&
+    legacyKeys.some((key) => !DEPLOYMENT_KEYS.has(key as DeploymentSecretKey))
+  ) {
+    throw new Error('空实例包含不能归属的项目 Secret');
   }
   const oldStore: SecretStore = createSecretStore(database, masterKey);
   const plaintext = legacyKeys.map((key) => {
@@ -53,6 +63,7 @@ export function migrateLegacySecretOwnership(
       if (DEPLOYMENT_KEYS.has(key as DeploymentSecretKey)) {
         scoped.deployment().set(key as DeploymentSecretKey, value);
       } else {
+        if (legacyProjectId === null) throw new Error('项目 Secret 缺少归属');
         scoped.project(legacyProjectId).set(key as ProjectSecretKey, value);
       }
     }
@@ -67,7 +78,7 @@ export function migrateLegacySecretOwnership(
         `INSERT INTO system_metadata (key, value, created_at, updated_at)
          VALUES (?, ?, ?, ?)`,
       )
-      .run(OWNER_KEY, legacyProjectId, now, now);
+      .run(OWNER_KEY, legacyProjectId ?? '', now, now);
     database
       .prepare('INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)')
       .run(VERSION, now);

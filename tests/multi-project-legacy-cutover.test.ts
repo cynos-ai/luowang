@@ -8,7 +8,10 @@ import { describe, it } from 'vitest';
 
 import { runMigrations } from '../src/server/db/migrate.js';
 import { createLegacyBackup } from '../src/server/projects/legacy-backup.js';
-import { applyLegacyProjectCutover } from '../src/server/projects/legacy-cutover.js';
+import {
+  applyEmptyLegacyCutover,
+  applyLegacyProjectCutover,
+} from '../src/server/projects/legacy-cutover.js';
 import { fingerprintLegacyDatabase } from '../src/server/projects/legacy-fingerprint.js';
 import { createProjectStore } from '../src/server/projects/store.js';
 import { createScopedSecretStore } from '../src/server/security/scoped-secret-store.js';
@@ -17,6 +20,52 @@ import { createSecretStore } from '../src/server/security/secret-store.js';
 const verifiedRepository = { githubRepositoryId: '101', owner: 'example', name: 'old' };
 
 describe('offline legacy project cutover', () => {
+  it('keeps a backed-up empty instance at zero projects', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'luowang-cutover-'));
+    const databasePath = join(root, 'old.db');
+    const backupDir = join(root, 'backup');
+    const database = new Database(databasePath);
+    try {
+      runMigrations(database);
+      createSecretStore(database, 'empty-master').set('providerApiKey', 'provider-value');
+      await createLegacyBackup({
+        database,
+        databasePath,
+        repoDir: join(root, 'repo'),
+        reportDir: join(root, 'reports'),
+        backupDir,
+      });
+      const input = { database, databasePath, backupDir, masterKey: 'empty-master' };
+      await applyEmptyLegacyCutover(input);
+      await applyEmptyLegacyCutover(input);
+      assert.deepEqual(createProjectStore(database).list(), []);
+      assert.equal(
+        createScopedSecretStore(database, 'empty-master').deployment().get('providerApiKey'),
+        'provider-value',
+      );
+      assert.equal(
+        (
+          database.prepare('SELECT count(*) AS count FROM project_config').get() as {
+            count: number;
+          }
+        ).count,
+        0,
+      );
+      assert.equal(
+        (
+          database.prepare('SELECT count(*) AS count FROM run_store_runs').get() as {
+            count: number;
+          }
+        ).count,
+        0,
+      );
+      assert.deepEqual(database.prepare('PRAGMA foreign_key_check').all(), []);
+    } finally {
+      database.close();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it('requires a matching backup and rolls back bad Secrets before a successful retry', async () => {
     const root = await mkdtemp(join(tmpdir(), 'luowang-cutover-'));
     const databasePath = join(root, 'old.db');

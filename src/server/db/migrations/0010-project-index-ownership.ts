@@ -6,7 +6,7 @@ const OWNER_KEY = 'legacy_index_owner_project_id';
 /** Staged offline migration; never call this from normal service startup. */
 export function migrateLegacyIndexOwnership(
   database: Database.Database,
-  legacyProjectId: string,
+  legacyProjectId: string | null,
 ): boolean {
   const applied = database
     .prepare('SELECT 1 FROM schema_migrations WHERE version = ?')
@@ -15,13 +15,28 @@ export function migrateLegacyIndexOwnership(
     const owner = database
       .prepare('SELECT value FROM system_metadata WHERE key = ?')
       .get(OWNER_KEY) as { value: string } | undefined;
-    if (owner?.value !== legacyProjectId) throw new Error('旧索引迁移归属与已有记录不一致');
+    if (owner?.value !== (legacyProjectId ?? '')) throw new Error('旧索引迁移归属与已有记录不一致');
     return false;
   }
-  const project = database
-    .prepare('SELECT 1 FROM projects WHERE project_id = ?')
-    .get(legacyProjectId);
-  if (!project) throw new Error('旧索引迁移的项目不存在');
+  if (legacyProjectId === null) {
+    for (const table of [
+      'repository_index_state',
+      'indexed_scenarios',
+      'indexed_reports',
+      'repository_index_errors',
+    ]) {
+      if (
+        (database.prepare(`SELECT count(*) AS count FROM ${table}`).get() as { count: number })
+          .count > 0
+      ) {
+        throw new Error('空实例包含不能归属的旧索引数据');
+      }
+    }
+  } else if (
+    !database.prepare('SELECT 1 FROM projects WHERE project_id = ?').get(legacyProjectId)
+  ) {
+    throw new Error('旧索引迁移的项目不存在');
+  }
 
   database.transaction(() => {
     database.exec(`
@@ -134,7 +149,7 @@ export function migrateLegacyIndexOwnership(
         `INSERT INTO system_metadata (key, value, created_at, updated_at)
          VALUES (?, ?, ?, ?)`,
       )
-      .run(OWNER_KEY, legacyProjectId, now, now);
+      .run(OWNER_KEY, legacyProjectId ?? '', now, now);
     database
       .prepare('INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)')
       .run(VERSION, now);
