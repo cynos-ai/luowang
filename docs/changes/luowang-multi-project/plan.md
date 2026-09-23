@@ -1,12 +1,12 @@
 # 同一操作者管理多个 Git 项目 Plan
 
 - 目标版本：v0.6.1，依据 [spec](spec.md)。
-- 状态：计划已编写，各实施阶段均未执行；前置为 v0.6.0 代码深读发布完成。
+- 状态：v0.6.0 已发布；阶段 1 的单项目假设盘点已完成，其余实施与验收未完成。
 - 当前参考代码：develop `dc419f7`，已包含 v0.6.0 发布后的合并；启动实现时仍须拉取最新 develop，核对 Run、Session 和读取记录的实际改动。
 
 ## 阶段 1：项目身份、数据归属与升级
 
-- [ ] 盘点全局配置键、唯一约束、状态键、文件路径与进程单例，形成修改清单放在本 plan 的阶段证明中，不另建永久索引。
+- [x] 盘点全局配置键、唯一约束、状态键、文件路径与进程单例，修改清单见下方阶段证明。
 - [ ] 在 `db/schema.ts` 和既有迁移机制中建立项目归属及组合唯一约束；保留全局唯一 Run/请求 ID。
 - [ ] 为唯一管理员保存显示名称；旧实例迁移时设为“管理员”，不引入用户表或按用户分区的项目所有权。
 - [ ] 改造 configuration、config-transfer 和 Secret Store，分别提供部署及显式项目作用域；AAD 加入 scope/projectId/key。
@@ -14,6 +14,20 @@
 - [ ] 用合成旧库验证空实例、有完整历史实例、无法归属、错误主密钥、迁移中断/重试；核对数量、结果和内容哈希。
 
 完成证明：AC-MP-01 的身份部分、AC-MP-02/03/10；不在真实持久验收库上首次试迁移。风险是把旧全局 Secret 直接复制为多个项目凭据，或把多仓库历史错误归给一个项目。
+
+阶段 1 盘点证明（develop `d005294`；只完成定位，尚未修改数据或验证迁移）：
+
+| 单项目假设 | 当前 owner / 位置 | v0.6.1 修改方向 |
+| --- | --- | --- |
+| 配置与凭据 | `configuration.ts` 的 `harness`/`repository` 两个全局键；`config-transfer.ts` 的单仓库 YAML；`secret-store.ts` 按 Secret 名称作为键和 AAD | 拆部署与项目作用域，项目 Secret 的存储键和 AAD 均绑定 projectId；旧密文需解密后重加密，不直接复制 |
+| 数据唯一性与进度 | `db/schema.ts` / `db/migrations/0001–0004` 的全局场景 ID/路径、报告路径、索引状态 `id=1`、推进 `id=1`、队列与中断记录 | 场景/路径/错误/进度按项目复合定位；Run/请求 ID 保持全局唯一并显式关联项目；子记录经 Run 校验归属 |
+| 索引副作用 | `repository/indexer.ts` 按全表删除与全局场景 ID 去重 | 删除、upsert、错误缓存和状态更新全部限定 projectId，避免 A 的重建清空 B |
+| 调度状态与认领 | `automation/poller.ts`、`scheduler.ts` 的全局轮询/cron 键；`queue.ts` 全局队尾合并和 FIFO 认领；`service.ts` 单 activeRunId | 状态键和合并按项目；原子认领仍保持全局单 Run，增加项目轮转与 paused 检查 |
+| 目录和对象 | `config.ts` 的单 `repoDir`/`reportDir`；`runs/workspace.ts` 的 `running|completed/<runId>`；`storage/oss.ts` 的共享前缀 | 新写入使用受控 projectId/Run 路径与 OSS 前缀；旧工件保持原路径并在迁移表中绑定唯一项目 |
+| 服务及 HTTP 路由 | `app.ts` 创建一组 Repository/Indexer/Orchestrator/Archiver/Operations 实例，业务路由无 projectId | 显式项目上下文贯穿服务和业务 API；不能以页面当前选择决定后台副作用 |
+| 管理员资料 | `admin_credentials` 固定 `id=1`，现有改密码会撤销会话 | 仅增显示名称并迁移默认值，保留唯一管理员认证，不建多用户所有权 |
+
+迁移先验证旧数据是否能归属唯一仓库，再在离线副本中建立项目和复合键；不能让旧全局配置或 Secret 在新运行时隐式充当任意项目的默认值。仓库身份、旧目录和报告 URL 的保留规则按 Spec 第 7 节执行。
 
 ## 阶段 2：绑定项目的服务与副作用
 
