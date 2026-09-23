@@ -61,6 +61,8 @@ Run 归属的待执行离线迁移已实现：旧 Run、队列请求、中断记
 
 项目绑定的 Repository Service 已加入创建入口：仓库 URL 只从不可变的项目身份生成，配置读取固定 projectId，Git Token 由工厂绑定相同项目的 Secret scope，本地 clone 使用受控根目录下的 `projects/<projectId>/repo`；仓库状态读取也限制为该项目的索引状态和错误。合成双项目验证固定地址与不同 clone 路径，既有 Repository 回归通过。实际 GitHub 稳定 ID 在改名/重定向后的重新核验、后台调用链及真实双仓库操作尚待完成。
 
+项目绑定的 Run Store 已加入独立创建入口：导入时写入 projectId，历史和待归档列表按项目筛选，跨项目 Run ID 导入或状态修改拒绝，推进位置按项目主键维护。合成双项目验证 A/B 历史互不可见、A 归档推进不影响 B；原有 Run 回归通过。Run 工作目录、队列、归档服务和 API 仍须与该归属贯通。
+
 ## 阶段 2：绑定项目的服务与副作用
 
 - [ ] 逐条改造 Repository Service、Indexer、Orchestrator、Run Store、Archiver、Operations 与 Connectivity 的调用链，使用明确项目上下文，不引入全局 selectedProject。
