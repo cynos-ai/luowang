@@ -9,10 +9,16 @@ import {
   type ToolDefinition,
 } from '@earendil-works/pi-coding-agent';
 import { Type, type Static } from 'typebox';
+import { assertSourceReferences, type SourceReference } from './source-reads.js';
 
 import type { AgentConfig } from '../../shared/types.js';
 import {
   createTargetChangeEvidenceTools,
+  createSourceListTools,
+  createSourceTextTool,
+  type SourceToolOptions,
+  type TargetSearchResult,
+  type TargetTextReadResult,
   type TargetChangeEvidenceOptions,
 } from './change-evidence.js';
 import { effectiveStageThinking, type ProviderAdapter } from './provider.js';
@@ -180,7 +186,11 @@ export function createArtifactWriterTool(
 export function createPlanWriterTool(
   label: string,
   description: string,
-  write: (content: string, requiresBrowser: boolean) => Promise<void>,
+  write: (
+    content: string,
+    requiresBrowser: boolean,
+    sourceReferences: SourceReference[],
+  ) => Promise<void>,
 ): ToolDefinition {
   const parameters = Type.Object({
     content: Type.String({
@@ -192,6 +202,20 @@ export function createPlanWriterTool(
       description:
         'Main 判断所选验证操作是否需要浏览器；提及范围排除、历史描述或能力缺口本身不代表需要。确有需求时即使能力缺失仍为 true，声明不证明 MCP 已可用。',
     }),
+    sourceReferences: Type.Array(
+      Type.Object(
+        {
+          receiptId: Type.String(),
+          coverage: Type.Union([Type.Literal('returned-range'), Type.Literal('full-file')]),
+        },
+        { additionalProperties: false },
+      ),
+      {
+        maxItems: 2000,
+        description:
+          '必填：引用当前 Run 允许 Main 阶段的真实回执，例如 [{"receiptId":"工具返回的回执 ID","coverage":"returned-range"}]。full-file 须列出全文各页；无依据时用 [] 并如实说明缺口。',
+      },
+    ),
   });
   return {
     name: 'write_plan',
@@ -205,7 +229,8 @@ export function createPlanWriterTool(
           { error: true },
         );
       try {
-        await write(params.content, params.requiresBrowser);
+        assertSourceReferences(params.sourceReferences);
+        await write(params.content, params.requiresBrowser, params.sourceReferences);
         return createTextResult('write_plan 已写入');
       } catch (error) {
         return createTextResult(errorMessage(error), { error: true });
@@ -233,19 +258,15 @@ export function createReadArtifactTool(read: (name: string) => Promise<string>):
   };
 }
 
-export function createTargetContextTools(options: {
-  readFile: (path: string) => Promise<string>;
-  listFiles: () => Promise<string[]>;
-  search: (query: string) => Promise<string>;
-  context: () => string;
-  changeEvidence?: TargetChangeEvidenceOptions;
-}): ToolDefinition[] {
-  const readParameters = Type.Object({
-    path: Type.String({ description: '仓库相对路径' }),
-  });
-  const searchParameters = Type.Object({
-    query: Type.String({ description: '要搜索的文本' }),
-  });
+export function createTargetContextTools(
+  options: SourceToolOptions & {
+    readFile: (path: string) => Promise<TargetTextReadResult>;
+    listFiles: () => Promise<string[]>;
+    search: (query: string) => Promise<TargetSearchResult>;
+    context: () => string;
+    changeEvidence?: TargetChangeEvidenceOptions;
+  },
+): ToolDefinition[] {
   const tools: ToolDefinition[] = [
     {
       name: 'get_run_context',
@@ -254,45 +275,8 @@ export function createTargetContextTools(options: {
       parameters: Type.Object({}),
       execute: async () => createTextResult(options.context()),
     },
-    {
-      name: 'list_target_files',
-      label: '列出目标文件',
-      description: '列出固定 target commit 中的文件路径，只读。',
-      parameters: Type.Object({}),
-      execute: async () => {
-        try {
-          return createTextResult((await options.listFiles()).join('\n'));
-        } catch (error) {
-          return createTextResult(errorMessage(error), { error: true });
-        }
-      },
-    },
-    {
-      name: 'read_target_file',
-      label: '读取目标文件',
-      description: '从固定 target commit 读取一个非敏感文件，不能读取 .env、密钥或凭据文件。',
-      parameters: readParameters,
-      execute: async (_toolCallId, params: Static<typeof readParameters>) => {
-        try {
-          return createTextResult(await options.readFile(params.path));
-        } catch (error) {
-          return createTextResult(errorMessage(error), { error: true });
-        }
-      },
-    },
-    {
-      name: 'search_target_files',
-      label: '搜索目标文件',
-      description: '在固定 target commit 的文本文件中搜索关键词，只读。',
-      parameters: searchParameters,
-      execute: async (_toolCallId, params: Static<typeof searchParameters>) => {
-        try {
-          return createTextResult(await options.search(params.query));
-        } catch (error) {
-          return createTextResult(errorMessage(error), { error: true });
-        }
-      },
-    },
+    ...createSourceListTools(options),
+    createSourceTextTool(options, 'read_target_file', (_version, path) => options.readFile(path)),
   ];
   if (options.changeEvidence)
     tools.push(...createTargetChangeEvidenceTools(options.changeEvidence));

@@ -69,7 +69,9 @@ import {
   validateExecutionScenarioPlan,
   type ExecutionScenarioCandidate,
 } from './execution-plan.js';
-import type { TargetChangeDescriptor, TargetChangeEvidenceOptions } from './change-evidence.js';
+import type { TargetChangeDescriptor } from './change-evidence.js';
+import { SourceReadStore, sourceHash, type SourceStage } from './source-reads.js';
+import type { TargetSearchResult } from './change-evidence.js';
 import { createTestDataManager, createTestDataTools, type TestDataManager } from './test-data.js';
 import {
   createRoleInstructionLoader,
@@ -176,6 +178,7 @@ function requireSecretStore(secretStore: SecretStore | undefined): SecretStore {
 class DefaultRunOrchestrator implements RunOrchestrator {
   private readonly workspaceStore: RunWorkspaceStore;
   private readonly runs = new Map<string, RunState>();
+  private readonly sourceReadStores = new WeakMap<RunContext, SourceReadStore>();
   private activeRun: RunState | undefined;
   private startInProgress = false;
   private progressedTarget: string | null = null;
@@ -561,7 +564,16 @@ class DefaultRunOrchestrator implements RunOrchestrator {
   ): Promise<void> {
     this.setPhase(state, 'main-a', 'Main · 规划正在分析变更并选择场景');
     const tools = [
-      ...createTargetContextTools(this.targetToolOptions(repository, context, 'main-planning')),
+      ...createTargetContextTools(
+        this.targetToolOptions(
+          repository,
+          context,
+          'main-planning',
+          workspace,
+          context.initialization ? 'initialization-static' : 'main-planning',
+        ),
+      ),
+      this.sourceReads(context, workspace).queryTool((text) => this.sanitizeSource(text)),
       createRunHistoryTool({
         runStore: this.options.runStore,
         recoveryStore: this.options.recoveryStore,
@@ -569,8 +581,14 @@ class DefaultRunOrchestrator implements RunOrchestrator {
       createPlanWriterTool(
         '写入测试计划',
         '写入本次 Run 唯一的 plan.md。必须写完整 Markdown，不得写其他文件。',
-        async (content, requiresBrowser) => {
-          await workspace.writer('main-a').writePlan(content);
+        async (content, requiresBrowser, sourceReferences) => {
+          await this.sourceReads(context, workspace).writePlan(
+            content,
+            requiresBrowser,
+            sourceReferences,
+            [context.initialization ? 'initialization-static' : 'main-planning'],
+            (value) => workspace.writer('main-a').writePlan(value),
+          );
           context.browserRequired = requiresBrowser;
         },
       ),
@@ -642,7 +660,16 @@ class DefaultRunOrchestrator implements RunOrchestrator {
     let patchWriteAttempted = false;
     let patchWriteSucceeded = false;
     const tools = [
-      ...createTargetContextTools(this.targetToolOptions(repository, context, 'main-planning')),
+      ...createTargetContextTools(
+        this.targetToolOptions(
+          repository,
+          context,
+          'main-planning',
+          workspace,
+          'initialization-candidate',
+        ),
+      ),
+      this.sourceReads(context, workspace).queryTool((text) => this.sanitizeSource(text)),
       createRunHistoryTool({
         runStore: this.options.runStore,
         recoveryStore: this.options.recoveryStore,
@@ -653,8 +680,14 @@ class DefaultRunOrchestrator implements RunOrchestrator {
       createPlanWriterTool(
         '更新候选测试计划',
         '更新本次 Run 同一个 plan.md；必须保留静态依据和侦察事实，只能写计划 Markdown。',
-        async (content, requiresBrowser) => {
-          await workspace.writer('main-a').writePlan(content);
+        async (content, requiresBrowser, sourceReferences) => {
+          await this.sourceReads(context, workspace).writePlan(
+            content,
+            requiresBrowser,
+            sourceReferences,
+            ['initialization-static', 'initialization-candidate'],
+            (value) => workspace.writer('main-a').writePlan(value),
+          );
           context.browserRequired = requiresBrowser;
           planWriteSucceeded = true;
         },
@@ -957,7 +990,15 @@ class DefaultRunOrchestrator implements RunOrchestrator {
       },
     }));
     const tools = [
-      ...createTargetContextTools(this.targetToolOptions(repository, context, 'runner')),
+      ...createTargetContextTools(
+        this.targetToolOptions(
+          repository,
+          context,
+          'runner',
+          workspace,
+          purpose === 'standard' ? 'runner-execution' : purpose,
+        ),
+      ),
       ...createWorkingScenarioTools({
         list: () => repository.listWorkingScenarioFiles(),
         read: (path) => repository.readWorkingScenarioFile(path),
@@ -1383,6 +1424,7 @@ class DefaultRunOrchestrator implements RunOrchestrator {
     );
     const tools = [
       createReadArtifactTool(readOrder.readArtifact),
+      this.sourceReads(context, workspace).queryTool((text) => this.sanitizeSource(text)),
       ...(evidenceStore
         ? createReviewerEvidenceTools(
             evidenceStore,
@@ -1593,21 +1635,50 @@ class DefaultRunOrchestrator implements RunOrchestrator {
     }
   }
 
+  private sourceReads(context: RunContext, workspace: RunWorkspace): SourceReadStore {
+    let store = this.sourceReadStores.get(context);
+    if (!store) {
+      store = new SourceReadStore(
+        context.runId,
+        sourceHash(this.options.configuration.getRepository().repository),
+        (content) => workspace.writeSourceReads(content),
+      );
+      this.sourceReadStores.set(context, store);
+    }
+    return store;
+  }
+
+  private sanitizeSource(text: string): string {
+    const secrets = SECRET_KEYS.map((key) => this.options.secretStore?.get(key)).filter(
+      (value): value is string => Boolean(value),
+    );
+    return redactCommandText(text, secrets, Number.MAX_SAFE_INTEGER);
+  }
+
   private targetToolOptions(
     repository: GitRepository,
     context: RunContext,
     audience: 'main-planning' | 'runner',
+    workspace: RunWorkspace,
+    stage: SourceStage,
   ) {
-    const options: {
-      readFile: (path: string) => Promise<string>;
-      listFiles: () => Promise<string[]>;
-      search: (query: string) => Promise<string>;
-      context: () => string;
-      changeEvidence?: TargetChangeEvidenceOptions;
-    } = {
+    const options: Parameters<typeof createTargetContextTools>[0] = {
+      baseCommit: context.baseCommit,
+      targetCommit: context.targetCommit,
+      sourceReads: this.sourceReads(context, workspace).session(stage),
+      sanitize: (text) => this.sanitizeSource(text),
       readFile: async (path: string) => {
+        if (SENSITIVE_PATH.test(path)) return { status: 'unreadable' };
         assertReadableTargetPath(path);
-        return (await repository.readTextFileAtCommit(context.targetCommit, path)).content;
+        try {
+          const content = (await repository.readTextFileAtCommit(context.targetCommit, path))
+            .content;
+          return { status: content === '' ? 'empty' : 'ok', content };
+        } catch (error) {
+          if (error instanceof RepositoryError && error.code === 'TARGET_UNREADABLE')
+            return { status: 'unreadable' };
+          throw error;
+        }
       },
       listFiles: async () =>
         (await repository.listTree(context.targetCommit))
@@ -1630,6 +1701,8 @@ class DefaultRunOrchestrator implements RunOrchestrator {
     };
     if (audience === 'main-planning') {
       options.changeEvidence = {
+        sourceReads: options.sourceReads,
+        sanitize: options.sanitize,
         baseCommit: context.baseCommit,
         targetCommit: context.targetCommit,
         listChanges: async () =>
@@ -1763,10 +1836,12 @@ class DefaultRunOrchestrator implements RunOrchestrator {
     repository: GitRepository,
     targetCommit: string,
     query: string,
-  ): Promise<string> {
-    if (query.trim() === '') return '搜索关键词不能为空';
+  ): Promise<TargetSearchResult> {
+    if (query.trim() === '') throw new Error('Empty source query');
     const normalizedQuery = query.toLocaleLowerCase();
     const matches: string[] = [];
+    const limits = new Set<string>(['regular_non_sensitive_paths_only']);
+    let scannedFiles = 0;
     for (const entry of await repository.listTree(targetCommit)) {
       if (
         entry.type !== 'blob' ||
@@ -1774,16 +1849,23 @@ class DefaultRunOrchestrator implements RunOrchestrator {
         SENSITIVE_PATH.test(entry.path)
       )
         continue;
-      if (matches.length >= 100) break;
+      if (matches.length >= 100) {
+        limits.add('match_limit');
+        break;
+      }
       try {
         const content = (await repository.readTextFileAtCommit(targetCommit, entry.path)).content;
-        if (Buffer.byteLength(content, 'utf8') > MAX_SEARCH_FILE_BYTES) continue;
+        if (Buffer.byteLength(content, 'utf8') > MAX_SEARCH_FILE_BYTES) {
+          limits.add('large_files_skipped');
+          continue;
+        }
+        scannedFiles++;
         if (content.toLocaleLowerCase().includes(normalizedQuery)) matches.push(entry.path);
       } catch {
-        // Binary and unreadable files are intentionally skipped by the read-only search tool.
+        limits.add('unreadable_or_unavailable_files_skipped');
       }
     }
-    return matches.join('\n');
+    return { paths: matches, limits: [...limits], scannedFiles };
   }
 
   private async validateFinalReport(

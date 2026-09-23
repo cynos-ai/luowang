@@ -1,5 +1,6 @@
 import { strict as assert } from 'node:assert';
-import { cp, mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
+import { chmod, cp, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 
@@ -15,7 +16,7 @@ const cleanup: Array<() => Promise<void>> = [];
 const sourceDirectory = resolve('resources/agent-roles');
 
 const expectedByKind: Record<AgentSessionKind, string[]> = {
-  'main-planning': ['common', 'main-planning'],
+  'main-planning': ['common', 'main-planning', 'code-understanding'],
   'runner-execution': ['common', 'runner-execution'],
   'reviewer-audit': ['common', 'reviewer-audit'],
   'main-finalization': ['common', 'main-finalization'],
@@ -48,6 +49,10 @@ describe('Closure 1 built-in role instructions', () => {
       for (const other of Object.keys(expectedByKind).filter((id) => !expectedIds.includes(id))) {
         assert.doesNotMatch(loaded.content, new RegExp(`luowang-role-id: ${other}`));
       }
+      assert.equal(
+        loaded.content.includes('luowang-role-id: code-understanding;'),
+        kind === 'main-planning',
+      );
     }
   });
 
@@ -56,6 +61,11 @@ describe('Closure 1 built-in role instructions', () => {
     for (const kind of Object.keys(expectedByKind) as AgentSessionKind[]) {
       const loaded = await loader.load(kind, true);
       const ids = loaded.versions.map((item) => item.id);
+      assert.equal(ids.includes('code-understanding'), kind === 'main-planning');
+      assert.equal(
+        loaded.content.includes('luowang-role-id: code-understanding;'),
+        kind === 'main-planning',
+      );
       if (kind === 'main-planning' || kind === 'main-finalization') {
         assert.equal(ids.at(-1), 'scenario-initialization');
       } else {
@@ -107,43 +117,100 @@ describe('Closure 1 built-in role instructions', () => {
     assert.doesNotMatch(loaded.content, /AMBIENT_MARKER_MUST_NOT_LOAD/);
     assert.deepEqual(
       loaded.versions.map((item) => item.id),
-      ['common', 'main-planning'],
+      ['common', 'main-planning', 'code-understanding'],
     );
   });
 
-  it('fails closed for missing, empty or incorrectly marked resources without exposing paths', async () => {
-    for (const mode of ['missing', 'empty', 'marker', 'symlink'] as const) {
-      const root = await mkdtemp(join(tmpdir(), `luowang-closure1-${mode}-`));
-      cleanup.push(async () => rm(root, { recursive: true, force: true }));
-      await cp(sourceDirectory, root, { recursive: true });
-      const target = join(root, 'runner-execution.md');
-      if (mode === 'missing') await rm(target);
-      if (mode === 'empty') await writeFile(target, '\n');
-      if (mode === 'marker') await writeFile(target, '# wrong role\n');
-      if (mode === 'symlink') {
-        await rm(target);
-        // Windows file symlinks require Developer Mode or elevation. A directory
-        // junction exercises the same lstat fail-closed boundary without either
-        // requirement; POSIX keeps the narrower file-symlink fixture.
-        await symlink(
-          process.platform === 'win32'
-            ? sourceDirectory
-            : join(sourceDirectory, 'runner-execution.md'),
-          target,
-          process.platform === 'win32' ? 'junction' : 'file',
-        );
-      }
+  it('records the exact built-in method bytes and updates their hash on a new revision', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'luowang-code-understanding-version-'));
+    cleanup.push(async () => rm(root, { recursive: true, force: true }));
+    await cp(sourceDirectory, root, { recursive: true });
+    const loader = createRoleInstructionLoader({
+      resourceDirectory: root,
+      applicationVersion: 'code-understanding-test',
+    });
+    const methodPath = join(root, 'code-understanding.md');
+    const original = await readFile(methodPath, 'utf8');
+    const first = await loader.load('main-planning', false);
+    const version = first.versions.find((item) => item.id === 'code-understanding');
+    assert.deepEqual(version, {
+      id: 'code-understanding',
+      formatVersion: '1',
+      applicationVersion: 'code-understanding-test',
+      sha256: createHash('sha256').update(original, 'utf8').digest('hex'),
+    });
+    const revised = original + '\nMethod revision fixture.\n';
+    await writeFile(methodPath, revised);
+    const second = await loader.load('main-planning', true);
+    assert.equal(
+      second.versions.find((item) => item.id === 'code-understanding')?.sha256,
+      createHash('sha256').update(revised, 'utf8').digest('hex'),
+    );
+    assert.ok(second.content.includes(revised.trim()));
+    assert.notEqual(
+      second.versions.find((item) => item.id === 'code-understanding')?.sha256,
+      version?.sha256,
+    );
+  });
 
+  it.skipIf(process.platform === 'win32')(
+    'rejects an unreadable method without exposing paths',
+    async () => {
+      const root = await mkdtemp(join(tmpdir(), 'luowang-code-understanding-unreadable-'));
+      const target = join(root, 'code-understanding.md');
+      cleanup.push(async () => {
+        await chmod(target, 0o600);
+        await rm(root, { recursive: true, force: true });
+      });
+      await cp(sourceDirectory, root, { recursive: true });
+      await chmod(target, 0o000);
       await assert.rejects(
-        () =>
-          createRoleInstructionLoader({ resourceDirectory: root }).load('runner-execution', false),
+        () => createRoleInstructionLoader({ resourceDirectory: root }).load('main-planning', false),
         (error: unknown) => {
-          assert.equal(error instanceof RoleInstructionError, true);
-          assert.match((error as Error).message, /runner-execution/);
-          assert.doesNotMatch((error as Error).message, new RegExp(root));
+          assert.ok(error instanceof RoleInstructionError);
+          assert.equal(error.message, '内置角色指令缺失、为空或格式错误：code-understanding');
           return true;
         },
       );
-    }
-  });
+    },
+  );
+
+  it.each(['runner-execution', 'main-planning'] as const)(
+    'fails closed for invalid %s resources without exposing paths',
+    async (kind) => {
+      const resourceId = kind === 'main-planning' ? 'code-understanding' : kind;
+      for (const mode of ['missing', 'empty', 'marker', 'symlink'] as const) {
+        const root = await mkdtemp(join(tmpdir(), `luowang-closure1-${mode}-`));
+        cleanup.push(async () => rm(root, { recursive: true, force: true }));
+        await cp(sourceDirectory, root, { recursive: true });
+        const target = join(root, `${resourceId}.md`);
+        if (mode === 'missing') await rm(target);
+        if (mode === 'empty') await writeFile(target, '\n');
+        if (mode === 'marker') await writeFile(target, '# wrong role\n');
+        if (mode === 'symlink') {
+          await rm(target);
+          // Windows file symlinks require Developer Mode or elevation. A directory
+          // junction exercises the same lstat fail-closed boundary without either
+          // requirement; POSIX keeps the narrower file-symlink fixture.
+          await symlink(
+            process.platform === 'win32'
+              ? sourceDirectory
+              : join(sourceDirectory, `${resourceId}.md`),
+            target,
+            process.platform === 'win32' ? 'junction' : 'file',
+          );
+        }
+
+        await assert.rejects(
+          () => createRoleInstructionLoader({ resourceDirectory: root }).load(kind, false),
+          (error: unknown) => {
+            assert.equal(error instanceof RoleInstructionError, true);
+            assert.ok((error as Error).message.includes(resourceId));
+            assert.equal((error as Error).message.includes(root), false);
+            return true;
+          },
+        );
+      }
+    },
+  );
 });

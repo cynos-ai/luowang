@@ -257,6 +257,8 @@ Runner 只写本地 `execution.md`，不再生成报告草稿，不提供旧格�
 
 详细执行日志、临时计划、模型会话和中间证据不进入项目 Git，由测试 Harness 本地运行目录和 Run Store 管理。
 
+v0.6.0 代码深读变更在本地 Run 目录保存 `source-reads.json`，记录受控源码工具的返回范围；计划正文与引用集合保存在同一次 plan 提交中。这些材料不新增长期测试工件，也不上传目标 Git 或 OSS。回执不是功能通过证据，具体行为与版本验收状态见 `changes/luowang-code-understanding/`。
+
 报告可以直接引用 OSS 资源地址。场景文件和报告文件不得包含环境密码、仓库 Token、模型凭据或 OSS 写入凭据。
 
 只修改 `docs/scenario-testing/scenarios/**` 或 `docs/scenario-testing/reports/**` 的 commit 不自动触发测试，也不进入下一批测试范围，无论它来自罗网直接提交、人工修改还是场景 PR 合并。下一次产品或需求变化触发测试时使用当时最新的场景资产；需要立即验证场景变更时由用户人工重测当前版本。

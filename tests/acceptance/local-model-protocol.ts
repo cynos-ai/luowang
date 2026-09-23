@@ -18,6 +18,7 @@ export type LocalModelBehavior =
   | 'model-error'
   | 'missing-plan'
   | 'normal'
+  | 'repair-source-reference'
   | 'revise-final-patch'
   | 'invalid-tool'
   | 'rejected-command'
@@ -48,6 +49,7 @@ export interface LocalPiSessionRecord {
 
 export interface LocalModelProtocol {
   sessions: LocalPiSessionRecord[];
+  observedToolResults: Set<string>;
   requestCount: number;
   sessionFactory: AgentSessionFactory;
   close(): Promise<void>;
@@ -123,10 +125,11 @@ export async function startLocalModelProtocol(
   const productionFactory = createPiAgentSessionFactory({ provider });
   const sessions: LocalPiSessionRecord[] = [];
   const recordingFactory = new RecordingProductionFactory(productionFactory, sessions);
-  const protocolState = { requestCount: 0 };
+  const protocolState = { requestCount: 0, observedToolResults: new Set<string>() };
 
   return {
     sessions,
+    observedToolResults: protocolState.observedToolResults,
     get requestCount() {
       return protocolState.requestCount;
     },
@@ -224,7 +227,7 @@ async function handleRequest(
   request: IncomingMessage,
   response: ServerResponse,
   behavior: LocalModelBehavior,
-  state: { requestCount: number },
+  state: { requestCount: number; observedToolResults: Set<string> },
 ): Promise<void> {
   if (request.method !== 'POST' || request.url !== '/v1/chat/completions') {
     response.writeHead(404).end();
@@ -242,7 +245,28 @@ async function handleRequest(
   const called = (body.messages ?? []).flatMap(
     (message) => message.tool_calls?.map((tool) => tool.function?.name ?? '') ?? [],
   );
-  const next = nextTool(toolNames, called, `${systemPrompt}\n${userPrompt}`, behavior);
+  const references = new Map<string, { receiptId: string; coverage: 'returned-range' }>();
+  for (const message of body.messages ?? []) {
+    if (message.role !== 'tool') continue;
+    state.observedToolResults.add(messageText(message));
+    try {
+      const value = JSON.parse(messageText(message));
+      for (const receipt of value.receipt ? [value.receipt] : (value.receipts ?? [])) {
+        if (
+          ['main-planning', 'initialization-static', 'initialization-candidate'].includes(
+            receipt.stage,
+          ) &&
+          ['ok', 'empty', 'partial'].includes(receipt.status)
+        )
+          references.set(receipt.id, { receiptId: receipt.id, coverage: 'returned-range' });
+      }
+    } catch {
+      /* Other tools return plain text, not source receipts. */
+    }
+  }
+  const next = nextTool(toolNames, called, `${systemPrompt}\n${userPrompt}`, behavior, [
+    ...references.values(),
+  ]);
   if (behavior === 'model-error') {
     response.writeHead(400, { 'content-type': 'application/json' });
     response.end(JSON.stringify({ error: { message: 'private-model-error-sentinel' } }));
@@ -315,6 +339,7 @@ function nextTool(
   called: string[],
   prompt: string,
   behavior: LocalModelBehavior,
+  sourceReferences: Array<{ receiptId: string; coverage: 'returned-range' }>,
 ): NextTool | null {
   if (behavior === 'missing-plan' || behavior === 'model-error') return null;
   if (behavior === 'invalid-tool') {
@@ -342,6 +367,7 @@ function nextTool(
   if (candidateMain) {
     const unreadArtifact = nextUnreadArtifact(['plan.md', 'execution.md']);
     if (unreadArtifact) return unreadArtifact;
+    if (count('query_source_reads') === 0) return tool('query_source_reads', { stage: 'all' });
     if (count('write_plan') === 0) {
       const candidatePlan =
         behavior === 'empty-initialization'
@@ -350,6 +376,7 @@ function nextTool(
             ? '# 初始化候选计划\n\n复用 target 中已有的 approved 状态场景。\n\n## execution_scenarios\n\n- CORE-STATE-001\n'
             : '# 初始化候选计划\n\n侦察发现核心入口需要验证。\n\n## execution_scenarios\n\n- ONBOARD-SMOKE-001\n';
       return tool('write_plan', {
+        sourceReferences,
         requiresBrowser: false,
         content:
           candidatePlan +
@@ -383,8 +410,21 @@ function nextTool(
   if (has('write_plan')) {
     if (count('get_run_context') === 0) return tool('get_run_context');
     if (count('list_target_files') === 0) return tool('list_target_files');
-    if (count('write_plan') === 0) {
+    if (behavior === 'repair-source-reference' && count('write_plan') === 1) {
       return tool('write_plan', {
+        sourceReferences: [
+          { receiptId: '00000000-0000-4000-8000-000000000000', coverage: 'returned-range' },
+        ],
+        requiresBrowser: true,
+        content: '# REJECTED-PLAN-SENTINEL',
+      });
+    }
+    if (
+      count('write_plan') === 0 ||
+      (behavior === 'repair-source-reference' && count('write_plan') === 2)
+    ) {
+      return tool('write_plan', {
+        sourceReferences,
         requiresBrowser: false,
         content: initialization
           ? '# 初始化静态计划\n\n待运行时侦察确认主要入口和能力。\n'
@@ -473,6 +513,7 @@ function nextTool(
       'execution.md',
     ]);
     if (unreadArtifact) return unreadArtifact;
+    if (count('query_source_reads') === 0) return tool('query_source_reads', { scope: 'plan' });
     if (count('write_review') === 0) {
       return tool('write_review', {
         content: initialization
