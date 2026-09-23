@@ -23,6 +23,12 @@ export interface GitHubRepositoryInfo {
   };
 }
 
+export interface VerifiedGitHubRepositoryIdentity {
+  githubRepositoryId: string;
+  owner: string;
+  name: string;
+}
+
 export interface GitHubPullRequest {
   number: number;
   url: string;
@@ -81,6 +87,29 @@ export class GitHubClient {
         push: permissions.push === true,
         pull: permissions.pull === true,
       },
+    };
+  }
+
+  async verifyIdentity(): Promise<VerifiedGitHubRepositoryIdentity> {
+    const response = await this.request(`/repos/${this.repository.owner}/${this.repository.name}`);
+    if (response.status !== 200 || !isRecord(response.body)) {
+      throw new RepositoryError('REPOSITORY_INVALID', '无法验证 GitHub 仓库身份', 502);
+    }
+    const id = response.body.id;
+    const fullName = response.body.full_name;
+    if (!Number.isSafeInteger(id) || (id as number) <= 0 || typeof fullName !== 'string') {
+      throw new RepositoryError('REPOSITORY_INVALID', 'GitHub 仓库身份响应缺少稳定 ID', 502);
+    }
+    let canonical: { owner: string; name: string };
+    try {
+      canonical = parseGitHubRepository(`https://github.com/${fullName}`);
+    } catch {
+      throw new RepositoryError('REPOSITORY_INVALID', 'GitHub 仓库规范名称无效', 502);
+    }
+    return {
+      githubRepositoryId: String(id),
+      owner: canonical.owner,
+      name: canonical.name,
     };
   }
 
@@ -359,7 +388,10 @@ export function parseGitHubRepository(value: string): { owner: string; name: str
     url.protocol !== 'https:' ||
     url.hostname.toLowerCase() !== 'github.com' ||
     url.username ||
-    url.password
+    url.password ||
+    url.port ||
+    url.search ||
+    url.hash
   ) {
     throw new RepositoryError(
       'REPOSITORY_INVALID',
@@ -371,7 +403,7 @@ export function parseGitHubRepository(value: string): { owner: string; name: str
   if (parts.length !== 2) {
     throw new RepositoryError('REPOSITORY_INVALID', 'GitHub 仓库 URL 必须包含组织和仓库名', 400);
   }
-  const name = parts[1].replace(/\.git$/, '');
+  const name = parts[1].replace(/\.git$/i, '');
   if (!/^[A-Za-z0-9_.-]+$/.test(parts[0]) || !/^[A-Za-z0-9_.-]+$/.test(name)) {
     throw new RepositoryError('REPOSITORY_INVALID', 'GitHub 仓库名包含不支持的字符', 400);
   }
