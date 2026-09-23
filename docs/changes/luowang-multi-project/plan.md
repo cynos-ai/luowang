@@ -57,6 +57,8 @@ Run 归属的待执行离线迁移已实现：旧 Run、队列请求、中断记
 
 项目配置存储的独立切片已实现：按显式 projectId 读写，每个项目从已验证仓库身份生成固定 URL，配置 JSON 不再保存可改写的仓库地址；现有仓库字段校验由旧配置和新项目配置共用。保存时只增加该项目的配置修订，拒绝请求中的仓库身份字段。合成双项目和原有配置回归通过。配置冲突、就绪检查、HTTP 路由及服务调用链尚未接入。
 
+项目绑定的 Repository Indexer 已开始：创建时核对项目与仓库名称，运行同步前再次核对；场景、报告、错误和同步状态均按 projectId 查询，快照删除与 upsert 仅作用于当前项目。Run ID 仍全局唯一，报告索引发现同一 Run ID 已归其他项目时拒绝覆盖。合成双项目验证同名场景 ID/路径并存、A 清空快照不影响 B；既有单项目索引回归通过。项目 Repository Service 和网站调用链仍未切换，不能据此声明 AC-MP-02 完成。
+
 ## 阶段 2：绑定项目的服务与副作用
 
 - [ ] 逐条改造 Repository Service、Indexer、Orchestrator、Run Store、Archiver、Operations 与 Connectivity 的调用链，使用明确项目上下文，不引入全局 selectedProject。

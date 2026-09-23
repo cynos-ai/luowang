@@ -16,6 +16,7 @@ import {
   type ParsedScenario,
 } from './markdown.js';
 import type { GitRepository, GitTreeEntry } from './git-repository.js';
+import { parseGitHubRepository } from './github.js';
 
 const SCENARIO_PREFIX = 'docs/scenario-testing/scenarios/';
 const REPORT_PREFIX = 'docs/scenario-testing/reports/';
@@ -33,16 +34,38 @@ export function createRepositoryIndexer(
   database: Database.Database,
   repository: RepositoryService,
 ): RepositoryIndexer {
-  return new SqliteRepositoryIndexer(database, repository);
+  return new SqliteRepositoryIndexer(database, repository, null);
+}
+
+/** Project-bound indexer for the v0.6.1 schema; never falls back to a global index. */
+export function createProjectRepositoryIndexer(
+  database: Database.Database,
+  repository: RepositoryService,
+  projectId: string,
+): RepositoryIndexer {
+  const project = database
+    .prepare('SELECT repository_owner, repository_name FROM projects WHERE project_id = ?')
+    .get(projectId) as { repository_owner: string; repository_name: string } | undefined;
+  if (!project) throw new Error('索引项目不存在');
+  const bound = parseGitHubRepository(repository.getRepositoryUrl());
+  if (
+    bound.owner.toLowerCase() !== project.repository_owner.toLowerCase() ||
+    bound.name.toLowerCase() !== project.repository_name.toLowerCase()
+  ) {
+    throw new Error('索引仓库与项目身份不一致');
+  }
+  return new SqliteRepositoryIndexer(database, repository, projectId);
 }
 
 class SqliteRepositoryIndexer implements RepositoryIndexer {
   constructor(
     private readonly database: Database.Database,
     private readonly repository: RepositoryService,
+    private readonly projectId: string | null,
   ) {}
 
   async sync(): Promise<RepositorySyncResponse> {
+    if (this.projectId !== null) this.assertRepositoryBinding();
     let git: GitRepository;
     try {
       git = await this.repository.getRepository();
@@ -79,9 +102,9 @@ class SqliteRepositoryIndexer implements RepositoryIndexer {
     const previousState = this.database
       .prepare(
         `SELECT repository, scenario_branch, commit_sha
-         FROM repository_index_state WHERE id = 1`,
+         FROM repository_index_state WHERE ${this.projectId === null ? 'id = 1' : 'project_id = ?'}`,
       )
-      .get() as
+      .get(...(this.projectId === null ? [] : [this.projectId])) as
       { repository: string; scenario_branch: string; commit_sha: string | null } | undefined;
     if (
       previousState?.repository === this.repository.getRepositoryUrl() &&
@@ -134,9 +157,9 @@ class SqliteRepositoryIndexer implements RepositoryIndexer {
     const rows = this.database
       .prepare(
         `SELECT path, scenario_id, name, description, status, tags_json, content, commit_sha, indexed_at
-         FROM indexed_scenarios ORDER BY scenario_id`,
+         FROM indexed_scenarios ${this.projectId === null ? '' : 'WHERE project_id = ?'} ORDER BY scenario_id`,
       )
-      .all() as ScenarioRow[];
+      .all(...(this.projectId === null ? [] : [this.projectId])) as ScenarioRow[];
     return rows
       .map(toScenario)
       .filter((scenario) => !filters.status || scenario.status === filters.status)
@@ -147,9 +170,9 @@ class SqliteRepositoryIndexer implements RepositoryIndexer {
     const row = this.database
       .prepare(
         `SELECT path, scenario_id, name, description, status, tags_json, content, commit_sha, indexed_at
-         FROM indexed_scenarios WHERE scenario_id = ?`,
+         FROM indexed_scenarios WHERE ${this.projectId === null ? '' : 'project_id = ? AND '}scenario_id = ?`,
       )
-      .get(id) as ScenarioRow | undefined;
+      .get(...(this.projectId === null ? [id] : [this.projectId, id])) as ScenarioRow | undefined;
     return row ? toScenario(row) : null;
   }
 
@@ -159,9 +182,9 @@ class SqliteRepositoryIndexer implements RepositoryIndexer {
         `SELECT run_id, path, trigger, base_commit, target_commit, included_commits_json,
                 result, started_at, finished_at, scenario_results_json, confirmed_bugs_json,
                 files_json, content, commit_sha, indexed_at
-         FROM indexed_reports ORDER BY finished_at DESC`,
+         FROM indexed_reports ${this.projectId === null ? '' : 'WHERE project_id = ?'} ORDER BY finished_at DESC`,
       )
-      .all()
+      .all(...(this.projectId === null ? [] : [this.projectId]))
       .map((row) => toReport(row as ReportRow));
   }
 
@@ -171,22 +194,28 @@ class SqliteRepositoryIndexer implements RepositoryIndexer {
         `SELECT run_id, path, trigger, base_commit, target_commit, included_commits_json,
                 result, started_at, finished_at, scenario_results_json, confirmed_bugs_json,
                 files_json, content, commit_sha, indexed_at
-         FROM indexed_reports WHERE run_id = ?`,
+         FROM indexed_reports WHERE ${this.projectId === null ? '' : 'project_id = ? AND '}run_id = ?`,
       )
-      .get(runId) as ReportRow | undefined;
+      .get(...(this.projectId === null ? [runId] : [this.projectId, runId])) as
+      ReportRow | undefined;
     return row ? toReport(row) : null;
   }
 
   indexState(): { commitSha: string | null; syncedAt: string | null; errors: IndexErrorItem[] } {
     const row = this.database
-      .prepare('SELECT commit_sha, synced_at FROM repository_index_state WHERE id = 1')
-      .get() as { commit_sha: string | null; synced_at: string | null } | undefined;
+      .prepare(
+        `SELECT commit_sha, synced_at FROM repository_index_state WHERE ${this.projectId === null ? 'id = 1' : 'project_id = ?'}`,
+      )
+      .get(...(this.projectId === null ? [] : [this.projectId])) as
+      { commit_sha: string | null; synced_at: string | null } | undefined;
     return {
       commitSha: row?.commit_sha ?? null,
       syncedAt: row?.synced_at ?? null,
       errors: this.database
-        .prepare('SELECT path, message FROM repository_index_errors ORDER BY path')
-        .all()
+        .prepare(
+          `SELECT path, message FROM repository_index_errors ${this.projectId === null ? '' : 'WHERE project_id = ?'} ORDER BY path`,
+        )
+        .all(...(this.projectId === null ? [] : [this.projectId]))
         .map((item) => item as IndexErrorItem),
     };
   }
@@ -286,6 +315,10 @@ class SqliteRepositoryIndexer implements RepositoryIndexer {
     snapshot: Snapshot,
     state: { repository: string; scenarioBranch: string; commitSha: string; syncedAt: string },
   ): void {
+    if (this.projectId !== null) {
+      this.applyProjectSnapshot(this.projectId, snapshot, state);
+      return;
+    }
     this.database.transaction(() => {
       const currentScenePaths = [...snapshot.scenePaths];
       const currentReportDirs = [...snapshot.reportDirs];
@@ -407,15 +440,153 @@ class SqliteRepositoryIndexer implements RepositoryIndexer {
     })();
   }
 
+  private applyProjectSnapshot(
+    projectId: string,
+    snapshot: Snapshot,
+    state: { repository: string; scenarioBranch: string; commitSha: string; syncedAt: string },
+  ): void {
+    this.database.transaction(() => {
+      const scenePaths = [...snapshot.scenePaths];
+      const reportDirs = [...snapshot.reportDirs];
+      this.database
+        .prepare(
+          `DELETE FROM indexed_scenarios WHERE project_id = ?${scenePaths.length ? ` AND path NOT IN (${scenePaths.map(() => '?').join(',')})` : ''}`,
+        )
+        .run(projectId, ...scenePaths);
+      this.database
+        .prepare(
+          `DELETE FROM indexed_reports WHERE project_id = ?${reportDirs.length ? ` AND path NOT IN (${reportDirs.map(() => '?').join(',')})` : ''}`,
+        )
+        .run(projectId, ...reportDirs);
+
+      for (const scene of snapshot.scenes) {
+        this.database
+          .prepare(
+            'DELETE FROM indexed_scenarios WHERE project_id = ? AND scenario_id = ? AND path <> ?',
+          )
+          .run(projectId, scene.data.id, scene.path);
+        this.database
+          .prepare(
+            `INSERT INTO indexed_scenarios
+             (project_id, path, scenario_id, name, description, status, tags_json, content, commit_sha, indexed_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             ON CONFLICT(project_id, path) DO UPDATE SET
+               scenario_id = excluded.scenario_id, name = excluded.name,
+               description = excluded.description, status = excluded.status,
+               tags_json = excluded.tags_json, content = excluded.content,
+               commit_sha = excluded.commit_sha, indexed_at = excluded.indexed_at`,
+          )
+          .run(
+            projectId,
+            scene.path,
+            scene.data.id,
+            scene.data.name,
+            scene.data.description,
+            scene.data.status,
+            JSON.stringify(scene.data.tags),
+            scene.content,
+            state.commitSha,
+            state.syncedAt,
+          );
+      }
+      for (const report of snapshot.reports) {
+        const existing = this.database
+          .prepare('SELECT project_id FROM indexed_reports WHERE run_id = ?')
+          .get(report.data.runId) as { project_id: string } | undefined;
+        if (existing && existing.project_id !== projectId) {
+          throw new Error('报告 Run ID 已归属其他项目');
+        }
+        this.database
+          .prepare('DELETE FROM indexed_reports WHERE project_id = ? AND run_id = ? AND path <> ?')
+          .run(projectId, report.data.runId, report.path);
+        this.database
+          .prepare(
+            `INSERT INTO indexed_reports
+             (run_id, project_id, path, trigger, base_commit, target_commit,
+              included_commits_json, result, started_at, finished_at, scenario_results_json,
+              confirmed_bugs_json, files_json, content, commit_sha, indexed_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             ON CONFLICT(run_id) DO UPDATE SET
+               path = excluded.path, trigger = excluded.trigger,
+               base_commit = excluded.base_commit, target_commit = excluded.target_commit,
+               included_commits_json = excluded.included_commits_json, result = excluded.result,
+               started_at = excluded.started_at, finished_at = excluded.finished_at,
+               scenario_results_json = excluded.scenario_results_json,
+               confirmed_bugs_json = excluded.confirmed_bugs_json, files_json = excluded.files_json,
+               content = excluded.content, commit_sha = excluded.commit_sha,
+               indexed_at = excluded.indexed_at`,
+          )
+          .run(
+            report.data.runId,
+            projectId,
+            report.path,
+            report.data.trigger,
+            report.data.baseCommit,
+            report.data.targetCommit,
+            JSON.stringify(report.data.includedCommits),
+            report.data.result,
+            report.data.startedAt,
+            report.data.finishedAt,
+            JSON.stringify(report.data.scenarioResults),
+            JSON.stringify(report.data.confirmedBugs),
+            JSON.stringify(report.files),
+            report.content,
+            state.commitSha,
+            state.syncedAt,
+          );
+      }
+      this.database
+        .prepare('DELETE FROM repository_index_errors WHERE project_id = ?')
+        .run(projectId);
+      for (const error of snapshot.errors) {
+        this.database
+          .prepare(
+            `INSERT INTO repository_index_errors
+             (project_id, path, message, commit_sha, indexed_at) VALUES (?, ?, ?, ?, ?)`,
+          )
+          .run(projectId, error.path, error.message, state.commitSha, state.syncedAt);
+      }
+      this.database
+        .prepare(
+          `INSERT INTO repository_index_state
+           (project_id, repository, scenario_branch, commit_sha, synced_at)
+           VALUES (?, ?, ?, ?, ?)
+           ON CONFLICT(project_id) DO UPDATE SET
+             repository = excluded.repository, scenario_branch = excluded.scenario_branch,
+             commit_sha = excluded.commit_sha, synced_at = excluded.synced_at`,
+        )
+        .run(projectId, state.repository, state.scenarioBranch, state.commitSha, state.syncedAt);
+    })();
+  }
+
   private repositoryRepositoryName(): string {
     return this.repository.getRepositoryUrl();
   }
 
   private count(table: 'indexed_scenarios' | 'indexed_reports'): number {
     return Number(
-      (this.database.prepare(`SELECT COUNT(*) AS count FROM ${table}`).get() as { count: number })
-        .count,
+      (
+        this.database
+          .prepare(
+            `SELECT COUNT(*) AS count FROM ${table}${this.projectId === null ? '' : ' WHERE project_id = ?'}`,
+          )
+          .get(...(this.projectId === null ? [] : [this.projectId])) as { count: number }
+      ).count,
     );
+  }
+
+  private assertRepositoryBinding(): void {
+    const project = this.database
+      .prepare('SELECT repository_owner, repository_name FROM projects WHERE project_id = ?')
+      .get(this.projectId) as { repository_owner: string; repository_name: string } | undefined;
+    if (!project) throw new Error('索引项目不存在');
+    const bound = parseGitHubRepository(this.repository.getRepositoryUrl());
+    if (
+      bound.owner.toLowerCase() !== project.repository_owner.toLowerCase() ||
+      bound.name.toLowerCase() !== project.repository_name.toLowerCase()
+    ) {
+      throw new Error('索引仓库与项目身份不一致');
+    }
   }
 }
 
