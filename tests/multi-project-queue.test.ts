@@ -47,6 +47,14 @@ describe('project-bound request queues', () => {
       assert.equal(mergedA.configRevision, 2);
       assert.equal(mergedA.githubRepositoryId, '101');
       assert.equal(JSON.parse(mergedA.configSnapshotJson!).baseUrl, 'https://a.example');
+      assert.throws(
+        () => config.update(a.projectId, { baseUrl: 'https://other.example' }),
+        /待处理请求/,
+      );
+      config.update(a.projectId, { pollIntervalSeconds: 600 });
+      const nextRevisionA = queueA.enqueue({ trigger: 'git', request: 'after revision' });
+      assert.notEqual(nextRevisionA.queueId, firstA.queueId);
+      assert.equal(nextRevisionA.configRevision, 3);
       assert.equal(queueA.get(firstB.queueId), null);
       assert.throws(() => queueA.fail(firstB.queueId, 'wrong owner'), /不存在/);
 

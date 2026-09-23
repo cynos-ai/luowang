@@ -5,6 +5,7 @@ import { describe, it } from 'vitest';
 
 import { runMigrations } from '../src/server/db/migrate.js';
 import { projectIdentityMigration } from '../src/server/db/migrations/0009-project-identity.js';
+import { migrateLegacyRunOwnership } from '../src/server/db/migrations/0011-project-run-ownership.js';
 import { migrateLegacyConfigurationOwnership } from '../src/server/db/migrations/0012-project-configuration-ownership.js';
 import { createProjectConfigurationStore } from '../src/server/projects/configuration.js';
 import { createProjectStore } from '../src/server/projects/store.js';
@@ -25,6 +26,7 @@ describe('project configuration store', () => {
         displayName: 'B',
         repository: { githubRepositoryId: '102', owner: 'example', name: 'b' },
       });
+      migrateLegacyRunOwnership(database, a.projectId);
       database
         .prepare('INSERT INTO app_config (key, value, updated_at) VALUES (?, ?, ?)')
         .run(

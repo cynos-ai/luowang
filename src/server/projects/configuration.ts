@@ -21,6 +21,15 @@ const ALLOWED_FIELDS = new Set([
   'baseUrl',
   'externalDatabase',
 ]);
+const TASK_SEMANTIC_FIELDS = [
+  'language',
+  'scenarioBranch',
+  'scenarioMode',
+  'scenarioLabels',
+  'environmentDescription',
+  'baseUrl',
+  'externalDatabase',
+] as const;
 
 export interface ProjectConfigurationStore {
   get(projectId: string): ProjectConfiguration;
@@ -88,6 +97,22 @@ export function createProjectConfigurationStore(
         const { repository: ignored, ...rest } = merged;
         void ignored;
         const config = { ...rest, language };
+        const semanticChange = TASK_SEMANTIC_FIELDS.some(
+          (key) => JSON.stringify(config[key]) !== JSON.stringify(current.config[key]),
+        );
+        if (semanticChange) {
+          const pending = database
+            .prepare(
+              `SELECT count(*) AS count FROM test_request_queue
+               WHERE project_id = ? AND status IN ('queued', 'running', 'waiting_archive')`,
+            )
+            .get(projectId) as { count: number };
+          if (pending.count > 0) {
+            throw new ConfigurationError(
+              `项目仍有 ${pending.count} 个待处理请求，不能修改测试语义配置`,
+            );
+          }
+        }
         const now = new Date().toISOString();
         database
           .prepare(

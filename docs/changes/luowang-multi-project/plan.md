@@ -69,6 +69,8 @@ Run 归属的待执行离线迁移已实现：旧 Run、队列请求、中断记
 
 全局队列轮转选择器已加入：在一个 SQLite 事务中读取 active 且可执行的项目、按持久最近项目游标选下一个，并复用项目队列的全局单 running 与 waiting_archive 检查。合成双项目验证选择器重建后仍轮转、A 等待归档时 B 可以运行、两项目都有请求时交替认领。它尚未替换现有 Automation Service 的单项目消费循环；恢复及部署配置快照仍待贯通。
 
+项目配置写入现已检查同项目的 queued/running/waiting_archive 请求：生成语言、场景分支/模式/标签、环境与数据库说明等语义字段发生变化时拒绝保存并给出待处理数量；轮询频率等调度字段可修改，修订号增加后新自动请求不会与旧修订请求合并。合成队列与配置测试通过。测试账号、清理凭据和部署配置的冲突规则仍待接入。
+
 ## 阶段 2：绑定项目的服务与副作用
 
 - [ ] 逐条改造 Repository Service、Indexer、Orchestrator、Run Store、Archiver、Operations 与 Connectivity 的调用链，使用明确项目上下文，不引入全局 selectedProject。
