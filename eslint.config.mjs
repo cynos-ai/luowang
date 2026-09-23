@@ -11,6 +11,7 @@ export default tseslint.config(
       'node_modules/**',
       'test-results/**',
       'playwright-report/**',
+      'prototypes/**', // isolated static design demos; not shipped in the product bundle
     ],
   },
   eslint.configs.recommended,

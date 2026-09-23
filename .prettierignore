@@ -1,6 +1,7 @@
 AGENTS.md
 LICENSE
 docs/**
+prototypes/**
 node_modules/**
 dist/**
 coverage/**

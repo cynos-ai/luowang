@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#f3f4ef">
+  <link rel="icon" href="data:,">
+  <title>罗网 · 六种控制台设计方向 / 完整交互原型</title>
+  <link rel="stylesheet" href="luowang-six-directions.css">
+  <link rel="stylesheet" href="luowang-six-directions-v3.css">
+  <script src="luowang-six-directions-v3-pages.js" defer></script>
+  <script src="luowang-six-directions.js" defer></script>
+</head>
+<body data-style="1" data-palette="jade">
+  <div class="explore-bar" aria-label="设计方向与配色">
+    <div class="explore-id"><span class="explore-mark" aria-hidden="true"></span><span>LUOWANG <b>/ DESIGN LAB</b></span></div>
+    <div class="style-switch" id="style-switch" role="group" aria-label="选择六种页面风格"></div>
+    <div class="palette-switch" id="palette-switch" role="group" aria-label="选择三种主色配色"></div>
+  </div>
+  <div class="explore-note"><div><span class="micro">SIX DIRECTIONS · ONE PRODUCT</span><strong id="explore-name"></strong><span id="explore-description"></span></div><span class="demo-label">独立演示原型 · 不连接罗网 API<br>所有 Run、场景、状态、时间均为示意</span></div>
+  <main id="prototype" aria-label="罗网控制台交互原型"></main>
+  <footer class="page-footer">罗网 LuoWang · 仅供界面设计比较。正式数据、凭据和副作用都不在此原型中处理。<span>DESIGN EXPLORATION / V3</span></footer>
+  <button id="tweak-toggle" class="tweak-toggle" type="button" aria-expanded="false" aria-controls="tweaks">Tweaks · 演示状态</button>
+  <aside class="tweaks" id="tweaks" hidden aria-label="演示参数"><div class="section-heading"><strong>Tweaks</strong><button type="button" class="icon-button" data-close-tweaks aria-label="关闭演示参数">×</button></div><p class="muted">只改变演示界面，不保存真实配置。</p><label for="sample-mode">当前 Run 状态</label><select id="sample-mode"><option value="idle">空闲（默认）</option><option value="running">执行中</option><option value="stale">依赖异常 / 缓存陈旧</option></select><label class="check"><input type="checkbox" id="density-toggle"> 紧凑信息密度</label></aside>
+  <div class="overlay" id="overlay" hidden><div class="dialog" role="dialog" aria-modal="true" aria-labelledby="dialog-title"><header class="dialog-header"><div><span class="micro">DESIGN DEMO · NO REAL API</span><h2 id="dialog-title"></h2></div><button class="icon-button" type="button" data-close-dialog aria-label="关闭弹窗">×</button></header><div id="dialog-body"></div></div></div>
+  <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+</body>
+</html>
