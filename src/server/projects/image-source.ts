@@ -17,6 +17,12 @@ export interface ProjectImageSource {
   cleanup(): Promise<void>;
 }
 
+export interface ProjectCommitTree {
+  directory: string;
+  targetCommit: string;
+  cleanup(): Promise<void>;
+}
+
 /** Materialize only a verified commit tree, never the mutable repository checkout. */
 export async function prepareProjectImageSource(input: {
   repository: GitRepository;
@@ -25,21 +31,37 @@ export async function prepareProjectImageSource(input: {
   dockerfilePath: string;
   storageRoot: string;
 }): Promise<ProjectImageSource> {
-  if (!PROJECT_ID.test(input.projectId) || !COMMIT_SHA.test(input.targetCommit)) {
-    throw new Error('项目或镜像目标提交无效');
-  }
   assertRelativeSourcePath(input.dockerfilePath);
+  const tree = await checkedCommitTree(input);
   const targetCommit = await input.repository.resolveCommit(input.targetCommit);
-  const tree = await input.repository.listTree(targetCommit);
-  for (const entry of tree) assertBuildTreeEntry(entry);
   const dockerfile = tree.find((entry) => entry.path === input.dockerfilePath);
   if (!dockerfile || !isRegularTreeEntry(dockerfile)) {
     throw new Error('固定提交中不存在普通 Dockerfile');
   }
   await input.repository.readTextFileAtCommit(targetCommit, input.dockerfilePath);
 
+  const source = await prepareProjectCommitTree(input);
+  return { ...source, dockerfilePath: input.dockerfilePath };
+}
+
+/** Export a checked, immutable commit without a Dockerfile requirement. */
+export async function prepareProjectCommitTree(input: {
+  repository: GitRepository;
+  projectId: string;
+  targetCommit: string;
+  storageRoot: string;
+  sourceKind?: 'image-sources' | 'run-sources';
+}): Promise<ProjectCommitTree> {
+  const targetCommit = await input.repository.resolveCommit(input.targetCommit);
+  const tree = await checkedCommitTree(input);
+
   const root = resolve(input.storageRoot);
-  const projectRoot = resolve(root, 'projects', input.projectId, 'image-sources');
+  const projectRoot = resolve(
+    root,
+    'projects',
+    input.projectId,
+    input.sourceKind ?? 'image-sources',
+  );
   assertWithin(root, projectRoot);
   await mkdir(projectRoot, { recursive: true });
   const staging = await mkdtemp(join(projectRoot, 'source-'));
@@ -75,7 +97,6 @@ export async function prepareProjectImageSource(input: {
     }
     return {
       directory,
-      dockerfilePath: input.dockerfilePath,
       targetCommit,
       cleanup: () => rm(staging, { recursive: true, force: true }),
     };
@@ -83,6 +104,20 @@ export async function prepareProjectImageSource(input: {
     await rm(staging, { recursive: true, force: true });
     throw error;
   }
+}
+
+async function checkedCommitTree(input: {
+  repository: GitRepository;
+  projectId: string;
+  targetCommit: string;
+}): Promise<GitTreeEntry[]> {
+  if (!PROJECT_ID.test(input.projectId) || !COMMIT_SHA.test(input.targetCommit)) {
+    throw new Error('项目或镜像目标提交无效');
+  }
+  const targetCommit = await input.repository.resolveCommit(input.targetCommit);
+  const tree = await input.repository.listTree(targetCommit);
+  for (const entry of tree) assertBuildTreeEntry(entry);
+  return tree;
 }
 
 function assertBuildTreeEntry(entry: GitTreeEntry): void {
