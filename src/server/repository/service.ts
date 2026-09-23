@@ -1,7 +1,7 @@
 import { existsSync } from 'node:fs';
 
 import type Database from 'better-sqlite3';
-import { isAbsolute } from 'node:path';
+import { isAbsolute, resolve, relative, sep } from 'node:path';
 
 import type {
   ConnectivityResult,
@@ -12,6 +12,9 @@ import type {
 import type { ConfigurationStore } from '../configuration.js';
 import type { AppConfig } from '../config.js';
 import type { SecretStore } from '../security/secret-store.js';
+import type { ScopedSecretStore } from '../security/scoped-secret-store.js';
+import type { ProjectConfigurationStore } from '../projects/configuration.js';
+import { createProjectStore } from '../projects/store.js';
 import {
   GITHUB_CHECK_IDS,
   GitHubClient,
@@ -90,7 +93,45 @@ export function createRepositoryService(
   secretStore: SecretStore,
   paths: Pick<AppConfig, 'repoDir'> & { allowLocalRepository?: boolean },
 ): RepositoryService {
-  return new DefaultRepositoryService(database, configuration, secretStore, paths);
+  return new DefaultRepositoryService(database, configuration, secretStore, paths, null);
+}
+
+/** Bind one Repository Service to an immutable project identity, credential scope, and clone path. */
+export function createProjectRepositoryService(
+  database: Database.Database,
+  projectId: string,
+  configuration: ProjectConfigurationStore,
+  secrets: ScopedSecretStore,
+  repositoryRoot: string,
+): RepositoryService {
+  const project = createProjectStore(database).get(projectId);
+  if (!project) throw new Error('仓库项目不存在');
+  const root = resolve(repositoryRoot);
+  const repoDir = resolve(root, 'projects', project.projectId, 'repo');
+  const pathWithinRoot = relative(root, repoDir);
+  if (
+    pathWithinRoot.startsWith('..' + sep) ||
+    pathWithinRoot === '..' ||
+    isAbsolute(pathWithinRoot)
+  ) {
+    throw new Error('项目仓库目录越界');
+  }
+  const repositoryUrl = `https://github.com/${project.repositoryOwner}/${project.repositoryName}`;
+  return new DefaultRepositoryService(
+    database,
+    { getRepository: () => ({ repository: repositoryUrl, ...configuration.get(projectId) }) },
+    secrets.project(projectId),
+    { repoDir },
+    projectId,
+  );
+}
+
+interface RepositoryConfigurationReader {
+  getRepository(): ReturnType<ConfigurationStore['getRepository']>;
+}
+
+interface RepositoryTokenReader {
+  get(key: 'gitToken'): string | undefined;
 }
 
 class DefaultRepositoryService implements RepositoryService {
@@ -99,9 +140,10 @@ class DefaultRepositoryService implements RepositoryService {
 
   constructor(
     private readonly database: Database.Database,
-    private readonly configuration: ConfigurationStore,
-    private readonly secretStore: SecretStore,
+    private readonly configuration: RepositoryConfigurationReader,
+    private readonly secretStore: RepositoryTokenReader,
     private readonly paths: Pick<AppConfig, 'repoDir'> & { allowLocalRepository?: boolean },
+    private readonly projectId: string | null,
   ) {}
 
   async getStatus(): Promise<RepositoryStatusResponse> {
@@ -390,15 +432,20 @@ class DefaultRepositoryService implements RepositoryService {
 
   private readIndexState(): { commitSha: string | null; syncedAt: string | null } | undefined {
     const row = this.database
-      .prepare('SELECT commit_sha, synced_at FROM repository_index_state WHERE id = 1')
-      .get() as { commit_sha: string | null; synced_at: string | null } | undefined;
+      .prepare(
+        `SELECT commit_sha, synced_at FROM repository_index_state WHERE ${this.projectId === null ? 'id = 1' : 'project_id = ?'}`,
+      )
+      .get(...(this.projectId === null ? [] : [this.projectId])) as
+      { commit_sha: string | null; synced_at: string | null } | undefined;
     return row ? { commitSha: row.commit_sha, syncedAt: row.synced_at } : undefined;
   }
 
   private readIndexErrors(): Array<{ path: string; message: string }> {
     return this.database
-      .prepare('SELECT path, message FROM repository_index_errors ORDER BY path')
-      .all()
+      .prepare(
+        `SELECT path, message FROM repository_index_errors ${this.projectId === null ? '' : 'WHERE project_id = ?'} ORDER BY path`,
+      )
+      .all(...(this.projectId === null ? [] : [this.projectId]))
       .map((row) => row as { path: string; message: string });
   }
 }

@@ -59,6 +59,8 @@ Run 归属的待执行离线迁移已实现：旧 Run、队列请求、中断记
 
 项目绑定的 Repository Indexer 已开始：创建时核对项目与仓库名称，运行同步前再次核对；场景、报告、错误和同步状态均按 projectId 查询，快照删除与 upsert 仅作用于当前项目。Run ID 仍全局唯一，报告索引发现同一 Run ID 已归其他项目时拒绝覆盖。合成双项目验证同名场景 ID/路径并存、A 清空快照不影响 B；既有单项目索引回归通过。项目 Repository Service 和网站调用链仍未切换，不能据此声明 AC-MP-02 完成。
 
+项目绑定的 Repository Service 已加入创建入口：仓库 URL 只从不可变的项目身份生成，配置读取固定 projectId，Git Token 由工厂绑定相同项目的 Secret scope，本地 clone 使用受控根目录下的 `projects/<projectId>/repo`；仓库状态读取也限制为该项目的索引状态和错误。合成双项目验证固定地址与不同 clone 路径，既有 Repository 回归通过。实际 GitHub 稳定 ID 在改名/重定向后的重新核验、后台调用链及真实双仓库操作尚待完成。
+
 ## 阶段 2：绑定项目的服务与副作用
 
 - [ ] 逐条改造 Repository Service、Indexer、Orchestrator、Run Store、Archiver、Operations 与 Connectivity 的调用链，使用明确项目上下文，不引入全局 selectedProject。
