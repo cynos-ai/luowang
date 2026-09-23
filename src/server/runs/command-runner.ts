@@ -117,19 +117,7 @@ class DefaultControlledCommandRunner implements ControlledCommandRunner {
     command: string,
     options: { cwd: string; runId: string; targetCommit: string; signal?: AbortSignal },
   ): Promise<CommandRunResult> {
-    const args = parseCommand(command);
-    const executable = normalizeExecutable(args[0]);
-    if (!SAFE_EXECUTABLES.has(executable)) {
-      throw new ControlledCommandError('COMMAND_NOT_ALLOWED', `不允许运行命令：${args[0]}`);
-    }
-    if (executable === 'git' || executable === 'git.exe') {
-      const subcommand = args[1]?.toLowerCase();
-      if (!subcommand || !SAFE_GIT_SUBCOMMANDS.has(subcommand)) {
-        throw new ControlledCommandError('COMMAND_NOT_ALLOWED', 'Runner 只能执行只读 Git 命令');
-      }
-      assertReadOnlyGitArguments(subcommand, args.slice(2));
-    }
-    assertSafeInterpreterArguments(executable, args.slice(1));
+    const args = parseControlledCommand(command);
 
     const childEnvironment = makeExplicitEnvironment(this.sourceEnvironment, {
       LUOWANG_RUN_ID: options.runId,
@@ -179,6 +167,24 @@ class DefaultControlledCommandRunner implements ControlledCommandRunner {
       options.signal?.removeEventListener('abort', abort);
     }
   }
+}
+
+/** Shared validation for local and project-container command execution. */
+export function parseControlledCommand(command: string): string[] {
+  const args = parseCommand(command);
+  const executable = normalizeExecutable(args[0]);
+  if (!SAFE_EXECUTABLES.has(executable)) {
+    throw new ControlledCommandError('COMMAND_NOT_ALLOWED', `不允许运行命令：${args[0]}`);
+  }
+  if (executable === 'git' || executable === 'git.exe') {
+    const subcommand = args[1]?.toLowerCase();
+    if (!subcommand || !SAFE_GIT_SUBCOMMANDS.has(subcommand)) {
+      throw new ControlledCommandError('COMMAND_NOT_ALLOWED', 'Runner 只能执行只读 Git 命令');
+    }
+    assertReadOnlyGitArguments(subcommand, args.slice(2));
+  }
+  assertSafeInterpreterArguments(executable, args.slice(1));
+  return args;
 }
 
 export function makeExplicitEnvironment(
