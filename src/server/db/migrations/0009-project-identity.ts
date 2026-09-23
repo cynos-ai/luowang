@@ -7,6 +7,9 @@ import type { Migration } from './0000-foundation.js';
 export const projectIdentityMigration: Migration = {
   version: '0009_project_identity',
   apply(database: Database.Database) {
+    database.exec(
+      "ALTER TABLE admin_credentials ADD COLUMN display_name TEXT NOT NULL DEFAULT '管理员'",
+    );
     database.exec(`
       CREATE TABLE projects (
         project_id TEXT PRIMARY KEY NOT NULL,

@@ -17,6 +17,11 @@ describe('staged project identity', () => {
         .run('repository', '{"repository":"https://github.com/cynos-ai/example"}', '2026-01-01');
       database
         .prepare(
+          'INSERT INTO admin_credentials (id, password_hash, created_at, updated_at) VALUES (1, ?, ?, ?)',
+        )
+        .run('synthetic-hash', '2026-01-01', '2026-01-01');
+      database
+        .prepare(
           `INSERT INTO indexed_scenarios
              (path, scenario_id, name, description, status, tags_json, content, commit_sha, indexed_at)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -63,6 +68,10 @@ describe('staged project identity', () => {
           }
         ).value,
         '{"repository":"https://github.com/cynos-ai/example"}',
+      );
+      assert.deepEqual(
+        database.prepare('SELECT password_hash, display_name FROM admin_credentials').get(),
+        { password_hash: 'synthetic-hash', display_name: '管理员' },
       );
       assert.deepEqual(runMigrations(database, [projectIdentityMigration]).applied, []);
     } finally {

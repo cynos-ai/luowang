@@ -15,6 +15,7 @@ export const systemMetadata = sqliteTable('system_metadata', {
 export const adminCredentials = sqliteTable('admin_credentials', {
   id: integer('id').primaryKey(),
   passwordHash: text('password_hash').notNull(),
+  displayName: text('display_name').notNull().default('管理员'),
   createdAt: text('created_at').notNull(),
   updatedAt: text('updated_at').notNull(),
 });
