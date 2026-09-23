@@ -2,7 +2,7 @@
 
 - 状态：选定设计规格；仅原型已实现，生产控制台尚未改版。
 - 输入：[intent](intent.md)、[交互原型](../../../prototypes/luowang-signal-control-tower.html) 与 [素材/事实说明](../../../prototypes/brand-spec.md)。
-- 版本归属：待确认；不得仅凭本文件宣称已纳入 `v0.6.1`。多项目的业务行为以 [多项目 Spec](../luowang-multi-project/spec.md) 为准。
+- 版本归属：负责人已确认列入 `v0.6.1` 正式控制台范围；尚未实现或发布。多项目的业务行为以 [多项目 Spec](../luowang-multi-project/spec.md) 为准，视觉验收按本 Spec 单独核对。
 
 ## 1. 视觉系统
 
