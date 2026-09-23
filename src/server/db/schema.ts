@@ -25,6 +25,20 @@ export const authSessions = sqliteTable('auth_sessions', {
   expiresAt: text('expires_at').notNull(),
 });
 
+// Staged schema; the offline cutover registers its migration only after
+// historical records and Secrets have been assigned to a verified project.
+export const projects = sqliteTable('projects', {
+  projectId: text('project_id').primaryKey(),
+  displayName: text('display_name').notNull(),
+  githubRepositoryId: text('github_repository_id').notNull().unique(),
+  repositoryOwner: text('repository_owner').notNull(),
+  repositoryName: text('repository_name').notNull(),
+  status: text('status').notNull(),
+  configRevision: integer('config_revision').notNull().default(1),
+  createdAt: text('created_at').notNull(),
+  updatedAt: text('updated_at').notNull(),
+});
+
 export const appConfig = sqliteTable('app_config', {
   key: text('key').primaryKey(),
   value: text('value').notNull(),
