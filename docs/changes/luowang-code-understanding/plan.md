@@ -1,7 +1,7 @@
 # 代码深读与测试判断 Plan
 
 - 目标版本：v0.6.0；依据 [spec](spec.md)。
-- 状态：阶段 1–3 已实现；第十轮内置深读方法通过八类各三组冻结配对的客观指标，当前资源版本也已完成真实六 Session 初始化、维护、双缺陷和证据不可用代表验证。详细失败和成本保留在本机 `.cynos/code-understanding-round10/`，验收汇总为 `.cynos/code-understanding-v060-round10-review.md`，待负责人审阅。人工评分未运行；PR #75 仍为 draft，尚未合并或发布。2026-09-23 从 develop `c51e5c1` 创建 `feat/code-understanding`。
+- 状态：阶段 1–3 已实现；第十轮内置深读方法通过八类各三组冻结配对的客观指标，当前资源版本也已完成真实六 Session 初始化、维护、双缺陷和证据不可用代表验证。详细失败和成本保留在本机 `.cynos/code-understanding-round10/`，验收汇总为 `.cynos/code-understanding-v060-round10-review.md`。负责人已审阅并批准发布，PR #75 于 2026-09-23 合入 `develop`；版本准备、`develop → main` PR 与标签核对进行中。人工评分未运行。2026-09-23 从 develop `c51e5c1` 创建 `feat/code-understanding`。
 - 顺序：本版本单独实现、验收和发布，之后才启动 v0.6.1 多项目实现。
 
 ## 阶段 1：内置方法与资源加载
@@ -264,4 +264,4 @@ round5d 冻结质量镜像的 `format:check`、lint、typecheck 和完整本地 
 
 原始失败均保留：两次 Git 前置故障、一次维护脚本 target 写错、双缺陷脚本误挂旧账本、四次模型 503，以及旧验收驱动误读 Run 快照字段和 blocked 归档后 Git 查询失败。后两者用同一 Run 的正式 RunStore、队列和远端 HEAD 独立核对，不篡改原验收输出。旧账本污染副本保留，原 617 次历史账本已恢复；本轮共 643 次模型请求，含所有失败尝试和一次连通检查。完整逐项报告在本机 `.cynos/code-understanding-v060-round10-review.md`。
 
-当前等待负责人审阅报告。PR #75 保持 draft；审阅后再核对 CI、发布 PR、版本文件、`main` 与 annotated `v0.6.0` tag。v0.6.1 多项目仍未启动。
+负责人已审阅本轮报告并批准发布，PR #75 的 quality CI 通过，合并提交为 `752aa6f`。下一步完成版本文件、`develop → main` 发布 PR、CI 与 annotated `v0.6.0` tag；发布前不启动 v0.6.1 多项目。
