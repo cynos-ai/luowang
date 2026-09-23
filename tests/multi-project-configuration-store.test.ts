@@ -38,9 +38,11 @@ describe('project configuration store', () => {
       const config = createProjectConfigurationStore(database);
       assert.equal(config.get(a.projectId).baseUrl, 'https://a.example');
       assert.equal(config.get(b.projectId).baseUrl, '');
+      assert.equal(config.get(a.projectId).executionDockerfile, '');
       config.update(b.projectId, {
         baseUrl: 'https://b.example',
         language: 'en-US',
+        executionDockerfile: 'test/Dockerfile.luowang',
         triggerOnCommit: true,
         pollIntervalSeconds: 10,
       });
@@ -48,6 +50,7 @@ describe('project configuration store', () => {
       assert.equal(config.get(b.projectId).baseUrl, 'https://b.example');
       assert.equal(config.get(b.projectId).pollIntervalSeconds, 300);
       assert.equal(config.get(b.projectId).language, 'en-US');
+      assert.equal(config.get(b.projectId).executionDockerfile, 'test/Dockerfile.luowang');
       assert.equal(projects.get(b.projectId)?.configRevision, 2);
       assert.equal(projects.get(a.projectId)?.configRevision, 1);
       const stored = database
@@ -58,6 +61,10 @@ describe('project configuration store', () => {
         () => config.update(b.projectId, { repository: 'https://github.com/example/a' }),
         /不支持的字段/,
       );
+      for (const path of ['../Dockerfile', '/Dockerfile', 'test//Dockerfile', 'test\\Dockerfile']) {
+        assert.throws(() => config.update(b.projectId, { executionDockerfile: path }), /路径无效/);
+      }
+      assert.equal(config.get(b.projectId).executionDockerfile, 'test/Dockerfile.luowang');
       assert.throws(() => config.get('missing'), /项目不存在/);
       assert.deepEqual(database.prepare('PRAGMA foreign_key_check').all(), []);
     } finally {

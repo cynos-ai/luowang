@@ -7,7 +7,11 @@ import {
   normalizeRepository,
 } from '../configuration.js';
 
-export type ProjectConfiguration = Omit<RepositoryConfig, 'repository'> & { language: string };
+export type ProjectConfiguration = Omit<RepositoryConfig, 'repository'> & {
+  language: string;
+  /** Empty uses LuoWang's built-in executor image. */
+  executionDockerfile: string;
+};
 
 const ALLOWED_FIELDS = new Set([
   'language',
@@ -20,6 +24,7 @@ const ALLOWED_FIELDS = new Set([
   'environmentDescription',
   'baseUrl',
   'externalDatabase',
+  'executionDockerfile',
 ]);
 const TASK_SEMANTIC_FIELDS = [
   'language',
@@ -29,6 +34,7 @@ const TASK_SEMANTIC_FIELDS = [
   'environmentDescription',
   'baseUrl',
   'externalDatabase',
+  'executionDockerfile',
 ] as const;
 
 export interface ProjectConfigurationStore {
@@ -67,7 +73,8 @@ export function createProjectConfigurationStore(
       typeof source.language === 'string' && source.language.length <= 4096
         ? source.language
         : 'zh-CN';
-    return { repository, config: { ...rest, language } };
+    const executionDockerfile = normalizeExecutionDockerfile(source.executionDockerfile);
+    return { repository, config: { ...rest, language, executionDockerfile } };
   }
 
   return {
@@ -85,7 +92,11 @@ export function createProjectConfigurationStore(
       }
       return database.transaction(() => {
         const current = read(projectId);
-        const { language: languagePatch, ...repositoryPatch } = patch;
+        const {
+          language: languagePatch,
+          executionDockerfile: executionDockerfilePatch,
+          ...repositoryPatch
+        } = patch;
         const merged = mergeRepositoryConfiguration(
           { repository: current.repository, ...current.config },
           repositoryPatch,
@@ -96,7 +107,12 @@ export function createProjectConfigurationStore(
         }
         const { repository: ignored, ...rest } = merged;
         void ignored;
-        const config = { ...rest, language };
+        const executionDockerfile = normalizeExecutionDockerfile(
+          executionDockerfilePatch === undefined
+            ? current.config.executionDockerfile
+            : executionDockerfilePatch,
+        );
+        const config = { ...rest, language, executionDockerfile };
         const semanticChange = TASK_SEMANTIC_FIELDS.some(
           (key) => JSON.stringify(config[key]) !== JSON.stringify(current.config[key]),
         );
@@ -129,4 +145,24 @@ export function createProjectConfigurationStore(
       })();
     },
   };
+}
+
+function normalizeExecutionDockerfile(value: unknown): string {
+  if (value === undefined || value === '') return '';
+  if (typeof value !== 'string' || value.length > 255 || value.includes('\\')) {
+    throw new ConfigurationError('项目 Dockerfile 路径无效');
+  }
+  const segments = value.split('/');
+  if (
+    segments.some(
+      (segment) =>
+        segment === '' ||
+        segment === '.' ||
+        segment === '..' ||
+        !/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(segment),
+    )
+  ) {
+    throw new ConfigurationError('项目 Dockerfile 路径无效');
+  }
+  return value;
 }
