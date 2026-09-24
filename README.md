@@ -22,6 +22,7 @@ npm start
 # 首次准备测试数据卷前必须设置这两个值；不要把真实值提交到 Git。
 export LUOWANG_ADMIN_PASSWORD='replace-with-a-long-random-password'
 export LUOWANG_MASTER_KEY='replace-with-a-long-random-master-key'
+# Linux 主机若 Docker socket 不属于 root 组，设置 LUOWANG_DOCKER_GID 为 stat -c '%g' /var/run/docker.sock 的结果。
 docker compose build
 docker compose run --rm --no-deps luowang npm run db:migrate
 docker compose run --rm --no-deps luowang npm run db:multi-project -- backup /data/upgrade-backup
@@ -169,7 +170,7 @@ bash scripts/run-browser-sandbox.sh --network none --entrypoint node luowang:run
 
 ## 安全边界
 
-罗网会逐步获得读取目标仓库、执行测试命令和访问测试环境的高权限。当前单容器不是恶意代码沙箱，只应连接操作者信任的仓库和非生产环境；不要挂载 Docker socket、生产数据或无关宿主目录。密码、Token 和其他 Secret 不应写入 Git、日志或报告；本地 `.env` 仅作为被 `.gitignore` 忽略的开发/Compose 输入，正式部署应通过 Secret Store 或 Docker Secret 提供。正式部署还应由可信反向代理提供 TLS，并限制网络暴露范围。
+罗网会逐步获得读取目标仓库、执行测试命令和访问测试环境的高权限。当前项目镜像不是恶意代码沙箱，只应连接操作者信任的仓库和非生产环境。v0.6.1 的 Compose 服务容器通过 Docker socket 调用 Engine；这项权限等同于宿主机高权限，必须限制谁能访问罗网服务、Compose 配置和该 socket。项目 Run 容器只接收当前 Run 的源码副本，不挂载 Docker socket、罗网数据库、主密钥、其他项目目录或无关宿主目录。Engine 应留足镜像与构建缓存容量；镜像保留和清理需按项目与固定提交核对，不能误删正在使用的镜像。密码、Token 和其他 Secret 不应写入 Git、日志或报告；本地 `.env` 仅作为被 `.gitignore` 忽略的开发/Compose 输入，正式部署应通过 Secret Store 或 Docker Secret 提供。正式部署还应由可信反向代理提供 TLS，并限制网络暴露范围。
 
 ## 许可证
 

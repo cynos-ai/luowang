@@ -116,8 +116,7 @@ export async function startProjectCommandSession(
   if (
     sourceParts.length !== 2 ||
     !/^source-[a-zA-Z0-9_-]+$/.test(sourceParts[0]) ||
-    sourceParts[1] !== 'context' ||
-    sourceDirectory.includes(',')
+    sourceParts[1] !== 'context'
   ) {
     throw new ControlledCommandError('COMMAND_NOT_ALLOWED', 'Run 源码不在当前项目受控目录');
   }
@@ -161,9 +160,7 @@ export async function startProjectCommandSession(
       '--label',
       `luowang.scenario-patch-sha256=${input.runSource.scenarioPatchSha256 ?? 'none'}`,
       '--workdir',
-      '/workspace/source',
-      '--mount',
-      `type=bind,source=${sourceDirectory},target=/workspace/source`,
+      '/luowang-source',
       '--entrypoint',
       'sleep',
       input.imageId,
@@ -177,6 +174,11 @@ export async function startProjectCommandSession(
     throw new ControlledCommandError('COMMAND_FAILED', 'Docker 未返回有效容器 ID');
   }
   try {
+    await requireDockerSuccess(
+      docker,
+      ['cp', `${sourceDirectory}/.`, `${containerId}:/luowang-source`],
+      120_000,
+    );
     await requireDockerSuccess(docker, ['start', containerId], 30_000);
   } catch (error) {
     await docker.run(['rm', '--force', containerId], { timeoutMs: 30_000 }).catch(() => undefined);
@@ -223,7 +225,7 @@ class BoundProjectCommandSession implements ProjectCommandSession {
         [
           'exec',
           '--workdir',
-          '/workspace/source',
+          '/luowang-source',
           '--env',
           `LUOWANG_RUN_ID=${this.binding.runId}`,
           '--env',

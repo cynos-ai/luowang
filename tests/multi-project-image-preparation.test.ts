@@ -43,6 +43,7 @@ it('builds once, reuses a verified image and rebuilds when it disappears', async
     let cleanups = 0;
     let available = true;
     const dependencies: ProjectImagePreparationDependencies = {
+      async ensureDocker() {},
       async prepareSource(sourceInput) {
         assert.equal(sourceInput.projectId, project.projectId);
         return {
@@ -118,6 +119,28 @@ it('builds once, reuses a verified image and rebuilds when it disappears', async
       'IMAGE_MISMATCH',
     );
     assert.equal(cleanups, 3);
+    await assert.rejects(
+      () =>
+        ensureProjectImage(
+          { ...input, targetCommit: 'e'.repeat(40) },
+          {
+            ...dependencies,
+            ensureDocker: async () => {
+              throw new Error('DOCKER_UNAVAILABLE');
+            },
+          },
+        ),
+      /DOCKER_UNAVAILABLE/,
+    );
+    assert.equal(builds, 3);
+    assert.equal(
+      state.get({
+        projectId: project.projectId,
+        targetCommit: 'e'.repeat(40),
+        dockerfilePath: 'Dockerfile.test',
+      }),
+      null,
+    );
   } finally {
     database.close();
   }

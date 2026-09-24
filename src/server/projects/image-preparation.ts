@@ -24,6 +24,7 @@ export class ProjectImagePreparationError extends Error {
 }
 
 export interface ProjectImagePreparationDependencies {
+  ensureDocker(): Promise<void>;
   prepareSource(input: {
     repository: GitRepository;
     projectId: string;
@@ -39,6 +40,16 @@ export function createProjectImagePreparationDependencies(
   docker: DockerRuntime = createDockerRuntime(),
 ): ProjectImagePreparationDependencies {
   return {
+    async ensureDocker() {
+      try {
+        const result = await docker.run(['info', '--format', '{{.ServerVersion}}'], {
+          timeoutMs: 10_000,
+        });
+        if (result.exitCode !== 0) throw new Error('Docker Engine unavailable');
+      } catch {
+        throw new ProjectImagePreparationError('DOCKER_UNAVAILABLE');
+      }
+    },
     prepareSource(input) {
       if (input.dockerfilePath === '') return prepareBuiltInProjectImageSource(input);
       return prepareProjectImageSource(input);
@@ -72,6 +83,7 @@ export async function ensureProjectImage(
       return { imageId: existing.imageId, buildDefinition, reused: true };
     }
   }
+  await dependencies.ensureDocker();
   input.state.begin(key);
   let source: ProjectImageSource | undefined;
   try {

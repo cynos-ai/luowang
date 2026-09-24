@@ -46,6 +46,7 @@ describe('project command container', () => {
             );
           case 'create':
             return ok(CONTAINER);
+          case 'cp':
           case 'start':
           case 'rm':
             return ok('');
@@ -59,13 +60,15 @@ describe('project command container', () => {
     const session = await startProjectCommandSession(binding(), docker);
     assert.equal(session.containerId, CONTAINER);
     const create = calls.find((args) => args[0] === 'create')!;
-    assert.ok(create.includes(`type=bind,source=${sourceDirectory},target=/workspace/source`));
+    assert.equal(create.includes('--mount'), false);
+    const copy = calls.find((args) => args[0] === 'cp')!;
+    assert.deepEqual(copy, ['cp', `${sourceDirectory}/.`, `${CONTAINER}:/luowang-source`]);
     const result = await session.run('node --version', commandOptions());
     assert.equal(result.stdout, 'v24.0.0\n');
     assert.deepEqual(result.environmentKeys, ['LUOWANG_RUN_ID', 'LUOWANG_TARGET_COMMIT']);
     const exec = calls.find((args) => args[0] === 'exec')!;
     assert.deepEqual(exec.slice(-2), ['node', '--version']);
-    assert.ok(exec.includes('/workspace/source'));
+    assert.ok(exec.includes('/luowang-source'));
     assert.ok(exec.includes(`LUOWANG_RUN_ID=${RUN}`));
     assert.ok(exec.includes(`LUOWANG_TARGET_COMMIT=${COMMIT}`));
     await assert.rejects(
@@ -132,8 +135,27 @@ describe('project command container', () => {
     );
     assert.deepEqual(
       failedCalls.map((args) => args[0]),
-      ['image', 'create', 'start', 'rm'],
+      ['image', 'create', 'cp', 'start', 'rm'],
     );
+
+    const copyCalls: string[] = [];
+    await assert.rejects(
+      () =>
+        startProjectCommandSession(binding(), {
+          async run(args) {
+            copyCalls.push(args[0]);
+            if (args[0] === 'image')
+              return ok(
+                JSON.stringify({ 'luowang.project-id': PROJECT, 'luowang.target-commit': COMMIT }),
+              );
+            if (args[0] === 'create') return ok(CONTAINER);
+            if (args[0] === 'cp') return { stdout: '', stderr: 'copy failed', exitCode: 1 };
+            return ok('');
+          },
+        }),
+      /Docker cp 操作失败/,
+    );
+    assert.deepEqual(copyCalls, ['image', 'create', 'cp', 'rm']);
   });
 });
 
