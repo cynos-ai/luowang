@@ -13,6 +13,7 @@
     "build": "npm run build:server && vite build",
     "build:server": "node scripts/patch-playwright-request-headers.mjs && tsc -p tsconfig.json && node scripts/build-pi-mcp-adapter.mjs && node scripts/copy-agent-role-resources.mjs",
     "db:migrate": "tsx src/server/db/migrate-cli.ts",
+    "db:multi-project": "tsx src/server/projects/upgrade-cli.ts",
     "dev": "concurrently -k \"npm run dev:server\" \"vite\"",
     "dev:server": "tsx watch src/server/main.ts",
     "format": "prettier --write .",

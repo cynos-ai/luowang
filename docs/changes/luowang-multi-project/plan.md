@@ -104,6 +104,8 @@ Runner 的正式命令入口现支持按 Run 创建并关闭受控命令 Session
 
 独立的全局项目调度入口现已接上持久轮转认领和项目 Run/Archiver 组装：按队列中固定的 projectId、GitHub 仓库身份及配置快照解析 target，启动该项目 Run，完成后转 `waiting_archive` 并释放唯一执行槽；归档继续使用原项目服务。重启恢复从原队列归属重建服务，对无 Run 的认领请求重新排队，对中断/待归档请求分别处置。合成双项目覆盖 A 归档未结束时 B 启动、A 镜像准备失败/归档失败/恢复失败时 B 仍完成；完整 quality 容器回归 400 通过、2 跳过，类型、lint、格式检查通过。此入口尚未切入正常 App/后台定时器，未用真实 Git、模型和 Docker 证明完整项目 Run；部署配置更新冲突、项目级 poller/scheduler、内部 ref 恢复核对及正式升级切换仍待完成。
 
+离线升级现有正式命令 `npm run db:multi-project -- inspect|backup|upgrade-empty|upgrade-project|verify`。操作者必须先停止服务和后台任务，确认数据库路径及主密钥环境变量，先用 `inspect` 查看预检和数据库 fingerprint，再用 `backup <新目录>` 制作 SQLite、repo 和 report 一致备份；有历史时逐条核对归属后，向 `upgrade-project <备份目录> <已审 fingerprint>` 提交同一份摘要。命令会从旧配置和同 scope Git Token 向 GitHub 验证稳定仓库 ID，不接受手填 ID；空实例使用 `upgrade-empty`，完成后运行 `verify`。同一升级命令重复执行只返回已完成状态，半迁移或未知版本拒绝启动。备份需连同主密钥材料保存在受控位置，回退必须同时恢复数据库和工作目录。当前版本网站仍是旧单项目 App，因此**不要在真实实例执行升级**；已迁移库会被旧 App 和旧 db:migrate 入口明确拒绝，待新 App/API 完成后才能实际切换。合成文件库和完整 quality 容器验证为 403 通过、2 跳过；类型、lint 与格式检查通过。
+
 ## 阶段 2：绑定项目的服务与副作用
 
 - [ ] 先完成执行镜像可行性切片：明确镜像构建上下文与 Run 工作场景 patch 的交付方式，证明容器内代码/依赖与固定提交一致；保持现有命令允许列表、超时、输出限额和证据捕获语义。
