@@ -192,6 +192,10 @@ Docker 部署节点将 runtime 镜像加入 Docker CLI，Compose 只把 Engine s
 
 负责人已授权沿用两个非生产目标：`cynos-ai/cynos-website` 和 `cynos-ai/luowang-closure7-fixture`。2026-09-24 只读查询到前者 `main` 为 `2defdbf9b811d055aa397f29460c8e9ce8f22850`、`scenario-testing` 为 `f4800046e7797109527371504d97f778926ca957`；后者 `main` 为 `ef468e7c94d023d36da1e88254af90cdcc934b21`、`scenario-testing` 为 `7062f9a65651eeef7abe9f6a79ed4dc4c5f583d9`。这些只是查询时的分支头，不能作为后续 Run 的固定 target。当前尚无运行中的罗网联合验收服务，也未确认两个环境的合成账号、清理条件和受控 Secret Store，因此外部双项目 live 项保持未完成。
 
+2026-09-24 的 live 资源预检：GitHub API 用已有受控凭据核对两仓库的稳定 ID 分别为 `1350942277`、`1381180501`；在独立本地目录克隆并检出上述两个 `main` 提交，检出工作树均干净。现有 DeepSeek 凭据访问 `/models` 返回 HTTP 200，但列表没有列出当前配置的两个模型名；一次限制为 4 个输出 token 的 `deepseek-v4-flash` 请求返回 HTTP 200、计费 37 token，未取得可用于判定回答质量的文本。OSS 临时小对象完成写入、回读与删除。此预检只证明凭据和部分依赖当前可达，不算模型、浏览器或 OSS 的联合 Run。
+
+仍有三项真实验收输入未解决：本机没有运行中的 v0.6.1 候选实例，也未记录 `cynos-website` 的非生产应用地址、账号与 Run 数据清理方式；检查该仓库固定提交的服务路由未发现清理接口，而 closure7 fixture 有 `/api/luowang/test-data/:runId`。直接按官网仓库固定提交的 Dockerfile 构建项目镜像，在 `npm ci` 下载阶段约 168 秒后因 `ECONNRESET` 失败，未生成可记录的镜像 ID。两个授权仓库的 `package.json` 与 `package-lock.json` 内容相同，均使用 Node 工具链，不能凭这两个真实目标证明“两种不同工具链”；此前不同工具链的本地合成演练仍只算本地证明。上述问题解决前不启动会产生待清理数据的官网 Run，也不将资源预检标记为双项目 live 通过。
+
 ## 阶段 6：质量检查、文档与发布
 
 - [x] 干净 quality 容器执行完整本地质量与验收，runtime 验证生产原生 MCP 和资源包，禁止依赖宿主机 Node/浏览器差异判定发布质量。
