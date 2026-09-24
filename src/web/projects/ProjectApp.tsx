@@ -756,7 +756,8 @@ function ProjectView({
             <h4>Run</h4>
             {runs.slice(0, 10).map((run) => (
               <p key={run.runId}>
-                {run.runId} · {run.phase} · {run.result ?? '进行中'}
+                {run.runId} · {run.phase} · {run.result ?? run.status}
+                {run.errorMessage && ` · ${run.errorMessage}`}
               </p>
             ))}
           </div>

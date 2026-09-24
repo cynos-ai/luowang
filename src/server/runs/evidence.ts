@@ -131,7 +131,23 @@ class DefaultRunEvidenceStore implements RunEvidenceStore {
         await this.workspace.replaceBrowserEvidence(filename, clean);
         this.snapshotHashes.set(filename, createHash('sha256').update(clean).digest('hex'));
       }
-    } catch {
+    } catch (error) {
+      const reason =
+        error instanceof Error &&
+        [
+          'Snapshot too large',
+          'Invalid snapshot YAML',
+          'Snapshot too deep',
+          'Unsupported snapshot node',
+          'Unsupported snapshot entry',
+          'Unsupported snapshot value',
+          'Unsupported field value',
+          'Unsupported field child',
+          'Unsupported field metadata',
+          '快照文件内容已改变',
+        ].includes(error.message)
+          ? error.message
+          : 'unknown';
       this.snapshotHashes.delete(filename);
       try {
         await this.workspace.replaceBrowserEvidence(filename, DISCARDED_BROWSER_SNAPSHOT);
@@ -142,7 +158,7 @@ class DefaultRunEvidenceStore implements RunEvidenceStore {
           throw new Error('浏览器快照采集失败且原始内容清理失败');
         }
       }
-      throw new Error('浏览器快照采集失败，原始内容已丢弃');
+      throw new Error(`浏览器快照采集失败（${reason}），原始内容已丢弃`);
     }
     this.failedSnapshots.delete(filename);
     return {

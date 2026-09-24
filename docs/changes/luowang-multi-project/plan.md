@@ -213,6 +213,14 @@ fixture Run `8` 有 109 项证据：`AUTH-LOGIN-001` passed；`AUTH-REGISTRATION
 
 共同归档失败现已定位到 Git 推送返回 403：原项目 Token 可读取两个仓库，GitHub API 返回账号 `push=true`，但该标志不证明 Token 的 Contents 写入能力。归档先前用“正式报告尚未发布”覆盖具体失败原因；现已保留经脱敏的受控原因，fixture 重试明确得到“报告推送认证或权限被拒绝”，官网仍为 partial。检查到本机 GitHub CLI 的另一枚凭据带 `repo` scope 且与项目 Token 不同，但自动审批审查拒绝将它写入两项目的持久 Secret Store，理由是会扩大外部仓库写入能力且缺少针对该凭据的明确授权；没有绕过或执行轮换。后续须由负责人明确授权该轮换，或提供仅对两个测试仓库具 Contents 写权限的凭据，再从保留的 completed 工件幂等重试归档。随后还须解决官网证据上传失败、fixture 持久层验证缺口、失败 Run 详情不可查与模型成本记录，重跑完整双项目验收；当前不能合并或发布 v0.6.1。
 
+2026-09-25 授权后的接续：负责人明确允许将本机已登录 GitHub CLI 的 `repo` 凭据写入两个隔离项目的受控 Secret Store。轮换后，保留的 fixture Run `01M39Z2H59PP6TWS8D9JHAB0RM` 在其目标仓库发布报告提交 `c0bb63e5ad3f87dfeb3872b919ec3aef41c47430`；官网 Run `01M39Z7CNP5RHXCWKM3JZ0BRCR` 发布报告提交 `a6a0021f2d0ca77d388f3d872712445e1ad61765`。两者归档均为 completed，结果仍为 blocked，历史缺口不因发布而改判。Secret 值未进入代码、日志或报告。
+
+项目 `/runs` 现从同项目队列保留记录补出未归档的失败 Run，并提供项目受限详情；既有 completed 与 interrupted 记录优先，空工件不伪造执行证据。候选实例重启后原有官网 2 条、fixture 5 条失败记录均可见且不跨项目；相关 API 回归通过。官网 Run `10` / `01M3AB3GBZQ063V06NBZMN1SXD` 固定 `a6a0021f2d0ca77d388f3d872712445e1ad61765`，95 项证据均已上传、无快照捕获/上传失败，报告提交 `27cf72f4daf7af797e44b9da87a80afb1daf9262`；两场景仍 blocked。对照发现隔离官网应用原本由较旧的 `main` 提交 `2defdbf9b811d055aa397f29460c8e9ce8f22850` 构建，而 Run 的场景分支源码已包含“删除测试账号”控件，运行页面没有，属于测试环境与目标代码不一致。已把隔离官网应用重建为场景分支固定提交 `27cf72f4daf7af797e44b9da87a80afb1daf9262`，保留原数据卷，并将项目环境说明改为当前场景分支固定提交。
+
+更新应用后的官网 Run `11` / `01M3ABXC0X7RN3K6VSP529WF4D` 固定该 `27cf72f` 提交，登录场景 passed，注册场景仍因无受控持久层观察 blocked；105 项证据已上传，真实页面和网络记录确认删除账号后旧 Cookie 与原凭据均失效。该 Run 没有图片证据，Harness 正确保留 UI 截图缺口，因此尚不能称完整 UI 验收。场景 patch 首次归档遇到远端并发更新，后台幂等重试后场景及报告均成功发布，报告提交 `151e0036063546739dcad3d77f6b070184b9b578`，未 force-push。Runner 内置指令现明确要求浏览器场景在相关真实页面状态至少保存一张截图；该指令尚待下一次真实 Run 验证。快照采集失败只记录预定的安全类别，原始失败快照仍丢弃；旧 Run 的两份原始失败快照不可逆，不能追溯其具体解析根因。fixture 的持久层期望、模型成本汇总及完整双项目验收仍未闭合，不能合并发布 v0.6.1。
+
+继续验证截图指令的官网队列 `12` / Run `01M3ACRFBSJWBBHH3D47EX1CBM` 固定 `0341e87346e6b601b91818e54b7c077a4e64d5c5`；已核对该提交与当前隔离应用镜像的产品源码、依赖和 Dockerfile 无差异。Runner 在两个 UI 场景实际保存 4 张截图，均进入 OSS 和正式报告，标签分别反映有无可见表单值；总证据 111 项，无截图缺口。登录场景 passed；注册场景仍因无受控数据库观察 blocked。报告已发布为 `fcf92273e091cd6e0dfa287370c78e81ce815b35`，归档 completed。Reviewer 读受控操作证据时发生 10 次约 15 秒的 OSS timeout，Harness 保留两条读取失败阻塞项；事后经同项目证据 API 只读复查 `operation-7.json` 返回 200，只能证明至少该对象后来可读，不能追认当时 Reviewer 的审核。完整验收仍需查明/处理临时读超时，补 fixture 的持久层验证通道及模型成本记录后再重跑。固定 Linux quality 容器的 typecheck、lint、format 与完整测试通过：420 passed、2 skipped。
+
 ## 阶段 6：质量检查、文档与发布
 
 - [x] 干净 quality 容器执行完整本地质量与验收，runtime 验证生产原生 MCP 和资源包，禁止依赖宿主机 Node/浏览器差异判定发布质量。

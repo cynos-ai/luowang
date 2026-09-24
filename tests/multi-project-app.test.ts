@@ -598,6 +598,38 @@ it('uses only new-schema administration routes, scoped Secrets, and the existing
         .runs.length,
       0,
     );
+    const failedRunId = '01M39Z2H59PP6TWS8D9JHAB0RM';
+    database.sqlite
+      .prepare(
+        `UPDATE test_request_queue SET status = 'failed', run_id = ?,
+         resolved_target_commit = ?, error_message = 'Run 执行失败',
+         completed_at = '2026-01-02T00:00:00.000Z'
+         WHERE queue_id = ?`,
+      )
+      .run(failedRunId, 'a'.repeat(40), queueId);
+    const failedList = (
+      await app.inject({ method: 'GET', url: `/api/projects/${projectId}/runs`, headers })
+    ).json().runs;
+    assert.equal(failedList.find((run: RunSummary) => run.runId === failedRunId)?.status, 'failed');
+    const failedDetail = await app.inject({
+      method: 'GET',
+      url: `/api/projects/${projectId}/runs/${failedRunId}`,
+      headers,
+    });
+    assert.equal(failedDetail.statusCode, 200);
+    assert.equal(failedDetail.json().run.targetCommit, 'a'.repeat(40));
+    assert.equal(failedDetail.json().run.errorMessage, 'Run 执行失败');
+    assert.deepEqual(failedDetail.json().run.artifacts, {});
+    assert.equal(
+      (
+        await app.inject({
+          method: 'GET',
+          url: `/api/projects/${projectB}/runs/${failedRunId}`,
+          headers,
+        })
+      ).statusCode,
+      404,
+    );
     const password = await app.inject({
       method: 'POST',
       url: '/api/auth/password',

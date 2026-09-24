@@ -5,12 +5,36 @@ import type { OssObject } from '../storage/oss.js';
 
 import type { ProjectAutomationDispatcher } from '../automation/project-dispatcher.js';
 import { createProjectTestRequestQueue } from '../automation/queue.js';
+import type { TestRequestRecord } from '../automation/queue.js';
 import { createProjectRunRecoveryStore } from '../automation/recovery.js';
 import { AppError } from '../errors.js';
 import { createProjectRunStore } from '../runs/store.js';
 import { SESSION_COOKIE_NAME, type AuthService } from '../security/auth.js';
 import { encodeStableEvidenceId } from '../storage/oss.js';
 import type { ProjectStore } from './store.js';
+import type { RunDetail, RunSummary } from '../../shared/types.js';
+
+function failedQueueRun(item: TestRequestRecord | undefined): RunDetail | null {
+  if (item?.status !== 'failed' || !item.runId) return null;
+  return {
+    runId: item.runId,
+    status: 'failed',
+    phase: 'failed',
+    result: null,
+    trigger: item.trigger,
+    request: item.request,
+    baseCommit: null,
+    targetCommit: item.resolvedTargetCommit,
+    includedCommits: [],
+    startedAt: item.claimedAt ?? item.createdAt,
+    finishedAt: item.completedAt ?? item.updatedAt,
+    errorMessage: item.errorMessage,
+    artifactNames: [],
+    initialization: item.initialization,
+    updatedAt: item.updatedAt,
+    artifacts: {},
+  };
+}
 
 export async function registerProjectRunRoutes(
   app: FastifyInstance,
@@ -45,7 +69,12 @@ export async function registerProjectRunRoutes(
       return (
         (await options.dispatcher.getActiveRun(projectId, runId)) ??
         runStoreFor(projectId).get(runId) ??
-        recoveryFor(projectId).get(runId)
+        recoveryFor(projectId).get(runId) ??
+        failedQueueRun(
+          queueFor(projectId)
+            .list()
+            .find((item) => item.runId === runId),
+        )
       );
     };
     const startDrain = () => {
@@ -137,6 +166,15 @@ export async function registerProjectRunRoutes(
         const interrupted = recoveryFor(projectId).list();
         const current = await options.dispatcher.currentRun();
         const active = current?.projectId === projectId ? current.run : null;
+        const known = new Set([
+          ...(active ? [active.runId] : []),
+          ...stored.map((run) => run.runId),
+          ...interrupted.map((run) => run.runId),
+        ]);
+        const failed: RunSummary[] = queueFor(projectId)
+          .list()
+          .map(failedQueueRun)
+          .filter((run): run is RunDetail => run !== null && !known.has(run.runId));
         return {
           runs: [
             ...(active ? [active] : []),
@@ -145,7 +183,8 @@ export async function registerProjectRunRoutes(
               (run) =>
                 run.runId !== active?.runId && !stored.some((item) => item.runId === run.runId),
             ),
-          ],
+            ...failed,
+          ].sort((left, right) => right.startedAt.localeCompare(left.startedAt)),
         };
       },
     );

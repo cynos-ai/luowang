@@ -252,6 +252,15 @@ it('sanitizes nested Playwright form snapshots and discards raw values on captur
   assert.ok(!discarded.includes(failedSecret));
   await assert.rejects(() => failed.store.upload(filename), /采集失败/);
 
+  const malformed = await fixture();
+  await writeFile(
+    join(malformed.workspace.evidenceDirectory, filename),
+    '- textbox: [unterminated',
+  );
+  await malformed.call('browser_navigate', {}, `### Snapshot\n- [Snapshot](${filename})\n`);
+  assert.deepEqual(malformed.failureReasons(), ['Invalid snapshot YAML']);
+  assert.match((await malformed.workspace.readEvidence(filename)).toString(), /snapshot discarded/);
+
   const removed = await fixture();
   const removedSecret = randomUUID();
   await writeFile(
@@ -328,6 +337,7 @@ async function fixture(gateway = 'mcp', operationContext?: () => Record<string, 
     reviewSecrets: () => ['synthetic-configured-secret'],
   });
   let failures = 0;
+  const failureReasons: Array<string | undefined> = [];
   let scenarioId: string | null = 'AUTH-LOGIN-001';
   const hooks = new Map<string, (event: unknown) => unknown>();
   const extension = createBrowserObservationExtension({
@@ -335,8 +345,9 @@ async function fixture(gateway = 'mcp', operationContext?: () => Record<string, 
     targetCommit: 'fixed-target',
     now: () => new Date('2026-09-19T00:00:00Z'),
     operationContext: operationContext ?? (() => ({ scenarioId })),
-    onEvidenceFailure: () => {
+    onEvidenceFailure: (reason) => {
       failures++;
+      failureReasons.push(reason);
     },
   });
   const install = typeof extension === 'function' ? extension : extension.factory;
@@ -375,6 +386,7 @@ async function fixture(gateway = 'mcp', operationContext?: () => Record<string, 
     call,
     records,
     failures: () => failures,
+    failureReasons: () => failureReasons,
     setScenario: (id: string | null) => {
       scenarioId = id;
     },
