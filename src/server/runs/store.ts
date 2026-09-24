@@ -477,7 +477,7 @@ class SqliteRunStore implements RunStore {
         ? null
         : (completion.errorMessage ??
           (!reportReady
-            ? '正式报告尚未发布'
+            ? (run.archive_error ?? '正式报告尚未发布')
             : !scenarioReady
               ? '场景变更尚未发布或创建 PR'
               : !allIssuesSucceeded

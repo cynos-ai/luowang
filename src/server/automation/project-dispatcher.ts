@@ -61,6 +61,7 @@ export function createProjectAutomationDispatcher(options: {
         repoRoot: options.repoRoot,
         reportRoot: options.reportRoot,
         storageRoot: options.storageRoot,
+        logger: options.logger,
       }));
   const queueFor = (projectId: string) =>
     createProjectTestRequestQueue(options.database, projectId);

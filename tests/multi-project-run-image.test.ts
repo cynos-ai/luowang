@@ -8,6 +8,7 @@ import { projectIdentityMigration } from '../src/server/db/migrations/0009-proje
 import { migrateProjectImageState } from '../src/server/db/migrations/0015-project-image-state.js';
 import { migrateProjectRunImage } from '../src/server/db/migrations/0016-project-run-image.js';
 import { createProjectImageStateStore } from '../src/server/projects/image-state.js';
+import { BUILTIN_IMAGE_DEFINITION } from '../src/server/projects/image-source.js';
 import { createProjectRunImageStore } from '../src/server/projects/run-image.js';
 import { createProjectStore } from '../src/server/projects/store.js';
 
@@ -62,6 +63,39 @@ it('records only a started Run container image matching the prepared project ima
       /已准备项目镜像不一致/,
     );
     assert.deepEqual(database.prepare('PRAGMA foreign_key_check').all(), []);
+  } finally {
+    database.close();
+  }
+});
+
+it('records a Run using the prepared built-in image when the project Dockerfile is empty', () => {
+  const database = new Database(':memory:');
+  try {
+    runMigrations(database);
+    runMigrations(database, [projectIdentityMigration]);
+    migrateProjectImageState(database);
+    migrateProjectRunImage(database);
+    const project = createProjectStore(database).createVerified({
+      displayName: 'Built-in',
+      repository: { githubRepositoryId: '103', owner: 'example', name: 'builtin' },
+    });
+    const key = {
+      projectId: project.projectId,
+      targetCommit: COMMIT,
+      dockerfilePath: BUILTIN_IMAGE_DEFINITION,
+    };
+    const images = createProjectImageStateStore(database);
+    images.begin(key);
+    images.ready(key, IMAGE);
+
+    const runImage = createProjectRunImageStore(database, project.projectId).record({
+      runId: RUN,
+      targetCommit: COMMIT,
+      dockerfilePath: '',
+      imageId: IMAGE,
+    });
+    assert.equal(runImage.dockerfilePath, BUILTIN_IMAGE_DEFINITION);
+    assert.equal(runImage.imageId, IMAGE);
   } finally {
     database.close();
   }

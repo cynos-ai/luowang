@@ -1632,9 +1632,12 @@ class DefaultRunOrchestrator implements RunOrchestrator {
     validateOutput?: () => Promise<void>,
   ): Promise<void> {
     let session: AgentSession | undefined;
+    let stage = 'role-instructions';
+    let disposeFailure: unknown;
     try {
       const instructions = await this.roleInstructions.load(sessionKind, initialization);
       const systemPrompt = buildSystemPrompt(sessionKind, instructions.content, outputContract);
+      stage = 'session-input';
       const input = buildSessionInput(
         role,
         sessionKind,
@@ -1646,9 +1649,12 @@ class DefaultRunOrchestrator implements RunOrchestrator {
         instructions.versions,
         extensionFactories,
       );
+      stage = 'session-create';
       session = await this.sessions.create(input);
+      stage = 'session-prompt';
       await session.prompt(input.userMessage);
       if (validateOutput) {
+        stage = 'output-validation';
         // Keep correction in the same isolated Session; never launch extra roles or loop unboundedly.
         for (let attempt = 0; ; attempt += 1) {
           try {
@@ -1656,15 +1662,49 @@ class DefaultRunOrchestrator implements RunOrchestrator {
             break;
           } catch (error) {
             if (attempt >= 2) throw error;
+            stage = 'correction-prompt';
             await session.prompt(
               `规划工件联合校验失败：${safeMessage(error)}\n请在当前 Session 修正完整 plan.md/场景 patch 后结束。execution_scenarios 只能引用应用后实际存在的 approved 场景；draft/deprecated 不可执行。不要通过删去必需覆盖来掩盖问题，也不要重复发送未修正工件。`,
             );
+            stage = 'output-validation';
           }
         }
       }
+    } catch (error) {
+      this.options.logger?.error(
+        {
+          sessionKind,
+          stage,
+          errorName: error instanceof Error ? error.name : 'UnknownError',
+          errorCode:
+            error instanceof Error &&
+            'code' in error &&
+            typeof error.code === 'string' &&
+            /^[A-Z][A-Z0-9_]{0,63}$/.test(error.code)
+              ? error.code
+              : undefined,
+        },
+        'agent session failed',
+      );
+      throw error;
     } finally {
-      if (session) await session.dispose();
+      if (session) {
+        try {
+          await session.dispose();
+        } catch (error) {
+          this.options.logger?.error(
+            {
+              sessionKind,
+              stage: 'session-dispose',
+              errorName: error instanceof Error ? error.name : 'UnknownError',
+            },
+            'agent session failed',
+          );
+          disposeFailure = error;
+        }
+      }
     }
+    if (disposeFailure !== undefined) throw disposeFailure;
   }
 
   private sourceReads(context: RunContext, workspace: RunWorkspace): SourceReadStore {
@@ -2026,6 +2066,7 @@ class DefaultRunOrchestrator implements RunOrchestrator {
 
   private markExecutionFailure(state: RunState, error: unknown): void {
     if (state.status === 'completed' || state.status === 'interrupted') return;
+    const failedAtPhase = state.phase;
     state.status = 'failed';
     this.setPhase(state, 'failed', 'Run 执行失败，未形成可信最终结论', 'warning');
     state.finishedAt = this.now().toISOString();
@@ -2034,8 +2075,15 @@ class DefaultRunOrchestrator implements RunOrchestrator {
     this.options.logger?.error(
       {
         runId: state.runId,
-        phase: state.phase,
+        phase: failedAtPhase,
         errorName: error instanceof Error ? error.name : 'UnknownError',
+        errorCode:
+          error instanceof Error &&
+          'code' in error &&
+          typeof error.code === 'string' &&
+          /^[A-Z][A-Z0-9_]{0,63}$/.test(error.code)
+            ? error.code
+            : undefined,
       },
       'run failed',
     );

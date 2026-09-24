@@ -179,7 +179,7 @@ Docker 部署节点将 runtime 镜像加入 Docker CLI，Compose 只把 Engine s
 
 - [x] 在隔离副本完整演练 v0.6.0 → v0.6.1 升级、恢复和回退；首个旧项目的历史工件/证据地址不改写。
 - [ ] 以 v0.6.0 的深读样本验证项目 A/B 不共享理解、回执或计划，保持原有角色和场景行为。
-- [ ] 确认两个获授权非生产 GitHub 目标、合成账号、清理条件及模型调用预算；未具备资源时保留 live 未运行，不自行建仓库或扩大外部权限。
+- [x] 确认两个获授权非生产 GitHub 目标、合成账号、清理条件及模型调用预算；未具备资源时保留 live 未运行，不自行建仓库或扩大外部权限。
 - [ ] 交替运行两项目，核对同场景 ID、各自 fixed target、真实 DeepSeek/浏览器/OSS、清理、Issue/PR 和正式归档；加入一方依赖受阻而另一方完成的对照。
 - [ ] 使用两种不同工具链验证各自镜像的构建、复用、提交变化后重建、命令执行证据及失败隔离；记录实际镜像 digest，不能只验证容器能启动。
 - [ ] 留下两项目的提交、Run/队列 ID、模型成本、归档目的地及清理证明；验证结束清理临时资源，保留报告。
@@ -206,6 +206,12 @@ Docker 部署节点将 runtime 镜像加入 Docker CLI，Compose 只把 Engine s
 镜像定义均为内置 `@builtin/node-24.14.1-v1`，两次 `image/prepare` 返回 `reused=false`；后续 readiness 对实际镜像 ID 和各自目标提交重新核验通过。实际 Run 的队列固定 target 与镜像准备 target 一致，两个项目队列身份未串用。
 
 本轮**没有通过双项目联合 Run**，失败记录保留在隔离候选卷：官网队列 `1` 在 Git fetch 阶段失败，错误为“Git fetch 操作失败”；容器内后续对同一公开仓库执行只读 `ls-remote`、两仓库 `fetch` 均成功。官网重试队列 `3` / Run `01M39TYP1ZC5JZWAFNTHBN87VY` 固定同一 target，Main 已写 `plan.md`，但在生成最终报告前以通用执行错误失败。fixture 队列 `2` 固定 target 后，Main 写入 `plan.md`、`source-reads.json` 和场景 patch，随后也以通用执行错误失败；patch 按罗网实际使用的 `git apply --check --recount --whitespace=nowarn` 参数验证可应用，不能把不带 `--recount` 的检查失败当成根因。三个失败均未产生正式报告、归档提交或可声称通过的浏览器/OSS 联合证据。失败 Run 在队列中有 ID 和错误，但 `/runs` 列表未给出对应可查询详情；下一节点须定位未分类异常及失败详情保留问题，修复后重跑，并对清理结果、模型成本、归档与跨项目隔离逐项核验。临时应用、候选实例及独立卷暂保留用于诊断；不得把其中的测试数据或临时 Token 提交到 Git。
+
+2026-09-24 后续根因与重跑：内置项目镜像准备时以 `@builtin/node-24.14.1-v1` 记录，Run 容器成功启动后镜像绑定表却用项目配置的空 Dockerfile 路径查询，导致“Run 镜像与已准备项目镜像不一致”，在 Runner 执行前失败。修正绑定键后，专门回归测试及相邻服务/归档测试在固定 Linux quality 容器通过。保留的队列 `2/4/5/6/7` 均未被改写；其中 `6` 是独立的临时 Git fetch 失败。新的 fixture 队列 `8` / Run `01M39Z2H59PP6TWS8D9JHAB0RM` 和官网队列 `9` / Run `01M39Z7CNP5RHXCWKM3JZ0BRCR` 依次固定各自原 target，均完成 Main、Runner、Reviewer、最终 Main、本地报告及 Harness 清理，没有跨项目并行或上下文串用。
+
+fixture Run `8` 有 109 项证据：`AUTH-LOGIN-001` passed；`AUTH-REGISTRATION-001` blocked，因为“数据库不保存明文密码”这一明列期望缺少持久层观察，Reviewer 没有把响应体不回显密码冒充数据库证明。独立清理对两个 Run 标记账户均核验 `absent=true`。官网 Run `9` 有 104 项证据，两个场景均 blocked；浏览器操作证据捕获发生失败，两份页面快照上传失败，因此不能把缺口当作通过。两个报告均已在各自项目的隔离 completed 目录和数据库留存，但 `reportStatus=failed`、`archiveStatus=partial`，**没有发布到目标仓库**，blocked Run 也没有推进测试基线。本轮没有确认产品 Bug 或创建 Issue/PR，模型成本仍未形成可核验汇总。
+
+共同归档失败现已定位到 Git 推送返回 403：原项目 Token 可读取两个仓库，GitHub API 返回账号 `push=true`，但该标志不证明 Token 的 Contents 写入能力。归档先前用“正式报告尚未发布”覆盖具体失败原因；现已保留经脱敏的受控原因，fixture 重试明确得到“报告推送认证或权限被拒绝”，官网仍为 partial。检查到本机 GitHub CLI 的另一枚凭据带 `repo` scope 且与项目 Token 不同，但自动审批审查拒绝将它写入两项目的持久 Secret Store，理由是会扩大外部仓库写入能力且缺少针对该凭据的明确授权；没有绕过或执行轮换。后续须由负责人明确授权该轮换，或提供仅对两个测试仓库具 Contents 写权限的凭据，再从保留的 completed 工件幂等重试归档。随后还须解决官网证据上传失败、fixture 持久层验证缺口、失败 Run 详情不可查与模型成本记录，重跑完整双项目验收；当前不能合并或发布 v0.6.1。
 
 ## 阶段 6：质量检查、文档与发布
 

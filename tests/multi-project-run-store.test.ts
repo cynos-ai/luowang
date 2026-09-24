@@ -50,6 +50,15 @@ describe('project-bound Run Store', () => {
       assert.equal(runsA.getLastCompletedTarget(), 'a'.repeat(40));
       assert.equal(runsB.getLastCompletedTarget(), null);
       assert.equal(runsB.get('RUN-B')?.reportStatus, 'pending');
+      runsB.markReport('RUN-B', {
+        status: 'failed',
+        errorMessage: '报告推送认证或权限被拒绝',
+      });
+      runsB.completeArchive('RUN-B', { reportReady: false });
+      assert.equal(runsB.get('RUN-B')?.archiveError, '报告推送认证或权限被拒绝');
+      runsB.markReport('RUN-B', { status: 'published' });
+      runsB.completeArchive('RUN-B', { reportReady: true });
+      assert.equal(runsB.get('RUN-B')?.archiveError, null);
       assert.deepEqual(database.prepare('PRAGMA foreign_key_check').all(), []);
     } finally {
       database.close();

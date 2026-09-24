@@ -1,6 +1,7 @@
 import type Database from 'better-sqlite3';
 
 import { normalizeExecutionDockerfile } from './configuration.js';
+import { BUILTIN_IMAGE_DEFINITION } from './image-source.js';
 
 const RUN_ID = /^[0-9A-HJKMNP-TV-Z]{26}$/;
 const COMMIT = /^[0-9a-f]{40}$/i;
@@ -42,7 +43,10 @@ export function createProjectRunImageStore(
       ) {
         throw new Error('Run 镜像记录无效');
       }
-      const dockerfilePath = normalizeExecutionDockerfile(input.dockerfilePath);
+      const dockerfilePath =
+        input.dockerfilePath === ''
+          ? BUILTIN_IMAGE_DEFINITION
+          : normalizeExecutionDockerfile(input.dockerfilePath);
       return database.transaction(() => {
         const ready = database
           .prepare(

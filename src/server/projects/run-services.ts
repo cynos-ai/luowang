@@ -1,4 +1,5 @@
 import type Database from 'better-sqlite3';
+import type { Logger } from 'pino';
 
 import { createProjectRunRecoveryStore } from '../automation/recovery.js';
 import { createProjectRepositoryIndexer } from '../repository/indexer.js';
@@ -26,6 +27,7 @@ export function createProjectRunServices(options: {
   repoRoot: string;
   reportRoot: string;
   storageRoot: string;
+  logger?: Logger;
 }) {
   const { database, task, secrets, repoRoot, reportRoot, storageRoot } = options;
   const projectId = task.projectId;
@@ -48,6 +50,7 @@ export function createProjectRunServices(options: {
     repository,
     indexer,
     runStore,
+    logger: options.logger,
   });
   const runImages = createProjectRunImageStore(database, projectId);
   const testData = createTestDataManager({
@@ -65,12 +68,14 @@ export function createProjectRunServices(options: {
     testData,
     runStore,
     recoveryStore,
+    logger: options.logger,
     commandSessionFactory: createProjectRunCommandSessionFactory({
       projectId,
       instanceId: readInstanceId(database),
       dockerfilePath: task.executionDockerfile,
       storageRoot,
       imageState: createProjectImageStateStore(database),
+      logger: options.logger,
       recordImage: ({ runId, targetCommit, imageId }) =>
         runImages.record({
           runId,
