@@ -194,7 +194,18 @@ Docker 部署节点将 runtime 镜像加入 Docker CLI，Compose 只把 Engine s
 
 2026-09-24 的 live 资源预检：GitHub API 用已有受控凭据核对两仓库的稳定 ID 分别为 `1350942277`、`1381180501`；在独立本地目录克隆并检出上述两个 `main` 提交，检出工作树均干净。现有 DeepSeek 凭据访问 `/models` 返回 HTTP 200，但列表没有列出当前配置的两个模型名；一次限制为 4 个输出 token 的 `deepseek-v4-flash` 请求返回 HTTP 200、计费 37 token，未取得可用于判定回答质量的文本。OSS 临时小对象完成写入、回读与删除。此预检只证明凭据和部分依赖当前可达，不算模型、浏览器或 OSS 的联合 Run。
 
-仍有三项真实验收输入未解决：本机没有运行中的 v0.6.1 候选实例，也未记录 `cynos-website` 的非生产应用地址、账号与 Run 数据清理方式；检查该仓库固定提交的服务路由未发现清理接口，而 closure7 fixture 有 `/api/luowang/test-data/:runId`。直接按官网仓库固定提交的 Dockerfile 构建项目镜像，在 `npm ci` 下载阶段约 168 秒后因 `ECONNRESET` 失败，未生成可记录的镜像 ID。两个授权仓库的 `package.json` 与 `package-lock.json` 内容相同，均使用 Node 工具链，不能凭这两个真实目标证明“两种不同工具链”；此前不同工具链的本地合成演练仍只算本地证明。上述问题解决前不启动会产生待清理数据的官网 Run，也不将资源预检标记为双项目 live 通过。
+此前尚缺的本机候选实例和非生产应用已在 2026-09-24 建立；官网固定提交没有原生 Run 清理接口，验收环境使用未修改目标仓库的临时清理 sidecar。它只访问独立测试卷、要求独立 Token，并按完整 Run ID 标记查删。使用合成账号实测清理前 1、删除后 0、再次查询 0，匿名请求返回 401。两个目标应用固定 `main` 提交分别为 `2defdbf9b811d055aa397f29460c8e9ce8f22850` 和 `ef468e7c94d023d36da1e88254af90cdcc934b21`；官网原 Dockerfile 的 `npm ci` 曾因 `ECONNRESET` 失败，改用仅替换下载源的本地临时 Node 基础镜像后，两个应用镜像成功构建且容器健康。此下载源调整没有写入目标仓库。两个目标仍都是 Node 工具链，不能凭这两个真实目标证明“两种不同工具链”；此前异构工具链证明仍限于本地合成演练。
+
+2026-09-24 双项目 live 接入节点：独立罗网候选数据卷完成 `db:migrate → backup → upgrade-empty → verify`，Docker 服务容器健康；用正式管理员 API 创建两个 paused 项目并写入各自配置和受控 Secret。首次创建时 GitHub 请求恰逢 10 秒超时返回 500；容器内带已有凭据的只读核验随后返回 200，重试创建成功。两项目 readiness 的仓库、凭据、模型/浏览器/OSS、环境、镜像五项均为 `ok`，随后主动启用。此连通性检查不证明模型生成质量或完整 Run 成功。
+
+| 项目 | 项目 ID | 固定场景 target | 罗网构建的项目执行镜像 ID | 首次 live 队列 / Run |
+| --- | --- | --- | --- | --- |
+| `cynos-website` | `f4d56bc5-a7a7-40ab-afb5-4d098550945c` | `f4800046e7797109527371504d97f778926ca957` | `sha256:5712eff4ef452acaf149d44a4d3acb7b81a6e9f4ed8d9c87a2e23f11eabf90d6` | `1` / `01M39TJ9VY1JRQ3P659WJP97XN` |
+| `luowang-closure7-fixture` | `4b1cb89c-539c-4b1d-a197-688389e808c8` | `7062f9a65651eeef7abe9f6a79ed4dc4c5f583d9` | `sha256:b44a477cd91d16b0b3655043b3a7861028043e60eeb74d5c7e4f73c633fb268d` | `2` / `01M39TJ9WJV7X45GS15QXAMVC7` |
+
+镜像定义均为内置 `@builtin/node-24.14.1-v1`，两次 `image/prepare` 返回 `reused=false`；后续 readiness 对实际镜像 ID 和各自目标提交重新核验通过。实际 Run 的队列固定 target 与镜像准备 target 一致，两个项目队列身份未串用。
+
+本轮**没有通过双项目联合 Run**，失败记录保留在隔离候选卷：官网队列 `1` 在 Git fetch 阶段失败，错误为“Git fetch 操作失败”；容器内后续对同一公开仓库执行只读 `ls-remote`、两仓库 `fetch` 均成功。官网重试队列 `3` / Run `01M39TYP1ZC5JZWAFNTHBN87VY` 固定同一 target，Main 已写 `plan.md`，但在生成最终报告前以通用执行错误失败。fixture 队列 `2` 固定 target 后，Main 写入 `plan.md`、`source-reads.json` 和场景 patch，随后也以通用执行错误失败；patch 按罗网实际使用的 `git apply --check --recount --whitespace=nowarn` 参数验证可应用，不能把不带 `--recount` 的检查失败当成根因。三个失败均未产生正式报告、归档提交或可声称通过的浏览器/OSS 联合证据。失败 Run 在队列中有 ID 和错误，但 `/runs` 列表未给出对应可查询详情；下一节点须定位未分类异常及失败详情保留问题，修复后重跑，并对清理结果、模型成本、归档与跨项目隔离逐项核验。临时应用、候选实例及独立卷暂保留用于诊断；不得把其中的测试数据或临时 Token 提交到 Git。
 
 ## 阶段 6：质量检查、文档与发布
 
