@@ -204,6 +204,10 @@ Docker 部署节点将 runtime 镜像加入 Docker CLI，Compose 只把 Engine s
 
 阶段 6 文档节点：README 的当前操作说明已与项目 App、离线升级 CLI 和 Compose 对齐，区分已发布 v0.6.0 与开发中的 v0.6.1，列出部署/项目 API 归属、paused 接入、镜像准备、固定提交重建、容量及清理要求。PROJECT.md、默认布局和 AGENTS.md 同步注明多项目 Spec 覆盖历史单仓库基线；历史需求和旧 Run 记录不改写。此节点只完成文档项，不代表生产 Docker Engine 权限或真实双项目验收已通过。
 
+本机 Docker Desktop 28.3.3 的真实 smoke 已验证两项项目镜像构建和固定提交 Run 命令；新增检查直接读取实际容器配置，确认无挂载、无 Docker socket/罗网数据库、非 privileged，且服务进程中的合成主密钥没有进入项目容器。模拟 Engine 地址失联后，受控入口拒绝创建新 Run 容器，不回退到宿主机命令；恢复连接后按 Run 标签查询无遗留容器。`docker system df` 的只读快照显示本机镜像总量 166.6 GB、构建缓存 19.22 GB，说明正式部署须预留容量并按归属清理，未对共享 Engine 执行全局 prune。这是本机开发环境的真实 Docker 证明；尚未验证服务器 Compose 的 socket 权限、容量策略及实际进程重启清理，因此正式部署形态验收项仍未勾选。
+
+同一工作树构建的干净 Linux quality 镜像通过类型、lint、格式检查、419 项测试（Docker 专项 2 项默认跳过）、三个 UI E2E 和 `test:acceptance:local`；聚合结果为 `local=passed`、`live=blocked`、`release=blocked`，外部双项目输入仍未配齐。真实 Docker 专项另在本机 Engine 显式开启并通过。当前工作树的 runtime 构建已完成应用编译及 Docker CLI 包安装，随后在下载 Chromium 系统库时因镜像源速度过低主动中止；没有 runtime 成品或原生 MCP 预检结论。阶段 6 的完整质量与生产部署两项都保留未完成。
+
 ## 提交与范围控制
 
 实现分支从 v0.6.0 发布后的最新 develop 创建 `feat/multi-project`。各阶段通过对应检查后提交并 push，跨层改造未通过整体检查前不合入 develop。数据库、服务、调度和 UI 可以分提交 review，但不能以部分页面可用宣称多项目已完成。

@@ -33,6 +33,8 @@ dockerIt(
     let imageId: string | undefined;
     let builtInImageId: string | undefined;
     let containerId: string | undefined;
+    const originalMasterKey = process.env.LUOWANG_MASTER_KEY;
+    process.env.LUOWANG_MASTER_KEY = 'synthetic-docker-smoke-master';
     try {
       await execFileAsync('git', ['init', '-b', 'main', repo], { cwd: root });
       await execFileAsync('git', ['config', 'user.name', 'LuoWang Test'], { cwd: repo });
@@ -108,6 +110,44 @@ dockerIt(
           runSource,
         });
         containerId = session.containerId;
+        const inspected = JSON.parse(
+          (
+            await execFileAsync('docker', [
+              'container',
+              'inspect',
+              '--format',
+              '{{json .}}',
+              containerId,
+            ])
+          ).stdout.trim(),
+        ) as {
+          Config: { Env: string[] };
+          HostConfig: { Binds: string[] | null; Privileged: boolean };
+          Mounts: unknown[];
+        };
+        assert.deepEqual(inspected.Mounts, []);
+        assert.equal(inspected.HostConfig.Binds?.length ?? 0, 0);
+        assert.equal(inspected.HostConfig.Privileged, false);
+        assert.ok(
+          inspected.Config.Env.every(
+            (entry) =>
+              !/^(?:DOCKER_HOST|LUOWANG_MASTER_KEY|LUOWANG_ADMIN_PASSWORD|LUOWANG_TEST_PASSWORD)=/.test(
+                entry,
+              ),
+          ),
+        );
+        assert.equal(
+          (
+            await execFileAsync('docker', [
+              'exec',
+              containerId,
+              'sh',
+              '-c',
+              'test ! -e /var/run/docker.sock && test ! -e /data/luowang.db',
+            ])
+          ).stdout,
+          '',
+        );
         const result = await session.run('node read-scenario.js', {
           cwd: repo,
           runId,
@@ -117,11 +157,45 @@ dockerIt(
         assert.equal(result.stdout.replaceAll('\r\n', '\n'), scenario('after'));
         await session.close();
         containerId = undefined;
+        const originalDockerHost = process.env.DOCKER_HOST;
+        process.env.DOCKER_HOST = 'unix:///luowang-smoke-missing-docker.sock';
+        try {
+          await assert.rejects(
+            startProjectCommandSession({
+              projectId,
+              instanceId: projectId,
+              runId,
+              targetCommit,
+              imageId,
+              repositoryDirectory: repo,
+              sourceRoot: root,
+              runSource,
+            }),
+            /Docker|项目镜像标签无法核验/,
+          );
+        } finally {
+          if (originalDockerHost === undefined) delete process.env.DOCKER_HOST;
+          else process.env.DOCKER_HOST = originalDockerHost;
+        }
+        assert.equal(
+          (
+            await execFileAsync('docker', [
+              'ps',
+              '--all',
+              '--quiet',
+              '--filter',
+              `label=luowang.run-id=${runId}`,
+            ])
+          ).stdout.trim(),
+          '',
+        );
       } finally {
         await imageSource.cleanup();
         await runSource.cleanup();
       }
     } finally {
+      if (originalMasterKey === undefined) delete process.env.LUOWANG_MASTER_KEY;
+      else process.env.LUOWANG_MASTER_KEY = originalMasterKey;
       if (containerId) await execFileAsync('docker', ['rm', '--force', containerId]);
       if (builtInImageId) await execFileAsync('docker', ['image', 'rm', '--force', builtInImageId]);
       if (imageId) await execFileAsync('docker', ['image', 'rm', '--force', imageId]);
