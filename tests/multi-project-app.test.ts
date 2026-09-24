@@ -15,6 +15,8 @@ import { migrateProjectQueueContext } from '../src/server/db/migrations/0014-pro
 import { migrateProjectImageState } from '../src/server/db/migrations/0015-project-image-state.js';
 import { migrateProjectRunImage } from '../src/server/db/migrations/0016-project-run-image.js';
 import { createProjectApp } from '../src/server/projects/app.js';
+import { createProjectTestRequestQueue } from '../src/server/automation/queue.js';
+import { createProjectRunStore } from '../src/server/runs/store.js';
 
 it('uses only new-schema administration routes, scoped Secrets, and the existing administrator session', async () => {
   const config = loadConfig({
@@ -43,11 +45,24 @@ it('uses only new-schema administration routes, scoped Secrets, and the existing
     VALUES ('v061_empty_cutover', 'complete', '2026-01-01', '2026-01-01')`,
     )
     .run();
+  let drains = 0;
   const app = await createProjectApp({
     config,
     database,
     logger: pino({ level: 'silent' }),
-    verifyRepository: async () => ({ githubRepositoryId: '101', owner: 'example', name: 'a' }),
+    verifyRepository: async (url) => ({
+      githubRepositoryId: url.endsWith('/a') ? '101' : '102',
+      owner: 'example',
+      name: url.endsWith('/a') ? 'a' : 'b',
+    }),
+    dispatcher: {
+      enqueue: (projectId, input) =>
+        createProjectTestRequestQueue(database.sqlite, projectId).enqueue(input),
+      drain: async () => {
+        drains += 1;
+      },
+      recover: async () => {},
+    },
     readinessDependencies: {
       verifyRepository: async (project) => ({
         githubRepositoryId: project.githubRepositoryId,
@@ -131,6 +146,14 @@ it('uses only new-schema administration routes, scoped Secrets, and the existing
     });
     assert.equal(created.statusCode, 201);
     const projectId = created.json().project.projectId;
+    const createdB = await app.inject({
+      method: 'POST',
+      url: '/api/projects',
+      headers,
+      payload: { displayName: 'B', repositoryUrl: 'https://github.com/example/b' },
+    });
+    assert.equal(createdB.statusCode, 201);
+    const projectB = createdB.json().project.projectId;
     assert.equal(
       (await app.inject({ method: 'GET', url: `/api/projects/${projectId}`, headers })).json()
         .secrets.gitToken.configured,
@@ -150,6 +173,135 @@ it('uses only new-schema administration routes, scoped Secrets, and the existing
       (await app.inject({ method: 'POST', url: `/api/projects/${projectId}/resume`, headers }))
         .statusCode,
       409,
+    );
+    const runUrl = `/api/projects/${projectId}/runs`;
+    assert.equal((await app.inject({ method: 'GET', url: runUrl })).statusCode, 401);
+    assert.equal(
+      (await app.inject({ method: 'POST', url: runUrl, headers, payload: { request: 'test' } }))
+        .statusCode,
+      409,
+    );
+    database.sqlite
+      .prepare("UPDATE projects SET status = 'active' WHERE project_id = ?")
+      .run(projectId);
+    assert.equal(
+      (
+        await app.inject({
+          method: 'POST',
+          url: runUrl,
+          headers,
+          payload: { request: 'test', projectId: projectB },
+        })
+      ).statusCode,
+      400,
+    );
+    assert.equal(
+      (
+        await app.inject({
+          method: 'POST',
+          url: runUrl,
+          headers,
+          payload: { request: 'test', targetCommit: 'a'.repeat(40) },
+        })
+      ).statusCode,
+      400,
+    );
+    const submitted = await app.inject({
+      method: 'POST',
+      url: runUrl,
+      headers,
+      payload: { request: 'test A' },
+    });
+    assert.equal(submitted.statusCode, 202);
+    const queueId = submitted.json().queue.queueId;
+    assert.equal(submitted.json().queue.projectId, projectId);
+    assert.equal(drains, 1);
+    const mergeUrl = `/api/projects/${projectId}/merge`;
+    assert.equal(
+      (
+        await app.inject({
+          method: 'POST',
+          url: mergeUrl,
+          headers,
+          payload: { sourceRef: 'feat/source' },
+        })
+      ).statusCode,
+      400,
+    );
+    assert.equal(
+      (
+        await app.inject({
+          method: 'POST',
+          url: mergeUrl,
+          headers: { ...headers, origin: 'https://other.example' },
+          payload: { sourceRef: 'feat/source', confirmed: true },
+        })
+      ).statusCode,
+      403,
+    );
+    const merged = await app.inject({
+      method: 'POST',
+      url: mergeUrl,
+      headers,
+      payload: { sourceRef: 'feat/source', confirmed: true },
+    });
+    assert.equal(merged.statusCode, 202);
+    assert.equal(merged.json().queue.requestKind, 'manual-merge-source');
+    assert.equal(merged.json().queue.projectId, projectId);
+    assert.equal(drains, 2);
+    assert.equal(
+      (
+        await app.inject({
+          method: 'GET',
+          url: `/api/projects/${projectId}/queue/${queueId}`,
+          headers,
+        })
+      ).statusCode,
+      200,
+    );
+    assert.equal(
+      (
+        await app.inject({
+          method: 'GET',
+          url: `/api/projects/${projectB}/queue/${queueId}`,
+          headers,
+        })
+      ).statusCode,
+      404,
+    );
+    assert.equal(
+      (await app.inject({ method: 'GET', url: `/api/projects/${projectB}/queue`, headers })).json()
+        .queue.length,
+      0,
+    );
+    createProjectRunStore(database.sqlite, projectId).importCompleted({
+      runId: 'RUN-A',
+      trigger: 'manual',
+      baseCommit: null,
+      targetCommit: 'a'.repeat(40),
+      includedCommits: ['a'.repeat(40)],
+      result: 'passed',
+      startedAt: '2026-01-01T00:00:00.000Z',
+      finishedAt: '2026-01-01T00:01:00.000Z',
+      completedDirectory: '/tmp/RUN-A',
+      artifacts: {},
+      scenarioResults: [],
+      confirmedBugs: [],
+    });
+    assert.equal(
+      (await app.inject({ method: 'GET', url: `/api/projects/${projectId}/runs/RUN-A`, headers }))
+        .statusCode,
+      200,
+    );
+    assert.equal(
+      (await app.inject({ method: 'GET', url: `/api/projects/${projectB}/runs/RUN-A`, headers }))
+        .statusCode,
+      404,
+    );
+    assert.equal(
+      (await app.inject({ method: 'GET', url: `/api/projects/${projectB}/runs`, headers })).json()
+        .runs.length,
+      0,
     );
     const password = await app.inject({
       method: 'POST',

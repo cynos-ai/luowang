@@ -3,6 +3,11 @@ import Fastify, { type FastifyBaseLogger, type FastifyRequest } from 'fastify';
 import type { Logger } from 'pino';
 
 import type { AppConfig } from '../config.js';
+import {
+  createProjectAutomationDispatcher,
+  type ProjectAutomationDispatcher,
+} from '../automation/project-dispatcher.js';
+import { TestRequestQueueError } from '../automation/queue.js';
 import type { DatabaseContext } from '../db/client.js';
 import { AppError, toErrorResponse } from '../errors.js';
 import { createLogger } from '../logger.js';
@@ -30,6 +35,7 @@ import { createGuardedScopedSecretStore } from './guarded-secrets.js';
 import { createProjectImageAdminService, type ProjectImageAdminService } from './image-admin.js';
 import { createLiveProjectReadinessAdapters } from './readiness-adapters.js';
 import { createProjectReadinessService, type ProjectReadinessDependencies } from './readiness.js';
+import { registerProjectRunRoutes } from './run-routes.js';
 import { assertProjectSchema } from './schema-mode.js';
 import { createProjectStore } from './store.js';
 
@@ -41,10 +47,11 @@ export interface ProjectAppOptions {
   secrets?: ScopedSecretStore;
   readinessDependencies?: ProjectReadinessDependencies;
   images?: ProjectImageAdminService;
+  dispatcher?: ProjectAutomationDispatcher;
   verifyRepository?: ProjectAdminRouteOptions['verifyRepository'];
 }
 
-/** New-schema administration app. Project Run routes are added before this becomes the startup app. */
+/** New-schema project app. Background scheduling and remaining project views precede startup cutover. */
 export async function createProjectApp(options: ProjectAppOptions) {
   const database = options.database.sqlite;
   assertProjectSchema(database);
@@ -81,6 +88,18 @@ export async function createProjectApp(options: ProjectAppOptions) {
       repoRoot: options.config.repoDir,
       storageRoot: options.config.dataDir,
     });
+  const dispatcher =
+    options.dispatcher ??
+    createProjectAutomationDispatcher({
+      database,
+      deployment,
+      projects,
+      secrets: scoped,
+      repoRoot: options.config.repoDir,
+      reportRoot: options.config.reportDir,
+      storageRoot: options.config.dataDir,
+      logger: options.logger,
+    });
   options.config.initialAdminPassword = undefined;
   options.config.masterKey = undefined;
 
@@ -96,23 +115,31 @@ export async function createProjectApp(options: ProjectAppOptions) {
         ? error.statusCode
         : error instanceof SecretStoreError
           ? 503
-          : error instanceof TypeError ||
-              error instanceof AuthError ||
-              error instanceof ConfigurationError
-            ? 400
-            : typeof failure.statusCode === 'number'
-              ? failure.statusCode
-              : 500;
+          : error instanceof TestRequestQueueError
+            ? error.code === 'QUEUE_NOT_FOUND'
+              ? 404
+              : error.code === 'QUEUE_STATE_INVALID'
+                ? 409
+                : 400
+            : error instanceof TypeError ||
+                error instanceof AuthError ||
+                error instanceof ConfigurationError
+              ? 400
+              : typeof failure.statusCode === 'number'
+                ? failure.statusCode
+                : 500;
     const code =
       error instanceof AppError
         ? error.code
         : error instanceof SecretStoreError
           ? 'SECRET_STORE_UNAVAILABLE'
-          : error instanceof AuthError
+          : error instanceof TestRequestQueueError
             ? error.code
-            : status === 400
-              ? 'INVALID_REQUEST'
-              : 'INTERNAL_ERROR';
+            : error instanceof AuthError
+              ? error.code
+              : status === 400
+                ? 'INVALID_REQUEST'
+                : 'INTERNAL_ERROR';
     const message = status >= 500 ? '内部错误' : failure.message;
     return reply.status(status).send(toErrorResponse(code, message, request.id));
   });
@@ -221,6 +248,13 @@ export async function createProjectApp(options: ProjectAppOptions) {
     images,
     allowedOrigin: options.config.allowedOrigin,
     verifyRepository: options.verifyRepository,
+  });
+  await registerProjectRunRoutes(app, {
+    database,
+    auth,
+    projects,
+    dispatcher,
+    logger: options.logger,
   });
   app.setNotFoundHandler((request, reply) =>
     reply.status(404).send(toErrorResponse('NOT_FOUND', 'Resource not found', request.id)),
