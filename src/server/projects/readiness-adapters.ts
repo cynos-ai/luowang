@@ -8,6 +8,7 @@ import { createPlaywrightMcpAdapter } from '../browser/playwright-mcp.js';
 import { createOssAdapter } from '../storage/oss.js';
 import type { ScopedSecretStore } from '../security/scoped-secret-store.js';
 import type { ProjectConfigurationStore } from './configuration.js';
+import type { ProjectConfiguration } from './configuration.js';
 import { BUILTIN_IMAGE_DEFINITION } from './image-source.js';
 import { inspectProjectImage } from './image-preparation.js';
 import { createProjectImageStateStore } from './image-state.js';
@@ -114,10 +115,12 @@ export function createLiveProjectReadinessAdapters(input: {
       const token = input.secrets.project(project.projectId).get('gitToken');
       if (!token)
         return { id: 'image', status: 'not_configured', message: '请先配置项目 GitHub Token' };
-      const repository = await github(project, token).readRepository();
-      const commit =
-        (await branchHead(project.projectId, config.scenarioBranch)) ??
-        (await branchHead(project.projectId, repository.defaultBranch));
+      const commit = await resolveProjectImageCommit(
+        project.projectId,
+        config,
+        github(project, token),
+        branchHead,
+      );
       if (!commit) return failed('image', '无法确定项目固定提交');
       const key = {
         projectId: project.projectId,
@@ -133,6 +136,20 @@ export function createLiveProjectReadinessAdapters(input: {
         : failed('image', '项目镜像已丢失或标签不匹配，请重建');
     },
   };
+}
+
+/** Before the first scenario branch exists, build from the verified repository's default branch. */
+export async function resolveProjectImageCommit(
+  projectId: string,
+  config: ProjectConfiguration,
+  github: Pick<GitHubClient, 'readRepository'>,
+  branchHead: (projectId: string, branch: string) => Promise<string | null>,
+): Promise<string | null> {
+  const repository = await github.readRepository();
+  const commit =
+    (await branchHead(projectId, config.scenarioBranch)) ??
+    (await branchHead(projectId, repository.defaultBranch));
+  return commit && /^[0-9a-f]{40}$/i.test(commit) ? commit.toLowerCase() : null;
 }
 
 function ok(id: ReadinessCheck['id'], message: string): ReadinessCheck {

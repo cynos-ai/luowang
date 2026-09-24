@@ -52,6 +52,11 @@ describe('project administration routes', () => {
         configuration,
         secrets,
         readiness: readyService(database, projects, configuration, secrets),
+        images: {
+          prepare: async () => {
+            throw new Error('未配置镜像准备测试');
+          },
+        },
         verifyRepository: async (url, token) => {
           verifiedTokens.push(token);
           return {
@@ -249,6 +254,11 @@ describe('project administration routes', () => {
           createProjectConfigurationStore(database),
           createScopedSecretStore(database, undefined),
         ),
+        images: {
+          prepare: async () => {
+            throw new Error('未配置镜像准备测试');
+          },
+        },
         verifyRepository: async () => ({ githubRepositoryId: '101', owner: 'example', name: 'a' }),
       });
       const response = await app.inject({

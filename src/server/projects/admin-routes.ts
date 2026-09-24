@@ -14,6 +14,7 @@ import { SecretStoreError } from '../security/secret-store.js';
 import type { ScopedSecretStore } from '../security/scoped-secret-store.js';
 import type { ProjectConfigurationStore } from './configuration.js';
 import { createGuardedScopedSecretStore } from './guarded-secrets.js';
+import { ProjectImageAdminError, type ProjectImageAdminService } from './image-admin.js';
 import type { ProjectReadinessService } from './readiness.js';
 import { ProjectStoreError, type ProjectStore } from './store.js';
 
@@ -33,6 +34,7 @@ export interface ProjectAdminRouteOptions {
   configuration: ProjectConfigurationStore;
   secrets: ScopedSecretStore;
   readiness: ProjectReadinessService;
+  images: ProjectImageAdminService;
   allowedOrigin?: string;
   verifyRepository?: (
     repositoryUrl: string,
@@ -126,6 +128,17 @@ export async function registerProjectAdminRoutes(
       },
     );
 
+    routes.post<{ Params: { projectId: string } }>(
+      '/api/projects/:projectId/image/prepare',
+      async (request) => {
+        if (request.body !== undefined && Object.keys(readRecord(request.body)).length !== 0) {
+          throw new AppError('IMAGE_INPUT_INVALID', '镜像准备不接受自选提交或路径', 400);
+        }
+        const project = requireProject(options.projects, request.params.projectId);
+        return { image: await options.images.prepare(project.projectId) };
+      },
+    );
+
     routes.put<{ Params: { projectId: string } }>(
       '/api/projects/:projectId/configuration',
       async (request) => {
@@ -169,17 +182,24 @@ export async function registerProjectAdminRoutes(
       const status =
         error instanceof AppError || error instanceof RepositoryError
           ? error.statusCode
-          : error instanceof SecretStoreError
-            ? 503
-            : conflict
-              ? 409
-              : error instanceof ConfigurationError || error instanceof ProjectStoreError
-                ? 400
-                : 500;
+          : error instanceof ProjectImageAdminError
+            ? error.code === 'DOCKER_UNAVAILABLE' || error.code === 'TARGET_UNAVAILABLE'
+              ? 503
+              : error.code === 'BUILD_FAILED'
+                ? 502
+                : 409
+            : error instanceof SecretStoreError
+              ? 503
+              : conflict
+                ? 409
+                : error instanceof ConfigurationError || error instanceof ProjectStoreError
+                  ? 400
+                  : 500;
       const code =
         error instanceof AppError ||
         error instanceof RepositoryError ||
         error instanceof SecretStoreError ||
+        error instanceof ProjectImageAdminError ||
         error instanceof ProjectStoreError
           ? error.code
           : conflict
