@@ -1684,3 +1684,96 @@ dd {
     padding: 1.4rem;
   }
 }
+.project-list,
+.project-facts,
+.project-checks,
+.project-history {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 0.8rem;
+  margin: 1rem 0;
+}
+
+.project-card {
+  display: grid;
+  gap: 0.3rem;
+  text-align: left;
+  padding: 1rem;
+  border: 1px solid var(--line, #d7dce3);
+  border-radius: 0.75rem;
+  background: var(--surface, #fff);
+  color: inherit;
+  cursor: pointer;
+}
+
+.project-card-active {
+  border-color: #1769aa;
+  box-shadow: inset 0 0 0 1px #1769aa;
+}
+
+.project-card small,
+.project-facts small {
+  display: block;
+  opacity: 0.7;
+}
+
+.project-create,
+.project-form,
+.project-secrets {
+  display: grid;
+  gap: 0.9rem;
+  margin-top: 1.2rem;
+}
+
+.project-form {
+  grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+}
+
+.project-form button {
+  align-self: end;
+}
+
+.project-checkbox {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.project-secrets form,
+.project-secret-row {
+  display: flex;
+  align-items: end;
+  gap: 0.7rem;
+}
+
+.project-secrets form .field,
+.project-secret-row .field {
+  flex: 1;
+}
+
+.project-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+}
+
+.project-facts > div,
+.project-checks > div,
+.project-history > div {
+  padding: 0.9rem;
+  border: 1px solid var(--line, #d7dce3);
+  border-radius: 0.6rem;
+}
+
+.project-checks span {
+  margin-left: 0.6rem;
+}
+
+@media (max-width: 640px) {
+  .project-secrets form,
+  .project-secret-row {
+    align-items: stretch;
+    flex-direction: column;
+  }
+}

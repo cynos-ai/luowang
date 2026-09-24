@@ -195,6 +195,7 @@ export async function createProjectApp(options: ProjectAppOptions) {
     database: options.database.isHealthy() ? 'ok' : 'error',
     timestamp: new Date().toISOString(),
   }));
+  app.get('/api/mode', async () => ({ mode: 'multi-project' as const }));
   app.get('/api/auth/status', async (request) => ({
     configured: auth.isConfigured(),
     authenticated: auth.authenticate(request.cookies[SESSION_COOKIE_NAME]),
