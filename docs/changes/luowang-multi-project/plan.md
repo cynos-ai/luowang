@@ -106,6 +106,8 @@ Runner 的正式命令入口现支持按 Run 创建并关闭受控命令 Session
 
 离线升级现有正式命令 `npm run db:multi-project -- inspect|backup|upgrade-empty|upgrade-project|verify`。操作者必须先停止服务和后台任务，确认数据库路径及主密钥环境变量，先用 `inspect` 查看预检和数据库 fingerprint，再用 `backup <新目录>` 制作 SQLite、repo 和 report 一致备份；有历史时逐条核对归属后，向 `upgrade-project <备份目录> <已审 fingerprint>` 提交同一份摘要。命令会从旧配置和同 scope Git Token 向 GitHub 验证稳定仓库 ID，不接受手填 ID；空实例使用 `upgrade-empty`，完成后运行 `verify`。同一升级命令重复执行只返回已完成状态，半迁移或未知版本拒绝启动。备份需连同主密钥材料保存在受控位置，回退必须同时恢复数据库和工作目录。当前版本网站仍是旧单项目 App，因此**不要在真实实例执行升级**；已迁移库会被旧 App 和旧 db:migrate 入口明确拒绝，待新 App/API 完成后才能实际切换。合成文件库和完整 quality 容器验证为 403 通过、2 跳过；类型、lint 与格式检查通过。
 
+部署与项目凭据写入门禁现有独立入口：部署设置只接受 Provider、三组模型、浏览器、OSS 和保留天数；运行中请求阻止模型/浏览器与 OSS 目的地变化，已有 Run 证据引用阻止 OSS 目的地原位变更。Provider 密钥在运行中不可轮换；项目 GitHub Token 仍允许原位修复，但测试账号和清理 Token 在本项目 queued/running/waiting_archive 未排空前不可替换或删除，另一项目不受影响。离线迁移继续使用底层 Secret Store，避免旧 queued 记录让升级无法重加密。新写入入口尚未接入网站 API；正式 App 切换时必须只暴露受控入口，不能让旧全局配置 API 绕过门禁。
+
 ## 阶段 2：绑定项目的服务与副作用
 
 - [ ] 先完成执行镜像可行性切片：明确镜像构建上下文与 Run 工作场景 patch 的交付方式，证明容器内代码/依赖与固定提交一致；保持现有命令允许列表、超时、输出限额和证据捕获语义。
