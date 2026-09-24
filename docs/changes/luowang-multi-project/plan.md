@@ -188,6 +188,8 @@ Docker 部署节点将 runtime 镜像加入 Docker CLI，Compose 只把 Engine s
 
 阶段 5 隔离演练：在合成 v0.6.0 文件库中建立旧 Run、场景、报告、进度、Secret、仓库及报告目录，先制作并核验一致备份，再升级为唯一 paused 旧项目，接入第二项目。数据库断言旧 Run 的固定提交、工件、报告路径及旧格式 OSS 证据地址保持原样；新 App 认证 API 可从原项目读取旧 Run，从第二项目读取返回 404。随后整体恢复数据库、仓库和报告目录，核对旧库摘要与 Secret，再重复升级并检查外键。此项只证明隔离合成副本的升级/回退路径，不代表真实持久实例已迁移。
 
+深读隔离回归使用 v0.6.0 验收集的 `refactor` 和 `bug-fix` 合成代码，两项目读取同一路径 `src/orders.mjs`，分别写入项目 Run 的回执和 Main 计划。测试核对 Run/仓库标识、目录及计划引用各自独立，B 引用 A 的回执会拒绝且不会留下计划，查询也只返回本 Run 的回执。这是确定性的归属与串用防护证明；尚未运行两项目的真实模型深读质量对比，因此深读验收项仍未勾选。
+
 负责人已授权沿用两个非生产目标：`cynos-ai/cynos-website` 和 `cynos-ai/luowang-closure7-fixture`。2026-09-24 只读查询到前者 `main` 为 `2defdbf9b811d055aa397f29460c8e9ce8f22850`、`scenario-testing` 为 `f4800046e7797109527371504d97f778926ca957`；后者 `main` 为 `ef468e7c94d023d36da1e88254af90cdcc934b21`、`scenario-testing` 为 `7062f9a65651eeef7abe9f6a79ed4dc4c5f583d9`。这些只是查询时的分支头，不能作为后续 Run 的固定 target。当前尚无运行中的罗网联合验收服务，也未确认两个环境的合成账号、清理条件和受控 Secret Store，因此外部双项目 live 项保持未完成。
 
 ## 阶段 6：质量检查、文档与发布
