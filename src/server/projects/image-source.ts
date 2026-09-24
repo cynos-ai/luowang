@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process';
-import { lstat, mkdir, mkdtemp, realpath, rm } from 'node:fs/promises';
+import { lstat, mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
 import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { promisify } from 'node:util';
 
@@ -9,12 +9,41 @@ const execFileAsync = promisify(execFile);
 const PROJECT_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const COMMIT_SHA = /^[0-9a-f]{40}$/i;
 const MAX_ARCHIVE_BYTES = 512 * 1024 * 1024;
+export const BUILTIN_IMAGE_DEFINITION = '@builtin/node-24.14.1-v1';
+const BUILTIN_DOCKERFILE = '.luowang-executor.Dockerfile';
+const BUILTIN_DOCKERFILE_CONTENT =
+  'FROM docker.m.daocloud.io/library/node:24.14.1-bookworm-slim@sha256:b506e7321f176aae77317f99d67a24b272c1f09f1d10f1761f2773447d8da26c\nWORKDIR /workspace\n';
 
 export interface ProjectImageSource {
   directory: string;
   dockerfilePath: string;
   targetCommit: string;
+  buildDefinition?: string;
   cleanup(): Promise<void>;
+}
+
+/** LuoWang's versioned Node baseline; projects needing other tools use their own Dockerfile. */
+export async function prepareBuiltInProjectImageSource(input: {
+  repository: GitRepository;
+  projectId: string;
+  targetCommit: string;
+  storageRoot: string;
+}): Promise<ProjectImageSource> {
+  const source = await prepareProjectCommitTree(input);
+  try {
+    await writeFile(join(source.directory, BUILTIN_DOCKERFILE), BUILTIN_DOCKERFILE_CONTENT, {
+      flag: 'wx',
+      mode: 0o600,
+    });
+    return {
+      ...source,
+      dockerfilePath: BUILTIN_DOCKERFILE,
+      buildDefinition: BUILTIN_IMAGE_DEFINITION,
+    };
+  } catch (error) {
+    await source.cleanup();
+    throw error;
+  }
 }
 
 export interface ProjectCommitTree {

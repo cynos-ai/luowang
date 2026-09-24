@@ -10,7 +10,12 @@ import { it } from 'vitest';
 
 import { buildProjectImage } from '../src/server/projects/image-builder.js';
 import { startProjectCommandSession } from '../src/server/projects/execution-container.js';
-import { prepareProjectImageSource } from '../src/server/projects/image-source.js';
+import { inspectProjectImage } from '../src/server/projects/image-preparation.js';
+import {
+  BUILTIN_IMAGE_DEFINITION,
+  prepareBuiltInProjectImageSource,
+  prepareProjectImageSource,
+} from '../src/server/projects/image-source.js';
 import { prepareProjectRunSource } from '../src/server/projects/run-source.js';
 import { GitRepository } from '../src/server/repository/git-repository.js';
 
@@ -26,6 +31,7 @@ dockerIt(
     const runId = '01K00000000000000000000002';
     const scenarioPath = 'docs/scenario-testing/scenarios/CHECK-001.md';
     let imageId: string | undefined;
+    let builtInImageId: string | undefined;
     let containerId: string | undefined;
     try {
       await execFileAsync('git', ['init', '-b', 'main', repo], { cwd: root });
@@ -67,6 +73,26 @@ dockerIt(
       });
       try {
         imageId = (await buildProjectImage({ projectId, source: imageSource })).imageId;
+        const builtInSource = await prepareBuiltInProjectImageSource({
+          repository,
+          projectId,
+          targetCommit,
+          storageRoot: root,
+        });
+        try {
+          builtInImageId = (await buildProjectImage({ projectId, source: builtInSource })).imageId;
+          assert.equal(
+            await inspectProjectImage({
+              projectId,
+              targetCommit,
+              dockerfilePath: BUILTIN_IMAGE_DEFINITION,
+              imageId: builtInImageId,
+            }),
+            true,
+          );
+        } finally {
+          await builtInSource.cleanup();
+        }
         const session = await startProjectCommandSession({
           projectId,
           runId,
@@ -92,6 +118,7 @@ dockerIt(
       }
     } finally {
       if (containerId) await execFileAsync('docker', ['rm', '--force', containerId]);
+      if (builtInImageId) await execFileAsync('docker', ['image', 'rm', '--force', builtInImageId]);
       if (imageId) await execFileAsync('docker', ['image', 'rm', '--force', imageId]);
       await rm(root, { recursive: true, force: true });
     }

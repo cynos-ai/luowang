@@ -72,6 +72,8 @@ export async function buildProjectImage(
         `luowang.project-id=${input.projectId}`,
         '--label',
         `luowang.target-commit=${input.source.targetCommit}`,
+        '--label',
+        `luowang.build-definition=${input.source.buildDefinition ?? input.source.dockerfilePath}`,
         directory,
       ],
       { cwd: directory, timeoutMs: 15 * 60 * 1000 },
