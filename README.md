@@ -2,11 +2,11 @@
 
 罗网（LuoWang）是一个独立部署的 AI 场景测试 Harness。当前仓库已实现 Phase 0–9 的主要模块：安全配置控制台、唯一 GitHub 目标仓库索引、Main → Runner → Reviewer → Main 的 Run、受控 Playwright MCP UI 执行、S3-compatible OSS 证据 Gateway、幂等归档、持久 FIFO 自动化队列、长期场景生命周期、三种场景维护模式、陌生项目初始化和运维控制台。仓库版本为 v0.6.0；v0.1.0 至 v0.5.0 的标签均保持既有不可变指向。
 
-v0.6.0 加入随版本维护的代码深读方法：Main 追踪业务规则与相关调用，并在计划中引用固定版本的读取回执；Reviewer 可以核对引用来源和阅读范围。回执只说明材料返回过，模型是否理解正确仍需单独评测。[实施与验收记录](docs/changes/luowang-code-understanding/plan.md)保留完整过程；多项目支持留在 v0.6.1。
+v0.6.0 加入随版本维护的代码深读方法：Main 追踪业务规则与相关调用，并在计划中引用固定版本的读取回执；Reviewer 可以核对引用来源和阅读范围。回执只说明材料返回过，模型是否理解正确仍需单独评测。[实施与验收记录](docs/changes/luowang-code-understanding/plan.md)保留完整过程；多项目支持正在 v0.6.1 开发分支实施，尚未发布。
 
 ## 本地启动
 
-优先使用下文的 Docker Compose 或固定 quality/runtime 镜像复现。原生运行需要 Node.js 24 和 npm；当 `better-sqlite3` 没有匹配的预编译包时，还需要 `python3`、`make` 和 `g++`。生产模式：
+优先使用下文的 Docker Compose 或固定 quality/runtime 镜像复现。原生运行需要 Node.js 24 和 npm；当 `better-sqlite3` 没有匹配的预编译包时，还需要 `python3`、`make` 和 `g++`。当前开发分支的正式启动入口只接受已完成离线升级的数据库，不会在启动时自动迁移旧实例或创建空库。以下生产命令适用于已升级的本地实例；真实旧实例应在 v0.6.1 联合验收和发布后按[多项目升级计划](docs/changes/luowang-multi-project/plan.md)执行备份、归属核对与离线升级。
 
 ```bash
 npm ci
@@ -19,9 +19,14 @@ npm start
 也可以使用 Docker Compose：
 
 ```bash
-# 首次启动空数据卷前必须设置这两个值；不要把真实值提交到 Git。
+# 首次准备测试数据卷前必须设置这两个值；不要把真实值提交到 Git。
 export LUOWANG_ADMIN_PASSWORD='replace-with-a-long-random-password'
 export LUOWANG_MASTER_KEY='replace-with-a-long-random-master-key'
+docker compose build
+docker compose run --rm --no-deps luowang npm run db:migrate
+docker compose run --rm --no-deps luowang npm run db:multi-project -- backup /data/upgrade-backup
+docker compose run --rm --no-deps luowang npm run db:multi-project -- upgrade-empty /data/upgrade-backup
+docker compose run --rm --no-deps luowang npm run db:multi-project -- verify
 docker compose up -d --build
 curl --fail http://127.0.0.1:3000/health
 docker compose down

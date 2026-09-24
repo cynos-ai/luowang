@@ -1,4 +1,7 @@
+import { existsSync } from 'node:fs';
+
 import fastifyCookie from '@fastify/cookie';
+import fastifyStatic from '@fastify/static';
 import Fastify, { type FastifyBaseLogger, type FastifyRequest } from 'fastify';
 import type { Logger } from 'pino';
 
@@ -61,7 +64,7 @@ export interface ProjectAppOptions {
   readEvidence?: (projectId: string, key: string) => Promise<OssObject>;
 }
 
-/** New-schema project app. Background scheduling and remaining project views precede startup cutover. */
+/** New-schema project app. */
 export async function createProjectApp(options: ProjectAppOptions) {
   const database = options.database.sqlite;
   assertProjectSchema(database);
@@ -133,6 +136,10 @@ export async function createProjectApp(options: ProjectAppOptions) {
   });
   const limiter = new LoginRateLimiter();
   await app.register(fastifyCookie);
+  const staticRoot = options.config.webRoot;
+  if (existsSync(staticRoot)) {
+    await app.register(fastifyStatic, { root: staticRoot, prefix: '/', index: 'index.html' });
+  }
   app.setErrorHandler((error, request, reply) => {
     const failure = error as Error & { statusCode?: number };
     const status =
@@ -313,9 +320,12 @@ export async function createProjectApp(options: ProjectAppOptions) {
     secrets: scoped,
     repoRoot: options.config.repoDir,
   });
-  app.setNotFoundHandler((request, reply) =>
-    reply.status(404).send(toErrorResponse('NOT_FOUND', 'Resource not found', request.id)),
-  );
+  app.setNotFoundHandler((request, reply) => {
+    if (request.method === 'GET' && !request.url.startsWith('/api/') && existsSync(staticRoot)) {
+      return reply.sendFile('index.html');
+    }
+    return reply.status(404).send(toErrorResponse('NOT_FOUND', 'Resource not found', request.id));
+  });
   app.addHook('onClose', async () => {
     await background.stop();
     options.database.close();
