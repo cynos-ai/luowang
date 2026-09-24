@@ -11,10 +11,15 @@ import { projectIdentityMigration } from '../src/server/db/migrations/0009-proje
 import { migrateLegacyRunOwnership } from '../src/server/db/migrations/0011-project-run-ownership.js';
 import { migrateLegacyConfigurationOwnership } from '../src/server/db/migrations/0012-project-configuration-ownership.js';
 import { migrateProjectQueueContext } from '../src/server/db/migrations/0014-project-queue-context.js';
+import { migrateProjectImageState } from '../src/server/db/migrations/0015-project-image-state.js';
 import { registerProjectAdminRoutes } from '../src/server/projects/admin-routes.js';
 import { createProjectConfigurationStore } from '../src/server/projects/configuration.js';
 import { createDeploymentConfigurationStore } from '../src/server/projects/deployment-configuration.js';
 import { createProjectStore } from '../src/server/projects/store.js';
+import {
+  createProjectReadinessService,
+  type ReadinessCheck,
+} from '../src/server/projects/readiness.js';
 import { createScopedSecretStore } from '../src/server/security/scoped-secret-store.js';
 
 const cookie = { cookie: 'luowang_session=valid' };
@@ -46,6 +51,7 @@ describe('project administration routes', () => {
         projects,
         configuration,
         secrets,
+        readiness: readyService(database, projects, configuration, secrets),
         verifyRepository: async (url, token) => {
           verifiedTokens.push(token);
           return {
@@ -81,6 +87,13 @@ describe('project administration routes', () => {
       assert.ok(!createdA.body.includes('private-token-a'));
       const a = createdA.json().project;
       assert.equal(a.status, 'paused');
+      const missingEnvironment = await app.inject({
+        method: 'POST',
+        url: `/api/projects/${a.projectId}/resume`,
+        headers: cookie,
+      });
+      assert.equal(missingEnvironment.statusCode, 409);
+      assert.equal(projects.get(a.projectId)?.status, 'paused');
       assert.equal(secrets.project(a.projectId).get('gitToken'), 'private-token-a');
       assert.deepEqual(verifiedTokens, ['private-token-a']);
       assert.equal(
@@ -127,13 +140,35 @@ describe('project administration routes', () => {
       );
       assert.equal(configuration.get(a.projectId).baseUrl, 'https://a.example');
       assert.equal(configuration.get(b.projectId).baseUrl, '');
-      database
-        .prepare("UPDATE projects SET status = 'active' WHERE project_id = ?")
-        .run(a.projectId);
+      const resumed = await app.inject({
+        method: 'POST',
+        url: `/api/projects/${a.projectId}/resume`,
+        headers: cookie,
+      });
+      assert.equal(resumed.statusCode, 200);
+      assert.equal(projects.get(a.projectId)?.status, 'active');
       createProjectTestRequestQueue(database, a.projectId).enqueue({
         trigger: 'manual',
         request: 'test A',
       });
+      const paused = await app.inject({
+        method: 'POST',
+        url: `/api/projects/${a.projectId}/pause`,
+        headers: cookie,
+      });
+      assert.equal(paused.statusCode, 200);
+      assert.equal(projects.get(a.projectId)?.status, 'paused');
+      assert.equal(createProjectTestRequestQueue(database, a.projectId).claimNext(), null);
+      assert.equal(
+        (
+          await app.inject({
+            method: 'GET',
+            url: `/api/projects/${a.projectId}/readiness`,
+            headers: cookie,
+          })
+        ).json().ready,
+        true,
+      );
       const blockedConfig = await app.inject({
         method: 'PUT',
         url: `/api/projects/${a.projectId}/configuration`,
@@ -208,6 +243,12 @@ describe('project administration routes', () => {
         projects,
         configuration: createProjectConfigurationStore(database),
         secrets: createScopedSecretStore(database, undefined),
+        readiness: readyService(
+          database,
+          projects,
+          createProjectConfigurationStore(database),
+          createScopedSecretStore(database, undefined),
+        ),
         verifyRepository: async () => ({ githubRepositoryId: '101', owner: 'example', name: 'a' }),
       });
       const response = await app.inject({
@@ -237,5 +278,35 @@ function setupDatabase(): Database.Database {
   migrateLegacyRunOwnership(database, null);
   migrateLegacyConfigurationOwnership(database, null);
   migrateProjectQueueContext(database);
+  migrateProjectImageState(database);
   return database;
+}
+
+function readyService(
+  database: Database.Database,
+  projects: ReturnType<typeof createProjectStore>,
+  configuration: ReturnType<typeof createProjectConfigurationStore>,
+  secrets: ReturnType<typeof createScopedSecretStore>,
+) {
+  const ok = (id: ReadinessCheck['id']): ReadinessCheck => ({
+    id,
+    status: 'ok',
+    message: '已检查',
+  });
+  return createProjectReadinessService({
+    database,
+    projects,
+    configuration,
+    secrets,
+    dependencies: {
+      verifyRepository: async (project) => ({
+        githubRepositoryId: project.githubRepositoryId,
+        owner: project.repositoryOwner,
+        name: project.repositoryName,
+      }),
+      checkDeployment: async () => ok('deployment'),
+      checkEnvironment: async () => ok('environment'),
+      checkImage: async () => ok('image'),
+    },
+  });
 }

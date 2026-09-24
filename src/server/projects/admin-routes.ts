@@ -14,6 +14,7 @@ import { SecretStoreError } from '../security/secret-store.js';
 import type { ScopedSecretStore } from '../security/scoped-secret-store.js';
 import type { ProjectConfigurationStore } from './configuration.js';
 import { createGuardedScopedSecretStore } from './guarded-secrets.js';
+import type { ProjectReadinessService } from './readiness.js';
 import { ProjectStoreError, type ProjectStore } from './store.js';
 
 type ProjectSecretKey = 'gitToken' | 'testUsername' | 'testPassword' | 'testDataCleanupToken';
@@ -31,6 +32,7 @@ export interface ProjectAdminRouteOptions {
   projects: ProjectStore;
   configuration: ProjectConfigurationStore;
   secrets: ScopedSecretStore;
+  readiness: ProjectReadinessService;
   allowedOrigin?: string;
   verifyRepository?: (
     repositoryUrl: string,
@@ -96,6 +98,33 @@ export async function registerProjectAdminRoutes(
         secrets: secrets.project(project.projectId).metadata(),
       };
     });
+
+    routes.get<{ Params: { projectId: string } }>(
+      '/api/projects/:projectId/readiness',
+      async (request) =>
+        options.readiness.check(
+          requireProject(options.projects, request.params.projectId).projectId,
+        ),
+    );
+
+    routes.post<{ Params: { projectId: string } }>(
+      '/api/projects/:projectId/pause',
+      async (request) => ({
+        project: options.readiness.pause(
+          requireProject(options.projects, request.params.projectId).projectId,
+        ),
+      }),
+    );
+
+    routes.post<{ Params: { projectId: string } }>(
+      '/api/projects/:projectId/resume',
+      async (request, reply) => {
+        const result = await options.readiness.resume(
+          requireProject(options.projects, request.params.projectId).projectId,
+        );
+        return reply.status(result.readiness.ready ? 200 : 409).send(result);
+      },
+    );
 
     routes.put<{ Params: { projectId: string } }>(
       '/api/projects/:projectId/configuration',
