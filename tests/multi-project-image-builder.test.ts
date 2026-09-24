@@ -27,7 +27,13 @@ describe('project image builder', () => {
           );
           assert.equal(args[args.indexOf('--tag') + 1], `luowang-project-${PROJECT}:${COMMIT}`);
           assert.ok(args.includes(`luowang.project-id=${PROJECT}`));
-          assert.ok(args.includes(`luowang.instance-id=${PROJECT}`));
+          assert.deepEqual(
+            args.slice(
+              args.indexOf(`luowang.instance-id=${PROJECT}`) - 1,
+              args.indexOf(`luowang.instance-id=${PROJECT}`) + 1,
+            ),
+            ['--label', `luowang.instance-id=${PROJECT}`],
+          );
           assert.ok(args.includes(`luowang.target-commit=${COMMIT}`));
           assert.equal(options.cwd, source.directory);
           await writeFile(args[args.indexOf('--iidfile') + 1], `sha256:${'b'.repeat(64)}\n`);

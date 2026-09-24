@@ -63,6 +63,13 @@ describe('project command container', () => {
     const create = calls.find((args) => args[0] === 'create')!;
     assert.equal(create.includes('--mount'), false);
     assert.ok(create.includes(`luowang.instance-id=${INSTANCE}`));
+    assert.deepEqual(
+      create.slice(
+        create.indexOf(`luowang.instance-id=${INSTANCE}`) - 1,
+        create.indexOf(`luowang.instance-id=${INSTANCE}`) + 1,
+      ),
+      ['--label', `luowang.instance-id=${INSTANCE}`],
+    );
     const copy = calls.find((args) => args[0] === 'cp')!;
     assert.deepEqual(copy, ['cp', `${sourceDirectory}/.`, `${CONTAINER}:/luowang-source`]);
     const result = await session.run('node --version', commandOptions());

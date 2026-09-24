@@ -155,6 +155,7 @@ export async function startProjectCommandSession(
       name,
       '--label',
       `luowang.project-id=${input.projectId}`,
+      '--label',
       `luowang.instance-id=${input.instanceId}`,
       '--label',
       `luowang.run-id=${input.runId}`,

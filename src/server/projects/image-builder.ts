@@ -71,6 +71,7 @@ export async function buildProjectImage(
         tag,
         '--label',
         `luowang.project-id=${input.projectId}`,
+        '--label',
         `luowang.instance-id=${input.instanceId}`,
         '--label',
         `luowang.target-commit=${input.source.targetCommit}`,
