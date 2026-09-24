@@ -46,6 +46,7 @@ it('uses only new-schema administration routes, scoped Secrets, and the existing
     )
     .run();
   let drains = 0;
+  const backgroundEvents: string[] = [];
   const app = await createProjectApp({
     config,
     database,
@@ -62,6 +63,19 @@ it('uses only new-schema administration routes, scoped Secrets, and the existing
         drains += 1;
       },
       recover: async () => {},
+    },
+    backgroundTasks: true,
+    background: {
+      recover: async () => {
+        backgroundEvents.push('recover');
+      },
+      start: () => {
+        backgroundEvents.push('start');
+      },
+      tick: async () => {},
+      stop: async () => {
+        backgroundEvents.push('stop');
+      },
     },
     readinessDependencies: {
       verifyRepository: async (project) => ({
@@ -80,6 +94,7 @@ it('uses only new-schema administration routes, scoped Secrets, and the existing
     },
   });
   try {
+    assert.deepEqual(backgroundEvents, ['recover', 'start']);
     assert.equal((await app.inject({ method: 'GET', url: '/api/projects' })).statusCode, 401);
     assert.equal((await app.inject({ method: 'GET', url: '/api/config' })).statusCode, 404);
     assert.equal((await app.inject({ method: 'POST', url: '/api/runs' })).statusCode, 404);
@@ -316,5 +331,6 @@ it('uses only new-schema administration routes, scoped Secrets, and the existing
     );
   } finally {
     await app.close();
+    assert.deepEqual(backgroundEvents, ['recover', 'start', 'stop']);
   }
 });

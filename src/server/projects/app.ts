@@ -29,6 +29,10 @@ import {
 import { SecretStoreError } from '../security/secret-store.js';
 import { registerProjectAdminRoutes, type ProjectAdminRouteOptions } from './admin-routes.js';
 import { createProjectConfigurationStore } from './configuration.js';
+import {
+  createProjectBackgroundScheduler,
+  type ProjectBackgroundScheduler,
+} from './background-scheduler.js';
 import { ConfigurationError } from '../configuration.js';
 import { createDeploymentConfigurationStore } from './deployment-configuration.js';
 import { createGuardedScopedSecretStore } from './guarded-secrets.js';
@@ -48,6 +52,8 @@ export interface ProjectAppOptions {
   readinessDependencies?: ProjectReadinessDependencies;
   images?: ProjectImageAdminService;
   dispatcher?: ProjectAutomationDispatcher;
+  background?: ProjectBackgroundScheduler;
+  backgroundTasks?: boolean;
   verifyRepository?: ProjectAdminRouteOptions['verifyRepository'];
 }
 
@@ -98,6 +104,19 @@ export async function createProjectApp(options: ProjectAppOptions) {
       repoRoot: options.config.repoDir,
       reportRoot: options.config.reportDir,
       storageRoot: options.config.dataDir,
+      logger: options.logger,
+    });
+  const background =
+    options.background ??
+    createProjectBackgroundScheduler({
+      database,
+      deployment,
+      projects,
+      configuration,
+      secrets: scoped,
+      dispatcher,
+      repoRoot: options.config.repoDir,
+      reportRoot: options.config.reportDir,
       logger: options.logger,
     });
   options.config.initialAdminPassword = undefined;
@@ -259,7 +278,14 @@ export async function createProjectApp(options: ProjectAppOptions) {
   app.setNotFoundHandler((request, reply) =>
     reply.status(404).send(toErrorResponse('NOT_FOUND', 'Resource not found', request.id)),
   );
-  app.addHook('onClose', async () => options.database.close());
+  app.addHook('onClose', async () => {
+    await background.stop();
+    options.database.close();
+  });
+  if (options.backgroundTasks ?? options.config.environment !== 'test') {
+    await background.recover();
+    background.start();
+  }
   return app;
 }
 
