@@ -1,12 +1,14 @@
 # LuoWang
 
-罗网（LuoWang）是一个独立部署的 AI 场景测试 Harness。当前仓库已实现 Phase 0–9 的主要模块：安全配置控制台、唯一 GitHub 目标仓库索引、Main → Runner → Reviewer → Main 的 Run、受控 Playwright MCP UI 执行、S3-compatible OSS 证据 Gateway、幂等归档、持久 FIFO 自动化队列、长期场景生命周期、三种场景维护模式、陌生项目初始化和运维控制台。仓库版本为 v0.6.0；v0.1.0 至 v0.5.0 的标签均保持既有不可变指向。
+罗网（LuoWang）是一个独立部署的 AI 场景测试 Harness。已发布版本为 v0.6.0；当前 `feat/multi-project` 分支正在实现 v0.6.1：同一管理员可管理多个 GitHub 项目，项目数据、凭据、任务、证据和执行镜像分别归属。此分支尚未发布，真实双项目联合验收也未完成。
 
 v0.6.0 加入随版本维护的代码深读方法：Main 追踪业务规则与相关调用，并在计划中引用固定版本的读取回执；Reviewer 可以核对引用来源和阅读范围。回执只说明材料返回过，模型是否理解正确仍需单独评测。[实施与验收记录](docs/changes/luowang-code-understanding/plan.md)保留完整过程；多项目支持正在 v0.6.1 开发分支实施，尚未发布。
 
+v0.6.1 虽使用补丁版本号，仍包含数据库与 HTTP 接口变化；部署前必须完成离线升级，旧的无项目 ID 业务 API 不继续兼容。这个编号不表示向后兼容。
+
 ## 本地启动
 
-优先使用下文的 Docker Compose 或固定 quality/runtime 镜像复现。原生运行需要 Node.js 24 和 npm；当 `better-sqlite3` 没有匹配的预编译包时，还需要 `python3`、`make` 和 `g++`。当前开发分支的正式启动入口只接受已完成离线升级的数据库，不会在启动时自动迁移旧实例或创建空库。以下生产命令适用于已升级的本地实例；真实旧实例应在 v0.6.1 联合验收和发布后按[多项目升级计划](docs/changes/luowang-multi-project/plan.md)执行备份、归属核对与离线升级。
+优先使用下文的 Docker Compose 或固定 quality/runtime 镜像复现。原生运行需要 Node.js 24 和 npm；当 `better-sqlite3` 没有匹配的预编译包时，还需要 `python3`、`make` 和 `g++`。当前开发分支的启动入口只接受已完成离线升级的数据库，不会自动迁移旧实例或创建空库。以下命令仅用于开发或已升级的隔离实例；真实旧实例应在 v0.6.1 联合验收和发布后按[多项目升级计划](docs/changes/luowang-multi-project/plan.md)执行备份、归属核对与离线升级。
 
 ```bash
 npm ci
@@ -14,7 +16,7 @@ npm run build
 npm start
 ```
 
-默认只监听 `127.0.0.1:3000`。打开 <http://127.0.0.1:3000/> 可查看控制台壳，健康检查地址为 <http://127.0.0.1:3000/health>。数据默认保存在 `/data`；本地开发可以设置 `LUOWANG_DATA_DIR` 到可写目录。执行 `npm run dev` 可以同时启动 Vite 和开发服务器。
+默认只监听 `127.0.0.1:3000`。打开 <http://127.0.0.1:3000/> 可查看控制台，健康检查地址为 <http://127.0.0.1:3000/health>。数据默认保存在 `/data`；本地开发可以设置 `LUOWANG_DATA_DIR` 到可写目录。执行 `npm run dev` 可以同时启动 Vite 和开发服务器。
 
 也可以使用 Docker Compose：
 
@@ -116,13 +118,15 @@ npm run test:acceptance:release
 
 可选的 GitHub smoke 仍只用于单独诊断仓库读取路径，不属于 live 或 release 证明。它不会默认执行；如需运行，必须显式提供 `LUOWANG_ACCEPTANCE_LIVE=1`、`LUOWANG_SMOKE_REPOSITORY=https://github.com/cynos-ai/cynos-website` 和临时 `LUOWANG_SMOKE_GITHUB_TOKEN`。
 
-打开 <http://127.0.0.1:3000/> 后使用管理员密码登录。配置页按配置文件、模型服务、Agent、Playwright MCP、S3-compatible OSS、GitHub 仓库、测试环境和自动触发分区；每个外部依赖都能在所属区域保存并检查。模型服务支持覆盖已知 Provider 的 Base URL，模型选择器只列出当前 Provider 的模型并标注视觉/推理能力；Reviewer 明确要求视觉模型以审核截图。Provider Key、Git Token、测试账号和 OSS Access Key 等 Secret 只能覆盖或显式删除，页面仅显示固定掩码。普通配置可以导出为版本化 YAML 并原子导入，Secret 始终排除且不会被导入覆盖。GitHub 区域通过一个按钮执行仓库读取、分支写入前提、PR 和 Issue 四项无副作用检查；底部总览也可一次测试全部已保存配置，并逐项显示问题原因。启用 MCP 后，Runner 使用 headless、isolated 浏览器上下文和 accessibility snapshot/ref，并可受控读取/恢复 Cookie 以验证退出后原 Session 是否被拒绝（仅 Cookie 读取/恢复，不含任意脚本执行、状态文件导出/导入或 local/session storage 变更）；截图等证据上传到 OSS，私有 bucket 使用登录后的 `/api/evidence/<id>` 稳定地址。自动测试默认关闭；启用新 commit 自动测试后，默认每 5 分钟检查一次是否存在可测试提交，只有发现变化才进入队列，不会每 5 分钟无条件执行测试。Cron 留空时同样不启用。归档每 10 秒扫描，索引和保留清理每 5 分钟执行；队列、调度游标和恢复状态保存在 SQLite。
+当前多项目控制台将账号、部署设置和项目设置分开。登录后先创建项目；服务端验证 GitHub 仓库稳定身份并以 paused 状态保存。为项目设置非生产环境、Git Token、测试账号、清理配置及执行镜像构建说明，查看就绪结果并准备镜像，最后由管理员主动恢复项目。保存配置不等于依赖检查通过，也不会自动启用测试。项目镜像按固定提交构建或复用，Run 记录不可变镜像 ID；目标提交变化后需要重新准备适用镜像。内置基础镜像只承诺 Node 环境，其他语言和依赖由该项目固定提交中的 Dockerfile 提供。就绪页区分构建中、就绪、过期和失败，并显示固定提交、镜像 ID 及失败原因；Docker Engine 不可用属于部署故障，单项目构建失败只阻塞该项目。镜像用于隔离不同项目的工具链，不会自动部署被测应用，也不是恶意代码安全沙箱。
 
-Agent 仍只有 Main、Runner、Reviewer 三组，出厂 thinking 为 low/off/low。运行时由产品按阶段覆盖有效思考策略为 **策划低—Runner关—Reviewer低—最终汇总关**（low/off/low/off），不是评测驱动覆盖；模型选择沿用三组配置。已有实例保存的 thinking 不迁移、不覆盖，但实际 Session 使用上述阶段策略，详见 [生产配置就绪 Spec](docs/changes/luowang-production-config-readiness/spec.md)。官网 HTTP 清理只处理显式登记 `cleanupScope: website-accounts` 的本 Run 沙箱账号及关联会话；未绑定或不支持的数据保留人工处理告警，不能把账号查询为空当作容器/文件已清理。
+Agent 仍只有 Main、Runner、Reviewer 三组，正常 Run 的阶段策略为策划 low、Runner off、Reviewer low、最终汇总 off。项目配置与凭据在任务归属内使用；测试账号和清理 Token 不交给受控命令容器。模型、浏览器和 OSS 属于部署设置。
 
-配置 GitHub 仓库后，先在“仓库事实与场景”区域准备 `scenario-testing` 分支，再点击“同步索引”。Git Token 只由 Repository Service 使用，不会写入 Git URL、命令参数、子进程环境、日志或测试 Agent。
+多项目 HTTP 入口均要求管理员会话。账号使用 `/api/account`，部署配置及 Provider/OSS Secret 使用 `/api/deployment` 和 `/api/deployment/secrets/:key`；项目列表与创建使用 `/api/projects`，详情、就绪、暂停、恢复、配置、项目 Secret 和镜像准备位于 `/api/projects/:projectId/...`。场景、报告、索引、队列、Run 和证据读取也必须带明确 `projectId`；旧版无项目 ID 的业务路由不再注册。项目 Secret 只接受 Git Token、测试账号和清理 Token；API 只返回配置状态和掩码，不返回明文。页面切换不会改变已有请求的归属或固定目标。一个部署同一时间最多执行一个 Run，但不同项目各有队列、进度与归档状态。
 
-真实 GitHub smoke 需要操作者临时通过环境变量提供独立测试仓库和最小权限 Token；命令不会把 Token 写入文件或提交：
+旧 v0.6.0 实例须停服务后离线升级：先运行 `npm run db:multi-project -- inspect` 记录预检和 fingerprint，再用 `backup <新目录>` 保存一致的数据库、repo 与 report 副本；逐条核对历史仓库归属后，有项目历史的实例使用 `upgrade-project <备份目录> <已审 fingerprint>`，空实例使用 `upgrade-empty <备份目录>`，最后运行 `verify`。升级命令不会创建缺失数据库，也不会代替人工历史归属核对。恢复旧版本时须同时恢复数据库、repo、report 和对应主密钥材料，不能只回退数据库；不要在尚未完成真实联合验收的持久实例上提前执行切换。具体风险和证明见[多项目计划](docs/changes/luowang-multi-project/plan.md)。
+
+可选的真实 GitHub smoke 需要操作者临时提供独立测试仓库和最小权限 Token；它只诊断仓库读取路径，不属于 v0.6.1 双项目 live 证明：
 
 ```bash
 LUOWANG_SMOKE_REPOSITORY=https://github.com/cynos-ai/cynos-website \

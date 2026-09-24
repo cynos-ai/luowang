@@ -3,7 +3,7 @@
 - 状态：MVP Baseline v0.6；角色交接与收尾按 `changes/luowang-single-handoff/spec.md` 更新
 - 日期：2026-08-29
 - 适用范围：Cynos 系列项目，以及接入 Cynos 测试 Harness 的项目
-- 当前 Harness MVP：一个罗网部署只连接一个目标仓库，并只跟踪一个场景测试分支（默认 `scenario-testing`），不支持多仓库或多租户
+- 已发布 Harness MVP：一个罗网部署只连接一个目标仓库，并只跟踪一个场景测试分支（默认 `scenario-testing`）。v0.6.1 开发分支的同一管理员多项目规则由 `changes/luowang-multi-project/spec.md` 覆盖；本文件的工件目录仍按每个目标仓库独立使用。
 - 目标读者：项目负责人、需求/开发 Agent、测试 Harness、维护这些约定的人
 
 ## 1. 目的
@@ -303,7 +303,7 @@ Git 提供版本关联、人工审核和历史追踪。罗网 MVP 不跟踪其�
 
 ## 9. 环境与 Secrets
 
-环境信息不属于项目默认文件架构。MVP 的每个罗网部署只连接一个目标仓库，并由网站为该仓库配置一个测试环境：
+环境信息不属于项目默认文件架构。已发布 MVP 的每个罗网部署只连接一个目标仓库，并由网站为该仓库配置一个测试环境；v0.6.1 开发分支改为每项目分别配置一个非生产环境，部署级 Provider/OSS 与项目级 Git/测试账号/清理 Secret 的归属以多项目 Spec 为准：
 
 - 环境说明；
 - 服务地址；

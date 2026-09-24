@@ -6,10 +6,10 @@
 - 理解项目时读取 `docs/PROJECT.md`（存在时）；处理需求时读取对应的 `docs/changes/<change-id>/intent.md`、`spec.md` 和 `plan.md`（存在时）。
 - 已发布 MVP 基线工件位于 `docs/changes/luowang-harness-mvp/`。
 - 当前角色交接与收尾调整位于 `docs/changes/luowang-single-handoff/`：取消 Runner 草稿，最终 Main 只读计划/审核；最终 Main 后由 Harness 清理，收尾失败不改测试结论。涉及这些主题时，以该目录 Spec 覆盖下述旧基线，不做旧草稿格式兼容。
-- 当前增量变更是 `docs/changes/luowang-v07-production-closure/`，用于补齐 v0.7 Built-in Role Instructions（内置角色指令）、固定分支请求、数据清理、实时进度、历史 Run 和真实联合验收；罗网不使用 Pi Skills，并保持 Main/Runner/Reviewer 三组 Agent 配置、正常 Run 四个隔离 Session。处理这些主题时先读该目录，冲突处以其 Spec 为准。
+- v0.7 Production Closure 的规则位于 `docs/changes/luowang-v07-production-closure/`，用于 Built-in Role Instructions（内置角色指令）、固定分支请求、数据清理、实时进度、历史 Run 和真实联合验收；罗网不使用 Pi Skills，并保持 Main/Runner/Reviewer 三组 Agent 配置、正常 Run 四个隔离 Session。处理这些主题时先读该目录，冲突处以其 Spec 为准。
 - 技术栈、产品边界和验收要求以对应需求 `spec.md` 为准，不在本文件重复维护。
 
-- 版本分两步实施：`docs/changes/luowang-code-understanding/` 对应 v0.6.0 的内置代码深读方法，`docs/changes/luowang-multi-project/` 对应 v0.6.1 的同一操作者多项目管理。v0.6.0 功能已合入 `develop`，正式发布状态以 `main` 和标签为准；v0.6.1 在其发布后启动。实现这些主题时读取对应 intent/spec/plan；新增内置方法仍沿用受控角色资源加载，不开启 Pi Skill 自动发现。
+- `docs/changes/luowang-code-understanding/` 对应已发布 v0.6.0 的内置代码深读方法；当前 `feat/multi-project` 开发分支实施 `docs/changes/luowang-multi-project/` 的 v0.6.1 同一操作者多项目管理。实现这些主题时读取对应 intent/spec/plan；新增内置方法仍沿用受控角色资源加载，不开启 Pi Skill 自动发现。v0.6.1 尚未完成真实双项目联合验收或发布。
 
 - 语义判断与客观事实的最新规则以 `docs/changes/luowang-model-semantic-decisions/spec.md` 为准：Main 显式声明浏览器执行需要，不用正则判断计划含义；安全和格式校验保留。
 - MCP启动、工件可重写和审核证据读取的最新规则以 `docs/changes/luowang-retest-followup/spec.md` 为准：Reviewer可受控读取本Run的浏览器快照/日志，不开放任意文本；工具路由错误不冒充证据损坏，真实读取或完整性失败仍阻塞。
@@ -17,7 +17,7 @@
 
 ## 仓库与分支
 
-- v0.6.0 代码深读的实现与验收遵循 `docs/changes/luowang-code-understanding/`。它扩展 Main 的内置角色资源、固定版本读取回执与计划引用；不启用 Pi Skills，不新增角色 Session。v0.6.1 多项目独立延期，不能与本版混合实现。
+- v0.6.0 代码深读的实现与验收遵循 `docs/changes/luowang-code-understanding/`。它扩展 Main 的内置角色资源、固定版本读取回执与计划引用；不启用 Pi Skills，不新增角色 Session。当前多项目开发以 `docs/changes/luowang-multi-project/` 的 Spec 覆盖单仓库基线，不能将合成测试视为真实联合验收。
 
 - 正式仓库是公开的 `cynos-ai/luowang`；许可证为 GNU Affero General Public License v3.0（`AGPL-3.0`）。它允许商业使用，但分发衍生作品或通过网络提供修改版时必须按 AGPL 提供对应源码。
 - `main` 只保存正式发布历史；`develop` 是日常开发集成分支。两者都禁止直接提交和 force-push，通过 Pull Request 合并。
