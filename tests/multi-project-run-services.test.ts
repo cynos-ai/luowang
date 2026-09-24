@@ -15,6 +15,7 @@ import { migrateLegacyRunOwnership } from '../src/server/db/migrations/0011-proj
 import { migrateLegacyConfigurationOwnership } from '../src/server/db/migrations/0012-project-configuration-ownership.js';
 import { migrateProjectQueueContext } from '../src/server/db/migrations/0014-project-queue-context.js';
 import { migrateProjectImageState } from '../src/server/db/migrations/0015-project-image-state.js';
+import { migrateProjectRunImage } from '../src/server/db/migrations/0016-project-run-image.js';
 import { createProjectConfigurationStore } from '../src/server/projects/configuration.js';
 import { createProjectRunServices } from '../src/server/projects/run-services.js';
 import { createProjectStore } from '../src/server/projects/store.js';
@@ -35,6 +36,7 @@ it('assembles two project Runs with fixed repository, cleanup, evidence and hist
     migrateLegacyConfigurationOwnership(database, null);
     migrateProjectQueueContext(database);
     migrateProjectImageState(database);
+    migrateProjectRunImage(database);
     const projects = createProjectStore(database);
     const a = projects.createVerified({
       displayName: 'A',
@@ -100,6 +102,7 @@ it('assembles two project Runs with fixed repository, cleanup, evidence and hist
     assert.equal((await servicesA.runs.get(RUN_ID))?.status, 'interrupted');
     assert.equal(await servicesB.runs.get(RUN_ID), null);
     assert.equal(servicesB.recoveryStore.get(RUN_ID), null);
+    assert.deepEqual(await servicesB.archiver.scan(), []);
     assert.equal(servicesA.recoveryStore.get(RUN_ID)?.runId, RUN_ID);
     assert.equal(config.get(a.projectId).testDataCleanupUrl, 'https://a.example/cleanup');
     assert.deepEqual(database.prepare('PRAGMA foreign_key_check').all(), []);

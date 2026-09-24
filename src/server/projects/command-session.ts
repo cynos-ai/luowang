@@ -18,6 +18,7 @@ export function createProjectRunCommandSessionFactory(
     dockerfilePath: string;
     storageRoot: string;
     imageState: ProjectImageStateStore;
+    recordImage?: (input: { runId: string; targetCommit: string; imageId: string }) => void;
   },
   dependencies: ProjectCommandSessionDependencies = {
     ensureImage: ensureProjectImage,
@@ -42,7 +43,7 @@ export function createProjectRunCommandSessionFactory(
       scenarioPatch: input.scenarioPatch,
       storageRoot: options.storageRoot,
     });
-    let session: ProjectCommandSession;
+    let session: ProjectCommandSession | undefined;
     try {
       session = await dependencies.startSession({
         projectId: options.projectId,
@@ -53,10 +54,17 @@ export function createProjectRunCommandSessionFactory(
         sourceRoot: options.storageRoot,
         runSource: source,
       });
+      options.recordImage?.({
+        runId: input.runId,
+        targetCommit: input.targetCommit,
+        imageId: image.imageId,
+      });
     } catch (error) {
+      await session?.close().catch(() => undefined);
       await source.cleanup();
       throw error;
     }
+    if (!session) throw new Error('项目命令 Session 未启动');
     return {
       run: (command, runOptions) => session.run(command, runOptions),
       async close() {

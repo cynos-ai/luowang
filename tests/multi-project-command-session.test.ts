@@ -60,6 +60,10 @@ it('prepares one pinned image and patch source, then closes container before del
       dockerfilePath: 'Dockerfile.test',
       storageRoot: '/tmp',
       imageState: {} as ProjectImageStateStore,
+      recordImage(input) {
+        assert.deepEqual(input, { runId: RUN, targetCommit: COMMIT, imageId: IMAGE });
+        calls.push('record');
+      },
     },
     dependencies,
   );
@@ -84,6 +88,7 @@ it('prepares one pinned image and patch source, then closes container before del
     'image',
     'source',
     'container',
+    'record',
     'command',
     'container-close',
     'source-cleanup',
@@ -156,4 +161,54 @@ it('deletes the Run source when container startup fails', async () => {
     /container failed/,
   );
   assert.equal(cleaned, true);
+});
+
+it('closes the container and source when image recording fails', async () => {
+  const repository = new GitRepository({ directory: '/tmp/project', remoteUrl: '/tmp/project' });
+  const calls: string[] = [];
+  const factory = createProjectRunCommandSessionFactory(
+    {
+      projectId: PROJECT,
+      dockerfilePath: '',
+      storageRoot: '/tmp',
+      imageState: {} as ProjectImageStateStore,
+      recordImage() {
+        throw new Error('record failed');
+      },
+    },
+    {
+      async ensureImage() {
+        return { imageId: IMAGE, buildDefinition: '', reused: true };
+      },
+      async prepareSource() {
+        return {
+          directory: '/tmp/source',
+          projectId: PROJECT,
+          runId: RUN,
+          targetCommit: COMMIT,
+          scenarioPatchSha256: null,
+          cleanup: async () => {
+            calls.push('source');
+          },
+        };
+      },
+      async startSession() {
+        calls.push('started');
+        return {
+          containerId: 'd'.repeat(64),
+          async run() {
+            throw new Error('unexpected');
+          },
+          async close() {
+            calls.push('closed');
+          },
+        };
+      },
+    },
+  );
+  await assert.rejects(
+    () => factory({ repository, runId: RUN, targetCommit: COMMIT }),
+    /record failed/,
+  );
+  assert.deepEqual(calls, ['started', 'closed', 'source']);
 });

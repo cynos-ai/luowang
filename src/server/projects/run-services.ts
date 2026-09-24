@@ -4,6 +4,7 @@ import { createProjectRunRecoveryStore } from '../automation/recovery.js';
 import { createProjectRepositoryIndexer } from '../repository/indexer.js';
 import { createProjectTaskRepositoryService } from '../repository/service.js';
 import { createRunOrchestrator } from '../runs/orchestrator.js';
+import { createRunArchiver } from '../runs/archiver.js';
 import { createProjectRunStore } from '../runs/store.js';
 import { createHttpTestDataCleanupAdapter } from '../runs/http-test-data-cleanup.js';
 import { createTestDataManager } from '../runs/test-data.js';
@@ -13,6 +14,7 @@ import { createProjectOssAdapter } from '../storage/oss.js';
 import type { ScopedSecretStore } from '../security/scoped-secret-store.js';
 import { createProjectRunCommandSessionFactory } from './command-session.js';
 import { createProjectImageStateStore } from './image-state.js';
+import { createProjectRunImageStore } from './run-image.js';
 import type { ProjectTaskRuntime } from './task-runtime.js';
 
 /** Assemble every Run dependency from one claimed task; never consult a selected project. */
@@ -39,6 +41,14 @@ export function createProjectRunServices(options: {
   const recoveryStore = createProjectRunRecoveryStore(database, projectId);
   const workspaceStore = createProjectRunWorkspaceStore(database, reportRoot, projectId);
   const oss = createProjectOssAdapter(database, projectId, task.configuration, secrets);
+  const archiver = createRunArchiver({
+    database,
+    reportDir: workspaceStore.root,
+    repository,
+    indexer,
+    runStore,
+  });
+  const runImages = createProjectRunImageStore(database, projectId);
   const testData = createTestDataManager({
     cleanupAdapter: task.testDataCleanupUrl
       ? createHttpTestDataCleanupAdapter(task.testDataCleanupUrl, secretStore)
@@ -59,7 +69,25 @@ export function createProjectRunServices(options: {
       dockerfilePath: task.executionDockerfile,
       storageRoot,
       imageState: createProjectImageStateStore(database),
+      recordImage: ({ runId, targetCommit, imageId }) =>
+        runImages.record({
+          runId,
+          targetCommit,
+          dockerfilePath: task.executionDockerfile,
+          imageId,
+        }),
     }),
   });
-  return { runs, repository, indexer, runStore, recoveryStore, workspaceStore, oss, testData };
+  return {
+    runs,
+    repository,
+    indexer,
+    runStore,
+    recoveryStore,
+    workspaceStore,
+    oss,
+    testData,
+    archiver,
+    runImages,
+  };
 }
