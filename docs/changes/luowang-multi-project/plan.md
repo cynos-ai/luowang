@@ -194,7 +194,7 @@ Docker 部署节点将 runtime 镜像加入 Docker CLI，Compose 只把 Engine s
 
 ## 阶段 6：质量检查、文档与发布
 
-- [ ] 干净 quality 容器执行完整本地质量与验收，runtime 验证生产原生 MCP 和资源包，禁止依赖宿主机 Node/浏览器差异判定发布质量。
+- [x] 干净 quality 容器执行完整本地质量与验收，runtime 验证生产原生 MCP 和资源包，禁止依赖宿主机 Node/浏览器差异判定发布质量。
 - [ ] 在正式部署形态验证受控执行服务到 Docker Engine 的权限、容量、镜像清理和失联恢复；确认项目容器不能获得 Docker API 或罗网主密钥。
 - [x] 更新单仓库限制、配置/API 文档、PROJECT.md 与工作入口，说明 v0.6.1 虽采用负责人指定版本号，但包含接口和数据变化及离线升级要求。
 - [x] 文档明确项目镜像解决语言/依赖环境差异，不等于恶意代码安全沙箱；说明项目构建说明、镜像重建/缓存、资源占用和诊断，不把被测应用部署纳入罗网。
@@ -206,7 +206,7 @@ Docker 部署节点将 runtime 镜像加入 Docker CLI，Compose 只把 Engine s
 
 本机 Docker Desktop 28.3.3 的真实 smoke 已验证两项项目镜像构建和固定提交 Run 命令；新增检查直接读取实际容器配置，确认无挂载、无 Docker socket/罗网数据库、非 privileged，且服务进程中的合成主密钥没有进入项目容器。模拟 Engine 地址失联后，受控入口拒绝创建新 Run 容器，不回退到宿主机命令；恢复连接后按 Run 标签查询无遗留容器。`docker system df` 的只读快照显示本机镜像总量 166.6 GB、构建缓存 19.22 GB，说明正式部署须预留容量并按归属清理，未对共享 Engine 执行全局 prune。这是本机开发环境的真实 Docker 证明；尚未验证服务器 Compose 的 socket 权限、容量策略及实际进程重启清理，因此正式部署形态验收项仍未勾选。
 
-同一工作树构建的干净 Linux quality 镜像通过类型、lint、格式检查、419 项测试（Docker 专项 2 项默认跳过）、三个 UI E2E 和 `test:acceptance:local`；聚合结果为 `local=passed`、`live=blocked`、`release=blocked`，外部双项目输入仍未配齐。真实 Docker 专项另在本机 Engine 显式开启并通过。当前工作树的 runtime 构建已完成应用编译及 Docker CLI 包安装，随后在下载 Chromium 系统库时因镜像源速度过低主动中止；没有 runtime 成品或原生 MCP 预检结论。阶段 6 的完整质量与生产部署两项都保留未完成。
+同一工作树构建的干净 Linux quality 镜像通过类型、lint、格式检查、419 项测试（Docker 专项 2 项默认跳过）、三个 UI E2E 和 `test:acceptance:local`；聚合结果为 `local=passed`、`live=blocked`、`release=blocked`，外部双项目输入仍未配齐。真实 Docker 专项另在本机 Engine 显式开启并通过。2026-09-24 使用构建参数 `DEBIAN_MIRROR=http://mirrors.ustc.edu.cn/debian`、`DEBIAN_SECURITY_MIRROR=http://mirrors.ustc.edu.cn/debian-security` 成功构建生产 runtime 镜像 `sha256:2ef6d228df5f2027ef20386faf38ad1e1d7da908579088fb911af3b7ebedc61c`；Debian 包仍由 apt 校验签名。最终镜像以 `node` 用户运行，包含 Docker CLI、编译后的服务和内置角色资源；角色加载器成功读取 Main 规划、Runner、Reviewer、Main 收尾及初始化所需资源并生成哈希。按 `scripts/run-browser-sandbox.sh` 的只读、非 root、tmpfs 等约束运行零模型原生 MCP 预检，结果 `status=passed`、`modelRequests=0`，覆盖工具边界、本地导航、快照、截图及 Session 释放。这完成了本地质量与 runtime 预检项；服务器 Compose 权限和真实双项目 live 验收仍未完成。
 
 ## 提交与范围控制
 
