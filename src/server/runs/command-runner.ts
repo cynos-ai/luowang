@@ -82,6 +82,10 @@ export interface ControlledCommandRunner {
   ): Promise<CommandRunResult>;
 }
 
+export interface ControlledCommandSession extends ControlledCommandRunner {
+  close(): Promise<void>;
+}
+
 export class ControlledCommandError extends Error {
   readonly code: 'COMMAND_INVALID' | 'COMMAND_NOT_ALLOWED' | 'COMMAND_FAILED';
 

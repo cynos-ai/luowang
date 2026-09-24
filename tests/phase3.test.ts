@@ -14,7 +14,11 @@ import type { AgentToolResult } from '@earendil-works/pi-coding-agent';
 import { createConfigurationStore } from '../src/server/configuration.js';
 import { DEFAULT_VERSION, loadConfig } from '../src/server/config.js';
 import { initializeDatabase } from '../src/server/db/migrate.js';
-import { createRunOrchestrator, type RunOrchestrator } from '../src/server/runs/orchestrator.js';
+import {
+  createRunOrchestrator,
+  type RunCommandSessionFactory,
+  type RunOrchestrator,
+} from '../src/server/runs/orchestrator.js';
 import { createControlledCommandRunner } from '../src/server/runs/command-runner.js';
 import type { ProviderAdapter } from '../src/server/runs/provider.js';
 import {
@@ -38,6 +42,77 @@ afterEach(async () => {
 });
 
 describe('Phase 3 agent run', () => {
+  it('uses and closes a Run command Session without executing the local command fallback', async () => {
+    const fixture = await createGitFixture();
+    let started = 0;
+    let executed = 0;
+    let closed = 0;
+    const context = await createRunContext(
+      fixture,
+      ['passed'],
+      undefined,
+      undefined,
+      '',
+      '\n',
+      false,
+      false,
+      {
+        commandSessionFactory: async ({ targetCommit }) => {
+          assert.match(targetCommit, /^[0-9a-f]{40}$/);
+          started += 1;
+          return {
+            async run() {
+              executed += 1;
+              return {
+                stdout: 'PROJECT_CONTAINER_ONLY',
+                stderr: '',
+                exitCode: 0,
+                environmentKeys: ['LUOWANG_RUN_ID', 'LUOWANG_TARGET_COMMIT'],
+              };
+            },
+            async close() {
+              closed += 1;
+            },
+          };
+        },
+      },
+    );
+    const result = await context.orchestrator.run({
+      request: '验证项目容器命令',
+      trigger: 'manual',
+    });
+    assert.equal(result.status, 'completed');
+    assert.equal(started, 1);
+    assert.equal(executed, 1);
+    assert.equal(closed, 1);
+    assert.match(result.artifacts['execution.md'], /PROJECT_CONTAINER_ONLY/);
+  });
+
+  it('does not fall back to a local Runner command when project Session preparation fails', async () => {
+    const fixture = await createGitFixture();
+    const context = await createRunContext(
+      fixture,
+      ['passed'],
+      undefined,
+      undefined,
+      '',
+      '\n',
+      false,
+      false,
+      {
+        commandSessionFactory: async () => {
+          throw new Error('project image unavailable');
+        },
+      },
+    );
+    const result = await context.orchestrator.run({
+      request: '验证项目容器失败',
+      trigger: 'manual',
+    });
+    assert.equal(result.status, 'failed');
+    assert.equal(result.artifacts['execution.md'], undefined);
+  });
+
   it.each([false, true])(
     'does not start a Session if the built-in method is missing (initialization=%s)',
     async (initialization) => {
@@ -1148,6 +1223,7 @@ async function createRunContext(
     testData?: import('../src/server/runs/test-data.js').TestDataManager;
     secretStore?: SecretStore;
     roleInstructions?: RoleInstructionLoader;
+    commandSessionFactory?: RunCommandSessionFactory;
   } = {},
 ): Promise<TestContext> {
   const dataDir = await mkdtemp(join(tmpdir(), 'luowang-phase3-data-'));
@@ -1201,6 +1277,7 @@ async function createRunContext(
     testData: options.testData,
     secretStore: options.secretStore,
     roleInstructions: options.roleInstructions,
+    commandSessionFactory: options.commandSessionFactory,
     reportDir,
     sessions,
     provider: {} as ProviderAdapter,

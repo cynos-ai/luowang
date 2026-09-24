@@ -47,6 +47,7 @@ import {
   commandFailureMessage,
   createControlledCommandRunner,
   type ControlledCommandRunner,
+  type ControlledCommandSession,
 } from './command-runner.js';
 import {
   createReviewerEvidenceTools,
@@ -115,6 +116,7 @@ export interface RunOrchestratorOptions {
   provider?: ProviderAdapter;
   sessions?: AgentSessionFactory;
   commandRunner?: ControlledCommandRunner;
+  commandSessionFactory?: RunCommandSessionFactory;
   browser?: BrowserMcpAdapter;
   oss?: OssAdapter;
   testData?: TestDataManager;
@@ -125,6 +127,13 @@ export interface RunOrchestratorOptions {
   logger?: Logger;
   roleInstructions?: RoleInstructionLoader;
 }
+
+export type RunCommandSessionFactory = (input: {
+  repository: GitRepository;
+  runId: string;
+  targetCommit: string;
+  scenarioPatch?: string;
+}) => Promise<ControlledCommandSession>;
 
 export interface RunOrchestrator {
   start(input: RunInput): Promise<RunSummary>;
@@ -964,6 +973,7 @@ class DefaultRunOrchestrator implements RunOrchestrator {
             allowedScenarios: await this.progressScenarios(workspace, repository, context, true),
             now: this.now,
           });
+    let commandRunner = this.commandRunner;
     const operationContext = () =>
       progress?.operationContext() ?? { scope: 'initialization-reconnaissance', scenarioId: null };
     const progressTools = (progress?.tools ?? []).map((tool): ToolDefinition => ({
@@ -1036,7 +1046,7 @@ class DefaultRunOrchestrator implements RunOrchestrator {
         };
         let result;
         try {
-          result = await this.commandRunner.run(command, {
+          result = await commandRunner.run(command, {
             cwd: context.repositoryDirectory,
             runId: context.runId,
             targetCommit: context.targetCommit,
@@ -1084,35 +1094,57 @@ class DefaultRunOrchestrator implements RunOrchestrator {
         ? this.options.browser.extension(workspace.evidenceDirectory)
         : undefined;
     if (browserExtension) evidenceStore?.allowBrowserRecords?.();
-    await this.invoke(
-      'runner-execution',
-      'runner',
-      this.options.configuration.getHarness().agents.runner,
-      context.repositoryDirectory,
-      tools,
-      runnerUserMessage(context, purpose),
-      runnerOutputContract(),
-      false,
-      browserExtension && evidenceStore
-        ? [
-            browserExtension,
-            createBrowserObservationExtension({
-              store: evidenceStore,
-              targetCommit: context.targetCommit,
-              now: this.now,
-              operationContext: () => progress?.recordOperation('browser') ?? operationContext(),
-              onEvidenceFailure: () => this.addBlockingReason(context, 'MCP 操作证据捕获失败'),
-            }),
-          ]
-        : browserExtension
-          ? [browserExtension]
-          : [],
-    );
-    const progressError = progress?.completionError();
-    if (progressError) {
-      throw new RunOrchestratorError('RUN_ARTIFACT_INVALID', progressError);
+    const commandSession = this.options.commandSessionFactory
+      ? await this.options.commandSessionFactory({
+          repository,
+          runId: context.runId,
+          targetCommit: context.targetCommit,
+          scenarioPatch:
+            purpose === 'initialization-reconnaissance'
+              ? undefined
+              : await readOptionalScenarioPatch(workspace),
+        })
+      : undefined;
+    commandRunner = commandSession ?? this.commandRunner;
+    try {
+      await this.invoke(
+        'runner-execution',
+        'runner',
+        this.options.configuration.getHarness().agents.runner,
+        context.repositoryDirectory,
+        tools,
+        runnerUserMessage(context, purpose),
+        runnerOutputContract(),
+        false,
+        browserExtension && evidenceStore
+          ? [
+              browserExtension,
+              createBrowserObservationExtension({
+                store: evidenceStore,
+                targetCommit: context.targetCommit,
+                now: this.now,
+                operationContext: () => progress?.recordOperation('browser') ?? operationContext(),
+                onEvidenceFailure: () => this.addBlockingReason(context, 'MCP 操作证据捕获失败'),
+              }),
+            ]
+          : browserExtension
+            ? [browserExtension]
+            : [],
+      );
+      const progressError = progress?.completionError();
+      if (progressError) {
+        throw new RunOrchestratorError('RUN_ARTIFACT_INVALID', progressError);
+      }
+      await assertArtifact(workspace, 'execution.md');
+    } finally {
+      if (commandSession) {
+        try {
+          await commandSession.close();
+        } catch {
+          this.addBlockingReason(context, '项目执行容器清理失败');
+        }
+      }
     }
-    await assertArtifact(workspace, 'execution.md');
   }
 
   private async progressScenarios(
