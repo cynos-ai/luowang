@@ -99,7 +99,60 @@ describe('project automation dispatcher', () => {
       const b = dispatcher.enqueue(fixture.b.projectId, { trigger: 'manual', request: 'B' });
       await dispatcher.drain();
       assert.equal(fixture.queue(fixture.a.projectId).get(a.queueId)?.archiveStatus, 'failed');
-      assert.equal(fixture.queue(fixture.b.projectId).get(b.queueId)?.archiveStatus, 'completed');
+      assert.equal(
+        fixture.queue(fixture.b.projectId).get(b.queueId)?.archiveStatus,
+        'completed',
+        fixture.queue(fixture.b.projectId).get(b.queueId)?.errorMessage ?? undefined,
+      );
+    } finally {
+      fixture.database.close();
+    }
+  });
+
+  it('retries completed archives from fixed project snapshots even when one project is paused', async () => {
+    const fixture = setup();
+    try {
+      const attempts = new Map<string, number>();
+      const dispatcher = fixture.dispatcher((projectId) =>
+        fakeServices(projectId, {
+          async archive() {
+            const attempt = (attempts.get(projectId) ?? 0) + 1;
+            attempts.set(projectId, attempt);
+            if (attempt === 1 || projectId === fixture.a.projectId) {
+              throw new Error(`${projectId} archive unavailable`);
+            }
+            return archiveResult();
+          },
+        }),
+      );
+      const a = dispatcher.enqueue(fixture.a.projectId, { trigger: 'manual', request: 'A' });
+      const b = dispatcher.enqueue(fixture.b.projectId, { trigger: 'manual', request: 'B' });
+      await dispatcher.drain();
+      assert.throws(
+        () =>
+          fixture
+            .queue(fixture.b.projectId)
+            .recordArchiveRetry(
+              a.queueId,
+              fixture.queue(fixture.a.projectId).get(a.queueId)!.runId!,
+              { archiveStatus: 'completed' },
+            ),
+        /不存在/,
+      );
+      fixture.database
+        .prepare("UPDATE projects SET status = 'paused' WHERE project_id = ?")
+        .run(fixture.a.projectId);
+      await dispatcher.retryArchives(new Date(Date.now() + 61_000));
+      assert.equal(fixture.queue(fixture.a.projectId).get(a.queueId)?.archiveStatus, 'failed');
+      assert.equal(
+        fixture.queue(fixture.b.projectId).get(b.queueId)?.archiveStatus,
+        'completed',
+        fixture.queue(fixture.b.projectId).get(b.queueId)?.errorMessage ?? undefined,
+      );
+      assert.equal(attempts.get(fixture.a.projectId), 2);
+      assert.equal(attempts.get(fixture.b.projectId), 2);
+      await dispatcher.retryArchives(new Date());
+      assert.equal(attempts.get(fixture.a.projectId), 2);
     } finally {
       fixture.database.close();
     }
@@ -257,7 +310,10 @@ function fakeServices(
       recover: hooks.recover ?? (async () => undefined),
       get: async () => null,
     },
-    archiver: { archive: hooks.archive ?? (async () => archiveResult()) },
+    archiver: {
+      archive: hooks.archive ?? (async () => archiveResult()),
+      retry: hooks.archive ?? (async () => archiveResult()),
+    },
   } as unknown as ProjectDispatchServices;
 }
 

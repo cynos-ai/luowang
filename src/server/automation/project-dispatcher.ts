@@ -32,6 +32,7 @@ export interface ProjectAutomationDispatcher {
   enqueue(projectId: string, input: TestRequestInput): TestRequestRecord;
   drain(): Promise<void>;
   recover(): Promise<void>;
+  retryArchives(at?: Date): Promise<void>;
 }
 
 export function createProjectAutomationDispatcher(options: {
@@ -59,11 +60,17 @@ export function createProjectAutomationDispatcher(options: {
       }));
   const queueFor = (projectId: string) =>
     createProjectTestRequestQueue(options.database, projectId);
-  const servicesFor = (item: TestRequestRecord) => {
-    const task = createProjectTaskRuntime(item, options.projects, options.deployment, {
-      repoRoot: options.repoRoot,
-      reportRoot: options.reportRoot,
-    });
+  const servicesFor = (item: TestRequestRecord, purpose: 'run' | 'archive-retry' = 'run') => {
+    const task = createProjectTaskRuntime(
+      item,
+      options.projects,
+      options.deployment,
+      {
+        repoRoot: options.repoRoot,
+        reportRoot: options.reportRoot,
+      },
+      purpose,
+    );
     return createServices(task);
   };
   const logError = (error: unknown, message: string) =>
@@ -73,6 +80,48 @@ export function createProjectAutomationDispatcher(options: {
     );
   let drainPromise: Promise<void> | null = null;
   let recoveryPromise: Promise<void> | null = null;
+  let retryPromise: Promise<void> | null = null;
+
+  async function retryArchivesInner(at: Date): Promise<void> {
+    for (const item of createTestRequestQueue(options.database).list()) {
+      if (
+        item.status !== 'completed' ||
+        (item.archiveStatus !== 'failed' && item.archiveStatus !== 'partial') ||
+        !item.projectId ||
+        !item.runId ||
+        at.getTime() - Date.parse(item.updatedAt) < 60_000
+      )
+        continue;
+      const queue = queueFor(item.projectId);
+      try {
+        const services = servicesFor(item, 'archive-retry');
+        const result = await services.archiver.retry(item.runId);
+        queue.recordArchiveRetry(item.queueId, item.runId, {
+          archiveStatus: result.status,
+          progressed: result.progressed,
+          errorMessage: result.errorMessage,
+        });
+      } catch (error) {
+        try {
+          queue.recordArchiveRetry(item.queueId, item.runId, {
+            archiveStatus: 'failed',
+            progressed: false,
+            errorMessage: safeMessage(error),
+          });
+        } catch (recordError) {
+          logError(recordError, 'project archive retry status update failed');
+        }
+        options.logger?.warn(
+          {
+            projectId: item.projectId,
+            runId: item.runId,
+            errorName: error instanceof Error ? error.name : 'UnknownError',
+          },
+          'project archive retry failed',
+        );
+      }
+    }
+  }
 
   async function cleanupRef(item: TestRequestRecord, repository: RepositoryService) {
     if (item.requestKind !== 'manual-merge-source') return;
@@ -235,6 +284,13 @@ export function createProjectAutomationDispatcher(options: {
         recoveryPromise = null;
       });
       return recoveryPromise;
+    },
+    retryArchives(at = new Date()) {
+      if (retryPromise) return retryPromise;
+      retryPromise = retryArchivesInner(at).finally(() => {
+        retryPromise = null;
+      });
+      return retryPromise;
     },
   };
 }

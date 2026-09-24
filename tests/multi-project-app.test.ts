@@ -63,6 +63,7 @@ it('uses only new-schema administration routes, scoped Secrets, and the existing
         drains += 1;
       },
       recover: async () => {},
+      retryArchives: async () => {},
     },
     backgroundTasks: true,
     background: {

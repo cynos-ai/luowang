@@ -69,6 +69,11 @@ export interface TestRequestQueue {
   requeue(queueId: number): TestRequestRecord;
   markWaitingArchive(queueId: number, runId: string): TestRequestRecord;
   complete(queueId: number, completion?: QueueCompletion): TestRequestRecord;
+  recordArchiveRetry(
+    queueId: number,
+    runId: string,
+    completion: QueueCompletion,
+  ): TestRequestRecord;
   fail(queueId: number, message: string, status?: 'failed' | 'interrupted'): TestRequestRecord;
   get(queueId: number): TestRequestRecord | null;
   list(): TestRequestRecord[];
@@ -413,6 +418,43 @@ class SqliteTestRequestQueue implements TestRequestQueue {
         'QUEUE_STATE_INVALID',
         '队列请求不在可完成的 running 或 waiting_archive 状态',
       );
+    }
+    return this.require(queueId);
+  }
+
+  recordArchiveRetry(
+    queueId: number,
+    runId: string,
+    completion: QueueCompletion,
+  ): TestRequestRecord {
+    this.assertOwned(queueId);
+    this.assertRunId(runId);
+    const current = this.require(queueId);
+    if (
+      current.status !== 'completed' ||
+      current.runId !== runId ||
+      (current.archiveStatus !== 'failed' && current.archiveStatus !== 'partial') ||
+      !completion.archiveStatus
+    ) {
+      throw new TestRequestQueueError('QUEUE_STATE_INVALID', '归档重试状态或 Run 归属无效');
+    }
+    const updated = this.database
+      .prepare(
+        `UPDATE test_request_queue SET archive_status = ?, progressed = ?, error_message = ?, updated_at = ?
+         WHERE queue_id = ? AND status = 'completed' AND run_id = ?
+           AND archive_status IN ('failed', 'partial')${this.projectId === null ? '' : ' AND project_id = ?'}`,
+      )
+      .run(
+        completion.archiveStatus,
+        completion.progressed ? 1 : 0,
+        completion.errorMessage ?? null,
+        this.now(),
+        queueId,
+        runId,
+        ...(this.projectId === null ? [] : [this.projectId]),
+      );
+    if (updated.changes !== 1) {
+      throw new TestRequestQueueError('QUEUE_STATE_INVALID', '归档重试状态已改变');
     }
     return this.require(queueId);
   }

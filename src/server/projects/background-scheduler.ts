@@ -6,6 +6,7 @@ import type { ProjectAutomationDispatcher } from '../automation/project-dispatch
 import { createGitPoller, type GitPoller } from '../automation/poller.js';
 import { matchesCron } from '../automation/scheduler.js';
 import { createProjectAutomationStateStore } from '../automation/state.js';
+import { createProjectRepositoryIndexer, type RepositoryIndexer } from '../repository/indexer.js';
 import { createProjectRepositoryService } from '../repository/service.js';
 import { createProjectRunStore } from '../runs/store.js';
 import type { ScopedSecretStore } from '../security/scoped-secret-store.js';
@@ -16,6 +17,9 @@ import type { ProjectStore } from './store.js';
 const LAST_POLL = 'scheduler.last-poll-at';
 const LAST_CRON = 'scheduler.last-cron-key';
 const LAST_ERROR = 'scheduler.last-error';
+const LAST_INDEX = 'scheduler.last-index-at';
+const INDEX_ERROR = 'scheduler.index-error';
+const INDEX_INTERVAL_MS = 5 * 60_000;
 
 export interface ProjectBackgroundScheduler {
   recover(): Promise<void>;
@@ -37,6 +41,7 @@ export function createProjectBackgroundScheduler(input: {
   logger?: Logger;
   now?: () => Date;
   createPoller?: (projectId: string) => GitPoller;
+  createIndexer?: (projectId: string) => Pick<RepositoryIndexer, 'sync'>;
 }): ProjectBackgroundScheduler {
   const now = input.now ?? (() => new Date());
   const pollerFor =
@@ -67,6 +72,7 @@ export function createProjectBackgroundScheduler(input: {
       });
     });
   const pollers = new Map<string, GitPoller>();
+  const indexers = new Map<string, Pick<RepositoryIndexer, 'sync'>>();
   let timer: NodeJS.Timeout | undefined;
   let activeTick: Promise<void> | null = null;
 
@@ -111,12 +117,52 @@ export function createProjectBackgroundScheduler(input: {
     }
   }
 
+  async function indexProject(projectId: string, at: Date): Promise<void> {
+    const state = createProjectAutomationStateStore(input.database, projectId);
+    const previous = state.get(LAST_INDEX);
+    const last = previous ? Date.parse(previous) : NaN;
+    if (Number.isFinite(last) && at.getTime() - last < INDEX_INTERVAL_MS) return;
+    state.set(LAST_INDEX, at.toISOString());
+    try {
+      let indexer = indexers.get(projectId);
+      if (!indexer) {
+        indexer = input.createIndexer
+          ? input.createIndexer(projectId)
+          : createProjectRepositoryIndexer(
+              input.database,
+              createProjectRepositoryService(
+                input.database,
+                projectId,
+                input.configuration,
+                input.secrets,
+                input.repoRoot,
+              ),
+              projectId,
+            );
+        indexers.set(projectId, indexer);
+      }
+      const result = await indexer.sync();
+      if (result.status !== 'synced') throw new Error(result.message);
+      state.delete(INDEX_ERROR);
+    } catch (error) {
+      state.set(INDEX_ERROR, error instanceof Error ? error.message : '项目索引失败');
+      input.logger?.warn(
+        { projectId, errorName: error instanceof Error ? error.name : 'UnknownError' },
+        'project index sync failed',
+      );
+    }
+  }
+
   const tick = (at: Date = now()): Promise<void> => {
     if (activeTick) return activeTick;
     activeTick = (async () => {
-      for (const project of input.projects.list()) {
-        if (project.status === 'active') await processProject(project.projectId, at);
-      }
+      await Promise.all(
+        input.projects.list().map(async (project) => {
+          await indexProject(project.projectId, at);
+          if (project.status === 'active') await processProject(project.projectId, at);
+        }),
+      );
+      await input.dispatcher.retryArchives(at);
       await input.dispatcher.drain();
     })().finally(() => {
       activeTick = null;

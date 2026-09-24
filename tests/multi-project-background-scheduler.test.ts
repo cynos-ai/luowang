@@ -40,6 +40,7 @@ it('polls active projects independently and drains through one global dispatcher
     database.prepare("UPDATE projects SET status = 'active'").run();
     const events: string[] = [];
     let aFailed = true;
+    let aIndexFailed = true;
     const dispatcher = {
       enqueue: (
         projectId: string,
@@ -50,6 +51,9 @@ it('polls active projects independently and drains through one global dispatcher
       },
       recover: async () => {
         events.push('recover');
+      },
+      retryArchives: async () => {
+        events.push('retry-archives');
       },
     };
     const scheduler = createProjectBackgroundScheduler({
@@ -95,10 +99,37 @@ it('polls active projects independently and drains through one global dispatcher
           };
         },
       }),
+      createIndexer: (projectId) => ({
+        async sync() {
+          events.push(`${projectId}:index`);
+          if (projectId === a.projectId && aIndexFailed) {
+            aIndexFailed = false;
+            throw new Error('A index unavailable');
+          }
+          return {
+            status: 'synced',
+            commitSha: 'a'.repeat(40),
+            syncedAt: '2026-01-01T00:00:00.000Z',
+            scenarios: 0,
+            reports: 0,
+            errors: [],
+            message: 'synced',
+          };
+        },
+      }),
     });
     const first = new Date('2026-01-01T00:00:00.000Z');
     await scheduler.recover();
     await scheduler.tick(first);
+    assert.equal(events.filter((event) => event.endsWith(':index')).length, 2);
+    assert.equal(
+      createProjectAutomationStateStore(database, a.projectId).get('scheduler.index-error'),
+      'A index unavailable',
+    );
+    assert.equal(
+      createProjectAutomationStateStore(database, b.projectId).get('scheduler.index-error'),
+      null,
+    );
     assert.equal(createProjectTestRequestQueue(database, a.projectId).list().length, 0);
     assert.equal(createProjectTestRequestQueue(database, b.projectId).list().length, 1);
     assert.equal(
@@ -122,6 +153,13 @@ it('polls active projects independently and drains through one global dispatcher
     await scheduler.tick(new Date('2026-01-01T00:02:00.000Z'));
     assert.equal(events.filter((event) => event.startsWith(`${a.projectId}:`)).length, aEvents);
     assert.equal(events.filter((event) => event === 'drain').length, 4);
+    await scheduler.tick(new Date('2026-01-01T00:05:00.000Z'));
+    assert.equal(events.filter((event) => event === `${a.projectId}:index`).length, 2);
+    assert.equal(
+      createProjectAutomationStateStore(database, a.projectId).get('scheduler.index-error'),
+      null,
+    );
+    assert.equal(events.filter((event) => event === 'retry-archives').length, 5);
     await scheduler.stop();
   } finally {
     database.close();

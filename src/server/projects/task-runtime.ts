@@ -39,8 +39,13 @@ export function createProjectTaskRuntime(
   projects: ProjectStore,
   deployment: ConfigurationStore,
   paths: { repoRoot: string; reportRoot: string },
+  purpose: 'run' | 'archive-retry' = 'run',
 ): ProjectTaskRuntime {
-  if (task.status !== 'running' && task.status !== 'waiting_archive') {
+  if (
+    task.status !== 'running' &&
+    task.status !== 'waiting_archive' &&
+    !(purpose === 'archive-retry' && task.status === 'completed')
+  ) {
     throw new Error('任务尚未认领');
   }
   const project = task.projectId ? projects.get(task.projectId) : null;
