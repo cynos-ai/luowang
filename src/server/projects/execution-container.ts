@@ -1,5 +1,6 @@
 import { execFile } from 'node:child_process';
-import { resolve } from 'node:path';
+import { lstat, realpath } from 'node:fs/promises';
+import { relative, resolve, sep } from 'node:path';
 import { promisify } from 'node:util';
 
 import {
@@ -8,6 +9,8 @@ import {
   type CommandRunResult,
   type ControlledCommandRunner,
 } from '../runs/command-runner.js';
+
+import type { ProjectRunSource } from './run-source.js';
 
 const execFileAsync = promisify(execFile);
 const PROJECT_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -77,7 +80,7 @@ export function createDockerRuntime(): DockerRuntime {
   };
 }
 
-/** Start one Run container from a pinned image ID; no source path or Secret is mounted. */
+/** Start one Run container from a pinned image and its isolated Run source. */
 export async function startProjectCommandSession(
   input: {
     projectId: string;
@@ -85,6 +88,8 @@ export async function startProjectCommandSession(
     targetCommit: string;
     imageId: string;
     repositoryDirectory: string;
+    sourceRoot: string;
+    runSource: ProjectRunSource;
   },
   docker: DockerRuntime = createDockerRuntime(),
 ): Promise<ProjectCommandSession> {
@@ -92,9 +97,36 @@ export async function startProjectCommandSession(
     !PROJECT_ID.test(input.projectId) ||
     !RUN_ID.test(input.runId) ||
     !COMMIT_SHA.test(input.targetCommit) ||
-    !IMAGE_ID.test(input.imageId)
+    !IMAGE_ID.test(input.imageId) ||
+    (input.runSource.scenarioPatchSha256 !== null &&
+      !/^[0-9a-f]{64}$/.test(input.runSource.scenarioPatchSha256))
   ) {
     throw new ControlledCommandError('COMMAND_INVALID', '项目执行容器身份无效');
+  }
+  if (
+    input.runSource.projectId !== input.projectId ||
+    input.runSource.runId !== input.runId ||
+    input.runSource.targetCommit !== input.targetCommit
+  ) {
+    throw new ControlledCommandError('COMMAND_NOT_ALLOWED', 'Run 源码与执行容器归属不符');
+  }
+  const sourceDirectory = resolve(input.runSource.directory);
+  const expectedRoot = resolve(input.sourceRoot, 'projects', input.projectId, 'run-sources');
+  const sourceParts = relative(expectedRoot, sourceDirectory).split(sep);
+  if (
+    sourceParts.length !== 2 ||
+    !/^source-[a-zA-Z0-9_-]+$/.test(sourceParts[0]) ||
+    sourceParts[1] !== 'context' ||
+    sourceDirectory.includes(',')
+  ) {
+    throw new ControlledCommandError('COMMAND_NOT_ALLOWED', 'Run 源码不在当前项目受控目录');
+  }
+  const sourceInfo = await lstat(sourceDirectory);
+  if (!sourceInfo.isDirectory() || sourceInfo.isSymbolicLink()) {
+    throw new ControlledCommandError('COMMAND_INVALID', 'Run 源码目录无效');
+  }
+  if ((await realpath(sourceDirectory)) !== sourceDirectory) {
+    throw new ControlledCommandError('COMMAND_INVALID', 'Run 源码路径不能经过符号链接');
   }
   const inspected = await requireDockerSuccess(
     docker,
@@ -126,8 +158,12 @@ export async function startProjectCommandSession(
       `luowang.run-id=${input.runId}`,
       '--label',
       `luowang.target-commit=${input.targetCommit}`,
+      '--label',
+      `luowang.scenario-patch-sha256=${input.runSource.scenarioPatchSha256 ?? 'none'}`,
       '--workdir',
-      '/workspace',
+      '/workspace/source',
+      '--mount',
+      `type=bind,source=${sourceDirectory},target=/workspace/source`,
       '--entrypoint',
       'sleep',
       input.imageId,
@@ -187,7 +223,7 @@ class BoundProjectCommandSession implements ProjectCommandSession {
         [
           'exec',
           '--workdir',
-          '/workspace',
+          '/workspace/source',
           '--env',
           `LUOWANG_RUN_ID=${this.binding.runId}`,
           '--env',

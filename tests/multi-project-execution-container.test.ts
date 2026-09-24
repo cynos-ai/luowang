@@ -1,6 +1,9 @@
 import { strict as assert } from 'node:assert';
+import { mkdir, mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
-import { describe, it } from 'vitest';
+import { afterAll, beforeAll, describe, it } from 'vitest';
 
 import {
   startProjectCommandSession,
@@ -14,6 +17,18 @@ const COMMIT = 'a'.repeat(40);
 const IMAGE = `sha256:${'b'.repeat(64)}`;
 const CONTAINER = 'c'.repeat(64);
 const CWD = '/tmp/project-a';
+let sourceRoot: string;
+let sourceDirectory: string;
+
+beforeAll(async () => {
+  sourceRoot = await mkdtemp(join(tmpdir(), 'luowang-command-source-'));
+  sourceDirectory = join(sourceRoot, 'projects', PROJECT, 'run-sources', 'source-test', 'context');
+  await mkdir(sourceDirectory, { recursive: true });
+});
+
+afterAll(async () => {
+  if (sourceRoot) await rm(sourceRoot, { recursive: true, force: true });
+});
 
 describe('project command container', () => {
   it('checks image ownership, shares the command allowlist, and binds every command to one Run', async () => {
@@ -43,11 +58,14 @@ describe('project command container', () => {
     };
     const session = await startProjectCommandSession(binding(), docker);
     assert.equal(session.containerId, CONTAINER);
+    const create = calls.find((args) => args[0] === 'create')!;
+    assert.ok(create.includes(`type=bind,source=${sourceDirectory},target=/workspace/source`));
     const result = await session.run('node --version', commandOptions());
     assert.equal(result.stdout, 'v24.0.0\n');
     assert.deepEqual(result.environmentKeys, ['LUOWANG_RUN_ID', 'LUOWANG_TARGET_COMMIT']);
     const exec = calls.find((args) => args[0] === 'exec')!;
     assert.deepEqual(exec.slice(-2), ['node', '--version']);
+    assert.ok(exec.includes('/workspace/source'));
     assert.ok(exec.includes(`LUOWANG_RUN_ID=${RUN}`));
     assert.ok(exec.includes(`LUOWANG_TARGET_COMMIT=${COMMIT}`));
     await assert.rejects(
@@ -79,6 +97,19 @@ describe('project command container', () => {
     assert.deepEqual(
       wrongCalls.map((args) => args[0]),
       ['image'],
+    );
+
+    await assert.rejects(
+      () =>
+        startProjectCommandSession(
+          { ...binding(), runSource: { ...binding().runSource, projectId: 'other' } },
+          wrong,
+        ),
+      /Run 源码与执行容器归属不符/,
+    );
+    await assert.rejects(
+      () => startProjectCommandSession({ ...binding(), sourceRoot: '/' }, wrong),
+      /受控目录/,
     );
 
     const failedCalls: string[][] = [];
@@ -113,6 +144,15 @@ function binding() {
     targetCommit: COMMIT,
     imageId: IMAGE,
     repositoryDirectory: CWD,
+    sourceRoot,
+    runSource: {
+      directory: sourceDirectory,
+      projectId: PROJECT,
+      runId: RUN,
+      targetCommit: COMMIT,
+      scenarioPatchSha256: null,
+      cleanup: async () => {},
+    },
   };
 }
 
