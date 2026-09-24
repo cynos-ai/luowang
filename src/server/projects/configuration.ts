@@ -39,6 +39,7 @@ const TASK_SEMANTIC_FIELDS = [
 
 export interface ProjectConfigurationStore {
   get(projectId: string): ProjectConfiguration;
+  repositoryUrl(projectId: string): string;
   update(projectId: string, input: unknown): ProjectConfiguration;
 }
 
@@ -80,6 +81,9 @@ export function createProjectConfigurationStore(
   return {
     get(projectId) {
       return read(projectId).config;
+    },
+    repositoryUrl(projectId) {
+      return read(projectId).repository;
     },
     update(projectId, input) {
       if (!input || typeof input !== 'object' || Array.isArray(input)) {
