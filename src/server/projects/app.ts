@@ -27,6 +27,7 @@ import {
   type DeploymentSecretKey,
 } from '../security/scoped-secret-store.js';
 import { SecretStoreError } from '../security/secret-store.js';
+import { createOssAdapter, OssError, type OssAdapter, type OssObject } from '../storage/oss.js';
 import { registerProjectAdminRoutes, type ProjectAdminRouteOptions } from './admin-routes.js';
 import { createProjectConfigurationStore } from './configuration.js';
 import {
@@ -40,6 +41,7 @@ import { createProjectImageAdminService, type ProjectImageAdminService } from '.
 import { registerProjectIndexRoutes } from './index-routes.js';
 import { createLiveProjectReadinessAdapters } from './readiness-adapters.js';
 import { createProjectReadinessService, type ProjectReadinessDependencies } from './readiness.js';
+import { createProjectRuntimeSecretStore } from './runtime-access.js';
 import { registerProjectRunRoutes } from './run-routes.js';
 import { assertProjectSchema } from './schema-mode.js';
 import { createProjectStore } from './store.js';
@@ -56,6 +58,7 @@ export interface ProjectAppOptions {
   background?: ProjectBackgroundScheduler;
   backgroundTasks?: boolean;
   verifyRepository?: ProjectAdminRouteOptions['verifyRepository'];
+  readEvidence?: (projectId: string, key: string) => Promise<OssObject>;
 }
 
 /** New-schema project app. Background scheduling and remaining project views precede startup cutover. */
@@ -120,11 +123,13 @@ export async function createProjectApp(options: ProjectAppOptions) {
       reportRoot: options.config.reportDir,
       logger: options.logger,
     });
+  const evidenceAdapters = new Map<string, OssAdapter>();
   options.config.initialAdminPassword = undefined;
   options.config.masterKey = undefined;
 
   const app = Fastify({
     loggerInstance: (options.logger ?? createLogger(options.config)) as FastifyBaseLogger,
+    routerOptions: { maxParamLength: 2048 },
   });
   const limiter = new LoginRateLimiter();
   await app.register(fastifyCookie);
@@ -135,31 +140,41 @@ export async function createProjectApp(options: ProjectAppOptions) {
         ? error.statusCode
         : error instanceof SecretStoreError
           ? 503
-          : error instanceof TestRequestQueueError
-            ? error.code === 'QUEUE_NOT_FOUND'
+          : error instanceof OssError
+            ? error.code === 'OSS_OBJECT_NOT_FOUND'
               ? 404
-              : error.code === 'QUEUE_STATE_INVALID'
-                ? 409
-                : 400
-            : error instanceof TypeError ||
-                error instanceof AuthError ||
-                error instanceof ConfigurationError
-              ? 400
-              : typeof failure.statusCode === 'number'
-                ? failure.statusCode
-                : 500;
+              : error.code === 'OSS_NOT_CONFIGURED' || error.code === 'OSS_CONFIGURATION_INVALID'
+                ? 503
+                : error.code === 'OSS_REQUEST_FAILED'
+                  ? 502
+                  : 400
+            : error instanceof TestRequestQueueError
+              ? error.code === 'QUEUE_NOT_FOUND'
+                ? 404
+                : error.code === 'QUEUE_STATE_INVALID'
+                  ? 409
+                  : 400
+              : error instanceof TypeError ||
+                  error instanceof AuthError ||
+                  error instanceof ConfigurationError
+                ? 400
+                : typeof failure.statusCode === 'number'
+                  ? failure.statusCode
+                  : 500;
     const code =
       error instanceof AppError
         ? error.code
         : error instanceof SecretStoreError
           ? 'SECRET_STORE_UNAVAILABLE'
-          : error instanceof TestRequestQueueError
+          : error instanceof OssError
             ? error.code
-            : error instanceof AuthError
+            : error instanceof TestRequestQueueError
               ? error.code
-              : status === 400
-                ? 'INVALID_REQUEST'
-                : 'INTERNAL_ERROR';
+              : error instanceof AuthError
+                ? error.code
+                : status === 400
+                  ? 'INVALID_REQUEST'
+                  : 'INTERNAL_ERROR';
     const message = status >= 500 ? '内部错误' : failure.message;
     return reply.status(status).send(toErrorResponse(code, message, request.id));
   });
@@ -275,6 +290,19 @@ export async function createProjectApp(options: ProjectAppOptions) {
     projects,
     dispatcher,
     logger: options.logger,
+    readEvidence:
+      options.readEvidence ??
+      ((projectId, key) => {
+        let adapter = evidenceAdapters.get(projectId);
+        if (!adapter) {
+          adapter = createOssAdapter(
+            deployment,
+            createProjectRuntimeSecretStore(projectId, scoped),
+          );
+          evidenceAdapters.set(projectId, adapter);
+        }
+        return adapter.getObject(key);
+      }),
   });
   await registerProjectIndexRoutes(app, {
     database,

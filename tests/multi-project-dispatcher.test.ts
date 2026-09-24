@@ -17,8 +17,64 @@ import { migrateProjectQueueContext } from '../src/server/db/migrations/0014-pro
 import { createProjectConfigurationStore } from '../src/server/projects/configuration.js';
 import { createProjectStore } from '../src/server/projects/store.js';
 import { createScopedSecretStore } from '../src/server/security/scoped-secret-store.js';
+import type { RunDetail, RunSummary } from '../src/shared/types.js';
 
 describe('project automation dispatcher', () => {
+  it('exposes only the active project Run while execution is in progress', async () => {
+    const fixture = setup();
+    try {
+      const waiting = Promise.withResolvers<void>();
+      const release = Promise.withResolvers<void>();
+      let activeId = '';
+      const summary: RunSummary = {
+        runId: '01ARZ3NDEKTSV4RRFFQ69G5FAV',
+        status: 'running',
+        phase: 'runner',
+        result: null,
+        trigger: 'manual',
+        request: 'A',
+        baseCommit: null,
+        targetCommit: 'a'.repeat(40),
+        includedCommits: [],
+        startedAt: '2026-01-01T00:00:00.000Z',
+        finishedAt: null,
+        errorMessage: null,
+        artifactNames: [],
+      };
+      const dispatcher = fixture.dispatcher((projectId) =>
+        fakeServices(projectId, {
+          async start(runId) {
+            activeId = runId;
+            return { runId };
+          },
+          async wait() {
+            waiting.resolve();
+            await release.promise;
+            return { status: 'completed' };
+          },
+          async current() {
+            return { ...summary, runId: activeId };
+          },
+          async get() {
+            return { ...summary, runId: activeId, artifacts: {} };
+          },
+        }),
+      );
+      dispatcher.enqueue(fixture.a.projectId, { trigger: 'manual', request: 'A' });
+      const draining = dispatcher.drain();
+      await waiting.promise;
+      const current = await dispatcher.currentRun();
+      assert.equal(current?.projectId, fixture.a.projectId);
+      assert.equal(current?.run.runId, activeId);
+      assert.equal((await dispatcher.getActiveRun(fixture.a.projectId, activeId))?.runId, activeId);
+      assert.equal(await dispatcher.getActiveRun(fixture.b.projectId, activeId), null);
+      release.resolve();
+      await draining;
+      assert.equal(await dispatcher.currentRun(), null);
+    } finally {
+      fixture.database.close();
+    }
+  });
   it('starts B while A is waiting for its own archive and retains both project bindings', async () => {
     const fixture = setup();
     try {
@@ -290,6 +346,9 @@ function fakeServices(
     start?: (runId: string, targetCommit: string) => Promise<{ runId: string }>;
     archive?: () => Promise<ReturnType<typeof archiveResult>>;
     recover?: () => Promise<void>;
+    wait?: () => Promise<{ status: 'completed' }>;
+    current?: () => Promise<RunSummary | null>;
+    get?: () => Promise<RunDetail | null>;
   },
 ): ProjectDispatchServices {
   const targetCommit = projectId.startsWith('1111') ? 'a'.repeat(40) : 'b'.repeat(40);
@@ -306,9 +365,10 @@ function fakeServices(
     runs: {
       start: async (input: { runId?: string; targetCommit?: string }) =>
         hooks.start ? hooks.start(input.runId!, input.targetCommit!) : { runId: input.runId! },
-      wait: async () => ({ status: 'completed' }),
+      wait: hooks.wait ?? (async () => ({ status: 'completed' })),
       recover: hooks.recover ?? (async () => undefined),
-      get: async () => null,
+      get: hooks.get ?? (async () => null),
+      current: hooks.current ?? (async () => null),
     },
     archiver: {
       archive: hooks.archive ?? (async () => archiveResult()),

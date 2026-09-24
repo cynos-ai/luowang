@@ -1,12 +1,15 @@
 import type Database from 'better-sqlite3';
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import type { Logger } from 'pino';
+import type { OssObject } from '../storage/oss.js';
 
 import type { ProjectAutomationDispatcher } from '../automation/project-dispatcher.js';
 import { createProjectTestRequestQueue } from '../automation/queue.js';
+import { createProjectRunRecoveryStore } from '../automation/recovery.js';
 import { AppError } from '../errors.js';
 import { createProjectRunStore } from '../runs/store.js';
 import { SESSION_COOKIE_NAME, type AuthService } from '../security/auth.js';
+import { encodeStableEvidenceId } from '../storage/oss.js';
 import type { ProjectStore } from './store.js';
 
 export async function registerProjectRunRoutes(
@@ -17,6 +20,7 @@ export async function registerProjectRunRoutes(
     projects: ProjectStore;
     dispatcher: ProjectAutomationDispatcher;
     logger?: Logger;
+    readEvidence: (projectId: string, key: string) => Promise<OssObject>;
   },
 ): Promise<void> {
   await app.register(async (routes) => {
@@ -34,6 +38,16 @@ export async function registerProjectRunRoutes(
       createProjectTestRequestQueue(options.database, requireProject(projectId).projectId);
     const runStoreFor = (projectId: string) =>
       createProjectRunStore(options.database, requireProject(projectId).projectId);
+    const recoveryFor = (projectId: string) =>
+      createProjectRunRecoveryStore(options.database, requireProject(projectId).projectId);
+    const readRun = async (projectId: string, runId: string) => {
+      requireProject(projectId);
+      return (
+        (await options.dispatcher.getActiveRun(projectId, runId)) ??
+        runStoreFor(projectId).get(runId) ??
+        recoveryFor(projectId).get(runId)
+      );
+    };
     const startDrain = () => {
       void options.dispatcher.drain().catch((error: unknown) => {
         options.logger?.error(
@@ -117,17 +131,69 @@ export async function registerProjectRunRoutes(
     );
     routes.get<{ Params: { projectId: string } }>(
       '/api/projects/:projectId/runs',
-      async (request) => ({ runs: runStoreFor(request.params.projectId).list() }),
+      async (request) => {
+        const projectId = request.params.projectId;
+        const stored = runStoreFor(projectId).list();
+        const interrupted = recoveryFor(projectId).list();
+        const current = await options.dispatcher.currentRun();
+        const active = current?.projectId === projectId ? current.run : null;
+        return {
+          runs: [
+            ...(active ? [active] : []),
+            ...stored.filter((run) => run.runId !== active?.runId),
+            ...interrupted.filter(
+              (run) =>
+                run.runId !== active?.runId && !stored.some((item) => item.runId === run.runId),
+            ),
+          ],
+        };
+      },
+    );
+    routes.get<{ Params: { projectId: string } }>(
+      '/api/projects/:projectId/runs/current',
+      async (request) => {
+        requireProject(request.params.projectId);
+        const current = await options.dispatcher.currentRun();
+        return { run: current?.projectId === request.params.projectId ? current.run : null };
+      },
     );
     routes.get<{ Params: { projectId: string; runId: string } }>(
       '/api/projects/:projectId/runs/:runId',
       async (request) => {
-        const run = runStoreFor(request.params.projectId).get(request.params.runId);
+        const run = await readRun(request.params.projectId, request.params.runId);
         if (!run) throw new AppError('RUN_NOT_FOUND', 'Run 不存在', 404);
         return { run };
       },
     );
+    routes.get<{ Params: { projectId: string; runId: string; objectId: string } }>(
+      '/api/projects/:projectId/runs/:runId/evidence/:objectId',
+      async (request, reply) => {
+        const { projectId, runId, objectId } = request.params;
+        const run = await readRun(projectId, runId);
+        const evidence = 'evidence' in (run ?? {}) ? run?.evidence : undefined;
+        const reference = evidence?.find(
+          (item) => item.id === objectId && encodeStableEvidenceId(item.objectKey) === objectId,
+        );
+        if (!reference) throw new AppError('EVIDENCE_NOT_FOUND', '证据不存在', 404);
+        const scopedKey = reference.objectKey.match(/(?:^|\/)projects\/([^/]+)\/runs\/([^/]+)\//);
+        if (scopedKey && (scopedKey[1] !== projectId || scopedKey[2] !== runId)) {
+          throw new AppError('EVIDENCE_NOT_FOUND', '证据不存在', 404);
+        }
+        const object = await options.readEvidence(projectId, reference.objectKey);
+        reply.header('cache-control', 'private, no-store');
+        reply.header('x-content-type-options', 'nosniff');
+        reply.type(safeContentType(reference.contentType));
+        return reply.send(object.body);
+      },
+    );
   });
+}
+
+function safeContentType(value: string): string {
+  const normalized = value.split(';', 1)[0]?.trim().toLowerCase() ?? '';
+  return /^[a-z0-9][a-z0-9!#$&^_.+-]*\/[a-z0-9][a-z0-9!#$&^_.+-]*$/.test(normalized)
+    ? normalized
+    : 'application/octet-stream';
 }
 
 function readInput(request: FastifyRequest): Record<string, unknown> {

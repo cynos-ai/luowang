@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 
 import type Database from 'better-sqlite3';
 import type { Logger } from 'pino';
+import type { RunDetail, RunSummary } from '../../shared/types.js';
 
 import type { ConfigurationStore } from '../configuration.js';
 import type { RepositoryService } from '../repository/service.js';
@@ -33,6 +34,8 @@ export interface ProjectAutomationDispatcher {
   drain(): Promise<void>;
   recover(): Promise<void>;
   retryArchives(at?: Date): Promise<void>;
+  currentRun(): Promise<{ projectId: string; run: RunSummary } | null>;
+  getActiveRun(projectId: string, runId: string): Promise<RunDetail | null>;
 }
 
 export function createProjectAutomationDispatcher(options: {
@@ -81,6 +84,7 @@ export function createProjectAutomationDispatcher(options: {
   let drainPromise: Promise<void> | null = null;
   let recoveryPromise: Promise<void> | null = null;
   let retryPromise: Promise<void> | null = null;
+  let activeRun: { projectId: string; runId: string; runs: RunOrchestrator } | null = null;
 
   async function retryArchivesInner(at: Date): Promise<void> {
     for (const item of createTestRequestQueue(options.database).list()) {
@@ -178,8 +182,10 @@ export function createProjectAutomationDispatcher(options: {
         ...(item.initialization ? { initialization: true } : {}),
       });
       if (run.runId !== runId) throw new Error('Run ID 与队列预留 ID 不一致');
+      activeRun = { projectId: item.projectId, runId, runs: services.runs };
       queue.markStarted(item.queueId, runId);
       const detail = await services.runs.wait(runId);
+      activeRun = null;
       if (detail?.status === 'completed') {
         queue.markWaitingArchive(item.queueId, runId);
         return { archive: archive(item, queue, services, runId) };
@@ -192,6 +198,7 @@ export function createProjectAutomationDispatcher(options: {
       await cleanupRef(item, services.repository);
       return null;
     } catch (error) {
+      if (activeRun?.projectId === item.projectId) activeRun = null;
       try {
         queue.fail(item.queueId, safeMessage(error));
         if (services) await cleanupRef(item, services.repository);
@@ -291,6 +298,17 @@ export function createProjectAutomationDispatcher(options: {
         retryPromise = null;
       });
       return retryPromise;
+    },
+    async currentRun() {
+      const current = activeRun;
+      if (!current) return null;
+      const run = await current.runs.current();
+      return run ? { projectId: current.projectId, run } : null;
+    },
+    async getActiveRun(projectId, runId) {
+      const current = activeRun;
+      if (!current || current.projectId !== projectId || current.runId !== runId) return null;
+      return current.runs.get(runId);
     },
   };
 }

@@ -17,6 +17,8 @@ import { migrateProjectRunImage } from '../src/server/db/migrations/0016-project
 import { createProjectApp } from '../src/server/projects/app.js';
 import { createProjectTestRequestQueue } from '../src/server/automation/queue.js';
 import { createProjectRunStore } from '../src/server/runs/store.js';
+import { encodeStableEvidenceId } from '../src/server/storage/oss.js';
+import type { RunSummary } from '../src/shared/types.js';
 
 it('uses only new-schema administration routes, scoped Secrets, and the existing administrator session', async () => {
   const config = loadConfig({
@@ -46,6 +48,8 @@ it('uses only new-schema administration routes, scoped Secrets, and the existing
     )
     .run();
   let drains = 0;
+  const evidenceReads: Array<{ projectId: string; key: string }> = [];
+  let activeRun: { projectId: string; run: RunSummary } | null = null;
   const backgroundEvents: string[] = [];
   const app = await createProjectApp({
     config,
@@ -64,6 +68,21 @@ it('uses only new-schema administration routes, scoped Secrets, and the existing
       },
       recover: async () => {},
       retryArchives: async () => {},
+      currentRun: async () => activeRun,
+      getActiveRun: async (projectId, runId) =>
+        activeRun?.projectId === projectId && activeRun.run.runId === runId
+          ? { ...activeRun.run, artifacts: { 'plan.md': 'active plan' } }
+          : null,
+    },
+    readEvidence: async (projectId, key) => {
+      evidenceReads.push({ projectId, key });
+      return {
+        key,
+        body: Buffer.from('evidence-body'),
+        contentType: 'text/plain; charset=utf-8',
+        contentLength: 13,
+        etag: null,
+      };
     },
     backgroundTasks: true,
     background: {
@@ -170,6 +189,86 @@ it('uses only new-schema administration routes, scoped Secrets, and the existing
     });
     assert.equal(createdB.statusCode, 201);
     const projectB = createdB.json().project.projectId;
+    const activeId = '01ARZ3NDEKTSV4RRFFQ69G5FAV';
+    activeRun = {
+      projectId,
+      run: {
+        runId: activeId,
+        status: 'running',
+        phase: 'runner',
+        result: null,
+        trigger: 'manual',
+        request: 'active A',
+        baseCommit: null,
+        targetCommit: 'a'.repeat(40),
+        includedCommits: [],
+        startedAt: '2026-01-01T00:00:00.000Z',
+        finishedAt: null,
+        errorMessage: null,
+        artifactNames: ['plan.md'],
+        evidence: [
+          {
+            id: encodeStableEvidenceId(`prefix/projects/${projectId}/runs/${activeId}/active.png`),
+            filename: 'active.png',
+            objectKey: `prefix/projects/${projectId}/runs/${activeId}/active.png`,
+            url: 'https://example.invalid/active',
+            contentType: 'image/png',
+            sizeBytes: 13,
+            sha256: 'a'.repeat(64),
+            uploadedAt: '2026-01-01T00:00:00.000Z',
+          },
+        ],
+      },
+    };
+    assert.equal(
+      (
+        await app.inject({ method: 'GET', url: `/api/projects/${projectId}/runs/current`, headers })
+      ).json().run.runId,
+      activeId,
+    );
+    assert.equal(
+      (
+        await app.inject({ method: 'GET', url: `/api/projects/${projectB}/runs/current`, headers })
+      ).json().run,
+      null,
+    );
+    assert.equal(
+      (
+        await app.inject({
+          method: 'GET',
+          url: `/api/projects/${projectId}/runs/${activeId}`,
+          headers,
+        })
+      ).json().run.artifacts['plan.md'],
+      'active plan',
+    );
+    assert.equal(
+      (
+        await app.inject({
+          method: 'GET',
+          url: `/api/projects/${projectB}/runs/${activeId}`,
+          headers,
+        })
+      ).statusCode,
+      404,
+    );
+    assert.equal(
+      (
+        await app.inject({
+          method: 'GET',
+          url: `/api/projects/${projectId}/runs/${activeId}/evidence/${encodeStableEvidenceId(`prefix/projects/${projectId}/runs/${activeId}/active.png`)}`,
+          headers,
+        })
+      ).statusCode,
+      200,
+    );
+    assert.equal(
+      (await app.inject({ method: 'GET', url: `/api/projects/${projectId}/runs`, headers })).json()
+        .runs[0].runId,
+      activeId,
+    );
+    evidenceReads.length = 0;
+    activeRun = null;
     const scenarioPath = 'docs/scenario-testing/scenarios/SHARED.md';
     const insertScenario = database.sqlite.prepare(
       `INSERT INTO indexed_scenarios
@@ -386,7 +485,104 @@ it('uses only new-schema administration routes, scoped Secrets, and the existing
       artifacts: {},
       scenarioResults: [],
       confirmedBugs: [],
+      evidence: [
+        {
+          id: encodeStableEvidenceId(`prefix/projects/${projectId}/runs/RUN-A/screenshot.png`),
+          filename: 'screenshot.png',
+          objectKey: `prefix/projects/${projectId}/runs/RUN-A/screenshot.png`,
+          url: 'https://example.invalid/evidence',
+          contentType: 'image/png',
+          sizeBytes: 13,
+          sha256: 'a'.repeat(64),
+          uploadedAt: '2026-01-01T00:00:00.000Z',
+        },
+        {
+          id: encodeStableEvidenceId(`prefix/projects/${projectB}/runs/RUN-A/foreign.png`),
+          filename: 'foreign.png',
+          objectKey: `prefix/projects/${projectB}/runs/RUN-A/foreign.png`,
+          url: 'https://example.invalid/foreign',
+          contentType: 'image/png',
+          sizeBytes: 13,
+          sha256: 'b'.repeat(64),
+          uploadedAt: '2026-01-01T00:00:00.000Z',
+        },
+        {
+          id: encodeStableEvidenceId('prefix/RUN-A/legacy.png'),
+          filename: 'legacy.png',
+          objectKey: 'prefix/RUN-A/legacy.png',
+          url: 'https://example.invalid/legacy',
+          contentType: 'image/png',
+          sizeBytes: 13,
+          sha256: 'c'.repeat(64),
+          uploadedAt: '2026-01-01T00:00:00.000Z',
+        },
+      ],
     });
+    const evidenceId = encodeStableEvidenceId(
+      `prefix/projects/${projectId}/runs/RUN-A/screenshot.png`,
+    );
+    assert.equal(
+      (
+        await app.inject({
+          method: 'GET',
+          url: `/api/projects/${projectId}/runs/RUN-A/evidence/${evidenceId}`,
+        })
+      ).statusCode,
+      401,
+    );
+    const evidence = await app.inject({
+      method: 'GET',
+      url: `/api/projects/${projectId}/runs/RUN-A/evidence/${evidenceId}`,
+      headers,
+    });
+    assert.equal(evidence.statusCode, 200);
+    assert.equal(evidence.body, 'evidence-body');
+    assert.equal(evidence.headers['cache-control'], 'private, no-store');
+    assert.equal(evidence.headers['x-content-type-options'], 'nosniff');
+    assert.equal(evidence.headers['content-type'], 'image/png');
+    assert.deepEqual(evidenceReads, [
+      { projectId, key: `prefix/projects/${projectId}/runs/RUN-A/screenshot.png` },
+    ]);
+    assert.equal(
+      (
+        await app.inject({
+          method: 'GET',
+          url: `/api/projects/${projectId}/runs/RUN-A/evidence/${encodeStableEvidenceId(`prefix/projects/${projectB}/runs/RUN-A/foreign.png`)}`,
+          headers,
+        })
+      ).statusCode,
+      404,
+    );
+    assert.equal(
+      (
+        await app.inject({
+          method: 'GET',
+          url: `/api/projects/${projectId}/runs/RUN-A/evidence/${encodeStableEvidenceId('prefix/RUN-A/legacy.png')}`,
+          headers,
+        })
+      ).statusCode,
+      200,
+    );
+    assert.equal(
+      (
+        await app.inject({
+          method: 'GET',
+          url: `/api/projects/${projectB}/runs/RUN-A/evidence/${evidenceId}`,
+          headers,
+        })
+      ).statusCode,
+      404,
+    );
+    assert.equal(
+      (
+        await app.inject({
+          method: 'GET',
+          url: `/api/projects/${projectId}/runs/RUN-A/evidence/${encodeStableEvidenceId('other/key')}`,
+          headers,
+        })
+      ).statusCode,
+      404,
+    );
     assert.equal(
       (await app.inject({ method: 'GET', url: `/api/projects/${projectId}/runs/RUN-A`, headers }))
         .statusCode,

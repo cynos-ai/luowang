@@ -55,6 +55,8 @@ it('polls active projects independently and drains through one global dispatcher
       retryArchives: async () => {
         events.push('retry-archives');
       },
+      currentRun: async () => null,
+      getActiveRun: async () => null,
     };
     const scheduler = createProjectBackgroundScheduler({
       database,
