@@ -37,6 +37,7 @@ import { ConfigurationError } from '../configuration.js';
 import { createDeploymentConfigurationStore } from './deployment-configuration.js';
 import { createGuardedScopedSecretStore } from './guarded-secrets.js';
 import { createProjectImageAdminService, type ProjectImageAdminService } from './image-admin.js';
+import { registerProjectIndexRoutes } from './index-routes.js';
 import { createLiveProjectReadinessAdapters } from './readiness-adapters.js';
 import { createProjectReadinessService, type ProjectReadinessDependencies } from './readiness.js';
 import { registerProjectRunRoutes } from './run-routes.js';
@@ -274,6 +275,14 @@ export async function createProjectApp(options: ProjectAppOptions) {
     projects,
     dispatcher,
     logger: options.logger,
+  });
+  await registerProjectIndexRoutes(app, {
+    database,
+    auth,
+    projects,
+    configuration,
+    secrets: scoped,
+    repoRoot: options.config.repoDir,
   });
   app.setNotFoundHandler((request, reply) =>
     reply.status(404).send(toErrorResponse('NOT_FOUND', 'Resource not found', request.id)),

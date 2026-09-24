@@ -169,6 +169,89 @@ it('uses only new-schema administration routes, scoped Secrets, and the existing
     });
     assert.equal(createdB.statusCode, 201);
     const projectB = createdB.json().project.projectId;
+    const scenarioPath = 'docs/scenario-testing/scenarios/SHARED.md';
+    const insertScenario = database.sqlite.prepare(
+      `INSERT INTO indexed_scenarios
+       (project_id, path, scenario_id, name, description, status, tags_json, content, commit_sha, indexed_at)
+       VALUES (?, ?, 'SHARED', ?, '', 'approved', '[]', ?, ?, '2026-01-01')`,
+    );
+    insertScenario.run(projectId, scenarioPath, 'A scenario', 'A content', 'a'.repeat(40));
+    insertScenario.run(projectB, scenarioPath, 'B scenario', 'B content', 'b'.repeat(40));
+    const insertReport = database.sqlite.prepare(
+      `INSERT INTO indexed_reports
+       (project_id, run_id, path, trigger, base_commit, target_commit, included_commits_json,
+        result, started_at, finished_at, scenario_results_json, confirmed_bugs_json,
+        files_json, content, commit_sha, indexed_at)
+       VALUES (?, ?, ?,
+               'manual', NULL, ?, '[]', 'passed', '2026-01-01', '2026-01-01',
+               '[]', '[]', '[]', ?, ?, '2026-01-01')`,
+    );
+    insertReport.run(
+      projectId,
+      'RUN-A',
+      'docs/scenario-testing/reports/RUN-A/report.md',
+      'a'.repeat(40),
+      'A report',
+      'a'.repeat(40),
+    );
+    insertReport.run(
+      projectB,
+      'RUN-B',
+      'docs/scenario-testing/reports/RUN-B/report.md',
+      'b'.repeat(40),
+      'B report',
+      'b'.repeat(40),
+    );
+    for (const [id, name, content, reportId] of [
+      [projectId, 'A scenario', 'A report', 'RUN-A'],
+      [projectB, 'B scenario', 'B report', 'RUN-B'],
+    ]) {
+      const base = `/api/projects/${id}`;
+      assert.equal(
+        (await app.inject({ method: 'GET', url: `${base}/scenarios`, headers })).json().scenarios[0]
+          .name,
+        name,
+      );
+      assert.equal(
+        (await app.inject({ method: 'GET', url: `${base}/scenarios/SHARED`, headers })).json()
+          .scenario.name,
+        name,
+      );
+      assert.equal(
+        (await app.inject({ method: 'GET', url: `${base}/reports/${reportId}`, headers })).json()
+          .report.content,
+        content,
+      );
+      assert.equal(
+        (await app.inject({ method: 'GET', url: `${base}/reports`, headers })).json().reports
+          .length,
+        1,
+      );
+    }
+    assert.equal(
+      (await app.inject({ method: 'GET', url: `/api/projects/${projectB}/reports/RUN-A`, headers }))
+        .statusCode,
+      404,
+    );
+    assert.equal(
+      (await app.inject({ method: 'GET', url: `/api/projects/${projectId}/scenarios` })).statusCode,
+      401,
+    );
+    assert.equal(
+      (await app.inject({ method: 'GET', url: `/api/projects/missing/scenarios`, headers }))
+        .statusCode,
+      404,
+    );
+    assert.equal(
+      (await app.inject({ method: 'GET', url: `/api/projects/${projectId}/reports/nope`, headers }))
+        .statusCode,
+      404,
+    );
+    assert.equal(
+      (await app.inject({ method: 'GET', url: `/api/projects/${projectId}/index`, headers }))
+        .statusCode,
+      200,
+    );
     assert.equal(
       (await app.inject({ method: 'GET', url: `/api/projects/${projectId}`, headers })).json()
         .secrets.gitToken.configured,
