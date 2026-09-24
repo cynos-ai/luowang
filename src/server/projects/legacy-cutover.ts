@@ -9,6 +9,7 @@ import { migrateLegacyRunOwnership } from '../db/migrations/0011-project-run-own
 import { migrateLegacyConfigurationOwnership } from '../db/migrations/0012-project-configuration-ownership.js';
 import { migrateLegacySecretOwnership } from '../db/migrations/0013-project-secret-ownership.js';
 import { migrateProjectQueueContext } from '../db/migrations/0014-project-queue-context.js';
+import { migrateProjectImageState } from '../db/migrations/0015-project-image-state.js';
 import type { VerifiedGitHubRepositoryIdentity } from '../repository/github.js';
 import { verifyLegacyBackup } from './legacy-backup.js';
 import { fingerprintLegacyDatabase } from './legacy-fingerprint.js';
@@ -45,10 +46,10 @@ export async function applyLegacyProjectCutover(input: LegacyCutoverInput): Prom
     if (!project) throw new Error('升级标记对应项目不存在');
     const completed = input.database
       .prepare(
-        "SELECT version FROM schema_migrations WHERE version IN ('0009_project_identity', '0010_project_index_ownership', '0011_project_run_ownership', '0012_project_configuration_ownership', '0013_project_secret_ownership', '0014_project_queue_context')",
+        "SELECT version FROM schema_migrations WHERE version IN ('0009_project_identity', '0010_project_index_ownership', '0011_project_run_ownership', '0012_project_configuration_ownership', '0013_project_secret_ownership', '0014_project_queue_context', '0015_project_image_state')",
       )
       .all() as Array<{ version: string }>;
-    if (completed.length !== 6) throw new Error('升级标记对应迁移不完整');
+    if (completed.length !== 7) throw new Error('升级标记对应迁移不完整');
     if (project.githubRepositoryId !== input.verifiedRepository.githubRepositoryId) {
       throw new Error('重复升级的 GitHub 仓库身份不一致');
     }
@@ -92,6 +93,7 @@ export async function applyLegacyProjectCutover(input: LegacyCutoverInput): Prom
     migrateLegacyConfigurationOwnership(input.database, project.projectId);
     migrateLegacySecretOwnership(input.database, input.masterKey, project.projectId);
     migrateProjectQueueContext(input.database);
+    migrateProjectImageState(input.database);
     if ((input.database.pragma('foreign_key_check') as unknown[]).length > 0) {
       throw new Error('升级后的数据库外键检查失败');
     }
@@ -135,6 +137,7 @@ export async function applyEmptyLegacyCutover(input: {
     migrateLegacyConfigurationOwnership(input.database, null);
     migrateLegacySecretOwnership(input.database, input.masterKey, null);
     migrateProjectQueueContext(input.database);
+    migrateProjectImageState(input.database);
     if ((input.database.pragma('foreign_key_check') as unknown[]).length > 0) {
       throw new Error('升级后的数据库外键检查失败');
     }

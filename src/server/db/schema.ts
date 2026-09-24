@@ -48,6 +48,22 @@ export const projectConfig = sqliteTable('project_config', {
   updatedAt: text('updated_at').notNull(),
 });
 
+export const projectExecutionImages = sqliteTable(
+  'project_execution_images',
+  {
+    projectId: text('project_id')
+      .notNull()
+      .references(() => projects.projectId),
+    targetCommit: text('target_commit').notNull(),
+    dockerfilePath: text('dockerfile_path').notNull(),
+    status: text('status').notNull(),
+    imageId: text('image_id'),
+    failureCode: text('failure_code'),
+    updatedAt: text('updated_at').notNull(),
+  },
+  (table) => [primaryKey({ columns: [table.projectId, table.targetCommit, table.dockerfilePath] })],
+);
+
 export const projectAutomationState = sqliteTable(
   'project_automation_state',
   {
