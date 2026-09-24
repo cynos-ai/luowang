@@ -43,11 +43,12 @@ export function createDockerCommand(): DockerCommand {
 
 /** Build a reusable project image and return its immutable local content ID. */
 export async function buildProjectImage(
-  input: { projectId: string; source: ProjectImageSource },
+  input: { projectId: string; instanceId: string; source: ProjectImageSource },
   docker: DockerCommand = createDockerCommand(),
 ): Promise<ProjectImageBuild> {
   if (
     !PROJECT_ID.test(input.projectId) ||
+    !PROJECT_ID.test(input.instanceId) ||
     !COMMIT_SHA.test(input.source.targetCommit) ||
     !input.source.dockerfilePath
   ) {
@@ -70,6 +71,7 @@ export async function buildProjectImage(
         tag,
         '--label',
         `luowang.project-id=${input.projectId}`,
+        `luowang.instance-id=${input.instanceId}`,
         '--label',
         `luowang.target-commit=${input.source.targetCommit}`,
         '--label',

@@ -5,7 +5,7 @@ import Database from 'better-sqlite3';
 import Fastify from 'fastify';
 import { it } from 'vitest';
 
-import { runMigrations } from '../src/server/db/migrate.js';
+import { ensureSystemMetadata, runMigrations } from '../src/server/db/migrate.js';
 import { projectIdentityMigration } from '../src/server/db/migrations/0009-project-identity.js';
 import { migrateLegacyRunOwnership } from '../src/server/db/migrations/0011-project-run-ownership.js';
 import { migrateLegacyConfigurationOwnership } from '../src/server/db/migrations/0012-project-configuration-ownership.js';
@@ -32,6 +32,7 @@ it('prepares only the authenticated project image at the resolved fixed commit',
   try {
     database.pragma('foreign_keys = ON');
     runMigrations(database);
+    ensureSystemMetadata(database, { appVersion: 'test' });
     runMigrations(database, [projectIdentityMigration]);
     migrateLegacyRunOwnership(database, null);
     migrateLegacyConfigurationOwnership(database, null);

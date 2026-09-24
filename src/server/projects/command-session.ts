@@ -15,6 +15,7 @@ export interface ProjectCommandSessionDependencies {
 export function createProjectRunCommandSessionFactory(
   options: {
     projectId: string;
+    instanceId: string;
     dockerfilePath: string;
     storageRoot: string;
     imageState: ProjectImageStateStore;
@@ -30,6 +31,7 @@ export function createProjectRunCommandSessionFactory(
     const image: PreparedProjectImage = await dependencies.ensureImage({
       repository: input.repository,
       projectId: options.projectId,
+      instanceId: options.instanceId,
       targetCommit: input.targetCommit,
       dockerfilePath: options.dockerfilePath,
       storageRoot: options.storageRoot,
@@ -47,6 +49,7 @@ export function createProjectRunCommandSessionFactory(
     try {
       session = await dependencies.startSession({
         projectId: options.projectId,
+        instanceId: options.instanceId,
         runId: input.runId,
         targetCommit: input.targetCommit,
         imageId: image.imageId,

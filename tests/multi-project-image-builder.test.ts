@@ -27,13 +27,17 @@ describe('project image builder', () => {
           );
           assert.equal(args[args.indexOf('--tag') + 1], `luowang-project-${PROJECT}:${COMMIT}`);
           assert.ok(args.includes(`luowang.project-id=${PROJECT}`));
+          assert.ok(args.includes(`luowang.instance-id=${PROJECT}`));
           assert.ok(args.includes(`luowang.target-commit=${COMMIT}`));
           assert.equal(options.cwd, source.directory);
           await writeFile(args[args.indexOf('--iidfile') + 1], `sha256:${'b'.repeat(64)}\n`);
           built = true;
         },
       };
-      const result = await buildProjectImage({ projectId: PROJECT, source }, docker);
+      const result = await buildProjectImage(
+        { projectId: PROJECT, instanceId: PROJECT, source },
+        docker,
+      );
       assert.equal(built, true);
       assert.deepEqual(result, {
         projectId: PROJECT,
@@ -45,7 +49,11 @@ describe('project image builder', () => {
       await assert.rejects(
         () =>
           buildProjectImage(
-            { projectId: PROJECT, source: { ...source, dockerfilePath: '../x' } },
+            {
+              projectId: PROJECT,
+              instanceId: PROJECT,
+              source: { ...source, dockerfilePath: '../x' },
+            },
             docker,
           ),
         /路径越界/,
@@ -65,7 +73,7 @@ describe('project image builder', () => {
         },
       };
       await assert.rejects(
-        () => buildProjectImage({ projectId: PROJECT, source }, docker),
+        () => buildProjectImage({ projectId: PROJECT, instanceId: PROJECT, source }, docker),
         /镜像 ID/,
       );
       await assert.rejects(() => readFile(join(root, 'image-id.txt')), /ENOENT/);

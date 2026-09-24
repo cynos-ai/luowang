@@ -34,6 +34,7 @@ it('builds once, reuses a verified image and rebuilds when it disappears', async
     const input = {
       repository,
       projectId: project.projectId,
+      instanceId: project.projectId,
       targetCommit: COMMIT,
       dockerfilePath: 'Dockerfile.test',
       storageRoot: '/tmp',

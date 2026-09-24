@@ -57,6 +57,7 @@ it('prepares one pinned image and patch source, then closes container before del
   const factory = createProjectRunCommandSessionFactory(
     {
       projectId: PROJECT,
+      instanceId: PROJECT,
       dockerfilePath: 'Dockerfile.test',
       storageRoot: '/tmp',
       imageState: {} as ProjectImageStateStore,
@@ -101,6 +102,7 @@ it('does not create a container if image preparation fails', async () => {
   const factory = createProjectRunCommandSessionFactory(
     {
       projectId: PROJECT,
+      instanceId: PROJECT,
       dockerfilePath: '',
       storageRoot: '/tmp',
       imageState: {} as ProjectImageStateStore,
@@ -131,6 +133,7 @@ it('deletes the Run source when container startup fails', async () => {
   const factory = createProjectRunCommandSessionFactory(
     {
       projectId: PROJECT,
+      instanceId: PROJECT,
       dockerfilePath: 'Dockerfile.test',
       storageRoot: '/tmp',
       imageState: {} as ProjectImageStateStore,
@@ -169,6 +172,7 @@ it('closes the container and source when image recording fails', async () => {
   const factory = createProjectRunCommandSessionFactory(
     {
       projectId: PROJECT,
+      instanceId: PROJECT,
       dockerfilePath: '',
       storageRoot: '/tmp',
       imageState: {} as ProjectImageStateStore,

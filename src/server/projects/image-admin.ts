@@ -8,6 +8,7 @@ import type { ProjectConfigurationStore } from './configuration.js';
 import { ensureProjectImage, ProjectImagePreparationError } from './image-preparation.js';
 import { createProjectImageStateStore } from './image-state.js';
 import { resolveProjectImageCommit } from './readiness-adapters.js';
+import { readInstanceId } from './instance-id.js';
 import type { ProjectRecord, ProjectStore } from './store.js';
 
 export class ProjectImageAdminError extends Error {
@@ -120,6 +121,7 @@ export function createProjectImageAdminService(input: {
         const image = await ensureImage({
           repository,
           projectId,
+          instanceId: readInstanceId(input.database),
           targetCommit,
           dockerfilePath: config.executionDockerfile,
           storageRoot: input.storageRoot,

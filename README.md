@@ -172,6 +172,8 @@ bash scripts/run-browser-sandbox.sh --network none --entrypoint node luowang:run
 
 罗网会逐步获得读取目标仓库、执行测试命令和访问测试环境的高权限。当前项目镜像不是恶意代码沙箱，只应连接操作者信任的仓库和非生产环境。v0.6.1 的 Compose 服务容器通过 Docker socket 调用 Engine；这项权限等同于宿主机高权限，必须限制谁能访问罗网服务、Compose 配置和该 socket。项目 Run 容器只接收当前 Run 的源码副本，不挂载 Docker socket、罗网数据库、主密钥、其他项目目录或无关宿主目录。Engine 应留足镜像与构建缓存容量；镜像保留和清理需按项目与固定提交核对，不能误删正在使用的镜像。密码、Token 和其他 Secret 不应写入 Git、日志或报告；本地 `.env` 仅作为被 `.gitignore` 忽略的开发/Compose 输入，正式部署应通过 Secret Store 或 Docker Secret 提供。正式部署还应由可信反向代理提供 TLS，并限制网络暴露范围。
 
+服务启动时先按数据库 `instance_id` 标签核验并删除本实例遗留的 Run 容器，再恢复队列。镜像只在同实例、同项目、构建标签与 `luowang-project-<projectId>:<targetCommit>` 标签吻合，且未被 ready 镜像状态或任何 Run 镜像记录引用时尝试删除；Docker 拒绝删除的镜像会保留。旧版没有实例标签的资源以及无标签的构建缓存不会被自动清理，应在确认归属和容量后由运维人员手工处理，不要对共享 Engine 执行全局 `docker image prune`。
+
 ## 许可证
 
 本项目使用 GNU Affero General Public License v3.0-only（AGPL-3.0-only）。它允许个人和商业使用、修改、分发和收费，但分发衍生作品以及通过网络向用户提供修改版时，必须按 AGPL 提供完整对应源码并保留版权与许可证声明。详见根目录 [`LICENSE`](./LICENSE)。

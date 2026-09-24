@@ -8,7 +8,7 @@ import { it } from 'vitest';
 
 import { createProjectTestRequestQueue } from '../src/server/automation/queue.js';
 import { createConfigurationStore } from '../src/server/configuration.js';
-import { runMigrations } from '../src/server/db/migrate.js';
+import { ensureSystemMetadata, runMigrations } from '../src/server/db/migrate.js';
 import { projectIdentityMigration } from '../src/server/db/migrations/0009-project-identity.js';
 import { migrateLegacyIndexOwnership } from '../src/server/db/migrations/0010-project-index-ownership.js';
 import { migrateLegacyRunOwnership } from '../src/server/db/migrations/0011-project-run-ownership.js';
@@ -30,6 +30,7 @@ it('assembles two project Runs with fixed repository, cleanup, evidence and hist
   database.pragma('foreign_keys = ON');
   try {
     runMigrations(database);
+    ensureSystemMetadata(database, { appVersion: 'test' });
     runMigrations(database, [projectIdentityMigration]);
     migrateLegacyIndexOwnership(database, null);
     migrateLegacyRunOwnership(database, null);

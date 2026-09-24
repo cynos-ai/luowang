@@ -32,7 +32,11 @@ export interface ProjectImagePreparationDependencies {
     dockerfilePath: string;
     storageRoot: string;
   }): Promise<ProjectImageSource>;
-  build(input: { projectId: string; source: ProjectImageSource }): Promise<ProjectImageBuild>;
+  build(input: {
+    projectId: string;
+    instanceId: string;
+    source: ProjectImageSource;
+  }): Promise<ProjectImageBuild>;
   inspect(input: ProjectImageKey & { imageId: string }): Promise<boolean>;
 }
 
@@ -64,6 +68,7 @@ export async function ensureProjectImage(
   input: {
     repository: GitRepository;
     projectId: string;
+    instanceId: string;
     targetCommit: string;
     dockerfilePath: string;
     storageRoot: string;
@@ -100,7 +105,11 @@ export async function ensureProjectImage(
     ) {
       throw new ProjectImagePreparationError('IMAGE_MISMATCH');
     }
-    const built = await dependencies.build({ projectId: input.projectId, source });
+    const built = await dependencies.build({
+      projectId: input.projectId,
+      instanceId: input.instanceId,
+      source,
+    });
     if (
       built.projectId !== input.projectId ||
       built.targetCommit !== input.targetCommit ||

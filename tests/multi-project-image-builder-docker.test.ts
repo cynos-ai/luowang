@@ -72,7 +72,9 @@ dockerIt(
         storageRoot: root,
       });
       try {
-        imageId = (await buildProjectImage({ projectId, source: imageSource })).imageId;
+        imageId = (
+          await buildProjectImage({ projectId, instanceId: projectId, source: imageSource })
+        ).imageId;
         const builtInSource = await prepareBuiltInProjectImageSource({
           repository,
           projectId,
@@ -80,7 +82,9 @@ dockerIt(
           storageRoot: root,
         });
         try {
-          builtInImageId = (await buildProjectImage({ projectId, source: builtInSource })).imageId;
+          builtInImageId = (
+            await buildProjectImage({ projectId, instanceId: projectId, source: builtInSource })
+          ).imageId;
           assert.equal(
             await inspectProjectImage({
               projectId,
@@ -95,6 +99,7 @@ dockerIt(
         }
         const session = await startProjectCommandSession({
           projectId,
+          instanceId: projectId,
           runId,
           targetCommit,
           imageId,
@@ -152,6 +157,7 @@ dockerIt(
       );
       const built = await buildProjectImage({
         projectId,
+        instanceId: projectId,
         source: {
           directory: context,
           dockerfilePath: 'Dockerfile.luowang',
@@ -171,6 +177,7 @@ dockerIt(
       await writeFile(join(context, 'marker.txt'), 'run-scenario-patch');
       const session = await startProjectCommandSession({
         projectId,
+        instanceId: projectId,
         runId: '01K00000000000000000000001',
         targetCommit,
         imageId,

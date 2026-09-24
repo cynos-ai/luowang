@@ -84,6 +84,7 @@ export function createDockerRuntime(): DockerRuntime {
 export async function startProjectCommandSession(
   input: {
     projectId: string;
+    instanceId: string;
     runId: string;
     targetCommit: string;
     imageId: string;
@@ -95,6 +96,7 @@ export async function startProjectCommandSession(
 ): Promise<ProjectCommandSession> {
   if (
     !PROJECT_ID.test(input.projectId) ||
+    !PROJECT_ID.test(input.instanceId) ||
     !RUN_ID.test(input.runId) ||
     !COMMIT_SHA.test(input.targetCommit) ||
     !IMAGE_ID.test(input.imageId) ||
@@ -153,6 +155,7 @@ export async function startProjectCommandSession(
       name,
       '--label',
       `luowang.project-id=${input.projectId}`,
+      `luowang.instance-id=${input.instanceId}`,
       '--label',
       `luowang.run-id=${input.runId}`,
       '--label',
@@ -170,7 +173,6 @@ export async function startProjectCommandSession(
   );
   const containerId = created.stdout.trim();
   if (!CONTAINER_ID.test(containerId)) {
-    await docker.run(['rm', '--force', name], { timeoutMs: 30_000 }).catch(() => undefined);
     throw new ControlledCommandError('COMMAND_FAILED', 'Docker 未返回有效容器 ID');
   }
   try {

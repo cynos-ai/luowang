@@ -15,6 +15,7 @@ import type { ScopedSecretStore } from '../security/scoped-secret-store.js';
 import { createProjectRunCommandSessionFactory } from './command-session.js';
 import { createProjectImageStateStore } from './image-state.js';
 import { createProjectRunImageStore } from './run-image.js';
+import { readInstanceId } from './instance-id.js';
 import type { ProjectTaskRuntime } from './task-runtime.js';
 
 /** Assemble every Run dependency from one claimed task; never consult a selected project. */
@@ -66,6 +67,7 @@ export function createProjectRunServices(options: {
     recoveryStore,
     commandSessionFactory: createProjectRunCommandSessionFactory({
       projectId,
+      instanceId: readInstanceId(database),
       dockerfilePath: task.executionDockerfile,
       storageRoot,
       imageState: createProjectImageStateStore(database),

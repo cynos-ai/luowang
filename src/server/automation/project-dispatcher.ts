@@ -11,6 +11,7 @@ import type { RunOrchestrator } from '../runs/orchestrator.js';
 import { createRunId } from '../runs/workspace.js';
 import type { ScopedSecretStore } from '../security/scoped-secret-store.js';
 import { createProjectRunServices } from '../projects/run-services.js';
+import { recoverProjectDockerResources } from '../projects/docker-recovery.js';
 import type { ProjectTaskRuntime } from '../projects/task-runtime.js';
 import { createProjectTaskRuntime } from '../projects/task-runtime.js';
 import type { ProjectStore } from '../projects/store.js';
@@ -227,6 +228,10 @@ export function createProjectAutomationDispatcher(options: {
   }
 
   async function recoverInner(): Promise<void> {
+    if (!options.createServices) {
+      const recovered = await recoverProjectDockerResources(options.database);
+      options.logger?.info(recovered, 'project Docker resources recovered');
+    }
     const archives: Promise<void>[] = [];
     for (const item of createTestRequestQueue(options.database).listInFlight()) {
       if (!item.projectId) throw new Error('待恢复请求缺少项目归属');

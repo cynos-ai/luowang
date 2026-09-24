@@ -12,6 +12,7 @@ import {
 } from '../src/server/projects/execution-container.js';
 
 const PROJECT = '00000000-0000-4000-8000-000000000001';
+const INSTANCE = '00000000-0000-4000-8000-000000000002';
 const RUN = '01K00000000000000000000001';
 const COMMIT = 'a'.repeat(40);
 const IMAGE = `sha256:${'b'.repeat(64)}`;
@@ -61,6 +62,7 @@ describe('project command container', () => {
     assert.equal(session.containerId, CONTAINER);
     const create = calls.find((args) => args[0] === 'create')!;
     assert.equal(create.includes('--mount'), false);
+    assert.ok(create.includes(`luowang.instance-id=${INSTANCE}`));
     const copy = calls.find((args) => args[0] === 'cp')!;
     assert.deepEqual(copy, ['cp', `${sourceDirectory}/.`, `${CONTAINER}:/luowang-source`]);
     const result = await session.run('node --version', commandOptions());
@@ -162,6 +164,7 @@ describe('project command container', () => {
 function binding() {
   return {
     projectId: PROJECT,
+    instanceId: INSTANCE,
     runId: RUN,
     targetCommit: COMMIT,
     imageId: IMAGE,
