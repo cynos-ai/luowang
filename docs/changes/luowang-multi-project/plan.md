@@ -208,6 +208,8 @@ Docker 部署节点将 runtime 镜像加入 Docker CLI，Compose 只把 Engine s
 
 同一工作树构建的干净 Linux quality 镜像通过类型、lint、格式检查、419 项测试（Docker 专项 2 项默认跳过）、三个 UI E2E 和 `test:acceptance:local`；聚合结果为 `local=passed`、`live=blocked`、`release=blocked`，外部双项目输入仍未配齐。真实 Docker 专项另在本机 Engine 显式开启并通过。2026-09-24 使用构建参数 `DEBIAN_MIRROR=http://mirrors.ustc.edu.cn/debian`、`DEBIAN_SECURITY_MIRROR=http://mirrors.ustc.edu.cn/debian-security` 成功构建生产 runtime 镜像 `sha256:2ef6d228df5f2027ef20386faf38ad1e1d7da908579088fb911af3b7ebedc61c`；Debian 包仍由 apt 校验签名。最终镜像以 `node` 用户运行，包含 Docker CLI、编译后的服务和内置角色资源；角色加载器成功读取 Main 规划、Runner、Reviewer、Main 收尾及初始化所需资源并生成哈希。按 `scripts/run-browser-sandbox.sh` 的只读、非 root、tmpfs 等约束运行零模型原生 MCP 预检，结果 `status=passed`、`modelRequests=0`，覆盖工具边界、本地导航、快照、截图及 Session 释放。这完成了本地质量与 runtime 预检项；服务器 Compose 权限和真实双项目 live 验收仍未完成。
 
+本机 Compose 部署演练使用上述 runtime 镜像、独立 Compose 项目和临时数据卷：按文档完成空库备份、离线升级与 `verify`，服务健康接口返回 200。服务进程为 `uid=1000(node)`，通过附加 `gid=0` 访问权限为 `660` 的 Docker socket，能连接 Docker Desktop Engine 28.3.3。通过服务容器的 Docker CLI 创建两只带不同实例标签的合成运行容器；重启后本实例容器被清理，另一实例容器保留。被测容器无挂载，环境中没有罗网主密钥、管理员密码或 Docker endpoint。再构建一张本实例标签的未引用空镜像，重启后回收日志记录 `removedImages=1`；模拟 Engine 地址失联时受控适配器返回失败，恢复原 socket 后可再次连接。只读容量快照显示镜像 173.7 GB、卷 49.42 GB、构建缓存 21.47 GB；未对共享 Engine 执行全局 prune。演练结束已删除临时容器、Compose 卷与网络及测试密钥。此证明限于本机 Docker Desktop；服务器 socket 组、磁盘配额和实际部署回收仍需在目标环境复核，因此正式部署形态验收项继续保留未完成。
+
 ## 提交与范围控制
 
 实现分支从 v0.6.0 发布后的最新 develop 创建 `feat/multi-project`。各阶段通过对应检查后提交并 push，跨层改造未通过整体检查前不合入 develop。数据库、服务、调度和 UI 可以分提交 review，但不能以部分页面可用宣称多项目已完成。
