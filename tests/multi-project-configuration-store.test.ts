@@ -43,6 +43,7 @@ describe('project configuration store', () => {
         baseUrl: 'https://b.example',
         language: 'en-US',
         executionDockerfile: 'test/Dockerfile.luowang',
+        testDataCleanupUrl: 'https://b.example/cleanup',
         triggerOnCommit: true,
         pollIntervalSeconds: 10,
       });
@@ -51,6 +52,7 @@ describe('project configuration store', () => {
       assert.equal(config.get(b.projectId).pollIntervalSeconds, 300);
       assert.equal(config.get(b.projectId).language, 'en-US');
       assert.equal(config.get(b.projectId).executionDockerfile, 'test/Dockerfile.luowang');
+      assert.equal(config.get(b.projectId).testDataCleanupUrl, 'https://b.example/cleanup');
       assert.equal(projects.get(b.projectId)?.configRevision, 2);
       assert.equal(projects.get(a.projectId)?.configRevision, 1);
       const stored = database
@@ -63,6 +65,16 @@ describe('project configuration store', () => {
       );
       for (const path of ['../Dockerfile', '/Dockerfile', 'test//Dockerfile', 'test\\Dockerfile']) {
         assert.throws(() => config.update(b.projectId, { executionDockerfile: path }), /路径无效/);
+      }
+      for (const url of [
+        'file:///tmp/cleanup',
+        'https://user:pass@b.example/cleanup',
+        'https://b.example/cleanup?token=x',
+      ]) {
+        assert.throws(
+          () => config.update(b.projectId, { testDataCleanupUrl: url }),
+          /清理地址无效/,
+        );
       }
       assert.equal(config.get(b.projectId).executionDockerfile, 'test/Dockerfile.luowang');
       assert.throws(() => config.get('missing'), /项目不存在/);

@@ -9,6 +9,7 @@ import {
 
 export type ProjectConfiguration = Omit<RepositoryConfig, 'repository'> & {
   language: string;
+  testDataCleanupUrl: string;
   /** Empty uses LuoWang's built-in executor image. */
   executionDockerfile: string;
 };
@@ -24,6 +25,7 @@ const ALLOWED_FIELDS = new Set([
   'environmentDescription',
   'baseUrl',
   'externalDatabase',
+  'testDataCleanupUrl',
   'executionDockerfile',
 ]);
 const TASK_SEMANTIC_FIELDS = [
@@ -34,6 +36,7 @@ const TASK_SEMANTIC_FIELDS = [
   'environmentDescription',
   'baseUrl',
   'externalDatabase',
+  'testDataCleanupUrl',
   'executionDockerfile',
 ] as const;
 
@@ -75,7 +78,8 @@ export function createProjectConfigurationStore(
         ? source.language
         : 'zh-CN';
     const executionDockerfile = normalizeExecutionDockerfile(source.executionDockerfile);
-    return { repository, config: { ...rest, language, executionDockerfile } };
+    const testDataCleanupUrl = normalizeTestDataCleanupUrl(source.testDataCleanupUrl);
+    return { repository, config: { ...rest, language, executionDockerfile, testDataCleanupUrl } };
   }
 
   return {
@@ -99,6 +103,7 @@ export function createProjectConfigurationStore(
         const {
           language: languagePatch,
           executionDockerfile: executionDockerfilePatch,
+          testDataCleanupUrl: cleanupUrlPatch,
           ...repositoryPatch
         } = patch;
         const merged = mergeRepositoryConfiguration(
@@ -116,7 +121,10 @@ export function createProjectConfigurationStore(
             ? current.config.executionDockerfile
             : executionDockerfilePatch,
         );
-        const config = { ...rest, language, executionDockerfile };
+        const testDataCleanupUrl = normalizeTestDataCleanupUrl(
+          cleanupUrlPatch === undefined ? current.config.testDataCleanupUrl : cleanupUrlPatch,
+        );
+        const config = { ...rest, language, executionDockerfile, testDataCleanupUrl };
         const semanticChange = TASK_SEMANTIC_FIELDS.some(
           (key) => JSON.stringify(config[key]) !== JSON.stringify(current.config[key]),
         );
@@ -169,4 +177,27 @@ export function normalizeExecutionDockerfile(value: unknown): string {
     throw new ConfigurationError('项目 Dockerfile 路径无效');
   }
   return value;
+}
+
+export function normalizeTestDataCleanupUrl(value: unknown): string {
+  if (value === undefined || value === '') return '';
+  if (typeof value !== 'string' || value.length > 2048) {
+    throw new ConfigurationError('测试数据清理地址无效');
+  }
+  let parsed: URL;
+  try {
+    parsed = new URL(value);
+  } catch {
+    throw new ConfigurationError('测试数据清理地址无效');
+  }
+  if (
+    !['http:', 'https:'].includes(parsed.protocol) ||
+    parsed.username ||
+    parsed.password ||
+    parsed.search ||
+    parsed.hash
+  ) {
+    throw new ConfigurationError('测试数据清理地址无效');
+  }
+  return parsed.href;
 }

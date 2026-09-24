@@ -55,6 +55,10 @@ describe('project-bound request queues', () => {
         () => config.update(a.projectId, { executionDockerfile: 'test/Dockerfile.luowang' }),
         /待处理请求/,
       );
+      assert.throws(
+        () => config.update(a.projectId, { testDataCleanupUrl: 'https://other.example/cleanup' }),
+        /待处理请求/,
+      );
       config.update(a.projectId, { pollIntervalSeconds: 600 });
       const nextRevisionA = queueA.enqueue({ trigger: 'git', request: 'after revision' });
       assert.notEqual(nextRevisionA.queueId, firstA.queueId);

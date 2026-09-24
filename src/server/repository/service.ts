@@ -104,6 +104,29 @@ export function createProjectRepositoryService(
   secrets: ScopedSecretStore,
   repositoryRoot: string,
 ): RepositoryService {
+  if (!createProjectStore(database).get(projectId)) throw new Error('仓库项目不存在');
+  return createProjectTaskRepositoryService(
+    database,
+    projectId,
+    {
+      getRepository: () => ({
+        repository: configuration.repositoryUrl(projectId),
+        ...configuration.get(projectId),
+      }),
+    },
+    secrets.project(projectId),
+    repositoryRoot,
+  );
+}
+
+/** A claimed task supplies its frozen repository settings; only the same project's token is read. */
+export function createProjectTaskRepositoryService(
+  database: Database.Database,
+  projectId: string,
+  configuration: Pick<ConfigurationStore, 'getRepository'>,
+  secrets: Pick<SecretStore, 'get'>,
+  repositoryRoot: string,
+): RepositoryService {
   const project = createProjectStore(database).get(projectId);
   if (!project) throw new Error('仓库项目不存在');
   const root = resolve(repositoryRoot);
@@ -117,13 +140,10 @@ export function createProjectRepositoryService(
     throw new Error('项目仓库目录越界');
   }
   const repositoryUrl = `https://github.com/${project.repositoryOwner}/${project.repositoryName}`;
-  return new DefaultRepositoryService(
-    database,
-    { getRepository: () => ({ repository: repositoryUrl, ...configuration.get(projectId) }) },
-    secrets.project(projectId),
-    { repoDir },
-    projectId,
-  );
+  if (configuration.getRepository().repository.toLowerCase() !== repositoryUrl.toLowerCase()) {
+    throw new Error('任务仓库与项目身份不一致');
+  }
+  return new DefaultRepositoryService(database, configuration, secrets, { repoDir }, projectId);
 }
 
 interface RepositoryConfigurationReader {

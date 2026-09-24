@@ -4,7 +4,7 @@ import type { ConfigurationStore } from '../configuration.js';
 import { mergeRepositoryConfiguration, normalizeRepository } from '../configuration.js';
 import type { TestRequestRecord } from '../automation/queue.js';
 import type { HarnessConfig } from '../../shared/types.js';
-import { normalizeExecutionDockerfile } from './configuration.js';
+import { normalizeExecutionDockerfile, normalizeTestDataCleanupUrl } from './configuration.js';
 import type { ProjectStore } from './store.js';
 
 const SNAPSHOT_FIELDS = new Set([
@@ -19,12 +19,14 @@ const SNAPSHOT_FIELDS = new Set([
   'environmentDescription',
   'baseUrl',
   'externalDatabase',
+  'testDataCleanupUrl',
 ]);
 
 export interface ProjectTaskRuntime {
   projectId: string;
   configRevision: number;
   executionDockerfile: string;
+  testDataCleanupUrl: string;
   configuration: ConfigurationStore;
 }
 
@@ -67,10 +69,17 @@ export function createProjectTaskRuntime(
     throw new Error('任务语言配置无效');
   }
   const executionDockerfile = normalizeExecutionDockerfile(snapshot.executionDockerfile);
+  const testDataCleanupUrl = normalizeTestDataCleanupUrl(snapshot.testDataCleanupUrl);
   const repositoryUrl = `https://github.com/${project.repositoryOwner}/${project.repositoryName}`;
-  const { language: _language, executionDockerfile: _dockerfile, ...repositoryFields } = snapshot;
+  const {
+    language: _language,
+    executionDockerfile: _dockerfile,
+    testDataCleanupUrl: _cleanupUrl,
+    ...repositoryFields
+  } = snapshot;
   void _language;
   void _dockerfile;
+  void _cleanupUrl;
   const repository = mergeRepositoryConfiguration(
     normalizeRepository({ repository: repositoryUrl }),
     repositoryFields,
@@ -92,6 +101,7 @@ export function createProjectTaskRuntime(
     projectId: project.projectId,
     configRevision: task.configRevision!,
     executionDockerfile,
+    testDataCleanupUrl,
     configuration: {
       getHarness: () => structuredClone(harness),
       getRepository: () => structuredClone(repository),
