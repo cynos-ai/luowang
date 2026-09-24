@@ -151,7 +151,7 @@ export function createProjectConfigurationStore(
   };
 }
 
-function normalizeExecutionDockerfile(value: unknown): string {
+export function normalizeExecutionDockerfile(value: unknown): string {
   if (value === undefined || value === '') return '';
   if (typeof value !== 'string' || value.length > 255 || value.includes('\\')) {
     throw new ConfigurationError('项目 Dockerfile 路径无效');
