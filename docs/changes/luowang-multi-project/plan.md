@@ -261,6 +261,8 @@ Python 项目三个 Run 的 DeepSeek SDK Session 目录估值依次为约 `0.035
 
 本 Run 有 149 项证据，其中 43 条普通受控 HTTP、25 条当前 Run 清理 HTTP 操作；仅输出计数的模式扫描未发现原始 Bearer Token、`sid` 值或明文 password 字段。OSS 截图实际回读 HTTP 200、20789 字节且 SHA-256 与登记值一致；Harness 在最终 Main 后独立核验 6 项登记账号 `absent=true`。本 Run 在 Python 项目 API 返回 200，另外两个项目均返回 404。四个真实 DeepSeek Session 使用文本 `deepseek-v4-flash` 和视觉 `deepseek-v4-flash-vision-exp`，合计 input/output/cacheRead 为 `327126/71439/6496384` token，SDK 目录估值约 `0.0840` 美元，并非供应商账单。实测 Run 使用本节点最后一项明文参数拒绝加固之前的 runtime；加固后的最终工作树再次在干净 Linux quality 镜像通过类型、lint、格式和完整单测（433 passed、2 skipped），最终 runtime 也已在同一数据卷上替换并健康运行、历史 Run 可读，但没有把旧 Run 记作在最终镜像重跑。下一个节点需决定如何在不读取任意历史 Run 的前提下验证跨 Run 清理不干扰，并补服务器环境检查；在此之前阶段 5/6 仍不整体勾选。
 
+2026-09-25 跨 Run 对照节点：按 Spec §4.4 的“单独受控演练”在现有本机非生产 Python 应用容器执行 `tests/e2e/python-fixture-cross-run-smoke.py`，不扩大 Runner 的其他 Run 读取权限。脚本生成两个互异的合法合成 Run ID，分别通过真实注册接口建号，再用部署级 Token 读实际清理端点：清理前 current/control 余量均为 `1`；只对 current 执行 `DELETE`，返回 `deleted=1、remaining=0`；独立重读为 `current=0、control=1`；最后清理 control 并核验两者余量均为 `0`。本次输出 `passed=true`，current `017QGHP57D21WNDDYQKM8A1HQC`、control `016C6VTNKDVDD5VNRT3JWD46R8`，被测应用镜像 `sha256:0cdaaa527431724d4c5c9d2f1426d897c3d292de9dad566f30e67919170065b1`。脚本只输出 Run ID 和计数，不输出 Token、密码或 Cookie。此证据证明该部署的清理接口没有误删另一个合成 Run；它发生在罗网 Runner/Reviewer 之外，**不能追认或改判**上一轮 `CLEANUP-SEED-001` 的 blocked。后续若要该场景通过，须先确定受控的场景内对照观察方式并重新执行、审核，仍不得开放任意历史 Run 数据。
+
 ## 阶段 6：质量检查、文档与发布
 
 - [x] 干净 quality 容器执行完整本地质量与验收，runtime 验证生产原生 MCP 和资源包，禁止依赖宿主机 Node/浏览器差异判定发布质量。
