@@ -14,6 +14,7 @@ import { migrateLegacySecretOwnership } from '../src/server/db/migrations/0013-p
 import { migrateProjectQueueContext } from '../src/server/db/migrations/0014-project-queue-context.js';
 import { migrateProjectImageState } from '../src/server/db/migrations/0015-project-image-state.js';
 import { migrateProjectRunImage } from '../src/server/db/migrations/0016-project-run-image.js';
+import { migrateProjectReportIndexIdentity } from '../src/server/db/migrations/0017-project-report-index-identity.js';
 import { createProjectApp } from '../src/server/projects/app.js';
 import { createProjectTestRequestQueue } from '../src/server/automation/queue.js';
 import { createProjectRunStore } from '../src/server/runs/store.js';
@@ -41,6 +42,7 @@ it('uses only new-schema administration routes, scoped Secrets, and the existing
   migrateProjectQueueContext(database.sqlite);
   migrateProjectImageState(database.sqlite);
   migrateProjectRunImage(database.sqlite);
+  migrateProjectReportIndexIdentity(database.sqlite);
   database.sqlite
     .prepare(
       `INSERT INTO system_metadata (key, value, created_at, updated_at)

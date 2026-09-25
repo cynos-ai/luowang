@@ -490,12 +490,6 @@ class SqliteRepositoryIndexer implements RepositoryIndexer {
           );
       }
       for (const report of snapshot.reports) {
-        const existing = this.database
-          .prepare('SELECT project_id FROM indexed_reports WHERE run_id = ?')
-          .get(report.data.runId) as { project_id: string } | undefined;
-        if (existing && existing.project_id !== projectId) {
-          throw new Error('报告 Run ID 已归属其他项目');
-        }
         this.database
           .prepare('DELETE FROM indexed_reports WHERE project_id = ? AND run_id = ? AND path <> ?')
           .run(projectId, report.data.runId, report.path);
@@ -506,7 +500,7 @@ class SqliteRepositoryIndexer implements RepositoryIndexer {
               included_commits_json, result, started_at, finished_at, scenario_results_json,
               confirmed_bugs_json, files_json, content, commit_sha, indexed_at)
              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-             ON CONFLICT(run_id) DO UPDATE SET
+             ON CONFLICT(project_id, run_id) DO UPDATE SET
                path = excluded.path, trigger = excluded.trigger,
                base_commit = excluded.base_commit, target_commit = excluded.target_commit,
                included_commits_json = excluded.included_commits_json, result = excluded.result,

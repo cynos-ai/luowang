@@ -21,6 +21,7 @@ const PROJECT_VERSIONS = [
   '0014_project_queue_context',
   '0015_project_image_state',
   '0016_project_run_image',
+  '0017_project_report_index_identity',
 ];
 
 export function assertLegacySchema(database: Database.Database): void {

@@ -6,6 +6,7 @@ import { describe, it } from 'vitest';
 import { runMigrations } from '../src/server/db/migrate.js';
 import { projectIdentityMigration } from '../src/server/db/migrations/0009-project-identity.js';
 import { migrateLegacyIndexOwnership } from '../src/server/db/migrations/0010-project-index-ownership.js';
+import { migrateProjectReportIndexIdentity } from '../src/server/db/migrations/0017-project-report-index-identity.js';
 import { createProjectStore } from '../src/server/projects/store.js';
 
 describe('offline project index ownership migration', () => {
@@ -100,6 +101,51 @@ describe('offline project index ownership migration', () => {
           )
           .run(a.projectId, 'a'.repeat(40), '2026-01-01'),
       );
+    } finally {
+      database.close();
+    }
+  });
+
+  it('preserves indexed reports while allowing an equal historical Run ID in another project', () => {
+    const database = makeDatabase();
+    try {
+      seedLegacyIndex(database);
+      const projects = createProjectStore(database);
+      const a = projects.createVerified({
+        displayName: 'A',
+        repository: { githubRepositoryId: '301', owner: 'example', name: 'a' },
+      });
+      const b = projects.createVerified({
+        displayName: 'B',
+        repository: { githubRepositoryId: '302', owner: 'example', name: 'b' },
+      });
+      migrateLegacyIndexOwnership(database, a.projectId);
+      assert.equal(migrateProjectReportIndexIdentity(database), true);
+      assert.equal(migrateProjectReportIndexIdentity(database), false);
+      database
+        .prepare(
+          `INSERT INTO indexed_reports
+             (project_id, run_id, path, trigger, base_commit, target_commit,
+              included_commits_json, result, started_at, finished_at,
+              scenario_results_json, confirmed_bugs_json, files_json, content,
+              commit_sha, indexed_at)
+           SELECT ?, run_id, path, trigger, base_commit, target_commit,
+                  included_commits_json, result, started_at, finished_at,
+                  scenario_results_json, confirmed_bugs_json, files_json,
+                  'other-project-report', commit_sha, indexed_at
+           FROM indexed_reports WHERE project_id = ?`,
+        )
+        .run(b.projectId, a.projectId);
+      assert.deepEqual(
+        database
+          .prepare('SELECT project_id, content FROM indexed_reports ORDER BY project_id')
+          .all(),
+        [
+          { project_id: a.projectId, content: 'legacy-report' },
+          { project_id: b.projectId, content: 'other-project-report' },
+        ].sort((left, right) => left.project_id.localeCompare(right.project_id)),
+      );
+      assert.deepEqual(database.prepare('PRAGMA foreign_key_check').all(), []);
     } finally {
       database.close();
     }

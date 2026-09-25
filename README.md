@@ -126,6 +126,8 @@ Agent 仍只有 Main、Runner、Reviewer 三组，正常 Run 的阶段策略为�
 
 旧 v0.6.0 实例须停服务后离线升级：先运行 `npm run db:multi-project -- inspect` 记录预检和 fingerprint，再用 `backup <新目录>` 保存一致的数据库、repo 与 report 副本；逐条核对历史仓库归属后，有项目历史的实例使用 `upgrade-project <备份目录> <已审 fingerprint>`，空实例使用 `upgrade-empty <备份目录>`，最后运行 `verify`。升级命令不会创建缺失数据库，也不会代替人工历史归属核对。恢复旧版本时须同时恢复数据库、repo、report 和对应主密钥材料，不能只回退数据库；不要在尚未完成真实联合验收的持久实例上提前执行切换。具体风险和证明见[多项目计划](docs/changes/luowang-multi-project/plan.md)。
 
+若已使用早期 v0.6.1 开发版完成多项目离线切换，升级到带项目报告索引修复的版本前也须停服务，运行 `npm run db:multi-project -- upgrade-index <新的备份目录>`，再运行 `verify` 后重启。命令先备份当前 SQLite，再将外部仓库历史报告的索引键改为项目内唯一；它不会改写目标仓库报告、Run 记录或 OSS 证据。备份目录必须不存在，失败时保留备份以供恢复；已完成时重复执行返回 `already_complete`。首次从 v0.6.0 切换的实例会在原升级事务中完成此项，不需要另跑 `upgrade-index`。
+
 可选的真实 GitHub smoke 需要操作者临时提供独立测试仓库和最小权限 Token；它只诊断仓库读取路径，不属于 v0.6.1 双项目 live 证明：
 
 ```bash

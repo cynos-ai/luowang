@@ -294,6 +294,10 @@ Python 项目三个 Run 的 DeepSeek SDK Session 目录估值依次为约 `0.035
 
 此快照仍是 **draft review**，不宣称 AC-MP-12 或 v0.6.1 发布通过。通用 `test:acceptance:live` 继续要求首次初始化、两个已确认 Bug/Issue 的 failed Run、blocked Run 等完整 Closure 7 输入；本轮真实多项目 Run 没有确认产品 Bug，不能用正常通过或受控停机报告冒充这些事实，也不能为过门禁制造产品缺陷。`test:acceptance:release` 还需要正式发布后的 `main` 与不可变 tag。测试服务器只有约 4 GiB 总内存且有既有服务，完整模型/浏览器负载尚未在那里运行；真实持久 v0.6.0 实例迁移无现成生产数据源可演练，现有证明是隔离旧库副本。阶段 5 候选实例及卷保留了全部失败/blocked 历史，须在导出或保留策略确定后再清理。下一步先进行 draft PR 审核，并分别补足可执行的 live gate 输入、资源足够的部署验收与候选收尾；上述条件满足后才合入 `develop`，再走 `develop → main` 发布 PR、tag 和发布后核对。
 
+2026-09-25 draft PR 审核中发现并修复报告索引身份冲突：fixture 仓库带有从官网目标复制的历史报告，两个外部仓库共有 **17 个相同的历史报告 Run ID**；罗网自身生成的新 Run ID 仍全局唯一，但旧报告索引把外部仓库的 ID 也当作全局主键，导致 fixture 同步返回 500、归档成功的新报告在索引 API 返回 404。索引主键现改为 `(projectId, runId)`，同项目路径仍唯一，报告读取继续要求明确项目；新增离线 `0017` 迁移和已切换实例专用的 `upgrade-index <新备份目录>`，不改写任何目标 Git 报告或旧 Run 工件。Linux quality 镜像通过格式、lint、类型、构建、**438 passed / 2 skipped** 与三条浏览器 E2E；两个仓库相同历史 ID 的回归及离线备份/幂等回归均通过。
+
+本机隔离候选三项目队列排空后停机，使用新 runtime 的 `upgrade-index` 先将 SQLite 备份到候选数据卷的 `upgrade-backup/report-index-v061-20260925`，再事务性改索引；迁移前 40 份索引报告均保留，`verify` 返回 3 个项目。原 runtime 容器已停止并改名保留，原数据卷和全部历史 Run/失败记录未删除。新 runtime 在同一端口和数据卷健康启动，fixture 首次启动时的一次同步返回临时 502，重试后成功同步 **28 份**报告且 0 索引错误；总索引报告现为 68 份（官网 34、Python 6、fixture 28），外键错误为 0。`01M1GVQWWX89MQZWJW27AGBCDV` 在官网和 fixture 的报告 API 均独立返回 200；fixture 本轮正式 Run `01M3C8S9ZFZ6YGRGGVGRH2XRRQ` 的索引报告也返回 200。此节点没有重跑模型 Run，原审核结论和远端报告均不改判。通用 Closure 7 live/release 门禁、服务器完整负载、正式旧实例迁移及候选资源最终收尾仍待后续。
+
 阶段 6 文档节点：README 的当前操作说明已与项目 App、离线升级 CLI 和 Compose 对齐，区分已发布 v0.6.0 与开发中的 v0.6.1，列出部署/项目 API 归属、paused 接入、镜像准备、固定提交重建、容量及清理要求。PROJECT.md、默认布局和 AGENTS.md 同步注明多项目 Spec 覆盖历史单仓库基线；历史需求和旧 Run 记录不改写。此节点只完成文档项，不代表生产 Docker Engine 权限或真实双项目验收已通过。
 
 本机 Docker Desktop 28.3.3 的真实 smoke 已验证两项项目镜像构建和固定提交 Run 命令；新增检查直接读取实际容器配置，确认无挂载、无 Docker socket/罗网数据库、非 privileged，且服务进程中的合成主密钥没有进入项目容器。模拟 Engine 地址失联后，受控入口拒绝创建新 Run 容器，不回退到宿主机命令；恢复连接后按 Run 标签查询无遗留容器。`docker system df` 的只读快照显示本机镜像总量 166.6 GB、构建缓存 19.22 GB，说明正式部署须预留容量并按归属清理，未对共享 Engine 执行全局 prune。这是本机开发环境的真实 Docker 证明；尚未验证服务器 Compose 的 socket 权限、容量策略及实际进程重启清理，因此正式部署形态验收项仍未勾选。

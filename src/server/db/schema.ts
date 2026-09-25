@@ -150,7 +150,7 @@ export const indexedScenarios = sqliteTable(
 export const indexedReports = sqliteTable(
   'indexed_reports',
   {
-    runId: text('run_id').primaryKey(),
+    runId: text('run_id').notNull(),
     projectId: text('project_id')
       .notNull()
       .references(() => projects.projectId),
@@ -169,7 +169,10 @@ export const indexedReports = sqliteTable(
     commitSha: text('commit_sha').notNull(),
     indexedAt: text('indexed_at').notNull(),
   },
-  (table) => [uniqueIndex('indexed_reports_project_path_idx').on(table.projectId, table.path)],
+  (table) => [
+    primaryKey({ columns: [table.projectId, table.runId] }),
+    uniqueIndex('indexed_reports_project_path_idx').on(table.projectId, table.path),
+  ],
 );
 
 export const repositoryIndexErrors = sqliteTable(

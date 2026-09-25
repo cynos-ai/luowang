@@ -1,10 +1,12 @@
 import { existsSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { mkdir } from 'node:fs/promises';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import Database from 'better-sqlite3';
 
 import { loadConfig } from '../config.js';
+import { migrateProjectReportIndexIdentity } from '../db/migrations/0017-project-report-index-identity.js';
 import { GitHubClient } from '../repository/github.js';
 import { createSecretStore } from '../security/secret-store.js';
 import { createLegacyBackup, verifyLegacyBackup } from './legacy-backup.js';
@@ -20,13 +22,15 @@ export async function runUpgradeCli(
 ): Promise<Record<string, unknown>> {
   const [command, backupDir, reviewedHistoryFingerprint] = args;
   if (
-    !['inspect', 'backup', 'upgrade-empty', 'upgrade-project', 'verify'].includes(command ?? '') ||
-    (['backup', 'upgrade-empty'].includes(command ?? '') && args.length !== 2) ||
+    !['inspect', 'backup', 'upgrade-empty', 'upgrade-project', 'upgrade-index', 'verify'].includes(
+      command ?? '',
+    ) ||
+    (['backup', 'upgrade-empty', 'upgrade-index'].includes(command ?? '') && args.length !== 2) ||
     (command === 'upgrade-project' && (args.length < 2 || args.length > 3)) ||
     (['inspect', 'verify'].includes(command ?? '') && args.length !== 1)
   ) {
     throw new Error(
-      '用法: db:multi-project inspect | backup <new-dir> | upgrade-empty <backup-dir> | upgrade-project <backup-dir> [reviewed-history-fingerprint] | verify',
+      '用法: db:multi-project inspect | backup <new-dir> | upgrade-empty <backup-dir> | upgrade-project <backup-dir> [reviewed-history-fingerprint] | upgrade-index <new-backup-dir> | verify',
     );
   }
   const config = loadConfig(environment);
@@ -37,6 +41,50 @@ export async function runUpgradeCli(
   database.pragma('foreign_keys = ON');
   database.pragma('busy_timeout = 5000');
   try {
+    if (command === 'upgrade-index') {
+      const marker = database
+        .prepare(
+          "SELECT key FROM system_metadata WHERE key IN ('v061_legacy_cutover_project_id', 'v061_empty_cutover')",
+        )
+        .all() as Array<{ key: string }>;
+      if (marker.length !== 1) throw new Error('多项目离线切换标记缺失或不唯一');
+      if (
+        database
+          .prepare(
+            "SELECT 1 FROM schema_migrations WHERE version = '0017_project_report_index_identity'",
+          )
+          .get()
+      ) {
+        assertProjectSchema(database);
+        return { status: 'already_complete' };
+      }
+      const backupPath = resolve(backupDir!);
+      await mkdir(dirname(backupPath), { recursive: true });
+      await mkdir(backupPath);
+      const databaseBackupPath = join(backupPath, 'luowang-before-index-0017.db');
+      await database.backup(databaseBackupPath);
+      const backup = new Database(databaseBackupPath, { readonly: true, fileMustExist: true });
+      try {
+        const check = backup.pragma('quick_check') as Array<{ quick_check: string }>;
+        if (check.length !== 1 || check[0]?.quick_check !== 'ok') {
+          throw new Error('索引升级备份完整性检查失败');
+        }
+      } finally {
+        backup.close();
+      }
+      const before = (
+        database.prepare('SELECT COUNT(*) AS count FROM indexed_reports').get() as { count: number }
+      ).count;
+      migrateProjectReportIndexIdentity(database);
+      const after = (
+        database.prepare('SELECT COUNT(*) AS count FROM indexed_reports').get() as { count: number }
+      ).count;
+      if (before !== after || (database.pragma('foreign_key_check') as unknown[]).length > 0) {
+        throw new Error('索引升级后数量或外键核验失败，请从备份恢复');
+      }
+      assertProjectSchema(database);
+      return { status: 'complete', backupDir: backupPath, reports: after };
+    }
     if (command === 'verify') {
       assertProjectSchema(database);
       return {

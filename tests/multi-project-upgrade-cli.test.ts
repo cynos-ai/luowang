@@ -1,5 +1,6 @@
 import { strict as assert } from 'node:assert';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
+import { mkdir, mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -85,6 +86,44 @@ describe('offline multi-project upgrade command', () => {
       assert.equal((await runUpgradeCli(['verify'], environment)).projects, 1);
       assert.equal(
         (await runUpgradeCli(['upgrade-project', backupDir], environment)).status,
+        'already_complete',
+      );
+    } finally {
+      database.close();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('backs up an already cut over database before applying the report index change', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'luowang-upgrade-index-'));
+    const databasePath = join(root, 'luowang.db');
+    const database = new Database(databasePath);
+    const environment = { LUOWANG_DATA_DIR: root, LUOWANG_DATABASE_PATH: databasePath };
+    try {
+      runMigrations(database);
+      const backupDir = join(root, 'legacy-backup');
+      await runUpgradeCli(['backup', backupDir], environment);
+      await runUpgradeCli(['upgrade-empty', backupDir], environment);
+      database
+        .prepare(
+          "DELETE FROM schema_migrations WHERE version = '0017_project_report_index_identity'",
+        )
+        .run();
+      assert.throws(() => assertProjectSchema(database), /迁移不完整/);
+      const occupied = join(root, 'occupied');
+      await mkdir(occupied);
+      await assert.rejects(runUpgradeCli(['upgrade-index', occupied], environment), /EEXIST/);
+      assert.throws(() => assertProjectSchema(database), /迁移不完整/);
+      const indexBackup = join(root, 'index-backup');
+      assert.deepEqual(await runUpgradeCli(['upgrade-index', indexBackup], environment), {
+        status: 'complete',
+        backupDir: indexBackup,
+        reports: 0,
+      });
+      assert.equal(existsSync(join(indexBackup, 'luowang-before-index-0017.db')), true);
+      assert.equal((await runUpgradeCli(['verify'], environment)).status, 'complete');
+      assert.equal(
+        (await runUpgradeCli(['upgrade-index', join(root, 'unused')], environment)).status,
         'already_complete',
       );
     } finally {

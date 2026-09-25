@@ -70,6 +70,7 @@ GitHub/OSS 访问凭据允许原位轮换，以修复认证失败；后续副作
 | 数据 | 唯一性或关联规则 |
 | --- | --- |
 | 场景索引 | `(projectId, scenarioId)` 与 `(projectId, path)`；取消全局场景 ID 唯一约束 |
+| 目标仓库报告索引 | `(projectId, runId)` 与 `(projectId, path)`；不同仓库可含相同的历史报告 Run ID，读取必须带项目归属 |
 | 索引状态与错误 | 按项目及分支/路径定位，错误不得覆盖其他项目缓存 |
 | Run/请求 | 保留全局唯一 Run ID/请求 ID，同时强制关联 projectId |
 | 推进/调度状态 | 每项目各自记录 lastCompletedTarget、cron 去重键、轮询时间及失败状态 |
