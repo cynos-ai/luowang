@@ -302,7 +302,7 @@ export function createTestDataTools(
     {
       name: 'register_test_data',
       label: '登记测试数据',
-      description: `登记已创建的当前 Run 数据，供 Harness 收尾；登记不代表已清理。${cleanupNote}`,
+      description: `登记已创建的当前 Run 数据，供 Harness 收尾；在配置的非生产网站创建的账号必须设置 cleanupScope 为 website-accounts，其他资源不能设置该域。登记不代表已清理。${cleanupNote}`,
       parameters,
       execute: async (_id: string, params: Static<typeof parameters>) => {
         try {

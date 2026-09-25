@@ -227,6 +227,12 @@ fixture Run `8` 有 109 项证据：`AUTH-LOGIN-001` passed；`AUTH-REGISTRATION
 
 2026-09-25 持久层观察通道节点：Runner 新增仅在项目配置了受控 HTTP 清理适配器时出现的 `inspect_test_account_storage`；只有当前 Run 已登记 `website-accounts` 账号才可调用。适配器使用项目级清理 Secret 和固定非生产地址的 `/<runId>/storage` 只读端点，不接受模型指定 URL、账号或 SQL；响应仅允许当前 Run 的账号总数、Argon2id 数和其他格式数，校验计数后由 Harness 保存为本 Run 的 `operation-*.json` 证据，Reviewer 可独立读取。Runner 指令要求在删除账号前观察，且缺口不能由源码或单元测试代替。此节点只完成罗网侧工具和模拟端点回归；两个外部非生产应用尚未提供该端点，真实持久层期望仍 blocked，不据此改判旧 Run。下一节点需为两个测试应用增加受限聚合端点、构建与固定目标一致的应用，再真实复跑。
 
+2026-09-25 两目标持久层端点已分别经 [fixture PR #7](https://github.com/cynos-ai/luowang-closure7-fixture/pull/7) 和 [官网 PR #13](https://github.com/cynos-ai/cynos-website/pull/13) 合入各自 `scenario-testing`；对应固定提交为 `751b75095fd2faf9f37136f35eaaacda368770f9`、`fed06e9e581b759985c9b66348e663ea3ca9814d`。隔离应用按这两个提交重建，旧容器保留回退；罗网新 runtime 使用原候选数据卷，重启后两项目旧失败 Run 和已发布报告仍可分别查询。两项目各自重新准备执行镜像，ID 分别为 `sha256:a18bd2e2eb615837e2bc19ec72f6de2b227890c63b1e6ffe933140d767def2ec`、`sha256:b5e5861a4b97412cd62c8435302796ffb344e035f327ef16c9fd8aed2b560ca3`，均 `reused=false` 且 readiness 通过。
+
+首轮官网队列 `13` 在固定目标前以 Git 操作错误失败；fixture 队列 `14` / Run `01M3B7DDACNN7MHZ3CP99QEJNV` 固定上述 fixture 提交，Runner 完成两场景并生成截图、操作证据和 `execution.md`，但 Reviewer Session 以模型错误终止，没有审核结论、正式报告或归档。Runner 调用持久层工具时，先前登记的账号缺少显式 `cleanupScope: website-accounts`，工具拒绝观察；收尾亦将两条登记记为未绑定资源域，不能称为 Harness 清理通过。隔离应用随后对该 Run 的只读聚合查询为剩余账号 0，只证明当前无残留。该失败 Run 的 SDK Session 统计为 input 178541、output 35350、cacheRead 2364288 token，SDK 目录估值约 0.0415 美元；不是供应商账单。已在 Runner 内置指令及登记工具说明中明确账号必须绑定该域，其他资源不得绑定；固定 Linux quality 容器类型、lint、格式及完整测试通过（430 passed、2 skipped）。
+
+修正后官网队列 `15` / Run `01M3B89TRX832Y6CDSVF48PHQM` 和 fixture 队列 `16` / Run `01M3B89TSDKTT2X7RFVFSEVE79` 都固定各自新目标，但均在 Main Session 以模型错误终止。用同一受控 DeepSeek 凭据发最小文本请求返回 HTTP 402，当前模型服务不可用，不能继续消耗队列把它当作产品问题或声称双项目 Run 通过；所有失败记录原样保留。为独立核验新端点，在两个实际运行的非生产应用中分别创建一个 Run 前缀合成账号，注册返回 201，存储聚合均为 `accounts=1、argon2id=1、other=0`；调用固定域 DELETE 后独立 GET 均为剩余 0。这个端点 smoke 不包含 Agent、Reviewer、OSS 或归档，不替代联合验收。恢复模型访问后须在当前修正 runtime 重跑两项目，确认 Runner 带域登记、`operation-*.json` 生成与 Reviewer 读取、截图/OSS、清理、报告归档及真实 Session 用量，再决定是否提交发布审核。
+
 ## 阶段 6：质量检查、文档与发布
 
 - [x] 干净 quality 容器执行完整本地质量与验收，runtime 验证生产原生 MCP 和资源包，禁止依赖宿主机 Node/浏览器差异判定发布质量。
