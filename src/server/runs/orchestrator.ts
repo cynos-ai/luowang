@@ -1066,7 +1066,18 @@ class DefaultRunOrchestrator implements RunOrchestrator {
         this.options.configuration.getRepository(),
         this.options.secretStore,
       ),
-      ...createTestDataTools(this.options.testData ?? createTestDataManager(), context.runId),
+      ...createTestDataTools(
+        this.options.testData ?? createTestDataManager(),
+        context.runId,
+        undefined,
+        async (observation) => {
+          if (!evidenceStore?.captureObservation) throw new Error('证据存储不可用');
+          return evidenceStore.captureObservation(context.targetCommit, {
+            source: 'controlled-test-account-storage',
+            ...observation,
+          });
+        },
+      ),
       ...progressTools,
       ...(evidenceStore ? createRunnerEvidenceTools(evidenceStore) : []),
       createArtifactWriterTool(

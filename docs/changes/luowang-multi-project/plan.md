@@ -225,6 +225,8 @@ fixture Run `8` 有 109 项证据：`AUTH-LOGIN-001` passed；`AUTH-REGISTRATION
 
 2026-09-25 模型用量节点：每个 Pi Session 结束时从 SDK 的完整 Session 统计提取 input/output/cache token，在本 Run 本地受控目录的 `agent-usage.json` 逐 Session 累积并给出总量；失败 Run 保留已有 Session 的部分统计，人工审核的特殊完成路径也保留文件。该文件不进入模型可读工件、目标仓库报告或 OSS，且不保存消息正文。SDK 目录价格为正时只标为估值，价格为零或未知时费用记为 `null`，不把零当作免费或供应商账单。旧 Run 没有可追溯的同类统计，不能补造历史成本。此节点仍需在下一次真实 DeepSeek Run 核验 token 返回和估值口径，不能据本地模拟协议推断实际账单。
 
+2026-09-25 持久层观察通道节点：Runner 新增仅在项目配置了受控 HTTP 清理适配器时出现的 `inspect_test_account_storage`；只有当前 Run 已登记 `website-accounts` 账号才可调用。适配器使用项目级清理 Secret 和固定非生产地址的 `/<runId>/storage` 只读端点，不接受模型指定 URL、账号或 SQL；响应仅允许当前 Run 的账号总数、Argon2id 数和其他格式数，校验计数后由 Harness 保存为本 Run 的 `operation-*.json` 证据，Reviewer 可独立读取。Runner 指令要求在删除账号前观察，且缺口不能由源码或单元测试代替。此节点只完成罗网侧工具和模拟端点回归；两个外部非生产应用尚未提供该端点，真实持久层期望仍 blocked，不据此改判旧 Run。下一节点需为两个测试应用增加受限聚合端点、构建与固定目标一致的应用，再真实复跑。
+
 ## 阶段 6：质量检查、文档与发布
 
 - [x] 干净 quality 容器执行完整本地质量与验收，runtime 验证生产原生 MCP 和资源包，禁止依赖宿主机 Node/浏览器差异判定发布质量。

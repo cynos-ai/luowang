@@ -11,7 +11,10 @@ import { createSecretStore } from '../src/server/security/secret-store.js';
 import * as orchestration from '../src/server/runs/orchestrator.js';
 import type { TestDataManager } from '../src/server/runs/test-data.js';
 import { createHttpTestDataCleanupAdapter } from '../src/server/runs/http-test-data-cleanup.js';
-import { createTestDataManager } from '../src/server/runs/test-data.js';
+import { createTestDataManager, createTestDataTools } from '../src/server/runs/test-data.js';
+import { createRunEvidenceStore } from '../src/server/runs/evidence.js';
+import { RunWorkspace } from '../src/server/runs/workspace.js';
+import { localEvidenceTransport } from './acceptance/local-evidence.js';
 
 const RUN = '01K00000000000000000000000';
 const TOKEN = 'synthetic-cleanup-token-12345678901234567890';
@@ -25,6 +28,98 @@ afterEach(() => {
 });
 
 describe('Run-scoped HTTP cleanup adapter', () => {
+  it('observes only a registered current-Run account through the fixed read-only route', async () => {
+    const calls: string[] = [];
+    const request = (async (url, options) => {
+      calls.push(String(url));
+      assert.equal(options?.method, 'GET');
+      assert.equal(new Headers(options?.headers).get('authorization'), `Bearer ${TOKEN}`);
+      return Response.json({ runId: RUN, accounts: 1, argon2id: 1, other: 0 });
+    }) as typeof fetch;
+    const manager = createTestDataManager({
+      cleanupAdapter: createHttpTestDataCleanupAdapter(endpoint, secrets, request),
+    });
+    const captures: unknown[] = [];
+    const tools = createTestDataTools(manager, RUN, undefined, async (observation) => {
+      captures.push(observation);
+      return 'operation-1.json';
+    });
+    const tool = tools.find((candidate) => candidate.name === 'inspect_test_account_storage')!;
+    const execute = () => tool.execute('inspect', {}, undefined, undefined, {} as never);
+    assert.equal((await execute()).details?.error, true);
+    assert.deepEqual(calls, []);
+    await manager.register(RUN, entry);
+    const result = await execute();
+    assert.equal(result.details?.error, undefined);
+    assert.deepEqual(calls, [endpoint + '/' + RUN + '/storage']);
+    assert.deepEqual(captures, [{ runId: RUN, accounts: 1, argon2id: 1, other: 0 }]);
+    assert.match(JSON.stringify(result.content), /operation-1\.json/);
+    assert.doesNotMatch(JSON.stringify(result), new RegExp(TOKEN));
+  });
+
+  it('keeps a storage observation in the current Run evidence for independent review', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'storage-observation-'));
+    try {
+      const workspace = new RunWorkspace(RUN, directory);
+      await workspace.create();
+      const transport = localEvidenceTransport();
+      const evidence = createRunEvidenceStore(workspace, transport.oss);
+      const manager = createTestDataManager({
+        cleanupAdapter: createHttpTestDataCleanupAdapter(endpoint, secrets, (async () =>
+          Response.json({ runId: RUN, accounts: 1, argon2id: 1, other: 0 })) as typeof fetch),
+      });
+      await manager.register(RUN, entry);
+      const tool = createTestDataTools(manager, RUN, undefined, (observation) =>
+        evidence.captureObservation!('a'.repeat(40), {
+          source: 'controlled-test-account-storage',
+          ...observation,
+        }),
+      ).find((candidate) => candidate.name === 'inspect_test_account_storage')!;
+      const result = await tool.execute('inspect', {}, undefined, undefined, {} as never);
+      assert.equal(result.details?.error, undefined);
+      assert.deepEqual(evidence.commandEvidenceIds(), ['operation-1.json']);
+      await evidence.uploadAll();
+      const original = JSON.parse(await evidence.readCommandEvidence('operation-1.json'));
+      assert.deepEqual(original.observation, {
+        source: 'controlled-test-account-storage',
+        runId: RUN,
+        accounts: 1,
+        argon2id: 1,
+        other: 0,
+      });
+      assert.doesNotMatch(JSON.stringify(original), new RegExp(TOKEN));
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it.each(['wrong-run', 'bad-count', 'denied', 'oversized'])(
+    'rejects %s storage observations without creating evidence',
+    async (mode) => {
+      let captures = 0;
+      const manager = createTestDataManager({
+        cleanupAdapter: createHttpTestDataCleanupAdapter(endpoint, secrets, (async () => {
+          if (mode === 'denied') return new Response(TOKEN, { status: 403 });
+          if (mode === 'oversized') return new Response(TOKEN.repeat(100));
+          return Response.json({
+            runId: mode === 'wrong-run' ? 'other' : RUN,
+            accounts: 1,
+            argon2id: mode === 'bad-count' ? 0 : 1,
+            other: 0,
+          });
+        }) as typeof fetch),
+      });
+      await manager.register(RUN, entry);
+      const tool = createTestDataTools(manager, RUN, undefined, async () => {
+        captures++;
+        return 'operation-1.json';
+      }).find((candidate) => candidate.name === 'inspect_test_account_storage')!;
+      const result = await tool.execute('inspect', {}, undefined, undefined, {} as never);
+      assert.equal(result.details?.error, true);
+      assert.equal(captures, 0);
+      assert.doesNotMatch(JSON.stringify(result), new RegExp(TOKEN));
+    },
+  );
   it.each([false, true])(
     'wires the default application manager from deployment configuration: %s',
     async (enabled) => {

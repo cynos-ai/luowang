@@ -34,9 +34,17 @@ export interface TestDataAdapterObservation {
 
 export interface TestDataCleanupAdapter {
   id: string;
+  inspectStorage?(runId: string): Promise<TestAccountStorageObservation>;
   cleanupAndVerify(
     input: Readonly<{ runId: string; entry: TestDataEntry }>,
   ): Promise<TestDataAdapterObservation>;
+}
+
+export interface TestAccountStorageObservation {
+  runId: string;
+  accounts: number;
+  argon2id: number;
+  other: number;
 }
 
 export interface TestDataRecord extends TestDataEntry {
@@ -63,9 +71,11 @@ export interface TestDataFinalResult {
 export interface TestDataManager {
   /** Adapter configuration, not proof of successful cleanup; omitted means unknown. */
   readonly cleanupAvailable?: boolean;
+  readonly storageInspectionAvailable?: boolean;
   prefix(runId: string): string;
   register(runId: string, entry: TestDataEntry): Promise<void>;
   pending(runId: string): TestDataRecord[];
+  inspectStorage?(runId: string): Promise<TestAccountStorageObservation>;
   cleanup(runId: string): Promise<TestDataCleanupResult>;
   finalize(runId: string): TestDataFinalResult;
 }
@@ -92,6 +102,10 @@ class DefaultTestDataManager implements TestDataManager {
 
   get cleanupAvailable(): boolean {
     return this.options.cleanupAdapter !== undefined;
+  }
+
+  get storageInspectionAvailable(): boolean {
+    return this.options.cleanupAdapter?.inspectStorage !== undefined;
   }
 
   prefix(runId: string): string {
@@ -130,6 +144,29 @@ class DefaultTestDataManager implements TestDataManager {
         ...(entry.verification ? { verification: { ...entry.verification } } : {}),
       }))
       .sort((a, b) => a.id.localeCompare(b.id));
+  }
+
+  async inspectStorage(runId: string): Promise<TestAccountStorageObservation> {
+    if (!/^[0-9A-HJKMNP-TV-Z]{26}$/.test(runId)) throw new Error('Run ID 无效');
+    if (!this.pending(runId).some((entry) => entry.cleanupScope === 'website-accounts'))
+      throw new Error('当前 Run 尚未登记官网测试账号');
+    const adapter = this.options.cleanupAdapter;
+    if (!adapter?.inspectStorage) throw new Error('未配置受控账号存储观察');
+    const result = await adapter.inspectStorage(runId);
+    if (
+      result.runId !== runId ||
+      ![result.accounts, result.argon2id, result.other].every(
+        (count) => Number.isSafeInteger(count) && count >= 0,
+      ) ||
+      result.accounts !== result.argon2id + result.other
+    )
+      throw new Error('账号存储观察响应无效');
+    return {
+      runId,
+      accounts: result.accounts,
+      argon2id: result.argon2id,
+      other: result.other,
+    };
   }
 
   async cleanup(runId: string): Promise<TestDataCleanupResult> {
@@ -233,6 +270,7 @@ export function createTestDataTools(
   manager: TestDataManager,
   runId: string,
   scenarioId?: string,
+  captureStorageObservation?: (observation: TestAccountStorageObservation) => Promise<string>,
 ): ToolDefinition[] {
   const cleanupNote =
     manager.cleanupAvailable === true
@@ -287,6 +325,28 @@ export function createTestDataTools(
           JSON.stringify(manager.pending(runId).map(({ id, status }) => ({ id, status }))),
         ),
     },
+    ...(manager.storageInspectionAvailable && manager.inspectStorage && captureStorageObservation
+      ? [
+          {
+            name: 'inspect_test_account_storage',
+            label: '核对测试账号持久层',
+            description:
+              '只读当前 Run 已登记账号在受控非生产数据库中的存储格式汇总；注册后、删除账号前调用。只返回数量，不返回密码、哈希、邮箱或其他 Run 数据。结果保存为本 Run 的审核证据。',
+            parameters: Type.Object({}, { additionalProperties: false }),
+            execute: async () => {
+              try {
+                const observation = await manager.inspectStorage!(runId);
+                const evidenceId = await captureStorageObservation(observation);
+                return createTextResult(JSON.stringify({ ...observation, evidenceId }));
+              } catch {
+                return createTextResult('当前 Run 的账号存储观察不可用，不能确认持久层结果', {
+                  error: true,
+                });
+              }
+            },
+          } satisfies ToolDefinition,
+        ]
+      : []),
   ];
 }
 
