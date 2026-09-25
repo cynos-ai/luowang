@@ -217,4 +217,118 @@ describe('controlled non-production HTTP tools', () => {
     expect(request).toHaveBeenCalledTimes(1);
     expect(request.mock.calls[0]![1]).toMatchObject({ redirect: 'manual' });
   });
+
+  it('checks only a new disposable control Run and removes it after the comparison', async () => {
+    const calls: Array<{ url: string; method: string }> = [];
+    const captured: Record<string, unknown>[] = [];
+    const secrets: string[] = [];
+    const counts = new Map([[RUN_ID, 1]]);
+    const request = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = init!.method!;
+      calls.push({ url, method });
+      if (url.endsWith('/api/auth/register')) {
+        const body = JSON.parse(String(init!.body)) as { email: string; password: string };
+        const controlRunId = body.email.match(/^luowang-([0-9a-z]{26})-scope@/)?.[1]?.toUpperCase();
+        expect(controlRunId).toMatch(/^[0-9A-HJKMNP-TV-Z]{26}$/);
+        expect(body.password).toHaveLength(58);
+        counts.set(controlRunId!, 1);
+        return new Response('{}', { status: 201 });
+      }
+      expect((init!.headers as Record<string, string>).authorization).toBe(
+        'Bearer secret-cleanup-token-long-enough-123456',
+      );
+      const identity = url.split('/').at(-1)!;
+      expect(counts.has(identity)).toBe(true);
+      const before = counts.get(identity)!;
+      if (method === 'DELETE') counts.set(identity, 0);
+      return new Response(
+        JSON.stringify({
+          runId: identity,
+          deleted: method === 'DELETE' ? before : 0,
+          remaining: counts.get(identity),
+        }),
+        { status: 200 },
+      );
+    });
+    const tool = createControlledHttpTools({
+      baseUrl: 'http://app.test:3100',
+      cleanupUrl: 'http://app.test:3100/api/luowang/test-data',
+      runId: RUN_ID,
+      getTestPassword: () => undefined,
+      getCleanupToken: () => 'secret-cleanup-token-long-enough-123456',
+      registerSensitiveValue: (value) => secrets.push(value),
+      redact: (value) =>
+        secrets.reduce((text, secret) => text.replaceAll(secret, '[REDACTED]'), value),
+      capture: async (record) => {
+        captured.push(record);
+        return `operation-${captured.length}.json`;
+      },
+      request,
+    }).find((item) => item.name === 'verify_run_cleanup_scope')!;
+    const result = toolResult(await tool.execute('1', {}));
+    expect(result).toMatchObject({
+      passed: true,
+      before: { current: 1, control: 1 },
+      currentCleanup: 0,
+      after: { current: 0, control: 1 },
+      controlCleanup: 0,
+      controlRemaining: 0,
+      evidenceId: 'operation-1.json',
+    });
+    expect(result.controlRunId).not.toBe(RUN_ID);
+    expect(counts.get(result.controlRunId)).toBe(0);
+    expect(calls.filter((call) => call.method === 'DELETE')).toEqual([
+      { url: `http://app.test:3100/api/luowang/test-data/${RUN_ID}`, method: 'DELETE' },
+      {
+        url: `http://app.test:3100/api/luowang/test-data/${result.controlRunId}`,
+        method: 'DELETE',
+      },
+    ]);
+    expect(JSON.stringify({ result, captured })).not.toContain('secret-cleanup-token');
+    expect(JSON.stringify({ result, captured })).not.toContain('synthetic-');
+  });
+
+  it('never reports scope success when the comparison or evidence fails', async () => {
+    const calls: Array<{ url: string; method: string }> = [];
+    const request = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = init!.method!;
+      calls.push({ url, method });
+      if (url.endsWith('/api/auth/register')) return new Response('{}', { status: 201 });
+      const identity = url.split('/').at(-1)!;
+      return new Response(
+        JSON.stringify({ runId: identity, remaining: identity === RUN_ID ? 1 : 0 }),
+        {
+          status: 200,
+        },
+      );
+    });
+    const tool = createControlledHttpTools({
+      baseUrl: 'http://app.test:3100',
+      cleanupUrl: 'http://app.test:3100/api/luowang/test-data',
+      runId: RUN_ID,
+      getTestPassword: () => undefined,
+      getCleanupToken: () => 'secret-cleanup-token-long-enough-123456',
+      registerSensitiveValue: () => {},
+      redact: (value) => value,
+      capture: async () => {
+        throw new Error('evidence unavailable');
+      },
+      request,
+    }).find((item) => item.name === 'verify_run_cleanup_scope')!;
+    const response = await tool.execute('1', {});
+    const result = toolResult(response);
+    expect(response.details?.error).toBe(true);
+    expect(result).toMatchObject({
+      passed: false,
+      error: 'HTTP 观察证据保存失败；不能引用该请求判定',
+    });
+    expect(result.controlRunId).toMatch(/^[0-9A-HJKMNP-TV-Z]{26}$/);
+    expect(
+      calls.some(
+        (call) => call.url.endsWith(`/${result.controlRunId}`) && call.method === 'DELETE',
+      ),
+    ).toBe(true);
+  });
 });

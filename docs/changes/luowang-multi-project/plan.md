@@ -263,6 +263,10 @@ Python 项目三个 Run 的 DeepSeek SDK Session 目录估值依次为约 `0.035
 
 2026-09-25 跨 Run 对照节点：按 Spec §4.4 的“单独受控演练”在现有本机非生产 Python 应用容器执行 `tests/e2e/python-fixture-cross-run-smoke.py`，不扩大 Runner 的其他 Run 读取权限。脚本生成两个互异的合法合成 Run ID，分别通过真实注册接口建号，再用部署级 Token 读实际清理端点：清理前 current/control 余量均为 `1`；只对 current 执行 `DELETE`，返回 `deleted=1、remaining=0`；独立重读为 `current=0、control=1`；最后清理 control 并核验两者余量均为 `0`。本次输出 `passed=true`，current `017QGHP57D21WNDDYQKM8A1HQC`、control `016C6VTNKDVDD5VNRT3JWD46R8`，被测应用镜像 `sha256:0cdaaa527431724d4c5c9d2f1426d897c3d292de9dad566f30e67919170065b1`。脚本只输出 Run ID 和计数，不输出 Token、密码或 Cookie。此证据证明该部署的清理接口没有误删另一个合成 Run；它发生在罗网 Runner/Reviewer 之外，**不能追认或改判**上一轮 `CLEANUP-SEED-001` 的 blocked。后续若要该场景通过，须先确定受控的场景内对照观察方式并重新执行、审核，仍不得开放任意历史 Run 数据。
 
+2026-09-25 场景内对照节点：新增 `verify_run_cleanup_scope`，仅用于应用与清理端点同源、支持固定注册接口的非生产目标。工具自行创建随机合法对照 Run 账号，在同一次调用内比较 `current/control` 清理前后的真实余量，并在 `finally` 中删除对照、独立确认余量 0；模型不能指定任意历史 Run、地址或 Token。缺少当前账号、响应不符、对照清理失败或证据保存失败均不返回 passed，并保留对照 ID 供受控排障。Runner 指令要求本 Run 账号先登记，预置账号在清理后另行登录验证。定向单测覆盖成功、对照收尾及证据失败路径；干净 Linux quality 镜像类型、lint、格式、完整测试 **435 passed / 2 skipped**、三条浏览器 E2E 全通过。`test:acceptance:local` 为 `local=passed`；该容器未注入通用 live/release 输入，聚合显示 `live=blocked、release=blocked`，不替代下面的独立真实 Run。
+
+同一数据卷上的候选 runtime 已替换为本节点镜像并健康运行，旧容器保留回退。Python 定向队列 `23` / Run `01M3C0QRAV0Q3P6QYCBBBX4GX4` 固定目标 `6d3f87c2f36544eddcf1b78569a454be5cb644c0`，只执行 `CLEANUP-SEED-001`。Reviewer 独立读取本 Run 10 项原始操作记录后判 **passed**、无 blocking reason：临时对照 Run `01E5P39W1902R2FHXJAFZVNS99` 与当前 Run 清理前均为 1，当前 Run 清理后为 0、对照仍为 1；工具最后将对照清理并核验为 0；预置账号在此后独立登录 201、会话状态 authenticated。Harness 收尾独立核验 1 项登记账号不存在，报告自动归档至该项目 `scenario-testing` 的提交 `08d5d82a358c507ba29a32646e01674991e1be93`。同项目 Run 详情 200，另外两个项目均 404；旧 blocked 报告不改写。Reviewer 如实保留一项证据强度限制：对照前后两次 GET 的读数保存在单条复合操作记录内，没有两份分立 HTTP 工件；本次 Reviewer 认为该具体且非零的对照足以支持期望。其余 12 个 approved 场景沿用上一轮记录，draft `CLEANUP-CONFIG-001` 未执行。本机 Python 目标的唯一已知 blocked 场景由这次定向复测闭合；正式服务器验收与发布审核仍未完成。
+
 ## 阶段 6：质量检查、文档与发布
 
 - [x] 干净 quality 容器执行完整本地质量与验收，runtime 验证生产原生 MCP 和资源包，禁止依赖宿主机 Node/浏览器差异判定发布质量。

@@ -6,6 +6,7 @@ import { createTextResult } from './agent-session.js';
 
 const RUN_ID = /^[0-9A-HJKMNP-TV-Z]{26}$/;
 const CLIENT_ID = /^[A-Za-z0-9_-]{1,40}$/;
+const RUN_ID_ALPHABET = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
 const MAX_RESPONSE_BYTES = 8192;
 const BODY_TOKENS = new Set([
   '__RUN_PASSWORD__',
@@ -61,6 +62,7 @@ export function createControlledHttpTools(options: ControlledHttpOptions): ToolD
       Type.Boolean({ description: '仅测试固定非法 ID；绝不允许指定其他真实 Run ID' }),
     ),
   });
+  const scopeParameters = Type.Object({});
 
   const capture = async (record: Record<string, unknown>) => {
     try {
@@ -182,9 +184,131 @@ export function createControlledHttpTools(options: ControlledHttpOptions): ToolD
               }
             },
           } satisfies ToolDefinition,
+          {
+            name: 'verify_run_cleanup_scope',
+            label: '核对本 Run 清理不影响临时对照',
+            description:
+              '仅在兼容 /api/auth/register 的非生产应用使用。工具自行新建并清理一个随机合法对照 Run 账号；只读取这个临时对照与当前 Run 的余量，清理当前 Run 后复读。不能选择或读取历史 Run。调用前先创建当前 Run 账号；预置账号仍需单独验证。',
+            parameters: scopeParameters,
+            execute: async () => {
+              if (base.origin !== cleanup.origin)
+                return createTextResult('对照验证要求应用与清理端点同源', { error: true });
+              const controlRunId = `01${[...randomBytes(24)].map((byte) => RUN_ID_ALPHABET[byte % 32]).join('')}`;
+              const prefix = `luowang-${controlRunId.toLowerCase()}-`;
+              const password = `synthetic-${randomBytes(24).toString('hex')}`;
+              options.registerSensitiveValue(password);
+              const result: Record<string, unknown> = {
+                source: 'controlled-run-cleanup-scope',
+                currentRunId: options.runId,
+                controlRunId,
+                controlRegistrationStatus: null,
+                before: null,
+                currentCleanup: null,
+                after: null,
+                controlCleanup: null,
+                controlRemaining: null,
+                passed: false,
+              };
+              const token = options.getCleanupToken();
+              if (!token || token.length < 32)
+                return createTextResult('当前项目清理凭据不可用', { error: true });
+              const authorization = { authorization: `Bearer ${token}` };
+              const controlUrl = new URL(`${cleanup.href.replace(/\/$/, '')}/${controlRunId}`);
+              const currentUrl = new URL(`${cleanup.href.replace(/\/$/, '')}/${options.runId}`);
+              const registerUrl = resolveAppPath(base, '/api/auth/register');
+              let failure: string | null = null;
+              try {
+                const registration = await perform(
+                  registerUrl,
+                  'POST',
+                  { 'content-type': 'application/json' },
+                  JSON.stringify({
+                    email: `${prefix}scope@example.test`,
+                    displayName: `${prefix}scope`,
+                    password,
+                  }),
+                );
+                result.controlRegistrationStatus = registration.response.status;
+                if (registration.response.status !== 201) throw new Error('临时对照账号注册未成功');
+                const beforeCurrent = await cleanupCount(currentUrl, authorization, perform);
+                const beforeControl = await cleanupCount(controlUrl, authorization, perform);
+                result.before = { current: beforeCurrent, control: beforeControl };
+                if (beforeCurrent < 1 || beforeControl !== 1)
+                  throw new Error('清理前缺少本 Run 或临时对照账号');
+                const deletion = await cleanupCount(currentUrl, authorization, perform, 'DELETE');
+                result.currentCleanup = deletion;
+                const afterCurrent = await cleanupCount(currentUrl, authorization, perform);
+                const afterControl = await cleanupCount(controlUrl, authorization, perform);
+                result.after = { current: afterCurrent, control: afterControl };
+                if (deletion !== 0 || afterCurrent !== 0 || afterControl !== beforeControl)
+                  throw new Error('本 Run 清理影响了临时对照或留下本 Run 账号');
+              } catch (error) {
+                failure = safeError(error);
+              } finally {
+                try {
+                  result.controlCleanup = await cleanupCount(
+                    controlUrl,
+                    authorization,
+                    perform,
+                    'DELETE',
+                  );
+                  result.controlRemaining = await cleanupCount(controlUrl, authorization, perform);
+                  if (result.controlRemaining !== 0)
+                    failure = [failure, '临时对照账号清理不完整'].filter(Boolean).join('；');
+                } catch (error) {
+                  failure = [failure, safeError(error)].filter(Boolean).join('；');
+                }
+              }
+              result.passed = failure === null;
+              if (failure) result.error = failure;
+              try {
+                const evidenceId = await capture(result);
+                return createTextResult(JSON.stringify({ ...result, evidenceId }), {
+                  error: Boolean(failure),
+                });
+              } catch (error) {
+                return createTextResult(
+                  JSON.stringify({ controlRunId, passed: false, error: safeError(error) }),
+                  { error: true },
+                );
+              }
+            },
+          } satisfies ToolDefinition,
         ]
       : []),
   ];
+}
+
+async function cleanupCount(
+  url: URL,
+  headers: Record<string, string>,
+  perform: (
+    url: URL,
+    method: 'GET' | 'POST' | 'DELETE',
+    headers: Record<string, string>,
+    body?: string,
+  ) => Promise<{ response: Response; responseBody: string }>,
+  method: 'GET' | 'DELETE' = 'GET',
+): Promise<number> {
+  const { response, responseBody } = await perform(url, method, headers);
+  if (response.status !== 200) throw new Error(`清理端点 HTTP ${response.status}`);
+  let body: unknown;
+  try {
+    body = JSON.parse(responseBody);
+  } catch {
+    throw new Error('清理端点响应不是 JSON');
+  }
+  if (
+    !body ||
+    typeof body !== 'object' ||
+    !('runId' in body) ||
+    body.runId !== url.pathname.split('/').at(-1) ||
+    !('remaining' in body) ||
+    !Number.isSafeInteger(body.remaining) ||
+    (body.remaining as number) < 0
+  )
+    throw new Error('清理端点响应范围或计数无效');
+  return body.remaining as number;
 }
 
 function parseConfiguredUrl(value: string): URL {
@@ -292,7 +416,7 @@ async function readBoundedResponse(response: Response): Promise<string> {
 
 function safeError(error: unknown): string {
   return error instanceof Error &&
-    /^(HTTP |GET |请求|只能|敏感|非生产|当前|存储|证据)/.test(error.message)
+    /^(HTTP |GET |请求|只能|敏感|非生产|当前|存储|证据|清理|临时|本 Run)/.test(error.message)
     ? error.message
     : '受控 HTTP 请求失败，未取得可确认的响应';
 }
