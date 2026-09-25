@@ -290,6 +290,10 @@ Python 项目三个 Run 的 DeepSeek SDK Session 目录估值依次为约 `0.035
 
 完成证明：AC-MP-12；不能修改 v0.6.0 tag 或用新结果改写历史 Run。
 
+2026-09-25 发布审核快照：功能分支 `feat/multi-project` 基于当前 `develop`，远端 `develop` 没有领先提交；上方阶段 5 的交替真实 Run、跨项目 404、受控故障隔离、正式报告及 SDK 成本可以交给 Reviewer 核对。最近一次代码切片在干净 Linux quality 镜像通过 typecheck、lint、format、435 passed / 2 skipped、三条浏览器 E2E 和 `test:acceptance:local`；之后只提交了服务器验收及本轮 live 验收文档，文档再经 Prettier 检查。外部三个目标的 `scenario-testing` 远端 HEAD 分别核验为 `0defd30be3761c7ad8ba66bfd96d65737f54245b`、`9c864dff252814432d4e1ec7776a60c04eac32ae`、`5d6542365629c9fa878243a5ec91f4be1df21e0d`，与本轮最后归档一致。
+
+此快照仍是 **draft review**，不宣称 AC-MP-12 或 v0.6.1 发布通过。通用 `test:acceptance:live` 继续要求首次初始化、两个已确认 Bug/Issue 的 failed Run、blocked Run 等完整 Closure 7 输入；本轮真实多项目 Run 没有确认产品 Bug，不能用正常通过或受控停机报告冒充这些事实，也不能为过门禁制造产品缺陷。`test:acceptance:release` 还需要正式发布后的 `main` 与不可变 tag。测试服务器只有约 4 GiB 总内存且有既有服务，完整模型/浏览器负载尚未在那里运行；真实持久 v0.6.0 实例迁移无现成生产数据源可演练，现有证明是隔离旧库副本。阶段 5 候选实例及卷保留了全部失败/blocked 历史，须在导出或保留策略确定后再清理。下一步先进行 draft PR 审核，并分别补足可执行的 live gate 输入、资源足够的部署验收与候选收尾；上述条件满足后才合入 `develop`，再走 `develop → main` 发布 PR、tag 和发布后核对。
+
 阶段 6 文档节点：README 的当前操作说明已与项目 App、离线升级 CLI 和 Compose 对齐，区分已发布 v0.6.0 与开发中的 v0.6.1，列出部署/项目 API 归属、paused 接入、镜像准备、固定提交重建、容量及清理要求。PROJECT.md、默认布局和 AGENTS.md 同步注明多项目 Spec 覆盖历史单仓库基线；历史需求和旧 Run 记录不改写。此节点只完成文档项，不代表生产 Docker Engine 权限或真实双项目验收已通过。
 
 本机 Docker Desktop 28.3.3 的真实 smoke 已验证两项项目镜像构建和固定提交 Run 命令；新增检查直接读取实际容器配置，确认无挂载、无 Docker socket/罗网数据库、非 privileged，且服务进程中的合成主密钥没有进入项目容器。模拟 Engine 地址失联后，受控入口拒绝创建新 Run 容器，不回退到宿主机命令；恢复连接后按 Run 标签查询无遗留容器。`docker system df` 的只读快照显示本机镜像总量 166.6 GB、构建缓存 19.22 GB，说明正式部署须预留容量并按归属清理，未对共享 Engine 执行全局 prune。这是本机开发环境的真实 Docker 证明；尚未验证服务器 Compose 的 socket 权限、容量策略及实际进程重启清理，因此正式部署形态验收项仍未勾选。
