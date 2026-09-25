@@ -616,6 +616,7 @@ class DefaultRunOrchestrator implements RunOrchestrator {
           ]),
     ];
     await this.invoke(
+      workspace,
       'main-planning',
       'main-a',
       this.options.configuration.getHarness().agents.main,
@@ -722,6 +723,7 @@ class DefaultRunOrchestrator implements RunOrchestrator {
       ),
     ];
     await this.invoke(
+      workspace,
       'main-planning',
       'main-a',
       this.options.configuration.getHarness().agents.main,
@@ -1108,6 +1110,7 @@ class DefaultRunOrchestrator implements RunOrchestrator {
     commandRunner = commandSession ?? this.commandRunner;
     try {
       await this.invoke(
+        workspace,
         'runner-execution',
         'runner',
         this.options.configuration.getHarness().agents.runner,
@@ -1503,6 +1506,7 @@ class DefaultRunOrchestrator implements RunOrchestrator {
       ),
     ];
     await this.invoke(
+      workspace,
       'reviewer-audit',
       'reviewer',
       this.options.configuration.getHarness().agents.reviewer,
@@ -1592,6 +1596,7 @@ class DefaultRunOrchestrator implements RunOrchestrator {
         : []),
     ];
     await this.invoke(
+      workspace,
       'main-finalization',
       'main-b',
       this.options.configuration.getHarness().agents.main,
@@ -1626,6 +1631,7 @@ class DefaultRunOrchestrator implements RunOrchestrator {
   }
 
   private async invoke(
+    workspace: RunWorkspace,
     sessionKind: AgentSessionKind,
     role: AgentRole,
     config: AgentConfig,
@@ -1695,6 +1701,15 @@ class DefaultRunOrchestrator implements RunOrchestrator {
       throw error;
     } finally {
       if (session) {
+        try {
+          const usage = session.usage?.();
+          if (usage) await workspace.recordAgentUsage(sessionKind, usage);
+        } catch (error) {
+          this.options.logger?.warn(
+            { sessionKind, errorName: error instanceof Error ? error.name : 'UnknownError' },
+            'agent session usage unavailable',
+          );
+        }
         try {
           await session.dispose();
         } catch (error) {

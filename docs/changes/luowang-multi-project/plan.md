@@ -223,6 +223,8 @@ fixture Run `8` 有 109 项证据：`AUTH-LOGIN-001` passed；`AUTH-REGISTRATION
 
 2026-09-25 证据读取节点：Reviewer 对本 Run 已上传对象的 OSS 读取现在仅对明确的 timeout/connection 最多尝试三次，间隔 200/400 毫秒；认证、对象不存在、内容校验失败仍立即阻塞。最终读取失败继续保留诊断及失败计数，暂态失败后读到对象则不伪造失败。此修复不改旧 Run 结论，也尚未在 live 候选实例重跑。固定 Linux quality 容器的 typecheck、lint、完整测试通过（424 passed、2 skipped）；格式由相同 Prettier 版本在工作树检查通过。下一节点需更新隔离候选并真实重跑两项目，同时补受控持久层观察和可核验的模型用量口径。
 
+2026-09-25 模型用量节点：每个 Pi Session 结束时从 SDK 的完整 Session 统计提取 input/output/cache token，在本 Run 本地受控目录的 `agent-usage.json` 逐 Session 累积并给出总量；失败 Run 保留已有 Session 的部分统计，人工审核的特殊完成路径也保留文件。该文件不进入模型可读工件、目标仓库报告或 OSS，且不保存消息正文。SDK 目录价格为正时只标为估值，价格为零或未知时费用记为 `null`，不把零当作免费或供应商账单。旧 Run 没有可追溯的同类统计，不能补造历史成本。此节点仍需在下一次真实 DeepSeek Run 核验 token 返回和估值口径，不能据本地模拟协议推断实际账单。
+
 ## 阶段 6：质量检查、文档与发布
 
 - [x] 干净 quality 容器执行完整本地质量与验收，runtime 验证生产原生 MCP 和资源包，禁止依赖宿主机 Node/浏览器差异判定发布质量。

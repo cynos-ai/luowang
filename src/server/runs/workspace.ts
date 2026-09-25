@@ -10,6 +10,8 @@ import {
   RUN_ARTIFACT_NAMES,
   SCENARIO_PATCH_ARTIFACT_NAME,
   type AgentRole,
+  type AgentSessionKind,
+  type AgentSessionUsage,
   type RunArtifactName,
 } from './types.js';
 
@@ -186,7 +188,11 @@ export class RunWorkspace implements RunArtifactReader {
   }
 
   private async retainSpecialScenarioReviewArtifacts(): Promise<void> {
-    const retained = new Set<string>([SCENARIO_PATCH_ARTIFACT_NAME, 'report.md']);
+    const retained = new Set<string>([
+      SCENARIO_PATCH_ARTIFACT_NAME,
+      'report.md',
+      'agent-usage.json',
+    ]);
     for (const entry of await readdir(this.runningDirectory)) {
       if (!retained.has(entry)) {
         await rm(resolve(this.runningDirectory, entry), { recursive: true, force: false });
@@ -232,6 +238,58 @@ export class RunWorkspace implements RunArtifactReader {
     const temporary = resolve(
       this.directory,
       `.source-reads-${randomBytes(16).toString('hex')}.tmp`,
+    );
+    try {
+      await writeFile(temporary, content, { flag: 'wx', mode: 0o600 });
+      await rename(temporary, path);
+    } finally {
+      await rm(temporary, { force: true });
+    }
+  }
+
+  /** Harness-only per-Session accounting; never exposed as a model-readable artifact. */
+  async recordAgentUsage(kind: AgentSessionKind, usage: AgentSessionUsage): Promise<void> {
+    const path = resolve(this.directory, 'agent-usage.json');
+    let records: Array<{ kind: AgentSessionKind; usage: AgentSessionUsage }> = [];
+    try {
+      const info = await lstat(path);
+      if (!info.isFile() || info.isSymbolicLink() || info.size > 64 * 1024)
+        throw new RunWorkspaceError('ARTIFACT_INVALID', '模型用量记录无效');
+      const saved = JSON.parse(await readFile(path, 'utf8')) as {
+        version: number;
+        sessions: typeof records;
+      };
+      if (saved.version !== 1 || !Array.isArray(saved.sessions) || saved.sessions.length > 16)
+        throw new RunWorkspaceError('ARTIFACT_INVALID', '模型用量记录无效');
+      records = saved.sessions;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    }
+    records.push({ kind, usage });
+    const totals = records.reduce(
+      (sum, record) => ({
+        input: sum.input + record.usage.tokens.input,
+        output: sum.output + record.usage.tokens.output,
+        cacheRead: sum.cacheRead + record.usage.tokens.cacheRead,
+        cacheWrite: sum.cacheWrite + record.usage.tokens.cacheWrite,
+        total: sum.total + record.usage.tokens.total,
+      }),
+      { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+    );
+    const content = JSON.stringify({
+      version: 1,
+      costBasis: 'sdk-catalog-estimate-not-provider-bill',
+      totals: {
+        tokens: totals,
+        sdkEstimatedCostUsd: records.every((record) => record.usage.sdkEstimatedCostUsd !== null)
+          ? records.reduce((sum, record) => sum + record.usage.sdkEstimatedCostUsd!, 0)
+          : null,
+      },
+      sessions: records,
+    });
+    const temporary = resolve(
+      this.directory,
+      `.agent-usage-${randomBytes(16).toString('hex')}.tmp`,
     );
     try {
       await writeFile(temporary, content, { flag: 'wx', mode: 0o600 });
