@@ -66,6 +66,7 @@ export function createProjectRunServices(options: {
     secretStore,
     oss,
     testData,
+    testDataCleanupUrl: task.testDataCleanupUrl,
     runStore,
     recoveryStore,
     logger: options.logger,

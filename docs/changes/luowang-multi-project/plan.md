@@ -253,6 +253,14 @@ fixture Run `8` 有 109 项证据：`AUTH-LOGIN-001` passed；`AUTH-REGISTRATION
 
 Python 项目三个 Run 的 DeepSeek SDK Session 目录估值依次为约 `0.0357`、`0.1325`、`0.0188` 美元，input/output/cacheRead token 分别为 `96568/59438/1977856`、`480917/86412/14620032`、`80515/20177/683008`；这些是 SDK 估值而非供应商账单。修复 Run 含 Main 规划、Runner、视觉 Reviewer、最终 Main 四个 Session。报告归档后移动中的场景分支再次改变为 `abf6c24`，镜像随固定提交重建为 `sha256:a9f44c1ced7ae757950c955bea4dd415099dbb15dfd03501d136e92b81118d9f`；同一提交再准备返回该精确 image ID 且 `reused=true`。本节点证明了外部 Python 目标的真实构建、运行、修复复测、OSS、Issue/PR、清理和项目归属，但全场景 Run 的 10 个 blocked 以及正式服务器资源检查仍限制 v0.6.1 发布；隔离候选资源暂留用于补齐验证能力，不能将阶段 5/6 整体勾选。
 
+2026-09-25 节点 3 受控 HTTP 验证：针对上述真实 blocked 根因，Runner 增加 `request_test_http` 和 `probe_run_cleanup`，规则固定在同目录 Spec §4.4。前者仅向任务固定 `baseUrl` 的同源路径发有界 GET/POST/DELETE，拒绝自选域名、查询、重定向跟随和任意请求头；命名客户端的 Cookie 各自隔离，仅返回 Cookie 名称。JSON 口令只允许受控占位符，服务端按项目 Secret 或本 Session 合成值替换，并拒绝工具参数中直接出现已知 Secret。后者只访问项目固定清理地址的当前 Run 或固定非法 ID，Token 在服务端注入；DELETE 仅限当前 Run，最终 Harness 收尾仍独立核验。两者的状态、脱敏响应和场景归属写入 Reviewer 可读的 `operation-*.json`，证据保存失败不算已验证；不会开放 curl、任意内联脚本或其他 Run 的读取。Main/Runner 内置角色资源同步说明 HTTP 观察不能代替页面与浏览器 Cookie 证据。
+
+干净 Linux quality 镜像完成类型、lint、格式和完整单测（433 passed、2 skipped），三条浏览器 E2E 通过；本地验收 `local=passed`，其通用 live/release 输入清单未注入该容器，故聚合仍为 `live=blocked、release=blocked`，不与下面独立候选 Run 混同。宿主机的旧 `better-sqlite3` 二进制与当前 Node ABI 不匹配导致两项旧测试无法在 Windows 直接运行，容器内对应完整单测已通过。隔离候选 runtime 在原数据卷上替换启动，旧容器保留回退；旧 Python passed Run、报告提交和归档状态重启后仍可读。
+
+真实复核队列 `22` / Run `01M3BX7A6SQQK8MVW6KZ5S4256` 固定 Python 目标 `abf6c24b388bd662ea25b05614871a8c4fbdd5d1`。Runner 执行 13 个 approved 场景，独立 Reviewer 判 **12 passed、1 blocked、0 failed**，正式报告自动归档在该仓库 `docs/scenario-testing/reports/01M3BX7A6SQQK8MVW6KZ5S4256/`，报告提交 `6d3f87c2f36544eddcf1b78569a454be5cb644c0`。先前因 POST/鉴权请求缺口而 blocked 的注册、登录、删号、存储和清理场景在本轮凭原始 HTTP 与浏览器证据通过；`CLEANUP-SCOPE-001` 记录当前 Run 余量 `6 → DELETE deleted=6、remaining=0 → 独立 GET 0`，非法 ID 返回 400，旧凭据返回 401。唯一 `CLEANUP-SEED-001` 保留 blocked：预置账号在本 Run 清理后仍可登录已证明，但场景还要求比较另一个合法 Run 的余量；当前工具有意不读取其他 Run，不能把固定非法 ID 或预置账号观察冒充这一期望。该阻塞是验证权限边界，不是已确认产品 Bug，原始失败/blocked Run 不改判；`CLEANUP-CONFIG-001` 仍为 draft，未进入本批。
+
+本 Run 有 149 项证据，其中 43 条普通受控 HTTP、25 条当前 Run 清理 HTTP 操作；仅输出计数的模式扫描未发现原始 Bearer Token、`sid` 值或明文 password 字段。OSS 截图实际回读 HTTP 200、20789 字节且 SHA-256 与登记值一致；Harness 在最终 Main 后独立核验 6 项登记账号 `absent=true`。本 Run 在 Python 项目 API 返回 200，另外两个项目均返回 404。四个真实 DeepSeek Session 使用文本 `deepseek-v4-flash` 和视觉 `deepseek-v4-flash-vision-exp`，合计 input/output/cacheRead 为 `327126/71439/6496384` token，SDK 目录估值约 `0.0840` 美元，并非供应商账单。实测 Run 使用本节点最后一项明文参数拒绝加固之前的 runtime；加固后的最终工作树再次在干净 Linux quality 镜像通过类型、lint、格式和完整单测（433 passed、2 skipped），最终 runtime 也已在同一数据卷上替换并健康运行、历史 Run 可读，但没有把旧 Run 记作在最终镜像重跑。下一个节点需决定如何在不读取任意历史 Run 的前提下验证跨 Run 清理不干扰，并补服务器环境检查；在此之前阶段 5/6 仍不整体勾选。
+
 ## 阶段 6：质量检查、文档与发布
 
 - [x] 干净 quality 容器执行完整本地质量与验收，runtime 验证生产原生 MCP 和资源包，禁止依赖宿主机 Node/浏览器差异判定发布质量。

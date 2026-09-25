@@ -74,6 +74,7 @@ import type { TargetChangeDescriptor } from './change-evidence.js';
 import { SourceReadStore, sourceHash, type SourceStage } from './source-reads.js';
 import type { TargetSearchResult } from './change-evidence.js';
 import { createTestDataManager, createTestDataTools, type TestDataManager } from './test-data.js';
+import { createControlledHttpTools } from './controlled-http.js';
 import {
   createRoleInstructionLoader,
   RoleInstructionError,
@@ -120,6 +121,7 @@ export interface RunOrchestratorOptions {
   browser?: BrowserMcpAdapter;
   oss?: OssAdapter;
   testData?: TestDataManager;
+  testDataCleanupUrl?: string;
   runStore?: RunStore;
   recoveryStore?: RunRecoveryStore;
   now?: () => Date;
@@ -1078,6 +1080,30 @@ class DefaultRunOrchestrator implements RunOrchestrator {
           });
         },
       ),
+      ...(evidenceStore && this.options.configuration.getRepository().baseUrl
+        ? createControlledHttpTools({
+            baseUrl: this.options.configuration.getRepository().baseUrl,
+            cleanupUrl: this.options.testDataCleanupUrl,
+            runId: context.runId,
+            getTestPassword: () => this.options.secretStore?.get('testPassword'),
+            getCleanupToken: () => this.options.secretStore?.get('testDataCleanupToken'),
+            registerSensitiveValue: (value) => evidenceStore.registerSensitiveValue?.(value),
+            redact: (value) => evidenceStore.redactText?.(value) ?? value,
+            capture: async (record) => {
+              if (!evidenceStore.captureObservation) throw new Error('证据存储不可用');
+              try {
+                return await evidenceStore.captureObservation(context.targetCommit, {
+                  ...record,
+                  ...(progress?.recordOperation('http') ?? operationContext()),
+                  at: this.now().toISOString(),
+                });
+              } catch {
+                this.addBlockingReason(context, '受控 HTTP 证据保存失败');
+                throw new Error('受控 HTTP 证据保存失败');
+              }
+            },
+          })
+        : []),
       ...progressTools,
       ...(evidenceStore ? createRunnerEvidenceTools(evidenceStore) : []),
       createArtifactWriterTool(
@@ -2611,7 +2637,7 @@ ${JSON.stringify(runnerContext(context), null, 2)}`;
 }
 
 function runnerOutputContract(): string {
-  return `先读取 plan.md，再按计划使用受控 target、工作场景、命令、环境、测试数据和 evidence 工具。正式场景必须通过场景进度工具按计划顺序声明、开始和完成；初始化侦察不得伪造正式场景进度。UI 场景只能使用受控的 headless、isolated Playwright MCP，优先使用 accessibility snapshot/ref；截图使用相对文件名并通过 list_evidence_files 确认存在。
+  return `先读取 plan.md，再按计划使用受控 target、工作场景、命令、HTTP、环境、测试数据和 evidence 工具。正式场景必须通过场景进度工具按计划顺序声明、开始和完成；初始化侦察不得伪造正式场景进度。UI 场景只能使用受控的 headless、isolated Playwright MCP，优先使用 accessibility snapshot/ref；截图使用相对文件名并通过 list_evidence_files 确认存在。
 测试账号只用于当前操作，绝不能写入日志、命令输出、Markdown 或证据。使用 get_test_data_prefix 标记临时数据，创建后立即登记；最终 Main 结束后由 Harness 统一清理，当前不声明收尾结果。场景本身要求删除时仍实际执行并验证业务行为。不能自填原始 evidence 正文、状态码、摘要或 hash。命令工具返回的 evidenceId 对应 Harness 捕获的脱敏原始结果，按需引用，不自行重造证据。每个场景记录实际观察、命令退出码、证据及偏差。结束前仅通过 write_execution 写完整运行记录，不写报告草稿；验证条件不可用时如实记录。`;
 }
 
