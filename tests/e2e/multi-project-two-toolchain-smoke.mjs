@@ -184,9 +184,17 @@ try {
   const brokenCommit = await command('git', ['rev-parse', 'HEAD'], node.directory);
   await assert.rejects(() => prepareImage(node, brokenCommit), /BUILD_FAILED/);
   assert.equal((await prepareImage(python)).reused, true);
+  await executeRun(
+    python,
+    pythonImage.imageId,
+    '01K00000000000000000000013',
+    'python3 read.py',
+    'python:after',
+  );
   console.log(
     JSON.stringify({
       status: 'passed',
+      otherProjectExecutedAfterBuildFailure: true,
       nodeProject: node.projectId,
       pythonProject: python.projectId,
       nodeCommit: node.targetCommit,
