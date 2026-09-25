@@ -178,7 +178,7 @@ Docker 部署节点将 runtime 镜像加入 Docker CLI，Compose 只把 Engine s
 ## 阶段 5：迁移演练与双项目联合验收
 
 - [x] 在隔离副本完整演练 v0.6.0 → v0.6.1 升级、恢复和回退；首个旧项目的历史工件/证据地址不改写。
-- [ ] 以 v0.6.0 的深读样本验证项目 A/B 不共享理解、回执或计划，保持原有角色和场景行为。
+- [x] 以 v0.6.0 的深读样本验证项目 A/B 不共享理解、回执或计划，保持原有角色和场景行为。
 - [x] 确认两个获授权非生产 GitHub 目标、合成账号、清理条件及模型调用预算；未具备资源时保留 live 未运行，不自行建仓库或扩大外部权限。
 - [ ] 交替运行两项目，核对同场景 ID、各自 fixed target、真实 DeepSeek/浏览器/OSS、清理、Issue/PR 和正式归档；加入一方依赖受阻而另一方完成的对照。
 - [ ] 使用两种不同工具链验证各自镜像的构建、复用、提交变化后重建、命令执行证据及失败隔离；记录实际镜像 digest，不能只验证容器能启动。
@@ -232,6 +232,12 @@ fixture Run `8` 有 109 项证据：`AUTH-LOGIN-001` passed；`AUTH-REGISTRATION
 首轮官网队列 `13` 在固定目标前以 Git 操作错误失败；fixture 队列 `14` / Run `01M3B7DDACNN7MHZ3CP99QEJNV` 固定上述 fixture 提交，Runner 完成两场景并生成截图、操作证据和 `execution.md`，但 Reviewer Session 以模型错误终止，没有审核结论、正式报告或归档。Runner 调用持久层工具时，先前登记的账号缺少显式 `cleanupScope: website-accounts`，工具拒绝观察；收尾亦将两条登记记为未绑定资源域，不能称为 Harness 清理通过。隔离应用随后对该 Run 的只读聚合查询为剩余账号 0，只证明当前无残留。该失败 Run 的 SDK Session 统计为 input 178541、output 35350、cacheRead 2364288 token，SDK 目录估值约 0.0415 美元；不是供应商账单。已在 Runner 内置指令及登记工具说明中明确账号必须绑定该域，其他资源不得绑定；固定 Linux quality 容器类型、lint、格式及完整测试通过（430 passed、2 skipped）。
 
 修正后官网队列 `15` / Run `01M3B89TRX832Y6CDSVF48PHQM` 和 fixture 队列 `16` / Run `01M3B89TSDKTT2X7RFVFSEVE79` 都固定各自新目标，但均在 Main Session 以模型错误终止。用同一受控 DeepSeek 凭据发最小文本请求返回 HTTP 402，当前模型服务不可用，不能继续消耗队列把它当作产品问题或声称双项目 Run 通过；所有失败记录原样保留。为独立核验新端点，在两个实际运行的非生产应用中分别创建一个 Run 前缀合成账号，注册返回 201，存储聚合均为 `accounts=1、argon2id=1、other=0`；调用固定域 DELETE 后独立 GET 均为剩余 0。这个端点 smoke 不包含 Agent、Reviewer、OSS 或归档，不替代联合验收。恢复模型访问后须在当前修正 runtime 重跑两项目，确认 Runner 带域登记、`operation-*.json` 生成与 Reviewer 读取、截图/OSS、清理、报告归档及真实 Session 用量，再决定是否提交发布审核。
+
+2026-09-25 DeepSeek 最小文本请求恢复 HTTP 200 后，同一隔离候选依次执行官网队列 `17` / Run `01M3B9TQ14F0Z0NV668DHSRX71` 与 fixture 队列 `18` / Run `01M3B9TQ1D6MKEJ0Z96QXBRPAE`。二者分别固定目标 `fed06e9e581b759985c9b66348e663ea3ca9814d`、`751b75095fd2faf9f37136f35eaaacda368770f9`，各自两个同 ID 场景均经 Runner、独立 Reviewer、最终 Main 判为 passed，`blockingReasons=[]`，自动归档 completed；先前 blocked/failed Run 仍按原结果保存。官网正式报告提交为 `b5afe7cf25768179e19fe0589c02e9fb21ae5d7b`，fixture 为 `4f870803f4a741af2966f43c7a4b30bda9e6790d`；两目标远端 `scenario-testing` 均已独立核验包含对应 `report.md` 与 `review.md`，官网另发布两份场景 patch，未改产品源码。项目间 Run 详情交叉查询均返回 404，本项目查询返回 200。
+
+官网 Run 有 108 项证据、6 张截图，fixture 有 102 项证据、9 张截图；两者证据读取警告均为 0，并从各自项目 API 对一张已上传截图实际取回 HTTP 200。存储观察分别落在 `operation-67.json`、`operation-60.json`，均记录本 Run `accounts=1、argon2id=1、other=0`；Reviewer 的 `review.md` 明确引用对应受控观察。两份报告的 Harness 收尾均记录 2 项登记账号经固定清理适配器独立查询 `absent=true`，且没有改变功能结论。真实深读回执分别有 21、34 条，每条绑定本项目 Run、仓库身份及各自固定提交；Main 计划引用分别为 21、33 条，未发现跨项目引用。两份 `agent-usage.json` 均含四个 DeepSeek Session；官网累计 input 262031、output 52769、cacheRead 4119680 token，SDK 目录估值约 0.0630 美元；fixture 累计 input 276312、output 54493、cacheRead 3769344 token，估值约 0.0645 美元。该费用不是供应商账单。
+
+本轮证明两个当前 Node 目标的完整路径、项目隔离和归档，但仍不能把它写成“两种不同工具链”的真实验证，也没有完成一方依赖受阻而另一方完成的受控对照。正式服务器的 Docker Engine 权限和容量尚未验证，隔离候选资源暂留用于后续检查。因此阶段 5 的异构镜像、失败隔离、最终资源清理及阶段 6 的发布审核仍未勾选；v0.6.1 尚未合并或发布。
 
 ## 阶段 6：质量检查、文档与发布
 
