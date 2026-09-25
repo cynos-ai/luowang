@@ -1,7 +1,7 @@
 # 同一操作者管理多个 Git 项目 Plan
 
 - 目标版本：v0.6.1，依据 [spec](spec.md)。
-- 状态：v0.6.0 已发布；v0.6.1 的多项目入口、离线升级、全局调度和项目镜像已实现。两个 Node 目标完成真实联合 Run，异构 Python 目标的 13 个 approved 场景通过全量与定向复测取得各自 Reviewer 结论并归档；旧失败/blocked 记录保留。负责人指定的测试服务器已完成隔离 Compose 部署形态与 Docker 回收验收，正式旧实例迁移、该服务器的完整模型/浏览器联合负载和最终发布审核仍未完成。发布仍受阶段 5–6 的剩余条件约束。
+- 状态：v0.6.0 已发布；v0.6.1 的多项目入口、离线升级、全局调度和项目镜像已实现。两个 Node 目标与异构 Python 目标已完成交替真实 Run，并做了单项目应用停机、其他项目继续完成的隔离对照；Python 全量 Run 的一项 blocked 已由后续定向复测闭合，旧失败/blocked 记录保留。负责人指定的测试服务器已完成隔离 Compose 部署形态与 Docker 回收验收，正式旧实例迁移、该服务器的完整模型/浏览器联合负载、候选资源收尾和最终发布审核仍未完成。发布仍受阶段 5–6 的剩余条件约束。
 - 实施分支：`feat/multi-project`，从 v0.6.0 发布后的 develop 创建；已推送节点以 Git 历史及下方阶段记录为准。
 
 ## 阶段 1：项目身份、数据归属与升级
@@ -182,7 +182,7 @@ Docker 部署节点将 runtime 镜像加入 Docker CLI，Compose 只把 Engine s
 - [x] 在隔离副本完整演练 v0.6.0 → v0.6.1 升级、恢复和回退；首个旧项目的历史工件/证据地址不改写。
 - [x] 以 v0.6.0 的深读样本验证项目 A/B 不共享理解、回执或计划，保持原有角色和场景行为。
 - [x] 确认两个获授权非生产 GitHub 目标、合成账号、清理条件及模型调用预算；未具备资源时保留 live 未运行，不自行建仓库或扩大外部权限。
-- [ ] 交替运行两项目，核对同场景 ID、各自 fixed target、真实 DeepSeek/浏览器/OSS、清理、Issue/PR 和正式归档；加入一方依赖受阻而另一方完成的对照。
+- [x] 交替运行两项目，核对同场景 ID、各自 fixed target、真实 DeepSeek/浏览器/OSS、清理、Issue/PR 和正式归档；加入一方依赖受阻而另一方完成的对照。
 - [x] 使用两种不同工具链验证各自镜像的构建、复用、提交变化后重建、命令执行证据及失败隔离；记录实际镜像 digest，不能只验证容器能启动。
 - [ ] 留下两项目的提交、Run/队列 ID、模型成本、归档目的地及清理证明；验证结束清理临时资源，保留报告。
 
@@ -266,6 +266,19 @@ Python 项目三个 Run 的 DeepSeek SDK Session 目录估值依次为约 `0.035
 2026-09-25 场景内对照节点：新增 `verify_run_cleanup_scope`，仅用于应用与清理端点同源、支持固定注册接口的非生产目标。工具自行创建随机合法对照 Run 账号，在同一次调用内比较 `current/control` 清理前后的真实余量，并在 `finally` 中删除对照、独立确认余量 0；模型不能指定任意历史 Run、地址或 Token。缺少当前账号、响应不符、对照清理失败或证据保存失败均不返回 passed，并保留对照 ID 供受控排障。Runner 指令要求本 Run 账号先登记，预置账号在清理后另行登录验证。定向单测覆盖成功、对照收尾及证据失败路径；干净 Linux quality 镜像类型、lint、格式、完整测试 **435 passed / 2 skipped**、三条浏览器 E2E 全通过。`test:acceptance:local` 为 `local=passed`；该容器未注入通用 live/release 输入，聚合显示 `live=blocked、release=blocked`，不替代下面的独立真实 Run。
 
 同一数据卷上的候选 runtime 已替换为本节点镜像并健康运行，旧容器保留回退。Python 定向队列 `23` / Run `01M3C0QRAV0Q3P6QYCBBBX4GX4` 固定目标 `6d3f87c2f36544eddcf1b78569a454be5cb644c0`，只执行 `CLEANUP-SEED-001`。Reviewer 独立读取本 Run 10 项原始操作记录后判 **passed**、无 blocking reason：临时对照 Run `01E5P39W1902R2FHXJAFZVNS99` 与当前 Run 清理前均为 1，当前 Run 清理后为 0、对照仍为 1；工具最后将对照清理并核验为 0；预置账号在此后独立登录 201、会话状态 authenticated。Harness 收尾独立核验 1 项登记账号不存在，报告自动归档至该项目 `scenario-testing` 的提交 `08d5d82a358c507ba29a32646e01674991e1be93`。同项目 Run 详情 200，另外两个项目均 404；旧 blocked 报告不改写。Reviewer 如实保留一项证据强度限制：对照前后两次 GET 的读数保存在单条复合操作记录内，没有两份分立 HTTP 工件；本次 Reviewer 认为该具体且非零的对照足以支持期望。其余 12 个 approved 场景沿用上一轮记录，draft `CLEANUP-CONFIG-001` 未执行。本机 Python 目标的唯一已知 blocked 场景由这次定向复测闭合；正式服务器验收与发布审核仍未完成。
+
+2026-09-25 交替真实 Run 与单项目故障对照：同一本机候选先执行 Node fixture 队列 `24`，再执行 Python 全量队列 `25`、官网队列 `26`；随后执行 Python 定向队列 `27`。三个外部目标分别固定本项目 `scenario-testing` 提交，同名 `AUTH-LOGIN-001`、`AUTH-REGISTRATION-001` 在两个 Node 项目独立判 passed。真实 DeepSeek、浏览器和 OSS 均经正式 Run 链路；官网、fixture 各抽取一张截图以及 Python 全量抽取一张截图，经受认证的项目证据 API 返回 200，字节非空且 SHA-256 与登记值一致。fixture Run 从其他两个项目读取为 404，Python 定向 Run 从其他两个项目读取亦为 404。
+
+| 项目 / 队列 | Run / fixed target | 审核、证据与 Harness 清理 | 归档提交 | SDK 估算成本 USD |
+| --- | --- | --- | --- | ---: |
+| `luowang-closure7-fixture` / `24` | `01M3C8S9ZFZ6YGRGGVGRH2XRRQ` / `4f870803f4a741af2966f43c7a4b30bda9e6790d` | 2 passed；113 项证据、8 张截图；3 项登记数据独立核验 `absent=true` | `0defd30be3761c7ad8ba66bfd96d65737f54245b` | 0.0656004272 |
+| `luowang-mp-python-fixture` / `25` | `01M3C8SY94SMQPT6AY19J1XSS1` / `08d5d82a358c507ba29a32646e01674991e1be93` | 12 passed、`CLEANUP-SEED-001` blocked；148 项证据、4 张截图；7 项登记数据独立核验 `absent=true` | `749c308754d8ede852ed008475e1457a5b781669` | 0.0802254376 |
+| `cynos-website` / `26` | `01M3C8YK56YBYMM74RCCDN2MZE` / `b5afe7cf25768179e19fe0589c02e9fb21ae5d7b` | 2 passed；107 项证据、8 张截图；2 项登记数据独立核验 `absent=true` | `c091dab3ab147df3444afba09ef7073796bd961f` | 0.0603360240 |
+| `luowang-mp-python-fixture` / `27` | `01M3C9M9WCK4BQ813DQ6MD0VYV` / `749c308754d8ede852ed008475e1457a5b781669` | 仅 `CLEANUP-SEED-001` passed；10 项证据；1 项登记数据独立核验 `absent=true` | `9c864dff252814432d4e1ec7776a60c04eac32ae` | 0.0190577016 |
+
+队列 `25` 的 blocked 记录不改写：该次请求沿用旧跨 Run 观察方式，Reviewer 确认另一合法 Run 的清理余量无法读取，故期望 B 未验证。队列 `27` 使用新增的受控 `verify_run_cleanup_scope` 定向复测并通过；Reviewer 仍标注两次余量读取归并在一条操作记录、缺少两份分立 HTTP 工件的证据粒度限制。四次正式报告均自动发布到各自目标仓库的 `docs/scenario-testing/reports/<run-id>/`，未发现已确认产品 Bug，本轮没有新建 Issue/PR。以上成本合计 USD `0.2252195904`，仅为 SDK catalog 估值，不是供应商账单。
+
+单项目故障对照在 Python 队列 `27` 运行期间，短暂停止隔离的官网非生产应用容器；官网 readiness 的 `environment=failed`，Python Run 仍 completed、passed 且归档。停机时排入官网队列 `28` / Run `01M3C9W5HWF3P7STWB06DR36YX`，固定 target `c091dab3ab147df3444afba09ef7073796bd961f`：两个 UI 场景均 blocked，11 项证据；Reviewer 核对到 5 次浏览器导航报错，原始回执不含具体错误码，也没有可审核截图，因此不从这次 Run 推断产品行为。正式 blocked 报告仍归档至 `5d6542365629c9fa878243a5ec91f4be1df21e0d`；SDK 估算 USD `0.0220389624`。它是受控停机，不是产品 Bug，报告和队列记录均保留。恢复官网容器后健康检查通过；官网、fixture 和 Python 重新准备各自最新报告提交的镜像，五项 readiness 均为 `ok`。本轮所有 Run 标记账号均经 Harness 清理；故障 Run 未创建登记账号。候选容器与隔离数据卷暂留作发布审核和后续复核，故阶段 5 的最终临时资源收尾项暂不勾选；长期 unhealthy 的旧官网清理 sidecar 并非当前项目配置的清理 URL，未把它的状态冒充当前 Run 结果。服务器完整模型/浏览器负载与真实持久旧实例迁移仍未验收。
 
 ## 阶段 6：质量检查、文档与发布
 
