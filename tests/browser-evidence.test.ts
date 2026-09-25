@@ -234,6 +234,44 @@ it('retries transient OSS failures with controlled receipts and the same sanitiz
   assert.doesNotMatch(JSON.stringify(result), /private transient diagnostic/);
 });
 
+it('recovers a transient Reviewer read without recording a failed evidence read', async () => {
+  const { workspace, store, tool, transport } = await fixture();
+  await writeFile(join(workspace.evidenceDirectory, snapshot), '- heading "登录"');
+  await store.upload(snapshot);
+  const get = transport.oss.getObject.bind(transport.oss);
+  let attempts = 0;
+  transport.oss.getObject = async (key) => {
+    attempts++;
+    if (attempts === 1)
+      throw new OssError('OSS_REQUEST_FAILED', 'private transient diagnostic', 'timeout');
+    return get(key);
+  };
+  const result = await execute(tool('read_browser_evidence'), snapshot);
+  assert.equal(result.details?.error, undefined);
+  assert.match(text(result), /登录/);
+  assert.equal(attempts, 2);
+  assert.equal(store.readFailureCount!(), 0);
+});
+
+it.each(['timeout', 'authentication', 'not-found'] as const)(
+  'keeps %s Reviewer read failure blocking with bounded attempts',
+  async (kind) => {
+    const { workspace, store, tool, transport } = await fixture();
+    await writeFile(join(workspace.evidenceDirectory, snapshot), '- heading "登录"');
+    await store.upload(snapshot);
+    let attempts = 0;
+    transport.oss.getObject = async () => {
+      attempts++;
+      throw new OssError('OSS_REQUEST_FAILED', 'private read diagnostic', kind);
+    };
+    const result = await execute(tool('read_browser_evidence'), snapshot);
+    assert.equal(result.details?.error, true);
+    assert.equal(attempts, kind === 'timeout' ? 3 : 1);
+    assert.ok(store.readFailureCount!() > 0);
+    assert.doesNotMatch(text(result), /private read diagnostic/);
+  },
+);
+
 it.each([
   ['timeout', 3, 'OSS 上传超时'],
   ['authentication', 1, 'OSS 上传认证失败'],

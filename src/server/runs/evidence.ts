@@ -17,6 +17,7 @@ import { readBrowserSnapshotText } from './browser-snapshot.js';
 
 const MAX_REVIEW_IMAGE_BYTES = 16 * 1024 * 1024;
 const MAX_UPLOAD_ATTEMPTS = 3;
+const MAX_REVIEW_READ_ATTEMPTS = 3;
 const DISCARDED_BROWSER_SNAPSHOT = '- note: browser snapshot discarded after capture failure\n';
 
 export interface EvidenceUploadResult {
@@ -348,7 +349,7 @@ class DefaultRunEvidenceStore implements RunEvidenceStore {
     try {
       const reference = this.references.get(filename);
       if (reference) {
-        const object = await this.oss.getObject(reference.objectKey);
+        const object = await this.readUploadedObject(reference.objectKey);
         return {
           filename,
           body: object.body,
@@ -380,7 +381,7 @@ class DefaultRunEvidenceStore implements RunEvidenceStore {
       throw new Error(`证据尚未成功上传：${filename}`);
     }
     try {
-      const object = await this.oss.getObject(reference.objectKey);
+      const object = await this.readUploadedObject(reference.objectKey);
       return {
         filename,
         body: object.body,
@@ -393,6 +394,24 @@ class DefaultRunEvidenceStore implements RunEvidenceStore {
       this.readFailures += 1;
       throw error;
     }
+  }
+
+  private async readUploadedObject(key: string) {
+    for (let attempt = 1; attempt <= MAX_REVIEW_READ_ATTEMPTS; attempt++) {
+      try {
+        return await this.oss.getObject(key);
+      } catch (error) {
+        if (
+          attempt === MAX_REVIEW_READ_ATTEMPTS ||
+          !(error instanceof OssError) ||
+          error.code !== 'OSS_REQUEST_FAILED' ||
+          !['timeout', 'connection'].includes(error.failureKind)
+        )
+          throw error;
+        await new Promise((resolve) => setTimeout(resolve, attempt * 200));
+      }
+    }
+    throw new Error('Unreachable evidence read retry state');
   }
 
   cleanupLocal(): Promise<void> {

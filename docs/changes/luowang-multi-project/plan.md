@@ -221,6 +221,8 @@ fixture Run `8` 有 109 项证据：`AUTH-LOGIN-001` passed；`AUTH-REGISTRATION
 
 继续验证截图指令的官网队列 `12` / Run `01M3ACRFBSJWBBHH3D47EX1CBM` 固定 `0341e87346e6b601b91818e54b7c077a4e64d5c5`；已核对该提交与当前隔离应用镜像的产品源码、依赖和 Dockerfile 无差异。Runner 在两个 UI 场景实际保存 4 张截图，均进入 OSS 和正式报告，标签分别反映有无可见表单值；总证据 111 项，无截图缺口。登录场景 passed；注册场景仍因无受控数据库观察 blocked。报告已发布为 `fcf92273e091cd6e0dfa287370c78e81ce815b35`，归档 completed。Reviewer 读受控操作证据时发生 10 次约 15 秒的 OSS timeout，Harness 保留两条读取失败阻塞项；事后经同项目证据 API 只读复查 `operation-7.json` 返回 200，只能证明至少该对象后来可读，不能追认当时 Reviewer 的审核。完整验收仍需查明/处理临时读超时，补 fixture 的持久层验证通道及模型成本记录后再重跑。固定 Linux quality 容器的 typecheck、lint、format 与完整测试通过：420 passed、2 skipped。
 
+2026-09-25 证据读取节点：Reviewer 对本 Run 已上传对象的 OSS 读取现在仅对明确的 timeout/connection 最多尝试三次，间隔 200/400 毫秒；认证、对象不存在、内容校验失败仍立即阻塞。最终读取失败继续保留诊断及失败计数，暂态失败后读到对象则不伪造失败。此修复不改旧 Run 结论，也尚未在 live 候选实例重跑。固定 Linux quality 容器的 typecheck、lint、完整测试通过（424 passed、2 skipped）；格式由相同 Prettier 版本在工作树检查通过。下一节点需更新隔离候选并真实重跑两项目，同时补受控持久层观察和可核验的模型用量口径。
+
 ## 阶段 6：质量检查、文档与发布
 
 - [x] 干净 quality 容器执行完整本地质量与验收，runtime 验证生产原生 MCP 和资源包，禁止依赖宿主机 Node/浏览器差异判定发布质量。
