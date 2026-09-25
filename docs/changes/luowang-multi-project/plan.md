@@ -183,7 +183,7 @@ Docker 部署节点将 runtime 镜像加入 Docker CLI，Compose 只把 Engine s
 - [x] 以 v0.6.0 的深读样本验证项目 A/B 不共享理解、回执或计划，保持原有角色和场景行为。
 - [x] 确认两个获授权非生产 GitHub 目标、合成账号、清理条件及模型调用预算；未具备资源时保留 live 未运行，不自行建仓库或扩大外部权限。
 - [ ] 交替运行两项目，核对同场景 ID、各自 fixed target、真实 DeepSeek/浏览器/OSS、清理、Issue/PR 和正式归档；加入一方依赖受阻而另一方完成的对照。
-- [ ] 使用两种不同工具链验证各自镜像的构建、复用、提交变化后重建、命令执行证据及失败隔离；记录实际镜像 digest，不能只验证容器能启动。
+- [x] 使用两种不同工具链验证各自镜像的构建、复用、提交变化后重建、命令执行证据及失败隔离；记录实际镜像 digest，不能只验证容器能启动。
 - [ ] 留下两项目的提交、Run/队列 ID、模型成本、归档目的地及清理证明；验证结束清理临时资源，保留报告。
 
 完成证明：AC-MP-09/10/11 及 AC-MP-12 的深读回归部分。上一版单项目 live 不能替代本阶段，两个页面截图也不能证明后台任务隔离。
@@ -243,6 +243,16 @@ fixture Run `8` 有 109 项证据：`AUTH-LOGIN-001` passed；`AUTH-REGISTRATION
 
 2026-09-25 节点 1 故障隔离复核：`multi-project-dispatcher.test.ts` 的受控服务故障覆盖 A 的镜像不可用、A 归档失败或恢复失败时 B 仍可完成，归档重试保持原项目快照且暂停项目不改投；队列测试覆盖 A 等待归档时 B 继续运行和跨重启轮转。本机真实 Docker 双工具链 smoke 增加更强对照：Node 项目在新提交的无效 Dockerfile 上构建失败后，Python 项目的已准备镜像仍精确复用，且新的 Python Run 容器实际执行命令并读到本 Run 的场景 patch。Node、Python 与 Node 新提交镜像 ID 分别为 `sha256:28f3768f1b878f2d2d6f4c41c58107bf2108791fa778db1d1ff2aa60f1809fb6`、`sha256:bbe5e8fc73bc7c0cac07f2b7bdf961963143a1f73d19a5dcffa434b7e6c0ee8f`、`sha256:5bbce6a2025e4f644f21a47141c66fb19eeb065887ee21e05fd80bdafb7cf941`；两项目首次构建 `reused=false`、第二次精确复用，Node 提交变化后重建。演练容器、镜像和临时 Git 目录由测试清理。固定 Linux quality 容器类型、lint、格式、完整单测（430 passed、2 skipped）和三条浏览器 E2E 均通过。该对照使用隔离本地项目及确定性故障，证明执行服务和调度边界，不冒充新增外部目标的真实联合 Run。负责人现已授权后续在 `cynos-ai` 下建立独立的异构非生产项目，阶段 5 的外部异构项待该项目真实接入后再勾选。
 
+2026-09-25 节点 2 外部异构项目：按负责人授权建立公开非生产仓库 [`cynos-ai/luowang-mp-python-fixture`](https://github.com/cynos-ai/luowang-mp-python-fixture)，GitHub 仓库 ID `1386819736`，罗网 projectId `daf7e42d-20d7-453a-a26d-d2bab1c1f478`。它使用 Python 3.13、Flask 3.1.1、SQLite、Argon2id，与已有两个 Node 项目构成真实异构目标；应用容器与罗网项目执行镜像分别由 `Dockerfile`、`Dockerfile.luowang` 构建。仓库通过 PR #1、#2 建立预置合成账号并同步 `scenario-testing`，初始固定提交 `a46a66e0ced2ff7100de8d16fe4605827adc8880`。项目以 paused 接入，配置项目级 GitHub/账号/清理 Secret，五项 readiness 均 `ok` 后由管理员主动启用。独立应用容器在隔离网络和 `/data` tmpfs 运行；真实 HTTP smoke 验证预置账号登录、Run 前缀账号 `accounts=1、argon2id=1、other=0`、DELETE 后独立 GET 余量 0、其他 Run 与预置账号仍有效。上述 smoke 不算 Agent Run。
+
+首次初始化队列 `19` / Run `01M3BHGCK740Z3Z2NH1FE89616` 固定 `a46a66e`，Main 深读 12 个受控文件，Runner 在真实浏览器发现页面英文欢迎语，并执行 Python 单测；因 `review-all` 需场景审核，结论按规则为 `blocked`。罗网自动生成的 [场景 PR #3](https://github.com/cynos-ai/luowang-mp-python-fixture/pull/3) 经人工审阅和 CI 后合入 `scenario-testing`，得到固定提交 `499b00378dec10c2d32dfec2354b144a1731b757`。13 个 approved 场景中 `AUTH-REGISTRATION-001` 与另两个目标使用同一 ID，但文件、Run 与报告均留在各自仓库。初始执行镜像 `sha256:83e2c065b8d6dbb8e3ff2df55e883b378794c54517f39f4e8eaf5bd5917a35cc`；场景合入后重建为 `sha256:a1d8d49eec1e356d2a92eb5f36977cf7bb88c7e7d70795b059628106e853e674`，均 `reused=false`。
+
+全场景队列 `20` / Run `01M3BHYQCY8D4P6WKD01RAPH0E` 固定 `499b003`，Runner 完成 13 个场景窗口，Reviewer 独立读证后判 **2 passed、1 failed、10 blocked**；聚合仍为 `blocked`，不可因确认了产品缺陷而改写总结果。`AUTH-REGISTRATION-001` 的页面截图和快照证明英文 `Welcome, <昵称>.` 违反中文契约，罗网归档器创建 [Issue #4](https://github.com/cynos-ai/luowang-mp-python-fixture/issues/4)，带 Run、Bug key、target 和场景 marker。正式报告已自动归档在该仓库 `docs/scenario-testing/reports/01M3BHYQCY8D4P6WKD01RAPH0E/`；5 项登记账号均由固定清理适配器独立核验 `absent=true`。10 项 blocked 的共同限制是现有受控 Runner 无法对部署应用发送任意 POST 或带自定义 Authorization 头的 HTTP 请求，页面又无登录表单；不能把浏览器 GET 405、无 Token 401 或单测替代这些真实期望。命令证据同时记录在项目镜像中运行的 `python -m unittest discover -s tests -v`、`python -m flask --version`（Python 3.13.15、Flask 3.1.1）；尝试 `curl`、解释器内联代码等被允许列表拒绝，属受控能力边界。该 Run 的其他 10 项结论保留，后续需补受限 HTTP 验证能力或调整场景验证前置，不能暗中改判。
+
+通过 [修复 PR #5](https://github.com/cynos-ai/luowang-mp-python-fixture/pull/5) 将欢迎语改为 `你好，<昵称>。`，Python CI 通过后合入 `main`（`47328c32606c7446101f8e1cbf09c17f7c6f817b`），再经 [同步 PR #6](https://github.com/cynos-ai/luowang-mp-python-fixture/pull/6) 和 CI 合入 `scenario-testing`（`c3600561fb3a0b65bcd1c13a4fb35be049b34539`）。应用和执行镜像按修复提交重建；执行镜像为 `sha256:5e713a42431cec7ea4b31b759b7cae1c5a939f908f1d252283108f8a83325770`，`reused=false`。定向队列 `21` / Run `01M3BK39NM6M44Q0VD1QBAPR8Q` 仅复测受影响的 `AUTH-REGISTRATION-001`，固定 `c360056`，Reviewer 判 `passed`，报告归档 `abf6c24b388bd662ea25b05614871a8c4fbdd5d1`，Issue #4 随修复 PR 关闭；旧失败/blocked 报告均保留。修复 Run 有 21 项证据，其中一张截图从 OSS 实际回读 HTTP 200、24964 字节、SHA-256 与登记值一致；Harness 独立核验 1 项 Run 账号清理 `absent=true`。补充真实 HTTP smoke 逐字确认 `/api/auth/status` 的 `displayName` 与注册昵称相同，该补充不冒充 Reviewer 在脱敏记录中未读到的字段原文。此 Run 在本项目 API 返回 200，在官网和 closure fixture 项目 API 均返回 404。
+
+Python 项目三个 Run 的 DeepSeek SDK Session 目录估值依次为约 `0.0357`、`0.1325`、`0.0188` 美元，input/output/cacheRead token 分别为 `96568/59438/1977856`、`480917/86412/14620032`、`80515/20177/683008`；这些是 SDK 估值而非供应商账单。修复 Run 含 Main 规划、Runner、视觉 Reviewer、最终 Main 四个 Session。报告归档后移动中的场景分支再次改变为 `abf6c24`，镜像随固定提交重建为 `sha256:a9f44c1ced7ae757950c955bea4dd415099dbb15dfd03501d136e92b81118d9f`；同一提交再准备返回该精确 image ID 且 `reused=true`。本节点证明了外部 Python 目标的真实构建、运行、修复复测、OSS、Issue/PR、清理和项目归属，但全场景 Run 的 10 个 blocked 以及正式服务器资源检查仍限制 v0.6.1 发布；隔离候选资源暂留用于补齐验证能力，不能将阶段 5/6 整体勾选。
+
 ## 阶段 6：质量检查、文档与发布
 
 - [x] 干净 quality 容器执行完整本地质量与验收，runtime 验证生产原生 MCP 和资源包，禁止依赖宿主机 Node/浏览器差异判定发布质量。
@@ -265,4 +275,4 @@ fixture Run `8` 有 109 项证据：`AUTH-LOGIN-001` passed；`AUTH-REGISTRATION
 
 实现分支从 v0.6.0 发布后的最新 develop 创建 `feat/multi-project`。各阶段通过对应检查后提交并 push，跨层改造未通过整体检查前不合入 develop。数据库、服务、调度和 UI 可以分提交 review，但不能以部分页面可用宣称多项目已完成。
 
-当前阶段不直接迁移真实实例、不新增测试仓库，也不把文档调整当成执行镜像已实现；每个代码切片仍按质量检查结果独立 push。
+外部异构非生产测试仓库已按负责人后续授权建立；隔离候选仍不直接迁移真实持久实例。每个代码切片按质量检查结果独立 push，正式发布仍需处理上文 blocked 场景与服务器验收。
