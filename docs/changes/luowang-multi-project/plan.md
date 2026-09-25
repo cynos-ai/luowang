@@ -1,7 +1,7 @@
 # 同一操作者管理多个 Git 项目 Plan
 
 - 目标版本：v0.6.1，依据 [spec](spec.md)。
-- 状态：v0.6.0 已发布；v0.6.1 已完成多项目入口、离线升级、全局调度与本机 Docker 验证，两个外部非生产目标已完成真实联合 Run 并分别归档。真实旧实例、异构外部目标及正式服务器尚未验收；发布仍受阶段 5–6 的剩余条件约束。项目专属可复用执行镜像须随固定目标提交核验。
+- 状态：v0.6.0 已发布；v0.6.1 的多项目入口、离线升级、全局调度和项目镜像已实现。两个 Node 目标完成真实联合 Run，异构 Python 目标的 13 个 approved 场景通过全量与定向复测取得各自 Reviewer 结论并归档；旧失败/blocked 记录保留。负责人指定的测试服务器已完成隔离 Compose 部署形态与 Docker 回收验收，正式旧实例迁移、该服务器的完整模型/浏览器联合负载和最终发布审核仍未完成。发布仍受阶段 5–6 的剩余条件约束。
 - 实施分支：`feat/multi-project`，从 v0.6.0 发布后的 develop 创建；已推送节点以 Git 历史及下方阶段记录为准。
 
 ## 阶段 1：项目身份、数据归属与升级
@@ -270,7 +270,7 @@ Python 项目三个 Run 的 DeepSeek SDK Session 目录估值依次为约 `0.035
 ## 阶段 6：质量检查、文档与发布
 
 - [x] 干净 quality 容器执行完整本地质量与验收，runtime 验证生产原生 MCP 和资源包，禁止依赖宿主机 Node/浏览器差异判定发布质量。
-- [ ] 在正式部署形态验证受控执行服务到 Docker Engine 的权限、容量、镜像清理和失联恢复；确认项目容器不能获得 Docker API 或罗网主密钥。
+- [x] 在负责人指定的测试服务器以隔离 Compose 部署验证服务到 Docker Engine 的权限、容量、实例标记镜像/容器回收和失联恢复；确认合成项目容器不能获得 Docker API 或罗网主密钥。完整模型/浏览器联合负载的资源余量另见下方限制。
 - [x] 更新单仓库限制、配置/API 文档、PROJECT.md 与工作入口，说明 v0.6.1 虽采用负责人指定版本号，但包含接口和数据变化及离线升级要求。
 - [x] 文档明确项目镜像解决语言/依赖环境差异，不等于恶意代码安全沙箱；说明项目构建说明、镜像重建/缓存、资源占用和诊断，不把被测应用部署纳入罗网。
 - [ ] 汇总迁移、双项目真实验收和残余限制供负责人审核；按 develop → main PR 发布并打 v0.6.1 annotated tag，复核 fixed main/tag 和发布后报告。
@@ -284,6 +284,12 @@ Python 项目三个 Run 的 DeepSeek SDK Session 目录估值依次为约 `0.035
 同一工作树构建的干净 Linux quality 镜像通过类型、lint、格式检查、419 项测试（Docker 专项 2 项默认跳过）、三个 UI E2E 和 `test:acceptance:local`；聚合结果为 `local=passed`、`live=blocked`、`release=blocked`，外部双项目输入仍未配齐。真实 Docker 专项另在本机 Engine 显式开启并通过。2026-09-24 使用构建参数 `DEBIAN_MIRROR=http://mirrors.ustc.edu.cn/debian`、`DEBIAN_SECURITY_MIRROR=http://mirrors.ustc.edu.cn/debian-security` 成功构建生产 runtime 镜像 `sha256:2ef6d228df5f2027ef20386faf38ad1e1d7da908579088fb911af3b7ebedc61c`；Debian 包仍由 apt 校验签名。最终镜像以 `node` 用户运行，包含 Docker CLI、编译后的服务和内置角色资源；角色加载器成功读取 Main 规划、Runner、Reviewer、Main 收尾及初始化所需资源并生成哈希。按 `scripts/run-browser-sandbox.sh` 的只读、非 root、tmpfs 等约束运行零模型原生 MCP 预检，结果 `status=passed`、`modelRequests=0`，覆盖工具边界、本地导航、快照、截图及 Session 释放。这完成了本地质量与 runtime 预检项；服务器 Compose 权限和真实双项目 live 验收仍未完成。
 
 本机 Compose 部署演练使用上述 runtime 镜像、独立 Compose 项目和临时数据卷：按文档完成空库备份、离线升级与 `verify`，服务健康接口返回 200。服务进程为 `uid=1000(node)`，通过附加 `gid=0` 访问权限为 `660` 的 Docker socket，能连接 Docker Desktop Engine 28.3.3。通过服务容器的 Docker CLI 创建两只带不同实例标签的合成运行容器；重启后本实例容器被清理，另一实例容器保留。被测容器无挂载，环境中没有罗网主密钥、管理员密码或 Docker endpoint。再构建一张本实例标签的未引用空镜像，重启后回收日志记录 `removedImages=1`；模拟 Engine 地址失联时受控适配器返回失败，恢复原 socket 后可再次连接。只读容量快照显示镜像 173.7 GB、卷 49.42 GB、构建缓存 21.47 GB；未对共享 Engine 执行全局 prune。演练结束已删除临时容器、Compose 卷与网络及测试密钥。此证明限于本机 Docker Desktop；服务器 socket 组、磁盘配额和实际部署回收仍需在目标环境复核，因此正式部署形态验收项继续保留未完成。
+
+2026-09-25 服务器部署形态节点：使用负责人提供的测试机资料，以 `sj` 账号和单独固定的当前 SSH 主机密钥连接；本机旧 `known_hosts` 未改，口令未写入仓库、命令参数或报告。服务器为 Linux 6.8、Docker Engine 29.5.3 / Compose 5.1.4；`sj` 属于 `docker` 组，socket 权限 `660 root:docker`。服务器原有 3 个 `agentteams` 容器保持运行，未停止或改动。初始 Docker 所在分区约 16.3 GiB 可用，运行内存约 1.1–1.5 GiB 可用；由于同机服务占用和总内存仅约 4 GiB，本节点只做部署形态和确定性回收验收，**未在服务器执行完整模型/浏览器联合负载**，也不把本机真实 Run 记为服务器 Run。
+
+已在本机通过质量检查的 runtime 镜像以流式传输加载到服务器，不在服务器构建依赖镜像；加载后分区约 13.9 GiB 可用。独立 Compose 项目 `lw-v061-51eede` 使用随机临时管理员/主密钥、独立数据卷、只监听 `127.0.0.1:47823` 的端口与本机 Docker socket：按文档完成基础迁移、空库备份、`upgrade-empty` 和 `verify`，服务健康且 HTTP `/health` 返回 200。服务以 `node` 用户运行，通过 socket 组在容器内读取同一 Engine 版本。合成 paused 项目绑定该隔离数据库后，创建本实例和另一实例标记的两个容器及本实例未引用的空镜像；重启服务后，本实例容器和空镜像被回收，另一实例容器保留。项目容器检查为 `mounts=0`、`privileged=false`，无 Docker endpoint、罗网主密钥或管理员密码。把单次 Docker 命令的 Engine 地址指向不存在的 socket 时明确失败，恢复原地址后再次连通。上述检查不依赖模型调用或被测应用，不证明完整 live 联合负载。
+
+验收结束按项目名精确停止并删除该 Compose 项目及独立卷、临时 Secret 文件、合成项目容器和传入的 runtime 镜像；未运行全局 prune，未触碰原有 `agentteams` 容器。清理后仅原 3 个服务仍运行，磁盘可用量回到约 16.3 GiB。服务器部署形态项据此完成；阶段 5 的完整交替真实联合验收、真实旧实例迁移和阶段 6 的合并发布仍保留未完成。
 
 ## 提交与范围控制
 
