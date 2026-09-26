@@ -72,17 +72,19 @@ RUN sed -i \
   -e "s#http://deb.debian.org/debian#${DEBIAN_MIRROR}#g" \
   /etc/apt/sources.list.d/debian.sources \
   && apt-get update \
-  && apt-get install --no-install-recommends -y ca-certificates git \
+  && apt-get install --no-install-recommends -y ca-certificates git docker.io \
   && rm -rf /var/lib/apt/lists/* \
   && mkdir -p /data \
   && chown node:node /data
 
 COPY --from=build --chown=node:node /app/package.json /app/package-lock.json ./
 COPY --from=build --chown=node:node /app/node_modules ./node_modules
-COPY --from=build --chown=node:node /app/dist ./dist
 COPY --from=browsers /ms-playwright /ms-playwright
 
-RUN npx --no-install playwright install-deps chromium
+RUN printf 'Acquire::Retries "5";\nAcquire::http::Timeout "30";\n' > /etc/apt/apt.conf.d/80-luowang-retries \
+  && npx --no-install playwright install-deps chromium
+
+COPY --from=build --chown=node:node /app/dist ./dist
 
 USER node
 
@@ -91,4 +93,4 @@ EXPOSE 3000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
   CMD ["node", "-e", "fetch('http://127.0.0.1:3000/health').then((response) => process.exit(response.ok ? 0 : 1)).catch(() => process.exit(1))"]
 
-CMD ["node", "dist/server/main.js"]
+CMD ["node", "dist/server/projects/main.js"]

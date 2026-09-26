@@ -18,10 +18,14 @@ services:
       LUOWANG_MASTER_KEY: ${LUOWANG_MASTER_KEY:-}
       LUOWANG_ALLOWED_ORIGIN: ${LUOWANG_ALLOWED_ORIGIN:-}
       LUOWANG_TEST_DATA_CLEANUP_URL: ${LUOWANG_TEST_DATA_CLEANUP_URL:-}
+      DOCKER_HOST: unix:///var/run/docker.sock
     ports:
       - '127.0.0.1:${LUOWANG_PORT:-3000}:3000'
     volumes:
       - luowang-data:/data
+      - /var/run/docker.sock:/var/run/docker.sock
+    group_add:
+      - '${LUOWANG_DOCKER_GID:-0}'
     init: true
     shm_size: 1gb
     healthcheck:

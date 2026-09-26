@@ -17,6 +17,7 @@ import { readBrowserSnapshotText } from './browser-snapshot.js';
 
 const MAX_REVIEW_IMAGE_BYTES = 16 * 1024 * 1024;
 const MAX_UPLOAD_ATTEMPTS = 3;
+const MAX_REVIEW_READ_ATTEMPTS = 3;
 const DISCARDED_BROWSER_SNAPSHOT = '- note: browser snapshot discarded after capture failure\n';
 
 export interface EvidenceUploadResult {
@@ -131,7 +132,23 @@ class DefaultRunEvidenceStore implements RunEvidenceStore {
         await this.workspace.replaceBrowserEvidence(filename, clean);
         this.snapshotHashes.set(filename, createHash('sha256').update(clean).digest('hex'));
       }
-    } catch {
+    } catch (error) {
+      const reason =
+        error instanceof Error &&
+        [
+          'Snapshot too large',
+          'Invalid snapshot YAML',
+          'Snapshot too deep',
+          'Unsupported snapshot node',
+          'Unsupported snapshot entry',
+          'Unsupported snapshot value',
+          'Unsupported field value',
+          'Unsupported field child',
+          'Unsupported field metadata',
+          '快照文件内容已改变',
+        ].includes(error.message)
+          ? error.message
+          : 'unknown';
       this.snapshotHashes.delete(filename);
       try {
         await this.workspace.replaceBrowserEvidence(filename, DISCARDED_BROWSER_SNAPSHOT);
@@ -142,7 +159,7 @@ class DefaultRunEvidenceStore implements RunEvidenceStore {
           throw new Error('浏览器快照采集失败且原始内容清理失败');
         }
       }
-      throw new Error('浏览器快照采集失败，原始内容已丢弃');
+      throw new Error(`浏览器快照采集失败（${reason}），原始内容已丢弃`);
     }
     this.failedSnapshots.delete(filename);
     return {
@@ -332,7 +349,7 @@ class DefaultRunEvidenceStore implements RunEvidenceStore {
     try {
       const reference = this.references.get(filename);
       if (reference) {
-        const object = await this.oss.getObject(reference.objectKey);
+        const object = await this.readUploadedObject(reference.objectKey);
         return {
           filename,
           body: object.body,
@@ -364,7 +381,7 @@ class DefaultRunEvidenceStore implements RunEvidenceStore {
       throw new Error(`证据尚未成功上传：${filename}`);
     }
     try {
-      const object = await this.oss.getObject(reference.objectKey);
+      const object = await this.readUploadedObject(reference.objectKey);
       return {
         filename,
         body: object.body,
@@ -377,6 +394,24 @@ class DefaultRunEvidenceStore implements RunEvidenceStore {
       this.readFailures += 1;
       throw error;
     }
+  }
+
+  private async readUploadedObject(key: string) {
+    for (let attempt = 1; attempt <= MAX_REVIEW_READ_ATTEMPTS; attempt++) {
+      try {
+        return await this.oss.getObject(key);
+      } catch (error) {
+        if (
+          attempt === MAX_REVIEW_READ_ATTEMPTS ||
+          !(error instanceof OssError) ||
+          error.code !== 'OSS_REQUEST_FAILED' ||
+          !['timeout', 'connection'].includes(error.failureKind)
+        )
+          throw error;
+        await new Promise((resolve) => setTimeout(resolve, attempt * 200));
+      }
+    }
+    throw new Error('Unreachable evidence read retry state');
   }
 
   cleanupLocal(): Promise<void> {

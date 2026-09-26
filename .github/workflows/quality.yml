@@ -53,7 +53,21 @@ jobs:
           cache-to: type=gha,mode=max,scope=luowang-quality,ignore-error=true
 
       - name: Local acceptance and quality matrix (live is not run in CI)
-        run: docker run --rm --init --ipc=host luowang:quality npm run test:acceptance:local
+        run: |
+          result=0
+          docker run --name luowang-quality-check --init --ipc=host luowang:quality npm run test:acceptance:local || result=$?
+          docker cp luowang-quality-check:/app/.cynos/acceptance ./acceptance-results || true
+          docker rm luowang-quality-check
+          exit "$result"
+
+      - name: Retain local acceptance reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: local-acceptance-reports
+          path: acceptance-results/**/report.json
+          if-no-files-found: warn
+          retention-days: 14
 
       - name: Build production image
         uses: docker/build-push-action@v6

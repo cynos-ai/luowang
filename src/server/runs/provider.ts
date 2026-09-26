@@ -196,7 +196,7 @@ class PiProviderAdapter implements ProviderAdapter {
         );
       }
 
-      await runtime.completeSimple(
+      const response = await runtime.completeSimple(
         mainModel,
         {
           messages: [
@@ -205,6 +205,11 @@ class PiProviderAdapter implements ProviderAdapter {
         },
         { timeoutMs: 15_000, maxRetries: 0 },
       );
+      // Pi can resolve with an error message instead of rejecting the request.
+      // Never expose the response body, which may contain credentials from a gateway.
+      if (response.stopReason !== 'stop') {
+        return result('failed', '模型 Provider 探测未正常完成', startedAt, 'REQUEST_FAILED');
+      }
       return result('ok', `Provider ${provider} 与三个角色模型均可用`, startedAt);
     } catch (error) {
       if (error instanceof ProviderError) {

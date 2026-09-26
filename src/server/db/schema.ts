@@ -1,4 +1,4 @@
-import { integer, sqliteTable, text } from 'drizzle-orm/sqlite-core';
+import { integer, primaryKey, sqliteTable, text, uniqueIndex } from 'drizzle-orm/sqlite-core';
 
 export const schemaMigrations = sqliteTable('schema_migrations', {
   version: text('version').primaryKey(),
@@ -15,6 +15,7 @@ export const systemMetadata = sqliteTable('system_metadata', {
 export const adminCredentials = sqliteTable('admin_credentials', {
   id: integer('id').primaryKey(),
   passwordHash: text('password_hash').notNull(),
+  displayName: text('display_name').notNull().default('管理员'),
   createdAt: text('created_at').notNull(),
   updatedAt: text('updated_at').notNull(),
 });
@@ -24,6 +25,72 @@ export const authSessions = sqliteTable('auth_sessions', {
   createdAt: text('created_at').notNull(),
   expiresAt: text('expires_at').notNull(),
 });
+
+// Staged schema; the offline cutover registers its migration only after
+// historical records and Secrets have been assigned to a verified project.
+export const projects = sqliteTable('projects', {
+  projectId: text('project_id').primaryKey(),
+  displayName: text('display_name').notNull(),
+  githubRepositoryId: text('github_repository_id').notNull().unique(),
+  repositoryOwner: text('repository_owner').notNull(),
+  repositoryName: text('repository_name').notNull(),
+  status: text('status').notNull(),
+  configRevision: integer('config_revision').notNull().default(1),
+  createdAt: text('created_at').notNull(),
+  updatedAt: text('updated_at').notNull(),
+});
+
+export const projectConfig = sqliteTable('project_config', {
+  projectId: text('project_id')
+    .primaryKey()
+    .references(() => projects.projectId),
+  value: text('value').notNull(),
+  updatedAt: text('updated_at').notNull(),
+});
+
+export const projectExecutionImages = sqliteTable(
+  'project_execution_images',
+  {
+    projectId: text('project_id')
+      .notNull()
+      .references(() => projects.projectId),
+    targetCommit: text('target_commit').notNull(),
+    dockerfilePath: text('dockerfile_path').notNull(),
+    status: text('status').notNull(),
+    imageId: text('image_id'),
+    failureCode: text('failure_code'),
+    updatedAt: text('updated_at').notNull(),
+  },
+  (table) => [primaryKey({ columns: [table.projectId, table.targetCommit, table.dockerfilePath] })],
+);
+
+export const projectAutomationState = sqliteTable(
+  'project_automation_state',
+  {
+    projectId: text('project_id')
+      .notNull()
+      .references(() => projects.projectId),
+    key: text('key').notNull(),
+    value: text('value').notNull(),
+    updatedAt: text('updated_at').notNull(),
+  },
+  (table) => [primaryKey({ columns: [table.projectId, table.key] })],
+);
+
+export const projectConnectivityCheckResults = sqliteTable(
+  'project_connectivity_check_results',
+  {
+    projectId: text('project_id')
+      .notNull()
+      .references(() => projects.projectId),
+    checkId: text('check_id').notNull(),
+    status: text('status').notNull(),
+    message: text('message').notNull(),
+    checkedAt: text('checked_at').notNull(),
+    latencyMs: integer('latency_ms'),
+  },
+  (table) => [primaryKey({ columns: [table.projectId, table.checkId] })],
+);
 
 export const appConfig = sqliteTable('app_config', {
   key: text('key').primaryKey(),
@@ -49,52 +116,82 @@ export const connectivityCheckResults = sqliteTable('connectivity_check_results'
 });
 
 export const repositoryIndexState = sqliteTable('repository_index_state', {
-  id: integer('id').primaryKey(),
+  projectId: text('project_id')
+    .primaryKey()
+    .references(() => projects.projectId),
   repository: text('repository').notNull(),
   scenarioBranch: text('scenario_branch').notNull(),
   commitSha: text('commit_sha'),
   syncedAt: text('synced_at'),
 });
 
-export const indexedScenarios = sqliteTable('indexed_scenarios', {
-  path: text('path').primaryKey(),
-  scenarioId: text('scenario_id').notNull().unique(),
-  name: text('name').notNull(),
-  description: text('description').notNull(),
-  status: text('status').notNull(),
-  tagsJson: text('tags_json').notNull(),
-  content: text('content').notNull(),
-  commitSha: text('commit_sha').notNull(),
-  indexedAt: text('indexed_at').notNull(),
-});
+export const indexedScenarios = sqliteTable(
+  'indexed_scenarios',
+  {
+    projectId: text('project_id')
+      .notNull()
+      .references(() => projects.projectId),
+    path: text('path').notNull(),
+    scenarioId: text('scenario_id').notNull(),
+    name: text('name').notNull(),
+    description: text('description').notNull(),
+    status: text('status').notNull(),
+    tagsJson: text('tags_json').notNull(),
+    content: text('content').notNull(),
+    commitSha: text('commit_sha').notNull(),
+    indexedAt: text('indexed_at').notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.projectId, table.path] }),
+    uniqueIndex('indexed_scenarios_project_scenario_idx').on(table.projectId, table.scenarioId),
+  ],
+);
 
-export const indexedReports = sqliteTable('indexed_reports', {
-  runId: text('run_id').primaryKey(),
-  path: text('path').notNull().unique(),
-  trigger: text('trigger').notNull(),
-  baseCommit: text('base_commit'),
-  targetCommit: text('target_commit').notNull(),
-  includedCommitsJson: text('included_commits_json').notNull(),
-  result: text('result').notNull(),
-  startedAt: text('started_at').notNull(),
-  finishedAt: text('finished_at').notNull(),
-  scenarioResultsJson: text('scenario_results_json').notNull(),
-  confirmedBugsJson: text('confirmed_bugs_json').notNull(),
-  filesJson: text('files_json').notNull(),
-  content: text('content').notNull(),
-  commitSha: text('commit_sha').notNull(),
-  indexedAt: text('indexed_at').notNull(),
-});
+export const indexedReports = sqliteTable(
+  'indexed_reports',
+  {
+    runId: text('run_id').notNull(),
+    projectId: text('project_id')
+      .notNull()
+      .references(() => projects.projectId),
+    path: text('path').notNull(),
+    trigger: text('trigger').notNull(),
+    baseCommit: text('base_commit'),
+    targetCommit: text('target_commit').notNull(),
+    includedCommitsJson: text('included_commits_json').notNull(),
+    result: text('result').notNull(),
+    startedAt: text('started_at').notNull(),
+    finishedAt: text('finished_at').notNull(),
+    scenarioResultsJson: text('scenario_results_json').notNull(),
+    confirmedBugsJson: text('confirmed_bugs_json').notNull(),
+    filesJson: text('files_json').notNull(),
+    content: text('content').notNull(),
+    commitSha: text('commit_sha').notNull(),
+    indexedAt: text('indexed_at').notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.projectId, table.runId] }),
+    uniqueIndex('indexed_reports_project_path_idx').on(table.projectId, table.path),
+  ],
+);
 
-export const repositoryIndexErrors = sqliteTable('repository_index_errors', {
-  path: text('path').primaryKey(),
-  message: text('message').notNull(),
-  commitSha: text('commit_sha').notNull(),
-  indexedAt: text('indexed_at').notNull(),
-});
+export const repositoryIndexErrors = sqliteTable(
+  'repository_index_errors',
+  {
+    projectId: text('project_id')
+      .notNull()
+      .references(() => projects.projectId),
+    path: text('path').notNull(),
+    message: text('message').notNull(),
+    commitSha: text('commit_sha').notNull(),
+    indexedAt: text('indexed_at').notNull(),
+  },
+  (table) => [primaryKey({ columns: [table.projectId, table.path] })],
+);
 
 export const runStoreRuns = sqliteTable('run_store_runs', {
   runId: text('run_id').primaryKey(),
+  projectId: text('project_id').references(() => projects.projectId),
   status: text('status').notNull(),
   trigger: text('trigger').notNull(),
   request: text('request').notNull(),
@@ -153,7 +250,9 @@ export const runStoreIssues = sqliteTable('run_store_issues', {
 });
 
 export const runStoreProgress = sqliteTable('run_store_progress', {
-  id: integer('id').primaryKey(),
+  projectId: text('project_id')
+    .primaryKey()
+    .references(() => projects.projectId),
   lastCompletedTarget: text('last_completed_target'),
   runId: text('run_id'),
   updatedAt: text('updated_at'),
@@ -161,6 +260,10 @@ export const runStoreProgress = sqliteTable('run_store_progress', {
 
 export const testRequestQueue = sqliteTable('test_request_queue', {
   queueId: integer('queue_id').primaryKey({ autoIncrement: true }),
+  projectId: text('project_id').references(() => projects.projectId),
+  configRevision: integer('config_revision'),
+  githubRepositoryId: text('github_repository_id'),
+  configSnapshotJson: text('config_snapshot_json'),
   requestId: text('request_id').notNull().unique(),
   trigger: text('trigger').notNull(),
   request: text('request').notNull(),
@@ -193,6 +296,7 @@ export const automationState = sqliteTable('automation_state', {
 
 export const interruptedRunRecords = sqliteTable('interrupted_run_records', {
   runId: text('run_id').primaryKey(),
+  projectId: text('project_id').references(() => projects.projectId),
   trigger: text('trigger').notNull(),
   request: text('request').notNull(),
   baseCommit: text('base_commit'),

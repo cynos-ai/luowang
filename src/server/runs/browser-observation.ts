@@ -13,7 +13,7 @@ export function createBrowserObservationExtension(options: {
   targetCommit: string;
   now: () => Date;
   operationContext: () => Record<string, unknown>;
-  onEvidenceFailure: () => void;
+  onEvidenceFailure: (reason?: string) => void;
 }): InlineExtension {
   const credentials = new Map<string, string>();
   const identify = (value: string) => {
@@ -218,8 +218,12 @@ export function createBrowserObservationExtension(options: {
               },
             ],
           };
-        } catch {
-          options.onEvidenceFailure();
+        } catch (error) {
+          const reason =
+            error instanceof Error
+              ? error.message.match(/^浏览器快照采集失败（([^）]+)），原始内容已丢弃$/)?.[1]
+              : undefined;
+          options.onEvidenceFailure(reason);
           return {
             content: [
               {

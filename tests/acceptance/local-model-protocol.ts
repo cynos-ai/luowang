@@ -211,6 +211,10 @@ class RecordingProductionFactory implements AgentSessionFactory {
     this.records.push(record);
     return {
       sessionId: record.id,
+      usage: () => {
+        if (!session.usage) throw new Error('Production Pi session usage is unavailable');
+        return session.usage();
+      },
       prompt: async (message) => {
         record.prompts.push(message);
         await session.prompt(message);

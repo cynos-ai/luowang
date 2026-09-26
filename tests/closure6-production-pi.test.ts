@@ -43,6 +43,33 @@ describe('Closure 6 local production Pi path', () => {
     assert.equal(result.status, 'completed', JSON.stringify(result));
     assert.equal(result.result, 'passed');
     assertSessionSequence(context.model, ['main-a', 'runner', 'reviewer', 'main-b']);
+    const accounting = JSON.parse(
+      await readFile(
+        join(context.reportDir, 'completed', result.runId, 'agent-usage.json'),
+        'utf8',
+      ),
+    );
+    assert.equal(accounting.costBasis, 'sdk-catalog-estimate-not-provider-bill');
+    assert.equal(accounting.totals.sdkEstimatedCostUsd, null);
+    assert.equal('agent-usage.json' in result.artifacts, false);
+    assert.equal(
+      accounting.totals.tokens.total,
+      accounting.sessions.reduce(
+        (sum: number, entry: { usage: { tokens: { total: number } } }) =>
+          sum + entry.usage.tokens.total,
+        0,
+      ),
+    );
+    assert.deepEqual(
+      accounting.sessions.map((entry: { kind: string }) => entry.kind),
+      ['main-planning', 'runner-execution', 'reviewer-audit', 'main-finalization'],
+    );
+    assert.ok(
+      accounting.sessions.every(
+        (entry: { usage: { tokens: { total: number }; sdkEstimatedCostUsd: number | null } }) =>
+          Number.isFinite(entry.usage.tokens.total) && entry.usage.sdkEstimatedCostUsd === null,
+      ),
+    );
     assert.ok(
       [...context.model.observedToolResults].some((value) => value.includes('旧计划未修改')),
     );
@@ -75,6 +102,13 @@ describe('Closure 6 local production Pi path', () => {
     assert.equal(context.model.sessions.length, 1);
     assert.equal(context.model.sessions[0]?.disposed, true);
     assert.equal(result.artifacts['plan.md'], undefined);
+    const accounting = JSON.parse(
+      await readFile(join(context.reportDir, 'running', result.runId, 'agent-usage.json'), 'utf8'),
+    );
+    assert.deepEqual(
+      accounting.sessions.map((entry: { kind: string }) => entry.kind),
+      ['main-planning'],
+    );
   });
 
   it('keeps missing-plan diagnostics when the model ends normally without writing', async () => {
@@ -461,6 +495,13 @@ describe('Closure 6 local production Pi path', () => {
     assert.equal(result.status, 'completed', JSON.stringify(result));
     assert.equal(result.result, 'blocked');
     assertSessionSequence(context.model, ['main-a', 'runner', 'main-a']);
+    const accounting = JSON.parse(
+      await readFile(
+        join(context.reportDir, 'completed', result.runId, 'agent-usage.json'),
+        'utf8',
+      ),
+    );
+    assert.equal(accounting.sessions.length, 3);
     assert.deepEqual(Object.keys(result.artifacts).sort(), ['report.md', 'scenario-changes.patch']);
     assert.match(result.artifacts['report.md'] ?? '', /等待场景变更人工审核/);
     assert.match(result.artifacts['report.md'] ?? '', /候选范围：核心入口验证/);

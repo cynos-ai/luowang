@@ -1,11 +1,17 @@
 import { randomBytes } from 'node:crypto';
 import { lstat, mkdir, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises';
-import { dirname, isAbsolute, relative, resolve } from 'node:path';
+import { dirname, isAbsolute, relative, resolve, sep } from 'node:path';
+
+import type Database from 'better-sqlite3';
+
+import { createProjectStore } from '../projects/store.js';
 
 import {
   RUN_ARTIFACT_NAMES,
   SCENARIO_PATCH_ARTIFACT_NAME,
   type AgentRole,
+  type AgentSessionKind,
+  type AgentSessionUsage,
   type RunArtifactName,
 } from './types.js';
 
@@ -182,7 +188,11 @@ export class RunWorkspace implements RunArtifactReader {
   }
 
   private async retainSpecialScenarioReviewArtifacts(): Promise<void> {
-    const retained = new Set<string>([SCENARIO_PATCH_ARTIFACT_NAME, 'report.md']);
+    const retained = new Set<string>([
+      SCENARIO_PATCH_ARTIFACT_NAME,
+      'report.md',
+      'agent-usage.json',
+    ]);
     for (const entry of await readdir(this.runningDirectory)) {
       if (!retained.has(entry)) {
         await rm(resolve(this.runningDirectory, entry), { recursive: true, force: false });
@@ -228,6 +238,58 @@ export class RunWorkspace implements RunArtifactReader {
     const temporary = resolve(
       this.directory,
       `.source-reads-${randomBytes(16).toString('hex')}.tmp`,
+    );
+    try {
+      await writeFile(temporary, content, { flag: 'wx', mode: 0o600 });
+      await rename(temporary, path);
+    } finally {
+      await rm(temporary, { force: true });
+    }
+  }
+
+  /** Harness-only per-Session accounting; never exposed as a model-readable artifact. */
+  async recordAgentUsage(kind: AgentSessionKind, usage: AgentSessionUsage): Promise<void> {
+    const path = resolve(this.directory, 'agent-usage.json');
+    let records: Array<{ kind: AgentSessionKind; usage: AgentSessionUsage }> = [];
+    try {
+      const info = await lstat(path);
+      if (!info.isFile() || info.isSymbolicLink() || info.size > 64 * 1024)
+        throw new RunWorkspaceError('ARTIFACT_INVALID', '模型用量记录无效');
+      const saved = JSON.parse(await readFile(path, 'utf8')) as {
+        version: number;
+        sessions: typeof records;
+      };
+      if (saved.version !== 1 || !Array.isArray(saved.sessions) || saved.sessions.length > 16)
+        throw new RunWorkspaceError('ARTIFACT_INVALID', '模型用量记录无效');
+      records = saved.sessions;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    }
+    records.push({ kind, usage });
+    const totals = records.reduce(
+      (sum, record) => ({
+        input: sum.input + record.usage.tokens.input,
+        output: sum.output + record.usage.tokens.output,
+        cacheRead: sum.cacheRead + record.usage.tokens.cacheRead,
+        cacheWrite: sum.cacheWrite + record.usage.tokens.cacheWrite,
+        total: sum.total + record.usage.tokens.total,
+      }),
+      { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+    );
+    const content = JSON.stringify({
+      version: 1,
+      costBasis: 'sdk-catalog-estimate-not-provider-bill',
+      totals: {
+        tokens: totals,
+        sdkEstimatedCostUsd: records.every((record) => record.usage.sdkEstimatedCostUsd !== null)
+          ? records.reduce((sum, record) => sum + record.usage.sdkEstimatedCostUsd!, 0)
+          : null,
+      },
+      sessions: records,
+    });
+    const temporary = resolve(
+      this.directory,
+      `.agent-usage-${randomBytes(16).toString('hex')}.tmp`,
     );
     try {
       await writeFile(temporary, content, { flag: 'wx', mode: 0o600 });
@@ -423,6 +485,49 @@ export class RunWorkspaceStore {
   get root(): string {
     return this.reportRoot;
   }
+}
+
+/** New runs live below a fixed project root. Historical runs keep their stored directory. */
+export function createProjectRunWorkspaceStore(
+  database: Database.Database,
+  reportRoot: string,
+  projectId: string,
+): RunWorkspaceStore {
+  const project = createProjectStore(database).get(projectId);
+  if (!project) throw new Error('Run 工作目录所属项目不存在');
+  const root = resolve(reportRoot);
+  const projectRoot = resolve(root, 'projects', project.projectId);
+  const pathWithinRoot = relative(root, projectRoot);
+  if (
+    isAbsolute(pathWithinRoot) ||
+    pathWithinRoot === '..' ||
+    pathWithinRoot.startsWith(`..${sep}`)
+  ) {
+    throw new Error('项目 Run 工作目录越界');
+  }
+  return new (class extends RunWorkspaceStore {
+    override open(runId: string, placement: 'running' | 'completed'): RunWorkspace {
+      assertRunId(runId);
+      if (placement === 'completed') {
+        const historical = database
+          .prepare(
+            `SELECT r.completed_directory FROM run_store_runs r
+           JOIN system_metadata m ON m.key = 'legacy_run_owner_project_id' AND m.value = r.project_id
+           WHERE r.project_id = ? AND r.run_id = ?`,
+          )
+          .get(projectId, runId) as { completed_directory: string } | undefined;
+        // Only the verified legacy owner may read the exact original completed path.
+        // Never derive a filesystem root from an arbitrary stored path.
+        if (
+          historical &&
+          resolve(historical.completed_directory) === resolve(root, 'completed', runId)
+        ) {
+          return new RunWorkspace(runId, root, placement);
+        }
+      }
+      return super.open(runId, placement);
+    }
+  })(projectRoot);
 }
 
 export function assertRunId(runId: string): void {

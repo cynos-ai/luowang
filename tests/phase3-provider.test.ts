@@ -2,6 +2,7 @@ import { strict as assert } from 'node:assert';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { createServer } from 'node:http';
 
 import { afterEach, describe, it } from 'vitest';
 
@@ -22,6 +23,34 @@ afterEach(async () => {
 });
 
 describe('Phase 3 Provider connectivity', () => {
+  it('rejects a real SDK error response from an unavailable gateway without exposing its body', async () => {
+    const server = createServer((_request, response) => {
+      response.writeHead(503, { 'content-type': 'application/json' });
+      response.end(
+        JSON.stringify({ error: { message: 'private-fixture-value', type: 'unavailable' } }),
+      );
+    });
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    try {
+      const address = server.address();
+      assert.ok(address && typeof address !== 'string');
+      const adapter = await makeAdapter({
+        provider: 'openai',
+        model: 'gpt-5.6-terra',
+        key: 'synthetic-key',
+        baseUrl: `http://127.0.0.1:${address.port}/v1`,
+      });
+      const result = await adapter.checkConnectivity();
+      assert.equal(result.status, 'failed');
+      assert.equal(result.code, 'REQUEST_FAILED');
+      assert.doesNotMatch(JSON.stringify(result), /private-fixture-value|synthetic-key/);
+    } finally {
+      await new Promise<void>((resolve, reject) =>
+        server.close((error) => (error ? reject(error) : resolve())),
+      );
+    }
+  });
+
   it.each([
     [
       { message: 'unsupported response_format secret=private-fixture-value' },

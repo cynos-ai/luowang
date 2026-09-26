@@ -26,6 +26,48 @@ export function createHttpTestDataCleanupAdapter(
   }
   return {
     id: 'run-scoped-http-cleanup',
+    async inspectStorage(runId) {
+      if (!RUN_ID.test(runId)) throw new Error('账号存储观察范围无效');
+      const token = secrets.get('testDataCleanupToken');
+      if (!token || token.length < 32) throw new Error('账号存储观察凭据未配置或无效');
+      const response = await request(base.href.replace(/\/$/, '') + '/' + runId + '/storage', {
+        method: 'GET',
+        redirect: 'error',
+        signal: AbortSignal.timeout(10_000),
+        headers: { authorization: `Bearer ${token}` },
+      });
+      if (response.status !== 200) {
+        await response.body?.cancel();
+        throw new Error('账号存储观察服务未确认成功');
+      }
+      const body = await readBoundedText(response, 1024);
+      let data: unknown;
+      try {
+        data = JSON.parse(body);
+      } catch {
+        throw new Error('账号存储观察响应无效');
+      }
+      if (
+        !data ||
+        typeof data !== 'object' ||
+        !('runId' in data) ||
+        data.runId !== runId ||
+        !('accounts' in data) ||
+        !('argon2id' in data) ||
+        !('other' in data) ||
+        ![data.accounts, data.argon2id, data.other].every(
+          (value) => Number.isSafeInteger(value) && (value as number) >= 0,
+        ) ||
+        data.accounts !== (data.argon2id as number) + (data.other as number)
+      )
+        throw new Error('账号存储观察响应范围或计数无效');
+      return {
+        runId,
+        accounts: data.accounts as number,
+        argon2id: data.argon2id as number,
+        other: data.other as number,
+      };
+    },
     async cleanupAndVerify({ runId, entry }) {
       if (!RUN_ID.test(runId) || !entry.id.startsWith(`luowang-${runId}-`)) {
         throw new Error('测试数据清理范围无效');
@@ -92,4 +134,23 @@ export function createHttpTestDataCleanupAdapter(
       };
     },
   };
+}
+
+async function readBoundedText(response: Response, limit: number): Promise<string> {
+  const reader = response.body?.getReader();
+  if (!reader) throw new Error('账号存储观察响应为空');
+  const chunks: Uint8Array[] = [];
+  let length = 0;
+  try {
+    for (;;) {
+      const part = await reader.read();
+      if (part.done) break;
+      length += part.value.byteLength;
+      if (length > limit) throw new Error('账号存储观察响应超限');
+      chunks.push(part.value);
+    }
+  } finally {
+    await reader.cancel().catch(() => undefined);
+  }
+  return Buffer.concat(chunks).toString('utf8');
 }
