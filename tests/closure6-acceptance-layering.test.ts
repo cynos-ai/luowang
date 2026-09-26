@@ -116,11 +116,14 @@ describe('Closure 6 acceptance status layering', () => {
         ' ❯ tests/projects/image-readiness.test.ts (2 tests | 1 failed)\n' +
         'fixture email: private-person@example.test\n' +
         ' ❯ tests/../private/escape.test.ts (1 failed)\n',
-      stderr: 'FAIL /app/tests/acceptance/local.test.ts\npassword=canary-password',
+      stderr:
+        'FAIL /app/tests/acceptance/local.test.ts\n' +
+        'at /app/tests/e2e/multi-project-ui-smoke.ts:351:12\npassword=canary-password',
     });
     const summary = summarizeAcceptanceFailure(error);
     assert.match(summary, /tests\/projects\/image-readiness\.test\.ts/);
     assert.match(summary, /\/app\/tests\/acceptance\/local\.test\.ts/);
+    assert.match(summary, /\/app\/tests\/e2e\/multi-project-ui-smoke\.ts:351/);
     assert.doesNotMatch(summary, /private-person|canary-|tests\/\.\.|fixture email/);
     assert.match(summary, /^Command failed \(exit code 1\) \| Failed test files:/);
     assert.equal(
