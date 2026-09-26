@@ -12,9 +12,12 @@ v0.6.1 虽使用补丁版本号，仍包含数据库与 HTTP 接口变化；部�
 
 ```bash
 npm ci
+npm run doctor
 npm run build
 npm start
 ```
+
+`npm run doctor` 会先核对 Node.js 24 和本机 `better-sqlite3` 是否能加载。若原生依赖与当前 Node 版本不匹配，先重跑 `npm ci`；本机没有所需编译工具时，可用仓库的 quality 容器运行检查。
 
 默认只监听 `127.0.0.1:3000`。打开 <http://127.0.0.1:3000/> 可查看控制台，健康检查地址为 <http://127.0.0.1:3000/health>。数据默认保存在 `/data`；本地开发可以设置 `LUOWANG_DATA_DIR` 到可写目录。执行 `npm run dev` 可以同时启动 Vite 和开发服务器。
 
