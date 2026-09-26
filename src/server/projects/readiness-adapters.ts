@@ -1,4 +1,5 @@
 import type Database from 'better-sqlite3';
+import type { ConnectivityResult } from '../../shared/types.js';
 
 import type { ConfigurationStore } from '../configuration.js';
 import { GitHubClient } from '../repository/github.js';
@@ -61,11 +62,22 @@ export function createLiveProjectReadinessAdapters(input: {
     async checkDeployment(project) {
       const id = project.projectId;
       const runtimeSecrets = createProjectRuntimeSecretStore(id, input.secrets);
-      const provider = input.checkProvider
-        ? await input.checkProvider(id)
-        : (await createProviderAdapter(input.deployment, runtimeSecrets).checkConnectivity())
-            .status === 'ok';
-      if (!provider) return failed('deployment', '模型 Provider 或角色模型检查失败');
+      if (input.checkProvider) {
+        if (!(await input.checkProvider(id)))
+          return failed('deployment', '模型 Provider 或角色模型检查失败');
+      } else {
+        const provider = await createProviderAdapter(
+          input.deployment,
+          runtimeSecrets,
+        ).checkConnectivity();
+        if (provider.status !== 'ok') {
+          return {
+            id: 'deployment',
+            status: provider.status === 'not_configured' ? 'not_configured' : 'failed',
+            message: providerReadinessFailure(provider),
+          };
+        }
+      }
       const browser = input.checkBrowser
         ? await input.checkBrowser()
         : await (async () => {
@@ -136,6 +148,20 @@ export function createLiveProjectReadinessAdapters(input: {
         : failed('image', '项目镜像已丢失或标签不匹配，请重建');
     },
   };
+}
+
+export function providerReadinessFailure(
+  result: Pick<ConnectivityResult, 'status' | 'code'>,
+): string {
+  if (result.code === 'AUTH_NOT_CONFIGURED') return '请配置部署级模型 Provider API Key';
+  if (result.code === 'AUTHENTICATION_FAILED')
+    return '模型 Provider 认证失败，请检查部署级 API Key';
+  if (result.code === 'MODEL_NOT_FOUND' || result.code === 'PROVIDER_NOT_FOUND')
+    return '模型 Provider 或角色模型不存在，请检查部署级配置';
+  if (result.code === 'VISION_UNSUPPORTED') return 'Reviewer 模型不支持图像输入';
+  if (result.code === 'THINKING_UNSUPPORTED') return '角色模型不支持当前推理等级';
+  if (result.status === 'timeout') return '模型 Provider 检查超时，请检查网络或网关';
+  return '模型 Provider 请求失败，请检查部署级连通性';
 }
 
 /** Before the first scenario branch exists, build from the verified repository's default branch. */
