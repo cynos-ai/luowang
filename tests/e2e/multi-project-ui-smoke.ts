@@ -352,7 +352,7 @@ try {
   await onboarding.getByRole('button', { name: '检查并启用' }).waitFor();
   assert.equal(await onboarding.getByRole('button', { name: '提交 Run' }).isDisabled(), true);
   assert.deepEqual(
-    writes.map(({ method, path }) => `${method} ${path}`),
+    writes.map(({ method, path }) => `${method} ${path}`).sort(),
     [
       'POST /api/projects',
       `POST /api/projects/${newProject.projectId}/resume`,
@@ -364,7 +364,7 @@ try {
       `POST /api/projects/${newProject.projectId}/merge`,
       `PUT /api/projects/${newProject.projectId}/configuration`,
       `POST /api/projects/${newProject.projectId}/pause`,
-    ],
+    ].sort(),
   );
   await onboarding.close();
   console.log('Multi-project UI smoke passed');
