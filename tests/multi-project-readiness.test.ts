@@ -4,6 +4,7 @@ import Database from 'better-sqlite3';
 import { describe, it } from 'vitest';
 
 import { createProjectTestRequestQueue } from '../src/server/automation/queue.js';
+import { GitHubApiError } from '../src/server/repository/github.js';
 import { runMigrations } from '../src/server/db/migrate.js';
 import { projectIdentityMigration } from '../src/server/db/migrations/0009-project-identity.js';
 import { migrateLegacyRunOwnership } from '../src/server/db/migrations/0011-project-run-ownership.js';
@@ -11,6 +12,7 @@ import { migrateLegacyConfigurationOwnership } from '../src/server/db/migrations
 import { migrateProjectQueueContext } from '../src/server/db/migrations/0014-project-queue-context.js';
 import { migrateProjectImageState } from '../src/server/db/migrations/0015-project-image-state.js';
 import { createProjectConfigurationStore } from '../src/server/projects/configuration.js';
+import { providerReadinessFailure } from '../src/server/projects/readiness-adapters.js';
 import {
   createProjectReadinessService,
   type ProjectReadinessDependencies,
@@ -21,6 +23,30 @@ import { awaitsCutoverActivation } from '../src/server/projects/cutover-activati
 import { createScopedSecretStore } from '../src/server/security/scoped-secret-store.js';
 
 describe('project readiness and lifecycle', () => {
+  it('uses provider status codes without forwarding gateway response text', () => {
+    const gatewayFailure = {
+      status: 'failed' as const,
+      code: 'AUTHENTICATION_FAILED' as const,
+      message: 'private-provider-response-canary',
+    };
+    assert.equal(
+      providerReadinessFailure(gatewayFailure),
+      '模型 Provider 认证失败，请检查部署级 API Key',
+    );
+    assert.doesNotMatch(
+      providerReadinessFailure(gatewayFailure),
+      /private-provider-response-canary/,
+    );
+    assert.equal(
+      providerReadinessFailure({ status: 'failed', code: 'MODEL_NOT_FOUND' }),
+      '模型 Provider 或角色模型不存在，请检查部署级配置',
+    );
+    assert.equal(
+      providerReadinessFailure({ status: 'timeout', code: 'REQUEST_FAILED' }),
+      '模型 Provider 检查超时，请检查网络或网关',
+    );
+  });
+
   it('fails closed on missing, failing and stale checks before allowing explicit resume', async () => {
     const database = setup();
     try {
@@ -38,6 +64,7 @@ describe('project readiness and lifecycle', () => {
       config.update(project.projectId, {});
       const secrets = createScopedSecretStore(database, 'test-master');
       let repositoryId = '101';
+      let repositoryFailure = false;
       let deploymentStatus: ReadinessCheck['status'] = 'ok';
       let mutateDuringImageCheck = false;
       let imageChecks = 0;
@@ -47,11 +74,14 @@ describe('project readiness and lifecycle', () => {
         message: '已检查',
       });
       const dependencies: ProjectReadinessDependencies = {
-        verifyRepository: async () => ({
-          githubRepositoryId: repositoryId,
-          owner: 'example',
-          name: 'a',
-        }),
+        verifyRepository: async () => {
+          if (repositoryFailure) throw new GitHubApiError(404, 'private-token-canary');
+          return {
+            githubRepositoryId: repositoryId,
+            owner: 'example',
+            name: 'a',
+          };
+        },
         checkDeployment: async () => ({ ...ok('deployment'), status: deploymentStatus }),
         checkEnvironment: async () => ok('environment'),
         checkImage: async () => {
@@ -79,6 +109,13 @@ describe('project readiness and lifecycle', () => {
       assert.equal(imageChecks, 0);
       secrets.project(project.projectId).set('gitToken', 'token-a');
       config.update(project.projectId, { baseUrl: 'https://a.example' });
+      repositoryFailure = true;
+      const inaccessible = await readiness.check(project.projectId);
+      const repositoryCheck = inaccessible.checks.find((item) => item.id === 'repository');
+      assert.equal(repositoryCheck?.status, 'failed');
+      assert.match(repositoryCheck?.message ?? '', /不存在，或当前 Token 无权读取/);
+      assert.doesNotMatch(JSON.stringify(inaccessible), /private-token-canary/);
+      repositoryFailure = false;
       const unreadable = await createProjectReadinessService({
         database,
         projects,

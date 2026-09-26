@@ -1,6 +1,10 @@
 import type Database from 'better-sqlite3';
 
-import { GitHubClient } from '../repository/github.js';
+import {
+  GitHubApiError,
+  GitHubClient,
+  describeGitHubRepositoryFailure,
+} from '../repository/github.js';
 import type { GitRepository } from '../repository/git-repository.js';
 import { createProjectRepositoryService } from '../repository/service.js';
 import type { ScopedSecretStore } from '../security/scoped-secret-store.js';
@@ -89,8 +93,11 @@ export function createProjectImageAdminService(input: {
       let identity;
       try {
         identity = await client.verifyIdentity();
-      } catch {
-        throw new ProjectImageAdminError('TARGET_UNAVAILABLE', 'GitHub 仓库身份核验失败');
+      } catch (error) {
+        throw new ProjectImageAdminError(
+          'TARGET_UNAVAILABLE',
+          describeGitHubRepositoryFailure(error),
+        );
       }
       if (
         identity.githubRepositoryId !== project.githubRepositoryId ||
@@ -105,8 +112,13 @@ export function createProjectImageAdminService(input: {
       let targetCommit: string | null;
       try {
         targetCommit = await resolveProjectImageCommit(projectId, config, client, branchHead);
-      } catch {
-        throw new ProjectImageAdminError('TARGET_UNAVAILABLE', '无法读取项目目标分支');
+      } catch (error) {
+        throw new ProjectImageAdminError(
+          'TARGET_UNAVAILABLE',
+          error instanceof GitHubApiError
+            ? `无法读取项目目标分支：${describeGitHubRepositoryFailure(error)}`
+            : '无法读取项目目标分支，请检查仓库连接',
+        );
       }
       if (!targetCommit) {
         throw new ProjectImageAdminError('TARGET_UNAVAILABLE', '无法确定项目固定提交');
