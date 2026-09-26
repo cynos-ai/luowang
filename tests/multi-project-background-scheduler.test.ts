@@ -162,6 +162,14 @@ it('polls active projects independently and drains through one global dispatcher
       null,
     );
     assert.equal(events.filter((event) => event === 'retry-archives').length, 5);
+    database
+      .prepare(
+        'INSERT INTO system_metadata (key, value, created_at, updated_at) VALUES (?, ?, ?, ?)',
+      )
+      .run('v061_legacy_cutover_project_id', a.projectId, 'now', 'now');
+    await scheduler.tick(new Date('2026-01-01T00:10:00.000Z'));
+    assert.equal(events.filter((event) => event === `${a.projectId}:index`).length, 2);
+    assert.equal(events.filter((event) => event === `${b.projectId}:index`).length, 3);
     await scheduler.stop();
   } finally {
     database.close();

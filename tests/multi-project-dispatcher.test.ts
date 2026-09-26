@@ -254,6 +254,62 @@ describe('project automation dispatcher', () => {
     }
   });
 
+  it('defers migrated archives until first activation, including across restart', async () => {
+    const fixture = setup();
+    try {
+      const queue = fixture.queue(fixture.a.projectId);
+      const failed = queue.enqueue({ trigger: 'manual', request: 'failed archive' });
+      queue.claimNext();
+      queue.markStarted(failed.queueId, '01ARZ3NDEKTSV4RRFFQ69G5FAV');
+      queue.markWaitingArchive(failed.queueId, '01ARZ3NDEKTSV4RRFFQ69G5FAV');
+      queue.complete(failed.queueId, {
+        runId: '01ARZ3NDEKTSV4RRFFQ69G5FAV',
+        archiveStatus: 'failed',
+      });
+      const pending = queue.enqueue({ trigger: 'manual', request: 'pending archive' });
+      queue.claimNext();
+      queue.markStarted(pending.queueId, '01ARZ3NDEKTSV4RRFFQ69G5FAW');
+      queue.markWaitingArchive(pending.queueId, '01ARZ3NDEKTSV4RRFFQ69G5FAW');
+      fixture.database
+        .prepare("UPDATE projects SET status = 'paused' WHERE project_id = ?")
+        .run(fixture.a.projectId);
+      fixture.database
+        .prepare(
+          'INSERT INTO system_metadata (key, value, created_at, updated_at) VALUES (?, ?, ?, ?)',
+        )
+        .run('v061_legacy_cutover_project_id', fixture.a.projectId, 'now', 'now');
+      let calls = 0;
+      const factory = (projectId: string) =>
+        fakeServices(projectId, {
+          async archive() {
+            calls++;
+            return archiveResult();
+          },
+        });
+      const first = fixture.dispatcher(factory);
+      await first.recover();
+      await first.retryArchives(new Date(Date.now() + 61_000));
+      assert.equal(calls, 0);
+      assert.equal(queue.get(pending.queueId)?.status, 'waiting_archive');
+      assert.equal(queue.get(failed.queueId)?.archiveStatus, 'failed');
+      const restarted = fixture.dispatcher(factory);
+      await restarted.recover();
+      fixture.database
+        .prepare(
+          'INSERT INTO system_metadata (key, value, created_at, updated_at) VALUES (?, ?, ?, ?)',
+        )
+        .run('v061_legacy_project_activated', fixture.a.projectId, 'now', 'now');
+      await restarted.retryArchives(new Date(Date.now() + 61_000));
+      assert.equal(calls, 2);
+      assert.equal(queue.get(pending.queueId)?.status, 'completed');
+      assert.equal(queue.get(failed.queueId)?.archiveStatus, 'completed');
+      await restarted.retryArchives(new Date(Date.now() + 120_000));
+      assert.equal(calls, 2);
+    } finally {
+      fixture.database.close();
+    }
+  });
+
   it('contains one project recovery failure and continues with another project', async () => {
     const fixture = setup();
     try {

@@ -6,6 +6,7 @@ import type { VerifiedGitHubRepositoryIdentity } from '../repository/github.js';
 import type { ScopedSecretStore } from '../security/scoped-secret-store.js';
 import type { ProjectConfiguration, ProjectConfigurationStore } from './configuration.js';
 import type { ProjectRecord, ProjectStore } from './store.js';
+import { activateCutoverProject } from './cutover-activation.js';
 
 export type ReadinessStatus = 'ok' | 'not_configured' | 'failed' | 'needs_recheck';
 export interface ReadinessCheck {
@@ -156,6 +157,7 @@ export function createProjectReadinessService(input: {
         input.database
           .prepare("UPDATE projects SET status = 'active', updated_at = ? WHERE project_id = ?")
           .run(now(), projectId);
+        activateCutoverProject(input.database, projectId, now());
         return { project: requireProject(projectId), readiness };
       })();
     },

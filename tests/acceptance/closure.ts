@@ -171,7 +171,6 @@ interface LiveRunFact {
   request?: string;
   targetCommit?: string | null;
   initialization?: boolean;
-  artifactNames?: string[];
   evidence?: Array<{
     id?: string;
     filename?: string;
@@ -184,13 +183,10 @@ interface LiveRunFact {
   activities?: Array<{ at?: string; message?: string; kind?: string }>;
   blockingReasons?: string[];
   scenarioPrUrl?: string | null;
-  archive?: {
-    reportStatus?: string;
-    archiveStatus?: string;
-    progressed?: boolean;
-    scenarioStatus?: string;
-    scenarioPrUrl?: string | null;
-  };
+  reportStatus?: string;
+  archiveStatus?: string;
+  progressed?: boolean;
+  scenarioStatus?: string;
   scenarioResults?: Array<{ id?: string; result?: string }>;
   confirmedBugs?: Array<{ key?: string; issueAction?: string; issueUrl?: string }>;
   issues?: Array<{ status?: string; issueNumber?: number; issueUrl?: string }>;
@@ -259,11 +255,11 @@ export function selectLiveFacts(queue: LiveQueueFact[], runs: LiveRunFact[]): Li
     (run) =>
       run.status === 'completed' &&
       run.result === 'blocked' &&
-      sameValues([...(run.artifactNames ?? [])].sort(), specialArtifacts) &&
-      run.archive?.reportStatus === 'not_applicable' &&
-      run.archive?.archiveStatus === 'completed' &&
-      run.archive?.scenarioStatus === 'pull_request' &&
-      Boolean(run.scenarioPrUrl ?? run.archive?.scenarioPrUrl),
+      sameValues(Object.keys(run.artifacts ?? {}).sort(), specialArtifacts) &&
+      run.reportStatus === 'not_applicable' &&
+      run.archiveStatus === 'completed' &&
+      run.scenarioStatus === 'pull_request' &&
+      Boolean(run.scenarioPrUrl),
   );
   assertLive(scenarioReviewRun?.runId, '缺少三 Session 特殊场景 PR Run');
 
@@ -272,8 +268,8 @@ export function selectLiveFacts(queue: LiveQueueFact[], runs: LiveRunFact[]): Li
       run.status === 'completed' &&
       run.result === 'blocked' &&
       run.runId !== scenarioReviewRun.runId &&
-      run.archive?.archiveStatus === 'completed' &&
-      run.archive?.progressed === false &&
+      run.archiveStatus === 'completed' &&
+      run.progressed === false &&
       (run.scenarioResults?.length ?? 0) > 0,
   );
   const blockedRun =
@@ -1389,10 +1385,13 @@ async function validateCompletedLiveAcceptance(environment: NodeJS.ProcessEnv): 
     'failed Run 未形成两个相互独立的 confirmed Bugs/Issues',
   );
   assertLive(
-    blocked.archive?.progressed === false && (blocked.blockingReasons?.length ?? 0) > 0,
+    blocked.progressed === false && (blocked.blockingReasons?.length ?? 0) > 0,
     'blocked Run 没有保持不推进事实',
   );
-  assertLive(scenarioReview.artifactNames?.length === 2, '场景 PR 特殊 Run 未保持两文件契约');
+  assertLive(
+    Object.keys(scenarioReview.artifacts ?? {}).length === 2,
+    '场景 PR 特殊 Run 未保持两文件契约',
+  );
 
   const image = passed.evidence?.find(
     (item) => item.contentType?.startsWith('image/') && item.url && (item.sizeBytes ?? 0) > 0,
@@ -1480,7 +1479,7 @@ async function validateCompletedLiveAcceptance(environment: NodeJS.ProcessEnv): 
     '当前 scenario-testing 未包含首次创建 commit',
   );
 
-  const scenarioPrUrl = scenarioReview.scenarioPrUrl ?? scenarioReview.archive?.scenarioPrUrl;
+  const scenarioPrUrl = scenarioReview.scenarioPrUrl;
   const scenarioPrNumber = parseGitHubNumber(scenarioPrUrl, repository, 'pull');
   const scenarioPr = await github(`${repoPath}/pulls/${scenarioPrNumber}`);
   assertLive(

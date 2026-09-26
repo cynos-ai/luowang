@@ -17,6 +17,7 @@ import {
   type ReadinessCheck,
 } from '../src/server/projects/readiness.js';
 import { createProjectStore } from '../src/server/projects/store.js';
+import { awaitsCutoverActivation } from '../src/server/projects/cutover-activation.js';
 import { createScopedSecretStore } from '../src/server/security/scoped-secret-store.js';
 
 describe('project readiness and lifecycle', () => {
@@ -29,6 +30,11 @@ describe('project readiness and lifecycle', () => {
         repository: { githubRepositoryId: '101', owner: 'example', name: 'a' },
       });
       const config = createProjectConfigurationStore(database);
+      database
+        .prepare(
+          'INSERT INTO system_metadata (key, value, created_at, updated_at) VALUES (?, ?, ?, ?)',
+        )
+        .run('v061_legacy_cutover_project_id', project.projectId, 'now', 'now');
       config.update(project.projectId, {});
       const secrets = createScopedSecretStore(database, 'test-master');
       let repositoryId = '101';
@@ -95,15 +101,18 @@ describe('project readiness and lifecycle', () => {
       assert.equal(stale.readiness.ready, false);
       assert.ok(stale.readiness.checks.every((item) => item.status === 'needs_recheck'));
       mutateDuringImageCheck = false;
+      assert.equal(awaitsCutoverActivation(database, project.projectId), true);
       const active = await readiness.resume(project.projectId);
       assert.equal(active.readiness.ready, true);
       assert.equal(active.project.status, 'active');
+      assert.equal(awaitsCutoverActivation(database, project.projectId), false);
 
       const queue = createProjectTestRequestQueue(database, project.projectId);
       const first = queue.enqueue({ trigger: 'manual', request: 'first' });
       const second = queue.enqueue({ trigger: 'manual', request: 'second' });
       assert.equal(queue.claimNext()?.queueId, first.queueId);
       assert.equal(readiness.pause(project.projectId).status, 'paused');
+      assert.equal(awaitsCutoverActivation(database, project.projectId), false);
       assert.equal(queue.get(first.queueId)?.status, 'running');
       assert.equal(queue.get(second.queueId)?.status, 'queued');
       assert.equal(queue.claimNext(), null);

@@ -15,6 +15,7 @@ import { recoverProjectDockerResources } from '../projects/docker-recovery.js';
 import type { ProjectTaskRuntime } from '../projects/task-runtime.js';
 import { createProjectTaskRuntime } from '../projects/task-runtime.js';
 import type { ProjectStore } from '../projects/store.js';
+import { awaitsCutoverActivation } from '../projects/cutover-activation.js';
 import { createProjectQueueCoordinator } from './project-queue-coordinator.js';
 import {
   createProjectTestRequestQueue,
@@ -87,9 +88,28 @@ export function createProjectAutomationDispatcher(options: {
   let recoveryPromise: Promise<void> | null = null;
   let retryPromise: Promise<void> | null = null;
   let activeRun: { projectId: string; runId: string; runs: RunOrchestrator } | null = null;
+  const deferredArchives = new Set<number>();
 
   async function retryArchivesInner(at: Date): Promise<void> {
     for (const item of createTestRequestQueue(options.database).list()) {
+      if (item.projectId && awaitsCutoverActivation(options.database, item.projectId)) continue;
+      if (deferredArchives.has(item.queueId) && item.projectId && item.runId) {
+        deferredArchives.delete(item.queueId);
+        if (item.status === 'waiting_archive') {
+          const queue = queueFor(item.projectId);
+          try {
+            await archive(item, queue, servicesFor(item), item.runId);
+          } catch (error) {
+            queue.complete(item.queueId, {
+              runId: item.runId,
+              archiveStatus: 'failed',
+              progressed: false,
+              errorMessage: safeMessage(error),
+            });
+          }
+          continue;
+        }
+      }
       if (
         item.status !== 'completed' ||
         (item.archiveStatus !== 'failed' && item.archiveStatus !== 'partial') ||
@@ -236,6 +256,13 @@ export function createProjectAutomationDispatcher(options: {
     const archives: Promise<void>[] = [];
     for (const item of createTestRequestQueue(options.database).listInFlight()) {
       if (!item.projectId) throw new Error('待恢复请求缺少项目归属');
+      if (
+        item.status === 'waiting_archive' &&
+        awaitsCutoverActivation(options.database, item.projectId)
+      ) {
+        deferredArchives.add(item.queueId);
+        continue;
+      }
       const queue = queueFor(item.projectId);
       let services: ProjectDispatchServices;
       try {

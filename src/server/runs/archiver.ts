@@ -57,6 +57,7 @@ export interface RunArchiverOptions {
   repository: RepositoryService;
   indexer?: RepositoryIndexer;
   runStore?: RunStore;
+  workspaceStore?: RunWorkspaceStore;
   now?: () => string;
   logger?: Logger;
 }
@@ -75,7 +76,7 @@ class DefaultRunArchiver implements RunArchiver {
   private readonly active = new Map<string, Promise<ArchiveResult>>();
 
   constructor(private readonly options: RunArchiverOptions & { runStore: RunStore }) {
-    this.workspaceStore = new RunWorkspaceStore(options.reportDir);
+    this.workspaceStore = options.workspaceStore ?? new RunWorkspaceStore(options.reportDir);
   }
 
   async archive(runId: string): Promise<ArchiveResult> {

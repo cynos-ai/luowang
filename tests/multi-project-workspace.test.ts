@@ -8,6 +8,8 @@ import { describe, it } from 'vitest';
 
 import { runMigrations } from '../src/server/db/migrate.js';
 import { projectIdentityMigration } from '../src/server/db/migrations/0009-project-identity.js';
+import { migrateLegacyRunOwnership } from '../src/server/db/migrations/0011-project-run-ownership.js';
+import { createRunStore } from '../src/server/runs/store.js';
 import { createProjectStore } from '../src/server/projects/store.js';
 import { createProjectRunWorkspaceStore, RunWorkspaceStore } from '../src/server/runs/workspace.js';
 
@@ -57,6 +59,28 @@ describe('project-bound Run workspace', () => {
       await oldWorkspace.writer('reviewer').writeReview('# Review');
       await oldWorkspace.writer('main-b').writeReport('# Report');
       await oldWorkspace.finalize();
+      createRunStore(database).importCompleted({
+        runId: oldRun,
+        trigger: 'manual',
+        baseCommit: null,
+        targetCommit: 'a'.repeat(40),
+        includedCommits: [],
+        result: 'passed',
+        startedAt: '2026-01-01T00:00:00.000Z',
+        finishedAt: '2026-01-01T00:01:00.000Z',
+        completedDirectory: oldWorkspace.completedDirectory,
+        artifacts: await legacy.open(oldRun, 'completed').list(),
+        scenarioResults: [],
+        confirmedBugs: [],
+      });
+      migrateLegacyRunOwnership(database, a.projectId);
+      assert.equal(await legacy.open(oldRun, 'completed').read('plan.md'), '# Legacy');
+      assert.equal(await storeA.open(oldRun, 'completed').read('plan.md'), '# Legacy');
+      assert.equal(await storeB.open(oldRun, 'completed').exists('plan.md'), false);
+      database
+        .prepare('UPDATE run_store_runs SET completed_directory = ? WHERE run_id = ?')
+        .run(resolve(root, '..', 'outside', oldRun), oldRun);
+      assert.equal(await storeA.open(oldRun, 'completed').exists('plan.md'), false);
       assert.equal(await legacy.open(oldRun, 'completed').read('plan.md'), '# Legacy');
       assert.deepEqual(await storeA.list('running'), []);
       assert.throws(

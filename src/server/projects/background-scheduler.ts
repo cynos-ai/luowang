@@ -13,6 +13,7 @@ import type { ScopedSecretStore } from '../security/scoped-secret-store.js';
 import type { ProjectConfigurationStore } from './configuration.js';
 import { createProjectRuntimeConfiguration } from './runtime-access.js';
 import type { ProjectStore } from './store.js';
+import { awaitsCutoverActivation } from './cutover-activation.js';
 
 const LAST_POLL = 'scheduler.last-poll-at';
 const LAST_CRON = 'scheduler.last-cron-key';
@@ -158,6 +159,7 @@ export function createProjectBackgroundScheduler(input: {
     activeTick = (async () => {
       await Promise.all(
         input.projects.list().map(async (project) => {
+          if (awaitsCutoverActivation(input.database, project.projectId)) return;
           await indexProject(project.projectId, at);
           if (project.status === 'active') await processProject(project.projectId, at);
         }),

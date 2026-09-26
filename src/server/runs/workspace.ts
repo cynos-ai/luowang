@@ -505,7 +505,29 @@ export function createProjectRunWorkspaceStore(
   ) {
     throw new Error('项目 Run 工作目录越界');
   }
-  return new RunWorkspaceStore(projectRoot);
+  return new (class extends RunWorkspaceStore {
+    override open(runId: string, placement: 'running' | 'completed'): RunWorkspace {
+      assertRunId(runId);
+      if (placement === 'completed') {
+        const historical = database
+          .prepare(
+            `SELECT r.completed_directory FROM run_store_runs r
+           JOIN system_metadata m ON m.key = 'legacy_run_owner_project_id' AND m.value = r.project_id
+           WHERE r.project_id = ? AND r.run_id = ?`,
+          )
+          .get(projectId, runId) as { completed_directory: string } | undefined;
+        // Only the verified legacy owner may read the exact original completed path.
+        // Never derive a filesystem root from an arbitrary stored path.
+        if (
+          historical &&
+          resolve(historical.completed_directory) === resolve(root, 'completed', runId)
+        ) {
+          return new RunWorkspace(runId, root, placement);
+        }
+      }
+      return super.open(runId, placement);
+    }
+  })(projectRoot);
 }
 
 export function assertRunId(runId: string): void {

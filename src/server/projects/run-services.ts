@@ -46,6 +46,7 @@ export function createProjectRunServices(options: {
   const oss = createProjectOssAdapter(database, projectId, task.configuration, secrets);
   const archiver = createRunArchiver({
     database,
+    workspaceStore,
     reportDir: workspaceStore.root,
     repository,
     indexer,
