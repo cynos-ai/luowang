@@ -1717,6 +1717,9 @@ export function summarizeAcceptanceFailure(error: unknown): string {
         ...output.matchAll(
           /^\s*(?:FAIL\s+|❯\s+)((?:\/app\/)?tests\/[A-Za-z0-9_./-]+\.test\.[cm]?[jt]sx?)/gm,
         ),
+        ...output.matchAll(
+          /(?:^|[\s(])((?:\/app\/)?tests\/e2e\/[A-Za-z0-9_./-]+\.tsx?)(?::\d+)?/gm,
+        ),
       ]
         .map((match) => match[1])
         .filter((file) => !file.split('/').includes('..')),
