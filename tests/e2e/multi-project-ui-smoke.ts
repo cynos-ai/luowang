@@ -334,7 +334,12 @@ try {
   await onboarding.getByText('就绪检查 · 已通过').waitFor();
   await onboarding.getByRole('button', { name: '检查并启用' }).click();
   await onboarding.getByRole('button', { name: '暂停新测试' }).waitFor();
-  assert.equal(await onboarding.getByRole('button', { name: '提交 Run' }).isDisabled(), false);
+  await onboarding.waitForFunction(() => {
+    const button = [...document.querySelectorAll('button')].find(
+      (element) => element.textContent?.trim() === '提交 Run',
+    );
+    return button !== undefined && !button.disabled;
+  });
   await onboarding.getByLabel('来源分支、tag 或提交').fill('main');
   await onboarding.getByLabel('首次初始化（场景分支尚不存在时必须勾选）').check();
   assert.equal(await onboarding.getByRole('button', { name: '提交来源并测试' }).isDisabled(), true);
