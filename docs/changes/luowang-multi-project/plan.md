@@ -298,6 +298,8 @@ Python 项目三个 Run 的 DeepSeek SDK Session 目录估值依次为约 `0.035
 
 本机隔离候选三项目队列排空后停机，使用新 runtime 的 `upgrade-index` 先将 SQLite 备份到候选数据卷的 `upgrade-backup/report-index-v061-20260925`，再事务性改索引；迁移前 40 份索引报告均保留，`verify` 返回 3 个项目。原 runtime 容器已停止并改名保留，原数据卷和全部历史 Run/失败记录未删除。新 runtime 在同一端口和数据卷健康启动，fixture 首次启动时的一次同步返回临时 502，重试后成功同步 **28 份**报告且 0 索引错误；总索引报告现为 68 份（官网 34、Python 6、fixture 28），外键错误为 0。`01M1GVQWWX89MQZWJW27AGBCDV` 在官网和 fixture 的报告 API 均独立返回 200；fixture 本轮正式 Run `01M3C8S9ZFZ6YGRGGVGRH2XRRQ` 的索引报告也返回 200。此节点没有重跑模型 Run，原审核结论和远端报告均不改判。通用 Closure 7 live/release 门禁、服务器完整负载、正式旧实例迁移及候选资源最终收尾仍待后续。
 
+2026-09-26 多项目 live 门禁节点：新增 `test:acceptance:multi-project-live`，使用受控本地清单只读检查本机候选的三个项目、五个历史 Run。队列固定 target、Run/索引场景结果、自动归档提交均与清单一致；20 张截图经项目 Evidence Gateway 回读，字节数和 SHA-256 与登记值一致；13 项 Harness 清理回执为 `absent=true`。五份报告在各自 GitHub 仓库的发布提交中存在，正文与项目索引完全相同；每个 Run 在另外两个项目的详情和报告路由均为 404。官网队列 28 和 Python 队列 25 仍按原样 blocked，Python 队列 27 的定向复测 passed；受控官网停机不计为产品 Bug。此脚本没有生成新 Run 或改写历史，只证明列出的多项目历史事实；通用 Closure 7 live/release、正式旧实例迁移、服务器完整模型/浏览器负载和候选资源收尾仍未完成。
+
 阶段 6 文档节点：README 的当前操作说明已与项目 App、离线升级 CLI 和 Compose 对齐，区分已发布 v0.6.0 与开发中的 v0.6.1，列出部署/项目 API 归属、paused 接入、镜像准备、固定提交重建、容量及清理要求。PROJECT.md、默认布局和 AGENTS.md 同步注明多项目 Spec 覆盖历史单仓库基线；历史需求和旧 Run 记录不改写。此节点只完成文档项，不代表生产 Docker Engine 权限或真实双项目验收已通过。
 
 本机 Docker Desktop 28.3.3 的真实 smoke 已验证两项项目镜像构建和固定提交 Run 命令；新增检查直接读取实际容器配置，确认无挂载、无 Docker socket/罗网数据库、非 privileged，且服务进程中的合成主密钥没有进入项目容器。模拟 Engine 地址失联后，受控入口拒绝创建新 Run 容器，不回退到宿主机命令；恢复连接后按 Run 标签查询无遗留容器。`docker system df` 的只读快照显示本机镜像总量 166.6 GB、构建缓存 19.22 GB，说明正式部署须预留容量并按归属清理，未对共享 Engine 执行全局 prune。这是本机开发环境的真实 Docker 证明；尚未验证服务器 Compose 的 socket 权限、容量策略及实际进程重启清理，因此正式部署形态验收项仍未勾选。
