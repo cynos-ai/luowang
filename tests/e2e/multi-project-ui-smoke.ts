@@ -205,6 +205,7 @@ try {
   let created = false;
   let imageReady = false;
   let imageAttempts = 0;
+  let initialSourceSubmitted = false;
   let pendingRequest = false;
   const writes: Array<{ method: string; path: string }> = [];
   await onboarding.route('**/health', (route) => route.fulfill({ json: { status: 'ok' } }));
@@ -286,6 +287,15 @@ try {
         },
       });
     }
+    if (suffix === '/merge' && method === 'POST') {
+      assert.deepEqual(request.postDataJSON(), {
+        sourceRef: 'main',
+        confirmed: true,
+        initialization: true,
+      });
+      initialSourceSubmitted = true;
+      return route.fulfill({ status: 202, json: { queue: { queueId: 1 } } });
+    }
     if (suffix === '/index')
       return route.fulfill({ json: { index: { commitSha: null, syncedAt: null, errors: [] } } });
     if (suffix === '/queue') return route.fulfill({ json: { queue: [] } });
@@ -325,6 +335,13 @@ try {
   await onboarding.getByRole('button', { name: '检查并启用' }).click();
   await onboarding.getByRole('button', { name: '暂停新测试' }).waitFor();
   assert.equal(await onboarding.getByRole('button', { name: '提交 Run' }).isDisabled(), false);
+  await onboarding.getByLabel('来源分支、tag 或提交').fill('main');
+  await onboarding.getByLabel('首次初始化（场景分支尚不存在时必须勾选）').check();
+  assert.equal(await onboarding.getByRole('button', { name: '提交来源并测试' }).isDisabled(), true);
+  await onboarding.getByLabel('我确认要把此来源纳入当前项目的场景测试分支').check();
+  await onboarding.getByRole('button', { name: '提交来源并测试' }).click();
+  await onboarding.getByText('提交来源并测试完成').waitFor();
+  assert.equal(initialSourceSubmitted, true);
   pendingRequest = true;
   await onboarding.getByLabel('非生产环境 URL').fill('https://other.example.test');
   await onboarding.getByRole('button', { name: '保存项目配置' }).click();
@@ -344,6 +361,7 @@ try {
       `POST /api/projects/${newProject.projectId}/image/prepare`,
       `POST /api/projects/${newProject.projectId}/image/prepare`,
       `POST /api/projects/${newProject.projectId}/resume`,
+      `POST /api/projects/${newProject.projectId}/merge`,
       `PUT /api/projects/${newProject.projectId}/configuration`,
       `POST /api/projects/${newProject.projectId}/pause`,
     ],
