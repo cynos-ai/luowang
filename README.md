@@ -1,6 +1,6 @@
 # LuoWang
 
-罗网（LuoWang）是一个独立部署的 AI 场景测试 Harness。v0.6.1 支持同一管理员可管理多个 GitHub 项目，项目数据、凭据、任务、证据和执行镜像分别归属。两个 Node 目标及一个 Python 目标已完成交替真实 Run 和故障隔离，历史持久测试实例副本已完成升级与回退验收。正式版本见 [GitHub Releases](https://github.com/cynos-ai/luowang/releases)。
+罗网（LuoWang）是一个独立部署的 AI 场景测试 Harness。v0.6.1 支持同一管理员管理多个 GitHub 项目，项目数据、凭据、任务、证据和执行镜像分别归属。两个 Node 目标及一个 Python 目标已完成交替真实 Run 和故障隔离，历史持久测试实例副本已完成升级与回退验收。正式版本见 [GitHub Releases](https://github.com/cynos-ai/luowang/releases)。
 
 v0.6.0 加入随版本维护的代码深读方法：Main 追踪业务规则与相关调用，并在计划中引用固定版本的读取回执；Reviewer 可以核对引用来源和阅读范围。回执只说明材料返回过，模型是否理解正确仍需单独评测。[实施与验收记录](docs/changes/luowang-code-understanding/plan.md)保留完整过程；多项目的功能边界与验收结果见[多项目计划](docs/changes/luowang-multi-project/plan.md)。
 

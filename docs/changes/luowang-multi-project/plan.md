@@ -1,7 +1,7 @@
 # 同一操作者管理多个 Git 项目 Plan
 
 - 目标版本：v0.6.1，依据 [spec](spec.md)。
-- 状态：v0.6.0 已发布；v0.6.1 的多项目入口、离线升级、全局调度和项目镜像已实现。两个 Node 目标与异构 Python 目标已完成交替真实 Run，并做了单项目应用停机、其他项目继续完成的隔离对照；Python 全量 Run 的一项 blocked 已由后续定向复测闭合，旧失败/blocked 记录保留。本机候选已完成只读复核、离线备份及临时容器/网络收尾，原始数据卷保留供回退。负责人指定的测试服务器已完成隔离 Compose 部署形态与 Docker 回收验收；该机器未运行完整模型/浏览器负载，也不作为该负载的单独发布门禁，不能据此推断罗网支持的最低服务器配置。历史持久测试实例的隔离副本已完成迁移、恢复和备份回退演练，最终候选验收通过；负责人审阅、合并与 tag 尚未完成，详见本计划末尾的验收记录。
+- 状态：v0.6.1 已发布，负责人审阅、合并、annotated tag、发布后 local/live/release 和资源收尾均完成。三个外部项目的交替真实 Run、故障隔离、历史实例副本迁移与回退证据见下方记录；失败/blocked 历史及受控备份保留。测试服务器只验证部署形态，不代表最低支持配置。
 - 实施分支：`feat/multi-project`，从 v0.6.0 发布后的 develop 创建；已推送节点以 Git 历史及下方阶段记录为准。
 
 ## 阶段 1：项目身份、数据归属与升级
@@ -290,7 +290,7 @@ Python 项目三个 Run 的 DeepSeek SDK Session 目录估值依次为约 `0.035
 - [x] 在负责人指定的测试服务器以隔离 Compose 部署验证服务到 Docker Engine 的权限、容量、实例标记镜像/容器回收和失联恢复；确认合成项目容器不能获得 Docker API 或罗网主密钥。该机器的资源快照只限定其自身测试范围，不是产品最低配置。
 - [x] 更新单仓库限制、配置/API 文档、PROJECT.md 与工作入口，说明 v0.6.1 虽采用负责人指定版本号，但包含接口和数据变化及离线升级要求。
 - [x] 文档明确项目镜像解决语言/依赖环境差异，不等于恶意代码安全沙箱；说明项目构建说明、镜像重建/缓存、资源占用和诊断，不把被测应用部署纳入罗网。
-- [ ] 汇总迁移、双项目真实验收和残余限制供负责人审核；按 develop → main PR 发布并打 v0.6.1 annotated tag，复核 fixed main/tag 和发布后报告。
+- [x] 汇总迁移、双项目真实验收和残余限制供负责人审核；按 develop → main PR 发布并打 v0.6.1 annotated tag，复核 fixed main/tag 和发布后报告。
 
 完成证明：AC-MP-12；不能修改 v0.6.0 tag 或用新结果改写历史 Run。
 
@@ -336,9 +336,9 @@ Python 项目三个 Run 的 DeepSeek SDK Session 目录估值依次为约 `0.035
 | --- | --- | --- |
 | 1. 固定验收方案 | 核对 AC 与真实事实，修正通用门禁的项目 API/返回格式，确定持久候选和缺项 | 已完成（748bc7c） |
 | 2. 完整真实流程 | 核验同一项目的首次初始化、passed、双 Bug/Issue failed、blocked、场景 PR 和合并后重测；通用 live 与多项目 live 分别通过 | 已完成；两套 live 通过，补充 Run passed 且归档完成 |
-| 3. 最终候选与审核报告 | 复核升级/回退/历史不变，运行 quality/runtime/local/live/release，汇总限制和发布回退说明 | 已完成，等待负责人审阅 |
-| 4. 合并发布 | 负责人审核后通过功能 PR 与 develop → main PR 发布 v0.6.1，核对 main/tag | 待审核 |
-| 5. 发布后收尾 | 正式镜像复核、测试资源清理、备份和证据保留记录 | 待发布 |
+| 3. 最终候选与审核报告 | 复核升级/回退/历史不变，运行 quality/runtime/local/live/release，汇总限制和发布回退说明 | 已完成，负责人已批准 |
+| 4. 合并发布 | 负责人审核后通过功能 PR 与 develop → main PR 发布 v0.6.1，核对 main/tag | 已完成；PR #80、v0.6.1 |
+| 5. 发布后收尾 | 正式镜像复核、测试资源清理、备份和证据保留记录 | 已完成；见发布收尾记录 |
 
 本次清点发现旧 Closure 7 持久验收库仍保留 8 个真实 Run 和 8 个终态队列，SQLite 完整性为 ok；其中有首次创建的初始化、含两个 Bug 的 failed Run、blocked、特殊场景 PR 和后续 passed 重测。它是历史验收实例，不是生产实例；接下来在隔离副本验证归属、备份与迁移，不删除原库。不能据此提前声称 v0.6.1 已通过 live，但也不再把“找不到历史事实”当作已确认结论。新查出的通用门禁格式缺陷是仍读取旧的嵌套 archive/artifactNames，而项目 API 返回平铺归档状态与 artifacts 内容映射；需按实际契约修正。
 
@@ -419,3 +419,26 @@ Python 项目三个 Run 的 DeepSeek SDK Session 目录估值依次为约 `0.035
 ### 2026-09-26 负责人审阅通过
 
 负责人已审阅最终候选报告并授权完成收尾。功能 PR #79 已合入 develop（`282e0f6c8fc9dd61b41006ab7e3bff218353c70d`），发布 PR #80 指向 main。发布前补正文档中的过期未验收说明，后续按该 PR 检查、annotated tag、正式 runtime、带 tag 的发布核验和实例资源清理依次完成。前面的“待审阅”是当时的历史快照；本次不再等待额外批准。最终发布状态以 [v0.6.1 Release](https://github.com/cynos-ai/luowang/releases/tag/v0.6.1) 和后续收尾记录为准。
+
+
+## v0.6.1 发布收尾记录（2026-09-26）
+
+负责人审阅通过后，功能 PR #79、发布文档 PR #81 和历史同步/CI 报告留存 PR #82 依次合入 develop，发布 PR #80 合入 main。正式版本已发布：[LuoWang v0.6.1](https://github.com/cynos-ai/luowang/releases/tag/v0.6.1)。
+
+- main 发布提交：`33d068ff72c104129e8a945a8e17bb30fa5208e9`。
+- annotated tag 对象：`47d122bbc40c9311c314f089882908c3d9774236`，剥离后指向上述 main 提交。v0.6.0 tag 对象仍为 `c5d60254c489761d5de9c91822a76400ba9bc5b0`；发布门禁也确认 v0.1.0 原对象及提交未变。
+- 发布提交构建的 runtime ID：`sha256:7882855ab151a83b7ad9cca206e85acabbd0fe938a32d0e37656d42ff5f2b4e2`，与实际候选实例使用的镜像一致。本机保留 `luowang:v0.6.1` 标签和发布 quality/runtime 镜像；没有向未经配置的镜像仓库上传。
+- 发布后原生 MCP 预检再次 passed，模型请求为 0。带 `LUOWANG_LIVE_RELEASE_TAG=v0.6.1` 的完整验收为 local=passed、live=passed、release=passed，`AC-CLOSURE-RELEASE-01` 也 passed；报告保留在受控本机 `.cynos/multi-project-live/final-results/release-1790404535033/report.json`。AC-MP-12 的发布后部分据此完成。
+
+发布准备中发现 main 的历史发布合并记录未同步回 develop，严格最新基线检查阻止合并。同步前后文件树完全相同，最终通过 PR #82 补齐关系，没有直接提交长期分支。该 PR 首次 CI 返回 local=failed，但旧工作流随临时容器删除了详细报告，无法确认具体失败项；该失败不改判。同代码在本机完整复核通过，随后只补 CI 报告留存，远端完整检查通过，发布 PR 的检查也通过。新工作流在成功或失败时保留 report.json 14 天，失败退出码不变；CI 仍不接收真实 live 凭据。
+
+发布后再次确认两套候选内四个项目均无 queued/running/waiting_archive 任务，随后停止候选并备份四个数据卷。每份 tar 均完整读取目录并计算 SHA-256，清单保存在 Git 忽略的 `.cynos/multi-project-live/backups/published-v061-20260926/manifest.json`。备份含受控实例数据和 Secret，只保存在本机，不上传 GitHub。
+
+| 备份卷 | 字节数 | SHA-256 |
+| --- | ---: | --- |
+| 首次迁移失败候选 | 20,029,440 | `0ee7f628b4f35b381e1f35b343339d79587519797dafb29f486fa736417f974d` |
+| 修复后迁移及补充 Run 候选 | 22,241,280 | `c9e00d4883ef2adabc3afa1a9ed75057bee140fa6cd672c8a070557fa00c9efb` |
+| 原三项目联合验收实例 | 26,961,920 | `7b516a006b7fce040a48620a087d2b6b22facc3ecaa39e81629e7c3ec817f3dd` |
+| 临时非生产应用 | 51,200 | `1c4f9602f2043d8367305a5d981374646dc412f3e35c57ccc0daefee992ba405` |
+
+备份后按精确名称删除本轮 7 个 Harness/应用候选容器、`luowang-v061-final` 网络和临时应用卷，移除四个候选 quality/runtime 镜像标签。三份 Harness 历史卷、原始旧实例、迁移前备份、发布镜像及全部验收日志继续保留；未清理共享构建缓存或执行全局 prune，也未触碰其他服务。外部目标仓库的报告、Issue 和失败/blocked 事实保持原样。最后将 main 的本次发布记录同步回 develop，并在本收尾 PR 更新版本入口与计划状态，避免下次发布重复遇到历史落后。
