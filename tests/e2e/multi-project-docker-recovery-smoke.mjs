@@ -13,6 +13,7 @@ import { projectIdentityMigration } from '../../dist/server/db/migrations/0009-p
 import { migrateProjectImageState } from '../../dist/server/db/migrations/0015-project-image-state.js';
 import { migrateProjectRunImage } from '../../dist/server/db/migrations/0016-project-run-image.js';
 import { recoverProjectDockerResources } from '../../dist/server/projects/docker-recovery.js';
+import { inspectProjectResources } from '../../dist/server/projects/resource-inventory.js';
 import { createProjectStore } from '../../dist/server/projects/store.js';
 
 const exec = promisify(execFile);
@@ -68,6 +69,13 @@ try {
     `luowang.run-id=${runId}`,
     imageId,
     'true',
+  );
+
+  const preview = await inspectProjectResources(database);
+  assert.deepEqual(preview.containers, [{ containerId, projectId, runId }]);
+  assert.deepEqual(
+    preview.images.map(({ imageId: id, disposition }) => [id, disposition]),
+    [[imageId, 'restart-candidate']],
   );
 
   assert.deepEqual(await recoverProjectDockerResources(database), {

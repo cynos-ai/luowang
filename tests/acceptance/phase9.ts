@@ -475,7 +475,7 @@ async function runQualityCommands(commands: CommandEvidence[]): Promise<boolean>
         command: label,
         status: 'failed',
         durationMs: Date.now() - startedAt,
-        summary: summarizeOutput(details),
+        summary: summarizeOutput(details, 25),
       });
     }
   }
@@ -523,7 +523,7 @@ async function runOptionalGithubSmoke(commands: CommandEvidence[]): Promise<{
       command: 'npm run test:e2e:github (live)',
       status: 'failed',
       durationMs: Date.now() - startedAt,
-      summary: summarizeOutput(commandErrorDetails(error)),
+      summary: summarizeOutput(commandErrorDetails(error), 25),
     });
     return { status: 'failed' };
   }
@@ -1795,12 +1795,12 @@ function commandErrorDetails(error: unknown): string {
   return [details.message, details.stdout, details.stderr].filter(Boolean).join('\n');
 }
 
-function summarizeOutput(value: string): string {
+function summarizeOutput(value: string, lineCount = 3): string {
   const lines = redact(value)
     .split(/\r?\n/)
     .map((line) => line.trim())
     .filter(Boolean);
-  return lines.slice(-3).join(' | ').slice(-1_000) || 'completed';
+  return lines.slice(-lineCount).join(' | ').slice(-3_000) || 'completed';
 }
 
 function redact(value: string): string {
