@@ -15,6 +15,7 @@
     "db:migrate": "node dist/server/db/migrate-cli.js",
     "db:multi-project": "node dist/server/projects/upgrade-cli.js",
     "doctor": "node scripts/check-local-runtime.mjs",
+    "ops:inventory": "node dist/server/projects/resource-inventory.js",
     "dev": "concurrently -k \"npm run dev:server\" \"vite\"",
     "dev:server": "tsx watch src/server/projects/main.ts",
     "format": "prettier --write .",
