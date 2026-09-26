@@ -324,6 +324,8 @@ Python 项目三个 Run 的 DeepSeek SDK Session 目录估值依次为约 `0.035
 
 已按精确名称移除本轮隔离候选的 15 个 Harness/目标应用容器，包括此前 unhealthy、已不在当前配置中使用的旧官网清理 sidecar；移除仅属于本轮候选的 `luowang-mp-live-4d420840` 网络。原始 `luowang-mp-live-data-4d420840` 和官网合成测试数据卷 `luowang-mp-site-data-4d420840` 仍保留，候选镜像也未删除，以便发布审核期间回退或重查；因此“临时容器/网络收尾完成”不等于所有本地镜像和卷已删除。未执行全局 Docker prune，未触碰其他工作负载，外部三个目标仓库的正式报告和所有失败/blocked 历史也未改写。此节点不新增模型 Run，不改变通用 Closure 7 live/release、真实持久旧实例迁移及最终发布审核仍待闭合的状态。
 
+后续发布门禁适配节点：检查发现通用 `test:acceptance:live` 仍读取 v0.6.0 的无项目 `/api/queue`、`/api/runs`、`/api/reports`、`/api/dashboard` 和连接检查，而 v0.6.1 App 已关闭这些业务接口。现增加必需的 `LUOWANG_LIVE_PROJECT_ID`，先核对项目绑定仓库，再从该项目的就绪、队列、Run、Evidence Gateway、报告和索引 API 读取 Closure 7 事实；远端 GitHub 分支仍须与该项目索引提交一致。原先首次初始化、两个 confirmed Bug/Issue、特殊场景 PR、blocked 不推进、当前 HEAD 重测和发布 tag 等严格要求均未放宽，也不跨项目拼接。定向测试 15 项、类型及修改文件 lint/格式检查通过；不提供真实输入时 live 正确返回 blocked，并明确列出项目 ID 缺项。当前三个真实目标没有同一项目内包含两个已确认 Bug/Issue 的 failed Run，候选已停机，故本节点只修复入口的接口不匹配，不把通用 live/release 写成通过；后续须用真实合格事实执行该门禁。
+
 ## 提交与范围控制
 
 实现分支从 v0.6.0 发布后的最新 develop 创建 `feat/multi-project`。各阶段通过对应检查后提交并 push，跨层改造未通过整体检查前不合入 develop。数据库、服务、调度和 UI 可以分提交 review，但不能以部分页面可用宣称多项目已完成。
