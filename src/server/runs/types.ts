@@ -78,6 +78,21 @@ export interface AgentSession {
   readonly sessionId?: string;
   prompt(message: string): Promise<void>;
   dispose(): void | Promise<void>;
+  usage?(): AgentSessionUsage;
+}
+
+export interface AgentSessionUsage {
+  provider: string;
+  model: string;
+  tokens: {
+    input: number;
+    output: number;
+    cacheRead: number;
+    cacheWrite: number;
+    total: number;
+  };
+  /** SDK catalog estimate, never a verified provider bill. */
+  sdkEstimatedCostUsd: number | null;
 }
 
 export interface AgentSessionFactory {

@@ -16,7 +16,7 @@ export interface ScenarioProgressController {
   tools: ToolDefinition[];
   completionError(): string | null;
   operationContext(): Record<string, unknown>;
-  recordOperation(kind: 'command' | 'browser'): Record<string, unknown>;
+  recordOperation(kind: 'command' | 'browser' | 'http'): Record<string, unknown>;
 }
 
 export function createScenarioProgressController(options: {
@@ -98,7 +98,7 @@ class DefaultScenarioProgressController {
       operationContext: () => this.operationContext(),
       recordOperation: (kind) => {
         this.addActivity(
-          `${this.active ? `场景 ${this.active}` : '辅助操作（无当前场景）'}：开始${kind === 'command' ? '受控命令' : '浏览器操作'}`,
+          `${this.active ? `场景 ${this.active}` : '辅助操作（无当前场景）'}：开始${kind === 'command' ? '受控命令' : kind === 'http' ? '受控 HTTP 请求' : '浏览器操作'}`,
           'info',
         );
         return this.operationContext();

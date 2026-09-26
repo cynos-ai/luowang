@@ -753,6 +753,16 @@ export class GitRepository {
       });
   }
 
+  /** Export an immutable commit tree for a controlled project image build context. */
+  async archiveCommit(commit: string, archivePath: string): Promise<string> {
+    if (!SHA_PATTERN.test(commit)) {
+      throw new RepositoryError('TARGET_INVALID', '镜像构建需要固定提交 SHA', 400);
+    }
+    const sha = await this.resolveCommit(commit);
+    await this.run(['archive', '--format=tar', `--output=${archivePath}`, sha]);
+    return sha;
+  }
+
   /**
    * Return the net file changes between two fixed commits. This deliberately
    * uses the commit trees rather than the current remote HEAD, so callers can

@@ -152,13 +152,25 @@ export function createRunStore(
   database: Database.Database,
   options: { now?: () => string } = {},
 ): RunStore {
-  return new SqliteRunStore(database, options.now ?? (() => new Date().toISOString()));
+  return new SqliteRunStore(database, options.now ?? (() => new Date().toISOString()), null);
+}
+
+export function createProjectRunStore(
+  database: Database.Database,
+  projectId: string,
+  options: { now?: () => string } = {},
+): RunStore {
+  if (!database.prepare('SELECT 1 FROM projects WHERE project_id = ?').get(projectId)) {
+    throw new RunStoreError('RUN_STORE_INVALID', 'Run 项目不存在');
+  }
+  return new SqliteRunStore(database, options.now ?? (() => new Date().toISOString()), projectId);
 }
 
 class SqliteRunStore implements RunStore {
   constructor(
     private readonly database: Database.Database,
     private readonly now: () => string,
+    private readonly projectId: string | null,
   ) {}
 
   importCompleted(input: CompletedRunImport): StoredRun {
@@ -171,6 +183,14 @@ class SqliteRunStore implements RunStore {
         ? 'pending'
         : 'not_applicable';
     this.database.transaction(() => {
+      if (this.projectId !== null) {
+        const owner = this.database
+          .prepare('SELECT project_id FROM run_store_runs WHERE run_id = ?')
+          .get(input.runId) as { project_id: string } | undefined;
+        if (owner && owner.project_id !== this.projectId) {
+          throw new RunStoreError('RUN_STORE_CONFLICT', 'Run ID 已归属其他项目');
+        }
+      }
       const existing = this.readRunRow(input.runId);
       if (existing) {
         assertSameImmutableRun(existing, input);
@@ -189,17 +209,18 @@ class SqliteRunStore implements RunStore {
       this.database
         .prepare(
           `INSERT INTO run_store_runs
-           (run_id, status, trigger, request, base_commit, target_commit, included_commits_json,
+           (run_id, ${this.projectId === null ? '' : 'project_id, '}status, trigger, request, base_commit, target_commit, included_commits_json,
             result, scenario_results_json, confirmed_bugs_json, evidence_json,
             blocking_reasons_json, scenario_progress_json, activities_json, started_at,
             finished_at, completed_directory, report_path, report_status, report_commit_sha,
             archive_status, archive_error, progressed, progressed_at, created_at, updated_at,
             scenario_mode, scenario_status, scenario_commit_sha, scenario_pr_url, scenario_error,
             initialization)
-           VALUES (?, 'completed', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, 'pending', NULL, 0, NULL, ?, ?, ?, ?, NULL, NULL, NULL, ?)`,
+           VALUES (?, ${this.projectId === null ? '' : '?, '}'completed', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, 'pending', NULL, 0, NULL, ?, ?, ?, ?, NULL, NULL, NULL, ?)`,
         )
         .run(
           input.runId,
+          ...(this.projectId === null ? [] : [this.projectId]),
           input.trigger,
           input.request?.trim() ?? '',
           input.baseCommit,
@@ -257,8 +278,10 @@ class SqliteRunStore implements RunStore {
 
   list(): StoredRun[] {
     const rows = this.database
-      .prepare('SELECT * FROM run_store_runs ORDER BY finished_at DESC, run_id DESC')
-      .all() as RunRow[];
+      .prepare(
+        `SELECT * FROM run_store_runs ${this.projectId === null ? '' : 'WHERE project_id = ?'} ORDER BY finished_at DESC, run_id DESC`,
+      )
+      .all(...(this.projectId === null ? [] : [this.projectId])) as RunRow[];
     return rows.map((row) => this.requireStoredRun(row.run_id));
   }
 
@@ -266,17 +289,20 @@ class SqliteRunStore implements RunStore {
     const rows = this.database
       .prepare(
         `SELECT * FROM run_store_runs
-         WHERE archive_status <> 'completed'
+         WHERE archive_status <> 'completed'${this.projectId === null ? '' : ' AND project_id = ?'}
          ORDER BY finished_at ASC, run_id ASC`,
       )
-      .all() as RunRow[];
+      .all(...(this.projectId === null ? [] : [this.projectId])) as RunRow[];
     return rows.map((row) => this.requireStoredRun(row.run_id));
   }
 
   getLastCompletedTarget(): string | null {
     const row = this.database
-      .prepare('SELECT last_completed_target FROM run_store_progress WHERE id = 1')
-      .get() as { last_completed_target: string | null } | undefined;
+      .prepare(
+        `SELECT last_completed_target FROM run_store_progress WHERE ${this.projectId === null ? 'id = 1' : 'project_id = ?'}`,
+      )
+      .get(...(this.projectId === null ? [] : [this.projectId])) as
+      { last_completed_target: string | null } | undefined;
     return row?.last_completed_target ?? null;
   }
 
@@ -305,6 +331,7 @@ class SqliteRunStore implements RunStore {
   }
 
   markScenario(runId: string, update: ScenarioPublicationUpdate): StoredRun {
+    this.requireRunRow(runId);
     const timestamp = this.now();
     this.database
       .prepare(
@@ -333,6 +360,7 @@ class SqliteRunStore implements RunStore {
   markIssueAttempt(runId: string, bugKey: string, update: IssueAttemptUpdate): StoredRun {
     const timestamp = this.now();
     this.database.transaction(() => {
+      this.requireRunRow(runId);
       const issue = this.database
         .prepare('SELECT bug_key FROM run_store_issues WHERE run_id = ? AND bug_key = ?')
         .get(runId, bugKey);
@@ -369,6 +397,7 @@ class SqliteRunStore implements RunStore {
   }
 
   markArchiveFailure(runId: string, message: string): StoredRun {
+    this.requireRunRow(runId);
     const timestamp = this.now();
     this.database
       .prepare(
@@ -405,8 +434,11 @@ class SqliteRunStore implements RunStore {
 
       if (canProgress && !progressed) {
         const progress = this.database
-          .prepare('SELECT run_id FROM run_store_progress WHERE id = 1')
-          .get() as { run_id: string | null } | undefined;
+          .prepare(
+            `SELECT run_id FROM run_store_progress WHERE ${this.projectId === null ? 'id = 1' : 'project_id = ?'}`,
+          )
+          .get(...(this.projectId === null ? [] : [this.projectId])) as
+          { run_id: string | null } | undefined;
         const currentRunId = progress?.run_id ?? null;
         const currentRun = currentRunId
           ? (this.database
@@ -422,14 +454,19 @@ class SqliteRunStore implements RunStore {
         if (!currentIsNewer) {
           this.database
             .prepare(
-              `INSERT INTO run_store_progress (id, last_completed_target, run_id, updated_at)
-               VALUES (1, ?, ?, ?)
-               ON CONFLICT(id) DO UPDATE SET
+              `INSERT INTO run_store_progress (${this.projectId === null ? 'id' : 'project_id'}, last_completed_target, run_id, updated_at)
+               VALUES (${this.projectId === null ? '1' : '?'}, ?, ?, ?)
+               ON CONFLICT(${this.projectId === null ? 'id' : 'project_id'}) DO UPDATE SET
                  last_completed_target = excluded.last_completed_target,
                  run_id = excluded.run_id,
                  updated_at = excluded.updated_at`,
             )
-            .run(run.target_commit, run.run_id, timestamp);
+            .run(
+              ...(this.projectId === null ? [] : [this.projectId]),
+              run.target_commit,
+              run.run_id,
+              timestamp,
+            );
           progressed = true;
           progressedAt = timestamp;
         }
@@ -440,7 +477,7 @@ class SqliteRunStore implements RunStore {
         ? null
         : (completion.errorMessage ??
           (!reportReady
-            ? '正式报告尚未发布'
+            ? (run.archive_error ?? '正式报告尚未发布')
             : !scenarioReady
               ? '场景变更尚未发布或创建 PR'
               : !allIssuesSucceeded
@@ -458,8 +495,11 @@ class SqliteRunStore implements RunStore {
   }
 
   private readRunRow(runId: string): RunRow | undefined {
-    return this.database.prepare('SELECT * FROM run_store_runs WHERE run_id = ?').get(runId) as
-      RunRow | undefined;
+    return this.database
+      .prepare(
+        `SELECT * FROM run_store_runs WHERE run_id = ?${this.projectId === null ? '' : ' AND project_id = ?'}`,
+      )
+      .get(runId, ...(this.projectId === null ? [] : [this.projectId])) as RunRow | undefined;
   }
 
   private requireRunRow(runId: string): RunRow {

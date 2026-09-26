@@ -2,6 +2,8 @@ import { createHash, randomBytes } from 'node:crypto';
 import { lstat, readFile } from 'node:fs/promises';
 import { basename, extname } from 'node:path';
 
+import type Database from 'better-sqlite3';
+
 import {
   DeleteObjectCommand,
   GetObjectCommand,
@@ -14,6 +16,8 @@ import {
 import type { ConnectivityResult, EvidenceReference, HarnessConfig } from '../../shared/types.js';
 import type { ConfigurationStore } from '../configuration.js';
 import type { SecretStore } from '../security/secret-store.js';
+import type { ScopedSecretStore } from '../security/scoped-secret-store.js';
+import { createProjectStore } from '../projects/store.js';
 import { assertEvidenceName } from '../runs/workspace.js';
 
 const MAX_EVIDENCE_BYTES = 32 * 1024 * 1024;
@@ -131,14 +135,32 @@ export function createOssAdapter(
   return new S3OssAdapter(configuration, secretStore, options);
 }
 
+/** Project-scoped OSS access for new runs; old evidence retains its recorded object key. */
+export function createProjectOssAdapter(
+  database: Database.Database,
+  projectId: string,
+  configuration: ConfigurationStore,
+  secrets: ScopedSecretStore,
+  options: OssAdapterOptions = {},
+): OssAdapter {
+  const project = createProjectStore(database).get(projectId);
+  if (!project) throw new Error('OSS 项目不存在');
+  return new S3OssAdapter(configuration, secrets.deployment(), options, project.projectId);
+}
+
+interface OssCredentialReader {
+  get(key: 'ossAccessKeyId' | 'ossAccessKeySecret'): string | undefined;
+}
+
 class S3OssAdapter implements OssAdapter {
   private client: S3ClientLike | undefined;
   private clientFingerprint: string | undefined;
 
   constructor(
     private readonly configuration: ConfigurationStore,
-    private readonly secretStore: SecretStore,
+    private readonly secretStore: OssCredentialReader,
     private readonly options: OssAdapterOptions,
+    private readonly projectId: string | null = null,
   ) {}
 
   isConfigured(): boolean {
@@ -149,7 +171,7 @@ class S3OssAdapter implements OssAdapter {
     assertRunSegment(runId);
     assertEvidenceName(filename);
     const prefix = normalizeObjectPrefix(this.configuration.getHarness().oss.objectPrefix);
-    return `${prefix}${runId}/${filename}`;
+    return `${prefix}${this.projectNamespace()}${runId}/${filename}`;
   }
 
   stableUrlForKey(key: string): string {
@@ -295,10 +317,11 @@ class S3OssAdapter implements OssAdapter {
     }
 
     const suffix = (this.options.randomId ?? (() => randomBytes(12).toString('hex')))();
-    const key = `${normalizeObjectPrefix(settings.objectPrefix)}connectivity/${suffix}.txt`.replace(
-      /^\//,
-      '',
-    );
+    const key =
+      `${normalizeObjectPrefix(settings.objectPrefix)}${this.projectNamespace()}connectivity/${suffix}.txt`.replace(
+        /^\//,
+        '',
+      );
     const body = Buffer.from('luowang-oss-connectivity-v1', 'utf8');
     let result: ConnectivityResult = {
       status: 'failed',
@@ -396,14 +419,21 @@ class S3OssAdapter implements OssAdapter {
     const settings = this.readSettings();
     if (!settings) throw new OssError('OSS_NOT_CONFIGURED', 'OSS 尚未完成配置');
     assertObjectKey(key, settings.objectPrefix);
+    if (
+      this.projectId !== null &&
+      !key.startsWith(`${settings.objectPrefix}${this.projectNamespace()}`)
+    ) {
+      throw new OssError('OSS_OBJECT_INVALID', '对象不属于当前项目');
+    }
     return settings;
   }
 
   private assertEvidenceKey(key: string): void {
     const settings = this.readSettings();
     if (!settings) throw new OssError('OSS_NOT_CONFIGURED', 'OSS 尚未完成配置');
-    assertObjectKey(key, settings.objectPrefix);
-    const rest = settings.objectPrefix !== '' ? key.slice(settings.objectPrefix.length) : key;
+    this.assertConfiguredKey(key);
+    const scopedPrefix = `${settings.objectPrefix}${this.projectNamespace()}`;
+    const rest = key.slice(scopedPrefix.length);
     const match = rest.match(/^([A-Za-z0-9][A-Za-z0-9_-]{0,127})\/(.+)$/);
     if (!match || !RUN_SEGMENT_PATTERN.test(match[1])) {
       throw new OssError('OSS_OBJECT_INVALID', '证据对象路径无效');
@@ -417,6 +447,10 @@ class S3OssAdapter implements OssAdapter {
 
   private timeoutMs(): number {
     return this.options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  }
+
+  private projectNamespace(): string {
+    return this.projectId === null ? '' : `projects/${this.projectId}/runs/`;
   }
 }
 

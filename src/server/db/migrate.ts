@@ -5,6 +5,7 @@ import type Database from 'better-sqlite3';
 import type { AppConfig } from '../config.js';
 import { openDatabase, type DatabaseContext } from './client.js';
 import { migrations, type Migration } from './migrations/index.js';
+import { assertLegacySchema } from '../projects/schema-mode.js';
 
 export interface MigrationResult {
   applied: string[];
@@ -71,6 +72,7 @@ export function ensureSystemMetadata(
 export function initializeDatabase(config: AppConfig): DatabaseContext {
   const database = openDatabase(config);
   try {
+    assertLegacySchema(database.sqlite);
     runMigrations(database.sqlite);
     ensureSystemMetadata(database.sqlite, { appVersion: config.version });
     return database;

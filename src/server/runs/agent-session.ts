@@ -28,6 +28,7 @@ import type {
   AgentSessionFactory,
   AgentSessionInput,
   AgentSessionKind,
+  AgentSessionUsage,
   RoleInstructionVersion,
 } from './types.js';
 
@@ -95,7 +96,7 @@ class PiAgentSessionFactory implements AgentSessionFactory {
     // Binding emits session_start, which initializes session-scoped extensions
     // such as the Playwright MCP adapter before the first prompt is handled.
     await session.bindExtensions({ mode: 'print' });
-    return new ManagedAgentSession(session);
+    return new ManagedAgentSession(session, model.provider, model.id);
   }
 }
 
@@ -108,13 +109,29 @@ class ManagedAgentSession implements AgentSession {
       sessionId: string;
       readonly messages: ReadonlyArray<{ role: string; stopReason?: string }>;
       prompt(message: string): Promise<void>;
+      getSessionStats(): {
+        tokens: AgentSessionUsage['tokens'];
+        cost: number;
+      };
       dispose(): void;
       extensionRunner: {
         emit(event: SessionShutdownEvent): Promise<unknown>;
       };
     },
+    private readonly provider: string,
+    private readonly model: string,
   ) {
     this.sessionId = session.sessionId;
+  }
+
+  usage(): AgentSessionUsage {
+    const stats = this.session.getSessionStats();
+    return {
+      provider: this.provider,
+      model: this.model,
+      tokens: { ...stats.tokens },
+      sdkEstimatedCostUsd: Number.isFinite(stats.cost) && stats.cost > 0 ? stats.cost : null,
+    };
   }
 
   async prompt(message: string): Promise<void> {

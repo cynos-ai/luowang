@@ -9,6 +9,7 @@ import {
   createLayeredReport,
   hasVerifiedCleanupReport,
   isNewSemVerTag,
+  liveProjectPath,
   localOnlyEnvironment,
   missingLiveInputs,
   parseGitHubRepository,
@@ -20,6 +21,17 @@ import {
 } from './acceptance/closure.js';
 
 describe('Closure 6 acceptance status layering', () => {
+  it('binds live evidence requests to an explicit project', () => {
+    const projectId = '4b1cb89c-539c-4b1d-a197-688389e808c8';
+    assert.equal(
+      liveProjectPath(projectId, 'runs/01M3C8S9ZFZ6YGRGGVGRH2XRRQ'),
+      `/api/projects/${projectId}/runs/01M3C8S9ZFZ6YGRGGVGRH2XRRQ`,
+    );
+    assert.throws(() => liveProjectPath('../other', 'runs'), /项目 ID/);
+    assert.throws(() => liveProjectPath(projectId, '../runs'), /项目路径/);
+    assert.throws(() => liveProjectPath(projectId, '/runs'), /项目路径/);
+  });
+
   it('requires Harness cleanup evidence from the final report instead of Reviewer prose', () => {
     const report = `## Harness 清理收尾
 
@@ -182,20 +194,19 @@ describe('Closure 6 acceptance status layering', () => {
         status: 'completed',
         result: 'blocked',
         scenarioResults: [{ id: 'AUTH-001', result: 'blocked' }],
-        archive: { archiveStatus: 'completed', progressed: false },
+        archiveStatus: 'completed',
+        progressed: false,
       },
       {
         runId: 'review-run',
         status: 'completed',
         result: 'blocked',
-        artifactNames: ['scenario-changes.patch', 'report.md'],
+        artifacts: { 'scenario-changes.patch': 'patch', 'report.md': 'report' },
         scenarioPrUrl: 'https://github.com/example/repo/pull/1',
-        archive: {
-          reportStatus: 'not_applicable',
-          archiveStatus: 'completed',
-          scenarioStatus: 'pull_request',
-          progressed: false,
-        },
+        reportStatus: 'not_applicable',
+        archiveStatus: 'completed',
+        scenarioStatus: 'pull_request',
+        progressed: false,
       },
     ];
     const facts = selectLiveFacts(queue, runs);

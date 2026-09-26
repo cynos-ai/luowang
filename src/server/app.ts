@@ -29,6 +29,7 @@ import { createConnectivityRegistry, type ConnectivityRegistry } from './connect
 import { createPlaywrightMcpAdapter, type BrowserMcpAdapter } from './browser/playwright-mcp.js';
 import type { AppConfig } from './config.js';
 import type { DatabaseContext } from './db/client.js';
+import { assertLegacySchema } from './projects/schema-mode.js';
 import { AppError, toErrorResponse } from './errors.js';
 import { createLogger } from './logger.js';
 import {
@@ -95,6 +96,7 @@ interface JsonRecord {
 }
 
 export async function createApp(options: AppOptions) {
+  assertLegacySchema(options.database.sqlite);
   const auth =
     options.auth ??
     (await createAuthService(options.database.sqlite, options.config.initialAdminPassword));

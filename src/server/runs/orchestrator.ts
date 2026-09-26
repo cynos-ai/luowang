@@ -47,6 +47,7 @@ import {
   commandFailureMessage,
   createControlledCommandRunner,
   type ControlledCommandRunner,
+  type ControlledCommandSession,
 } from './command-runner.js';
 import {
   createReviewerEvidenceTools,
@@ -73,6 +74,7 @@ import type { TargetChangeDescriptor } from './change-evidence.js';
 import { SourceReadStore, sourceHash, type SourceStage } from './source-reads.js';
 import type { TargetSearchResult } from './change-evidence.js';
 import { createTestDataManager, createTestDataTools, type TestDataManager } from './test-data.js';
+import { createControlledHttpTools } from './controlled-http.js';
 import {
   createRoleInstructionLoader,
   RoleInstructionError,
@@ -115,9 +117,11 @@ export interface RunOrchestratorOptions {
   provider?: ProviderAdapter;
   sessions?: AgentSessionFactory;
   commandRunner?: ControlledCommandRunner;
+  commandSessionFactory?: RunCommandSessionFactory;
   browser?: BrowserMcpAdapter;
   oss?: OssAdapter;
   testData?: TestDataManager;
+  testDataCleanupUrl?: string;
   runStore?: RunStore;
   recoveryStore?: RunRecoveryStore;
   now?: () => Date;
@@ -125,6 +129,13 @@ export interface RunOrchestratorOptions {
   logger?: Logger;
   roleInstructions?: RoleInstructionLoader;
 }
+
+export type RunCommandSessionFactory = (input: {
+  repository: GitRepository;
+  runId: string;
+  targetCommit: string;
+  scenarioPatch?: string;
+}) => Promise<ControlledCommandSession>;
 
 export interface RunOrchestrator {
   start(input: RunInput): Promise<RunSummary>;
@@ -607,6 +618,7 @@ class DefaultRunOrchestrator implements RunOrchestrator {
           ]),
     ];
     await this.invoke(
+      workspace,
       'main-planning',
       'main-a',
       this.options.configuration.getHarness().agents.main,
@@ -713,6 +725,7 @@ class DefaultRunOrchestrator implements RunOrchestrator {
       ),
     ];
     await this.invoke(
+      workspace,
       'main-planning',
       'main-a',
       this.options.configuration.getHarness().agents.main,
@@ -964,6 +977,7 @@ class DefaultRunOrchestrator implements RunOrchestrator {
             allowedScenarios: await this.progressScenarios(workspace, repository, context, true),
             now: this.now,
           });
+    let commandRunner = this.commandRunner;
     const operationContext = () =>
       progress?.operationContext() ?? { scope: 'initialization-reconnaissance', scenarioId: null };
     const progressTools = (progress?.tools ?? []).map((tool): ToolDefinition => ({
@@ -1036,7 +1050,7 @@ class DefaultRunOrchestrator implements RunOrchestrator {
         };
         let result;
         try {
-          result = await this.commandRunner.run(command, {
+          result = await commandRunner.run(command, {
             cwd: context.repositoryDirectory,
             runId: context.runId,
             targetCommit: context.targetCommit,
@@ -1054,7 +1068,42 @@ class DefaultRunOrchestrator implements RunOrchestrator {
         this.options.configuration.getRepository(),
         this.options.secretStore,
       ),
-      ...createTestDataTools(this.options.testData ?? createTestDataManager(), context.runId),
+      ...createTestDataTools(
+        this.options.testData ?? createTestDataManager(),
+        context.runId,
+        undefined,
+        async (observation) => {
+          if (!evidenceStore?.captureObservation) throw new Error('证据存储不可用');
+          return evidenceStore.captureObservation(context.targetCommit, {
+            source: 'controlled-test-account-storage',
+            ...observation,
+          });
+        },
+      ),
+      ...(evidenceStore && this.options.configuration.getRepository().baseUrl
+        ? createControlledHttpTools({
+            baseUrl: this.options.configuration.getRepository().baseUrl,
+            cleanupUrl: this.options.testDataCleanupUrl,
+            runId: context.runId,
+            getTestPassword: () => this.options.secretStore?.get('testPassword'),
+            getCleanupToken: () => this.options.secretStore?.get('testDataCleanupToken'),
+            registerSensitiveValue: (value) => evidenceStore.registerSensitiveValue?.(value),
+            redact: (value) => evidenceStore.redactText?.(value) ?? value,
+            capture: async (record) => {
+              if (!evidenceStore.captureObservation) throw new Error('证据存储不可用');
+              try {
+                return await evidenceStore.captureObservation(context.targetCommit, {
+                  ...record,
+                  ...(progress?.recordOperation('http') ?? operationContext()),
+                  at: this.now().toISOString(),
+                });
+              } catch {
+                this.addBlockingReason(context, '受控 HTTP 证据保存失败');
+                throw new Error('受控 HTTP 证据保存失败');
+              }
+            },
+          })
+        : []),
       ...progressTools,
       ...(evidenceStore ? createRunnerEvidenceTools(evidenceStore) : []),
       createArtifactWriterTool(
@@ -1084,35 +1133,64 @@ class DefaultRunOrchestrator implements RunOrchestrator {
         ? this.options.browser.extension(workspace.evidenceDirectory)
         : undefined;
     if (browserExtension) evidenceStore?.allowBrowserRecords?.();
-    await this.invoke(
-      'runner-execution',
-      'runner',
-      this.options.configuration.getHarness().agents.runner,
-      context.repositoryDirectory,
-      tools,
-      runnerUserMessage(context, purpose),
-      runnerOutputContract(),
-      false,
-      browserExtension && evidenceStore
-        ? [
-            browserExtension,
-            createBrowserObservationExtension({
-              store: evidenceStore,
-              targetCommit: context.targetCommit,
-              now: this.now,
-              operationContext: () => progress?.recordOperation('browser') ?? operationContext(),
-              onEvidenceFailure: () => this.addBlockingReason(context, 'MCP 操作证据捕获失败'),
-            }),
-          ]
-        : browserExtension
-          ? [browserExtension]
-          : [],
-    );
-    const progressError = progress?.completionError();
-    if (progressError) {
-      throw new RunOrchestratorError('RUN_ARTIFACT_INVALID', progressError);
+    const commandSession = this.options.commandSessionFactory
+      ? await this.options.commandSessionFactory({
+          repository,
+          runId: context.runId,
+          targetCommit: context.targetCommit,
+          scenarioPatch:
+            purpose === 'initialization-reconnaissance'
+              ? undefined
+              : await readOptionalScenarioPatch(workspace),
+        })
+      : undefined;
+    commandRunner = commandSession ?? this.commandRunner;
+    try {
+      await this.invoke(
+        workspace,
+        'runner-execution',
+        'runner',
+        this.options.configuration.getHarness().agents.runner,
+        context.repositoryDirectory,
+        tools,
+        runnerUserMessage(context, purpose),
+        runnerOutputContract(),
+        false,
+        browserExtension && evidenceStore
+          ? [
+              browserExtension,
+              createBrowserObservationExtension({
+                store: evidenceStore,
+                targetCommit: context.targetCommit,
+                now: this.now,
+                operationContext: () => progress?.recordOperation('browser') ?? operationContext(),
+                onEvidenceFailure: (reason) => {
+                  this.addBlockingReason(context, 'MCP 操作证据捕获失败');
+                  this.options.logger?.warn(
+                    { runId: context.runId, reason: reason ?? 'unknown' },
+                    'browser evidence capture failed',
+                  );
+                },
+              }),
+            ]
+          : browserExtension
+            ? [browserExtension]
+            : [],
+      );
+      const progressError = progress?.completionError();
+      if (progressError) {
+        throw new RunOrchestratorError('RUN_ARTIFACT_INVALID', progressError);
+      }
+      await assertArtifact(workspace, 'execution.md');
+    } finally {
+      if (commandSession) {
+        try {
+          await commandSession.close();
+        } catch {
+          this.addBlockingReason(context, '项目执行容器清理失败');
+        }
+      }
     }
-    await assertArtifact(workspace, 'execution.md');
   }
 
   private async progressScenarios(
@@ -1465,6 +1543,7 @@ class DefaultRunOrchestrator implements RunOrchestrator {
       ),
     ];
     await this.invoke(
+      workspace,
       'reviewer-audit',
       'reviewer',
       this.options.configuration.getHarness().agents.reviewer,
@@ -1554,6 +1633,7 @@ class DefaultRunOrchestrator implements RunOrchestrator {
         : []),
     ];
     await this.invoke(
+      workspace,
       'main-finalization',
       'main-b',
       this.options.configuration.getHarness().agents.main,
@@ -1588,6 +1668,7 @@ class DefaultRunOrchestrator implements RunOrchestrator {
   }
 
   private async invoke(
+    workspace: RunWorkspace,
     sessionKind: AgentSessionKind,
     role: AgentRole,
     config: AgentConfig,
@@ -1600,9 +1681,12 @@ class DefaultRunOrchestrator implements RunOrchestrator {
     validateOutput?: () => Promise<void>,
   ): Promise<void> {
     let session: AgentSession | undefined;
+    let stage = 'role-instructions';
+    let disposeFailure: unknown;
     try {
       const instructions = await this.roleInstructions.load(sessionKind, initialization);
       const systemPrompt = buildSystemPrompt(sessionKind, instructions.content, outputContract);
+      stage = 'session-input';
       const input = buildSessionInput(
         role,
         sessionKind,
@@ -1614,9 +1698,12 @@ class DefaultRunOrchestrator implements RunOrchestrator {
         instructions.versions,
         extensionFactories,
       );
+      stage = 'session-create';
       session = await this.sessions.create(input);
+      stage = 'session-prompt';
       await session.prompt(input.userMessage);
       if (validateOutput) {
+        stage = 'output-validation';
         // Keep correction in the same isolated Session; never launch extra roles or loop unboundedly.
         for (let attempt = 0; ; attempt += 1) {
           try {
@@ -1624,15 +1711,58 @@ class DefaultRunOrchestrator implements RunOrchestrator {
             break;
           } catch (error) {
             if (attempt >= 2) throw error;
+            stage = 'correction-prompt';
             await session.prompt(
               `规划工件联合校验失败：${safeMessage(error)}\n请在当前 Session 修正完整 plan.md/场景 patch 后结束。execution_scenarios 只能引用应用后实际存在的 approved 场景；draft/deprecated 不可执行。不要通过删去必需覆盖来掩盖问题，也不要重复发送未修正工件。`,
             );
+            stage = 'output-validation';
           }
         }
       }
+    } catch (error) {
+      this.options.logger?.error(
+        {
+          sessionKind,
+          stage,
+          errorName: error instanceof Error ? error.name : 'UnknownError',
+          errorCode:
+            error instanceof Error &&
+            'code' in error &&
+            typeof error.code === 'string' &&
+            /^[A-Z][A-Z0-9_]{0,63}$/.test(error.code)
+              ? error.code
+              : undefined,
+        },
+        'agent session failed',
+      );
+      throw error;
     } finally {
-      if (session) await session.dispose();
+      if (session) {
+        try {
+          const usage = session.usage?.();
+          if (usage) await workspace.recordAgentUsage(sessionKind, usage);
+        } catch (error) {
+          this.options.logger?.warn(
+            { sessionKind, errorName: error instanceof Error ? error.name : 'UnknownError' },
+            'agent session usage unavailable',
+          );
+        }
+        try {
+          await session.dispose();
+        } catch (error) {
+          this.options.logger?.error(
+            {
+              sessionKind,
+              stage: 'session-dispose',
+              errorName: error instanceof Error ? error.name : 'UnknownError',
+            },
+            'agent session failed',
+          );
+          disposeFailure = error;
+        }
+      }
     }
+    if (disposeFailure !== undefined) throw disposeFailure;
   }
 
   private sourceReads(context: RunContext, workspace: RunWorkspace): SourceReadStore {
@@ -1994,6 +2124,7 @@ class DefaultRunOrchestrator implements RunOrchestrator {
 
   private markExecutionFailure(state: RunState, error: unknown): void {
     if (state.status === 'completed' || state.status === 'interrupted') return;
+    const failedAtPhase = state.phase;
     state.status = 'failed';
     this.setPhase(state, 'failed', 'Run 执行失败，未形成可信最终结论', 'warning');
     state.finishedAt = this.now().toISOString();
@@ -2002,8 +2133,15 @@ class DefaultRunOrchestrator implements RunOrchestrator {
     this.options.logger?.error(
       {
         runId: state.runId,
-        phase: state.phase,
+        phase: failedAtPhase,
         errorName: error instanceof Error ? error.name : 'UnknownError',
+        errorCode:
+          error instanceof Error &&
+          'code' in error &&
+          typeof error.code === 'string' &&
+          /^[A-Z][A-Z0-9_]{0,63}$/.test(error.code)
+            ? error.code
+            : undefined,
       },
       'run failed',
     );
@@ -2499,7 +2637,7 @@ ${JSON.stringify(runnerContext(context), null, 2)}`;
 }
 
 function runnerOutputContract(): string {
-  return `先读取 plan.md，再按计划使用受控 target、工作场景、命令、环境、测试数据和 evidence 工具。正式场景必须通过场景进度工具按计划顺序声明、开始和完成；初始化侦察不得伪造正式场景进度。UI 场景只能使用受控的 headless、isolated Playwright MCP，优先使用 accessibility snapshot/ref；截图使用相对文件名并通过 list_evidence_files 确认存在。
+  return `先读取 plan.md，再按计划使用受控 target、工作场景、命令、HTTP、环境、测试数据和 evidence 工具。正式场景必须通过场景进度工具按计划顺序声明、开始和完成；初始化侦察不得伪造正式场景进度。UI 场景只能使用受控的 headless、isolated Playwright MCP，优先使用 accessibility snapshot/ref；截图使用相对文件名并通过 list_evidence_files 确认存在。
 测试账号只用于当前操作，绝不能写入日志、命令输出、Markdown 或证据。使用 get_test_data_prefix 标记临时数据，创建后立即登记；最终 Main 结束后由 Harness 统一清理，当前不声明收尾结果。场景本身要求删除时仍实际执行并验证业务行为。不能自填原始 evidence 正文、状态码、摘要或 hash。命令工具返回的 evidenceId 对应 Harness 捕获的脱敏原始结果，按需引用，不自行重造证据。每个场景记录实际观察、命令退出码、证据及偏差。结束前仅通过 write_execution 写完整运行记录，不写报告草稿；验证条件不可用时如实记录。`;
 }
 

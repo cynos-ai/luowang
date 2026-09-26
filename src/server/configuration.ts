@@ -112,49 +112,7 @@ class SqliteConfigurationStore implements ConfigurationStore {
   }
 
   updateRepository(input: unknown): RepositoryConfig {
-    const current = this.getRepository();
-    const patch = asRecord(input, 'Repository configuration must be an object');
-    const labels = patch.scenarioLabels;
-
-    const next: RepositoryConfig = {
-      repository: readText(patch.repository, current.repository, 'repository'),
-      scenarioBranch: readText(patch.scenarioBranch, current.scenarioBranch, 'scenarioBranch'),
-      scenarioMode: readChoice(
-        patch.scenarioMode,
-        current.scenarioMode,
-        ['autonomous', 'add-only', 'review-all'],
-        'scenarioMode',
-      ),
-      scenarioLabels:
-        labels === undefined ? current.scenarioLabels : readStringArray(labels, 'scenarioLabels'),
-      pollIntervalSeconds: readInteger(
-        patch.pollIntervalSeconds,
-        current.pollIntervalSeconds,
-        'pollIntervalSeconds',
-        0,
-        31_536_000,
-      ),
-      cron: readText(patch.cron, current.cron, 'cron'),
-      triggerOnCommit: readBoolean(
-        patch.triggerOnCommit,
-        current.triggerOnCommit,
-        'triggerOnCommit',
-      ),
-      environmentDescription: readText(
-        patch.environmentDescription,
-        current.environmentDescription,
-        'environmentDescription',
-      ),
-      baseUrl: readText(patch.baseUrl, current.baseUrl, 'baseUrl'),
-      externalDatabase: readText(
-        patch.externalDatabase,
-        current.externalDatabase,
-        'externalDatabase',
-      ),
-    };
-    if (next.triggerOnCommit && next.pollIntervalSeconds < 300) {
-      next.pollIntervalSeconds = 300;
-    }
+    const next = mergeRepositoryConfiguration(this.getRepository(), input);
     this.write(REPOSITORY_KEY, next);
     return next;
   }
@@ -183,6 +141,50 @@ class SqliteConfigurationStore implements ConfigurationStore {
       )
       .run(key, JSON.stringify(value), new Date().toISOString());
   }
+}
+
+export function mergeRepositoryConfiguration(
+  current: RepositoryConfig,
+  input: unknown,
+): RepositoryConfig {
+  const patch = asRecord(input, 'Repository configuration must be an object');
+  const labels = patch.scenarioLabels;
+  const next: RepositoryConfig = {
+    repository: readText(patch.repository, current.repository, 'repository'),
+    scenarioBranch: readText(patch.scenarioBranch, current.scenarioBranch, 'scenarioBranch'),
+    scenarioMode: readChoice(
+      patch.scenarioMode,
+      current.scenarioMode,
+      ['autonomous', 'add-only', 'review-all'],
+      'scenarioMode',
+    ),
+    scenarioLabels:
+      labels === undefined ? current.scenarioLabels : readStringArray(labels, 'scenarioLabels'),
+    pollIntervalSeconds: readInteger(
+      patch.pollIntervalSeconds,
+      current.pollIntervalSeconds,
+      'pollIntervalSeconds',
+      0,
+      31_536_000,
+    ),
+    cron: readText(patch.cron, current.cron, 'cron'),
+    triggerOnCommit: readBoolean(patch.triggerOnCommit, current.triggerOnCommit, 'triggerOnCommit'),
+    environmentDescription: readText(
+      patch.environmentDescription,
+      current.environmentDescription,
+      'environmentDescription',
+    ),
+    baseUrl: readText(patch.baseUrl, current.baseUrl, 'baseUrl'),
+    externalDatabase: readText(
+      patch.externalDatabase,
+      current.externalDatabase,
+      'externalDatabase',
+    ),
+  };
+  if (next.triggerOnCommit && next.pollIntervalSeconds < 300) {
+    next.pollIntervalSeconds = 300;
+  }
+  return next;
 }
 
 function normalizeHarness(
@@ -250,7 +252,7 @@ function normalizeHarness(
   };
 }
 
-function normalizeRepository(value: unknown): RepositoryConfig {
+export function normalizeRepository(value: unknown): RepositoryConfig {
   const source = isRecord(value) ? value : {};
   const storedMode = source.scenarioMode === 'pr-required' ? 'review-all' : source.scenarioMode;
   const triggerOnCommit = normalizeBoolean(source.triggerOnCommit, false);

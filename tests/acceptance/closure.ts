@@ -17,6 +17,7 @@ export const PUBLIC_QUALITY_SCRIPTS = [
 
 export const LIVE_INPUT_NAMES = [
   'LUOWANG_LIVE_REPOSITORY',
+  'LUOWANG_LIVE_PROJECT_ID',
   'LUOWANG_LIVE_INITIAL_REF',
   'LUOWANG_LIVE_TARGET_ALLOWLIST',
   'LUOWANG_LIVE_GITHUB_TOKEN',
@@ -170,7 +171,6 @@ interface LiveRunFact {
   request?: string;
   targetCommit?: string | null;
   initialization?: boolean;
-  artifactNames?: string[];
   evidence?: Array<{
     id?: string;
     filename?: string;
@@ -183,13 +183,10 @@ interface LiveRunFact {
   activities?: Array<{ at?: string; message?: string; kind?: string }>;
   blockingReasons?: string[];
   scenarioPrUrl?: string | null;
-  archive?: {
-    reportStatus?: string;
-    archiveStatus?: string;
-    progressed?: boolean;
-    scenarioStatus?: string;
-    scenarioPrUrl?: string | null;
-  };
+  reportStatus?: string;
+  archiveStatus?: string;
+  progressed?: boolean;
+  scenarioStatus?: string;
   scenarioResults?: Array<{ id?: string; result?: string }>;
   confirmedBugs?: Array<{ key?: string; issueAction?: string; issueUrl?: string }>;
   issues?: Array<{ status?: string; issueNumber?: number; issueUrl?: string }>;
@@ -258,11 +255,11 @@ export function selectLiveFacts(queue: LiveQueueFact[], runs: LiveRunFact[]): Li
     (run) =>
       run.status === 'completed' &&
       run.result === 'blocked' &&
-      sameValues([...(run.artifactNames ?? [])].sort(), specialArtifacts) &&
-      run.archive?.reportStatus === 'not_applicable' &&
-      run.archive?.archiveStatus === 'completed' &&
-      run.archive?.scenarioStatus === 'pull_request' &&
-      Boolean(run.scenarioPrUrl ?? run.archive?.scenarioPrUrl),
+      sameValues(Object.keys(run.artifacts ?? {}).sort(), specialArtifacts) &&
+      run.reportStatus === 'not_applicable' &&
+      run.archiveStatus === 'completed' &&
+      run.scenarioStatus === 'pull_request' &&
+      Boolean(run.scenarioPrUrl),
   );
   assertLive(scenarioReviewRun?.runId, '缺少三 Session 特殊场景 PR Run');
 
@@ -271,8 +268,8 @@ export function selectLiveFacts(queue: LiveQueueFact[], runs: LiveRunFact[]): Li
       run.status === 'completed' &&
       run.result === 'blocked' &&
       run.runId !== scenarioReviewRun.runId &&
-      run.archive?.archiveStatus === 'completed' &&
-      run.archive?.progressed === false &&
+      run.archiveStatus === 'completed' &&
+      run.progressed === false &&
       (run.scenarioResults?.length ?? 0) > 0,
   );
   const blockedRun =
@@ -726,6 +723,15 @@ function requiredLiveValue(environment: NodeJS.ProcessEnv, name: string): string
   const value = environment[name]?.trim();
   if (!value) throw new Error(`live 输入缺少 ${name}`);
   return value;
+}
+
+export function liveProjectPath(projectId: string, suffix: string): string {
+  assertLive(
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(projectId),
+    'LUOWANG_LIVE_PROJECT_ID 不是有效项目 ID',
+  );
+  assertLive(/^[a-zA-Z0-9_-]+(?:\/[a-zA-Z0-9_-]+)*$/.test(suffix), 'live 项目路径无效');
+  return `/api/projects/${projectId}/${suffix}`;
 }
 
 export function parseHarnessUrl(value: string, allowlist: string): string {
@@ -1294,6 +1300,11 @@ async function validateCompletedLiveAcceptance(environment: NodeJS.ProcessEnv): 
     requiredLiveValue(environment, 'LUOWANG_LIVE_TARGET_ALLOWLIST'),
   );
   const adminPassword = requiredLiveValue(environment, 'LUOWANG_ADMIN_PASSWORD');
+  const projectId = requiredLiveValue(environment, 'LUOWANG_LIVE_PROJECT_ID');
+  const projectPath = (suffix: string) => liveProjectPath(projectId, suffix);
+  const repository = parseGitHubRepository(
+    requiredLiveValue(environment, 'LUOWANG_LIVE_REPOSITORY'),
+  );
   let cookie = '';
   const harness = async (path: string, init: RequestInit = {}): Promise<unknown> => {
     const response = await fetch(`${harnessUrl}${path}`, {
@@ -1320,32 +1331,34 @@ async function validateCompletedLiveAcceptance(environment: NodeJS.ProcessEnv): 
   cookie = loginResponse.headers.get('set-cookie')?.split(';', 1)[0] ?? '';
   assertLive(cookie !== '', '候选实例认证未返回 Session Cookie');
 
-  const connectivityIds = [
-    'test-environment-url',
-    'github-repository-read',
-    'provider-model',
-    'playwright-mcp',
-    'oss',
-  ];
-  const connectivity: Record<string, unknown>[] = [];
-  for (const id of connectivityIds) {
-    const response = asRecord(
-      await harness(`/api/connectivity/checks/${id}`, { method: 'POST', body: '{}' }),
-    );
-    const result = asRecord(response.result);
-    assertLive(result.status === 'ok', `${id} connectivity 不是 ok`);
-    connectivity.push(response);
-  }
+  const projectResponse = asRecord(await harness(`/api/projects/${projectId}`));
+  const project = asRecord(projectResponse.project);
+  assertLive(
+    project.projectId === projectId &&
+      String(project.repositoryOwner).toLowerCase() === repository.owner.toLowerCase() &&
+      String(project.repositoryName).toLowerCase() === repository.name.toLowerCase(),
+    'live 项目与目标 GitHub 仓库不一致',
+  );
+  const readiness = asRecord(await harness(projectPath('readiness')));
+  const checks = asArray(readiness.checks).map(asRecord);
+  assertLive(
+    readiness.projectId === projectId &&
+      readiness.ready === true &&
+      checks.length === 5 &&
+      checks.every((check) => check.status === 'ok'),
+    'live 项目就绪检查未全部通过',
+  );
+  const connectivity = [readiness];
 
-  const queueResponse = asRecord(await harness('/api/queue'));
-  const runsResponse = asRecord(await harness('/api/runs'));
+  const queueResponse = asRecord(await harness(projectPath('queue')));
+  const runsResponse = asRecord(await harness(projectPath('runs')));
   const queue = asArray(queueResponse.queue) as LiveQueueFact[];
   const runs = asArray(runsResponse.runs) as LiveRunFact[];
   const selection = selectLiveFacts(queue, runs);
   const selectedIds = [...new Set(Object.values(selection))];
   const details: LiveRunFact[] = [];
   for (const runId of selectedIds) {
-    const response = asRecord(await harness(`/api/runs/${encodeURIComponent(runId)}`));
+    const response = asRecord(await harness(projectPath(`runs/${encodeURIComponent(runId)}`)));
     details.push(asRecord(response.run) as LiveRunFact);
   }
   const detailById = new Map(details.map((run) => [run.runId, run]));
@@ -1372,20 +1385,26 @@ async function validateCompletedLiveAcceptance(environment: NodeJS.ProcessEnv): 
     'failed Run 未形成两个相互独立的 confirmed Bugs/Issues',
   );
   assertLive(
-    blocked.archive?.progressed === false && (blocked.blockingReasons?.length ?? 0) > 0,
+    blocked.progressed === false && (blocked.blockingReasons?.length ?? 0) > 0,
     'blocked Run 没有保持不推进事实',
   );
-  assertLive(scenarioReview.artifactNames?.length === 2, '场景 PR 特殊 Run 未保持两文件契约');
+  assertLive(
+    Object.keys(scenarioReview.artifacts ?? {}).length === 2,
+    '场景 PR 特殊 Run 未保持两文件契约',
+  );
 
   const image = passed.evidence?.find(
     (item) => item.contentType?.startsWith('image/') && item.url && (item.sizeBytes ?? 0) > 0,
   );
   assertLive(image?.url, 'passed Run 缺少可读取的私有截图 URL');
-  const imageResponse = await fetch(`${harnessUrl}${image.url}`, {
-    headers: { cookie },
-    redirect: 'error',
-    signal: AbortSignal.timeout(120_000),
-  });
+  const imageResponse = await fetch(
+    `${harnessUrl}${projectPath(`runs/${passed.runId}/evidence/${image.id}`)}`,
+    {
+      headers: { cookie },
+      redirect: 'error',
+      signal: AbortSignal.timeout(120_000),
+    },
+  );
   assertLive(imageResponse.ok, `私有 screenshot Gateway 返回 HTTP ${imageResponse.status}`);
   const imageBody = Buffer.from(await imageResponse.arrayBuffer());
   assertLive(
@@ -1402,26 +1421,23 @@ async function validateCompletedLiveAcceptance(environment: NodeJS.ProcessEnv): 
     selection.blockedRunId,
     selection.currentHeadRetestRunId,
   ]) {
-    const response = asRecord(await harness(`/api/reports/${encodeURIComponent(runId)}`));
+    const response = asRecord(await harness(projectPath(`reports/${encodeURIComponent(runId)}`)));
     const report = asRecord(response.report);
     assertLive(report.runId === runId, `Indexer 未回读 Run ${runId}`);
     indexedReports.push(report);
   }
-  const scenarioResponse = asRecord(await harness('/api/scenarios/AUTH-REGISTRATION-002'));
+  const scenarioResponse = asRecord(await harness(projectPath('scenarios/AUTH-REGISTRATION-002')));
   assertLive(
     asRecord(scenarioResponse.scenario).id === 'AUTH-REGISTRATION-002',
     'Indexer 未回读场景 PR 资产',
   );
-  const dashboardResponse = asRecord(await harness('/api/dashboard'));
-  const branch = asRecord(dashboardResponse.branch);
+  const indexResponse = asRecord(await harness(projectPath('index')));
+  const branch = asRecord(indexResponse.index);
   assertLive(
-    isSha(branch.head) && branch.head === branch.indexedCommit,
-    '场景分支 HEAD 与 Indexer commit 不一致',
+    isSha(branch.commitSha) && asArray(branch.errors).length === 0,
+    '项目 Indexer commit 缺失或存在索引错误',
   );
 
-  const repository = parseGitHubRepository(
-    requiredLiveValue(environment, 'LUOWANG_LIVE_REPOSITORY'),
-  );
   const token = requiredLiveValue(environment, 'LUOWANG_LIVE_GITHUB_TOKEN');
   const githubPayloads: unknown[] = [];
   const github = async (path: string): Promise<Record<string, unknown>> => {
@@ -1443,7 +1459,7 @@ async function validateCompletedLiveAcceptance(environment: NodeJS.ProcessEnv): 
   const repoPath = `/repos/${repository.owner}/${repository.name}`;
   const scenarioBranch = await github(`${repoPath}/git/ref/heads/scenario-testing`);
   assertLive(
-    asRecord(scenarioBranch.object).sha === branch.head,
+    asRecord(scenarioBranch.object).sha === branch.commitSha,
     'GitHub scenario-testing HEAD 与候选实例不一致',
   );
   const initializationQueue = queue.find(
@@ -1456,14 +1472,14 @@ async function validateCompletedLiveAcceptance(environment: NodeJS.ProcessEnv): 
     '首次创建 branch/tag/SHA source 与 prepared commit 不一致',
   );
   const compare = await github(
-    `${repoPath}/compare/${initializationQueue.preparedMergeCommit}...${branch.head as string}`,
+    `${repoPath}/compare/${initializationQueue.preparedMergeCommit}...${branch.commitSha as string}`,
   );
   assertLive(
     compare.status === 'ahead' || compare.status === 'identical',
     '当前 scenario-testing 未包含首次创建 commit',
   );
 
-  const scenarioPrUrl = scenarioReview.scenarioPrUrl ?? scenarioReview.archive?.scenarioPrUrl;
+  const scenarioPrUrl = scenarioReview.scenarioPrUrl;
   const scenarioPrNumber = parseGitHubNumber(scenarioPrUrl, repository, 'pull');
   const scenarioPr = await github(`${repoPath}/pulls/${scenarioPrNumber}`);
   assertLive(
@@ -1540,7 +1556,8 @@ async function validateCompletedLiveAcceptance(environment: NodeJS.ProcessEnv): 
     details,
     indexedReports,
     scenario: scenarioResponse,
-    dashboard: dashboardResponse,
+    project: projectResponse,
+    index: indexResponse,
     github: githubPayloads,
   });
   assertLive(
@@ -1557,9 +1574,9 @@ async function validateCompletedLiveAcceptance(environment: NodeJS.ProcessEnv): 
     `current HEAD retest Run ${selection.currentHeadRetestRunId}`,
     `real-time scenario activity Run ${selection.progressRunId}`,
     `private OSS evidence ${image.filename ?? image.id}: authenticated stable read`,
-    `Indexer commit ${branch.indexedCommit as string} equals GitHub scenario-testing HEAD`,
+    `Indexer commit ${branch.commitSha as string} equals GitHub scenario-testing HEAD`,
     `scenario PR #${scenarioPrNumber} and Issues ${failed.issues?.map((item) => `#${item.issueNumber}`).join(', ')}`,
-    'Provider, Playwright MCP, private OSS, GitHub read and non-production URL connectivity: ok',
+    'Project repository, deployment, environment, image and credentials readiness: ok',
     'Secret value scan across candidate API, Run artifacts, indexed reports and GitHub payloads: no match',
     ...releaseEvidence,
   ];
