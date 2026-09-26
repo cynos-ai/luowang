@@ -1632,7 +1632,7 @@ async function runAcceptanceCommand(
         command: label,
         status: 'failed',
         durationMs: Date.now() - startedAt,
-        summary: safeError(error),
+        summary: summarizeAcceptanceFailure(error),
       },
     };
   }
@@ -1698,6 +1698,34 @@ function safeError(error: unknown): string {
     0,
     1000,
   );
+}
+
+/** Keep a failed test file visible without publishing subprocess output or fixture values. */
+export function summarizeAcceptanceFailure(error: unknown): string {
+  if (!error || typeof error !== 'object') return safeError(error);
+  const isSubprocessError = 'stdout' in error || 'stderr' in error;
+  if (!isSubprocessError) return safeError(error);
+  const output = [
+    'stdout' in error ? error.stdout : undefined,
+    'stderr' in error ? error.stderr : undefined,
+  ]
+    .filter((value): value is string => typeof value === 'string')
+    .join('\n');
+  const failedFiles = [
+    ...new Set(
+      [
+        ...output.matchAll(
+          /^\s*(?:FAIL\s+|❯\s+)((?:\/app\/)?tests\/[A-Za-z0-9_./-]+\.test\.[cm]?[jt]sx?)/gm,
+        ),
+      ]
+        .map((match) => match[1])
+        .filter((file) => !file.split('/').includes('..')),
+    ),
+  ].slice(0, 4);
+  const code =
+    'code' in error && typeof error.code === 'number' ? ` (exit code ${error.code})` : '';
+  const reason = `Command failed${code}`;
+  return failedFiles.length ? `${reason} | Failed test files: ${failedFiles.join(', ')}` : reason;
 }
 
 export function redactAcceptanceText(value: string): string {
