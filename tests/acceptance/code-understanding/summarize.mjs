@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { isDeepStrictEqual } from 'node:util';
 
 const readJson = (path) => JSON.parse(readFileSync(path, 'utf8'));
 const hash = (value) => createHash('sha256').update(value).digest('hex');
@@ -83,7 +84,7 @@ export function summarizeEvaluation(directory) {
       completionTokens: calls.reduce((sum, call) => sum + (call.usage?.completion_tokens ?? 0), 0),
       elapsedMs: calls.reduce((sum, call) => sum + (call.elapsedMs ?? 0), 0),
     };
-    if (JSON.stringify(metrics[revision]) !== JSON.stringify(audit.metrics[revision]))
+    if (!isDeepStrictEqual(metrics[revision], audit.metrics[revision]))
       throw new Error(`${revision} 指标与原始记录不一致`);
   }
   return {
