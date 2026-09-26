@@ -334,9 +334,9 @@ Python 项目三个 Run 的 DeepSeek SDK Session 目录估值依次为约 `0.035
 
 | 节点 | 交付与完成标准 | 当前状态 |
 | --- | --- | --- |
-| 1. 固定验收方案 | 核对 AC 与真实事实，修正通用门禁的项目 API/返回格式，确定持久候选和缺项 | 进行中 |
-| 2. 完整真实流程 | 核验同一项目的首次初始化、passed、双 Bug/Issue failed、blocked、场景 PR 和合并后重测；通用 live 与多项目 live 分别通过 | 待执行 |
-| 3. 最终候选与审核报告 | 复核升级/回退/历史不变，运行 quality/runtime/local/live/release，汇总限制和发布回退说明 | 待执行 |
+| 1. 固定验收方案 | 核对 AC 与真实事实，修正通用门禁的项目 API/返回格式，确定持久候选和缺项 | 已完成（748bc7c） |
+| 2. 完整真实流程 | 核验同一项目的首次初始化、passed、双 Bug/Issue failed、blocked、场景 PR 和合并后重测；通用 live 与多项目 live 分别通过 | 两套 live 均通过，当前版本补充 Run 进行中 |
+| 3. 最终候选与审核报告 | 复核升级/回退/历史不变，运行 quality/runtime/local/live/release，汇总限制和发布回退说明 | 进行中 |
 | 4. 合并发布 | 负责人审核后通过功能 PR 与 develop → main PR 发布 v0.6.1，核对 main/tag | 待审核 |
 | 5. 发布后收尾 | 正式镜像复核、测试资源清理、备份和证据保留记录 | 待发布 |
 
@@ -353,3 +353,10 @@ Python 项目三个 Run 的 DeepSeek SDK Session 目录估值依次为约 `0.035
 启动核验发现两个实际缺口，已修复：迁移项目首次显式恢复前，后台不得自动索引或重试归档；成功恢复后持久记录启用，后续普通暂停仍继续归档，启动时延期的 waiting_archive 在恢复后自动继续。旧归档重试现在通过项目工作目录服务读取经旧 Run 所有者绑定、且严格等于原受控 completed 路径的工件；不接受任意数据库路径或另一项目的旧目录。旧库另有两条 Run 归档状态为 completed、队列归档状态却为 failed 的既存不一致（历史 Secret scan 失败）；第一次候选启动重试将其 Run 归档状态变为 failed。该失败候选保留，不修改原库或把失败改写成通过，后续用新隔离副本复核修复。
 
 本切片在干净 Docker quality 镜像通过 typecheck、lint、format 和完整单元测试：443 passed / 2 skipped。新增检查覆盖首次恢复前无重试、跨进程恢复待归档、恢复后再暂停仍继续归档、就绪失败不能解除门禁、旧目录归属与路径越界拒绝。完整 live、runtime/E2E、回退演练和发布报告仍在执行中。
+
+
+2026-09-26 两套 live 与历史恢复核验：修复提交 `748bc7c` 的 GitHub Quality 已通过。第二个隔离旧实例副本启动后保持 paused，8 条 Run 与原队列状态未发生自动变化；五项 readiness 通过后显式恢复，两条既存队列归档失败被正常重试为 completed。再次与升级前备份逐条比较：8 条 Run 的结果、提交、时间、路径与证据摘要不变；30 个工件正文不变（SHA-256 `4439d2b47a8599edddfb4efffd1b96fa0ad10a9802f3adac962ea509bbb9bd00`）；2 条 Issue 的编号、URL 和状态不变。外键检查通过。回退演练在一次性临时目录验证备份清单后完整恢复，旧 schema 可识别、SQLite 完整性正常、8 个 target commit 均存在；没有用旧程序打开迁移后的数据库。
+
+通用 live 在该迁移副本通过，结果保留于受控本机 `.cynos/multi-project-live/final-results/live-1790399258822/report.json`。它复核的是旧实例留下的真实完整生命周期，不能写成这些初始化/双 Bug/场景 PR 都由今天的版本重新执行。独立多项目 live 使用修复后的 runtime 读取原三项目持久卷，再次通过五个代表 Run、20 张截图哈希、13 项清理回执、远端报告正文与跨项目 404；未恢复目标应用，也未新增三个项目的模型任务。本地完整验收 `local-final/report.json` 为 local=passed，其 live=blocked 是该命令不访问真实资源的正常分层结果，不是新的资源缺项。
+
+当前版本补充 Run `01M3E1TEVK3TEDHR7S57BHV6X8` 因旧实例保留的 localhost:3200 模型网关已不存在而在规划前失败；该记录保留，未记为产品 Bug。通过配置 API 改用当前已授权的 Provider endpoint 与作用域 Secret 后，新 Run `01M3E20CPNZ88WHADECPSQEG34` 正在执行。验收期间 Docker Desktop 代理层无响应，但底层引擎与既有容器健康；仅将本轮工具连接改为同一引擎的本地 socket，并使用已有网络代理访问外部依赖，没有重启 Docker 或其他工作负载。版本元数据现准备为 0.6.1，仍未创建 tag、合并或发布。
