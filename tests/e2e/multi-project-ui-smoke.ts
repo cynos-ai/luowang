@@ -44,6 +44,16 @@ const secrets = Object.fromEntries(
     { configured: false, masked: null },
   ]),
 );
+const projectConfigs = new Map(projects.map((project) => [project.projectId, { ...config }]));
+let releaseLateWrite: () => void = () => {};
+const lateWriteGate = new Promise<void>((resolve) => {
+  releaseLateWrite = resolve;
+});
+let lateWriteProjectId: string | null = null;
+let releaseLateImage: () => void = () => {};
+const lateImageGate = new Promise<void>((resolve) => {
+  releaseLateImage = resolve;
+});
 const server = createServer(async (request, response) => {
   const pathname = new URL(request.url ?? '/', 'http://localhost').pathname;
   const name = pathname === '/' ? 'index.html' : pathname.slice(1);
@@ -73,7 +83,8 @@ try {
   const page = await browser.newPage();
   await page.route('**/health', (route) => route.fulfill({ json: { status: 'ok' } }));
   await page.route('**/api/**', async (route) => {
-    const url = new URL(route.request().url());
+    const request = route.request();
+    const url = new URL(request.url());
     const path = url.pathname;
     if (path === '/api/mode') return route.fulfill({ json: { mode: 'multi-project' } });
     if (path === '/api/auth/status')
@@ -84,9 +95,33 @@ try {
     const project = projects.find((item) => item.projectId === match[1]);
     if (!project) return route.fulfill({ status: 404, json: { error: { message: '不存在' } } });
     const suffix = match[2];
+    if (suffix === '/configuration' && request.method() === 'PUT') {
+      lateWriteProjectId = project.projectId;
+      assert.equal(project, projects[0]);
+      assert.equal(request.postDataJSON().baseUrl, 'https://a.example.test');
+      await lateWriteGate;
+      return route.fulfill({
+        json: { project, configuration: projectConfigs.get(project.projectId) },
+      });
+    }
+    if (suffix === '/image/prepare' && request.method() === 'POST') {
+      assert.equal(project, projects[0]);
+      await lateImageGate;
+      return route.fulfill({
+        json: {
+          image: {
+            targetCommit: 'a'.repeat(40),
+            imageId: `sha256:${'b'.repeat(64)}`,
+            reused: false,
+          },
+        },
+      });
+    }
     if (suffix === '') {
       if (project === projects[0]) await new Promise((done) => setTimeout(done, 500));
-      return route.fulfill({ json: { project, configuration: config, secrets } });
+      return route.fulfill({
+        json: { project, configuration: projectConfigs.get(project.projectId), secrets },
+      });
     }
     if (suffix === '/readiness') {
       if (project === projects[0])
@@ -114,6 +149,46 @@ try {
   await page.getByRole('heading', { name: '项目 A' }).waitFor();
   await page.getByText('环境检查失败').waitFor();
   await page.getByRole('heading', { name: '项目设置' }).waitFor();
+  await page.getByLabel('非生产环境 URL').fill('https://a.example.test');
+  const oldWrite = page.waitForRequest(
+    (request) =>
+      request.url().endsWith(`/api/projects/${projects[0].projectId}/configuration`) &&
+      request.method() === 'PUT',
+  );
+  await page.getByRole('button', { name: '保存项目配置' }).click();
+  await oldWrite;
+  await page.getByRole('button', { name: /项目 B/ }).click();
+  await page.getByRole('heading', { name: '项目 B' }).waitFor();
+  assert.equal(await page.getByLabel('非生产环境 URL').inputValue(), '');
+  const oldResponse = page.waitForResponse((response) =>
+    response.url().endsWith(`/api/projects/${projects[0].projectId}/configuration`),
+  );
+  releaseLateWrite();
+  await oldResponse;
+  await page.waitForTimeout(100);
+  assert.equal(lateWriteProjectId, projects[0].projectId);
+  assert.equal(new URL(page.url()).hash, `#/projects/${projects[1].projectId}`);
+  assert.equal(await page.getByLabel('非生产环境 URL').inputValue(), '');
+  assert.equal(await page.getByText('保存项目配置完成').count(), 0);
+  await page.getByRole('button', { name: /项目 A/ }).click();
+  await page.getByRole('heading', { name: '项目 A' }).waitFor();
+  const oldImage = page.waitForRequest(
+    (request) =>
+      request.url().endsWith(`/api/projects/${projects[0].projectId}/image/prepare`) &&
+      request.method() === 'POST',
+  );
+  await page.getByRole('button', { name: '准备或重建镜像' }).click();
+  await oldImage;
+  await page.getByRole('button', { name: /项目 B/ }).click();
+  await page.getByRole('heading', { name: '项目 B' }).waitFor();
+  const oldImageResponse = page.waitForResponse((response) =>
+    response.url().endsWith(`/api/projects/${projects[0].projectId}/image/prepare`),
+  );
+  releaseLateImage();
+  await oldImageResponse;
+  await page.waitForTimeout(100);
+  assert.equal(await page.getByText('准备镜像完成').count(), 0);
+  assert.equal((await page.locator('body').innerText()).includes('sha256:bbbb'), false);
 
   // Exercise the human onboarding path with stateful API responses, not only project switching.
   const onboarding = await browser.newPage();
