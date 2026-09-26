@@ -17,6 +17,7 @@ import {
   PUBLIC_QUALITY_SCRIPTS,
   redactAcceptanceText,
   selectLiveFacts,
+  summarizeAcceptanceFailure,
   type ClosureProofStatuses,
 } from './acceptance/closure.js';
 
@@ -106,6 +107,26 @@ describe('Closure 6 acceptance status layering', () => {
     );
     assert.doesNotMatch(output, /canary-|github_pat_|AKIA123|user:pass/);
     assert.match(output, /REDACTED/);
+  });
+
+  it('retains failed test filenames while omitting subprocess output and secrets', () => {
+    const error = Object.assign(new Error('Command failed: token=canary-secret'), {
+      code: 1,
+      stdout:
+        ' ❯ tests/projects/image-readiness.test.ts (2 tests | 1 failed)\n' +
+        'fixture email: private-person@example.test\n' +
+        ' ❯ tests/../private/escape.test.ts (1 failed)\n',
+      stderr: 'FAIL /app/tests/acceptance/local.test.ts\npassword=canary-password',
+    });
+    const summary = summarizeAcceptanceFailure(error);
+    assert.match(summary, /tests\/projects\/image-readiness\.test\.ts/);
+    assert.match(summary, /\/app\/tests\/acceptance\/local\.test\.ts/);
+    assert.doesNotMatch(summary, /private-person|canary-|tests\/\.\.|fixture email/);
+    assert.match(summary, /^Command failed \(exit code 1\) \| Failed test files:/);
+    assert.equal(
+      summarizeAcceptanceFailure(new Error('Configuration check failed')),
+      'Configuration check failed',
+    );
   });
 
   it('keeps release blocked when local passes but live is blocked', () => {
