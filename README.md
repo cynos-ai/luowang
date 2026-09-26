@@ -1,14 +1,14 @@
 # LuoWang
 
-罗网（LuoWang）是一个独立部署的 AI 场景测试 Harness。已发布版本为 v0.6.0；当前 `feat/multi-project` 分支正在实现 v0.6.1：同一管理员可管理多个 GitHub 项目，项目数据、凭据、任务、证据和执行镜像分别归属。两个 Node 目标及一个 Python 目标已有独立真实 Run；完整交替联合验收、旧实例升级和正式发布仍未完成。
+罗网（LuoWang）是一个独立部署的 AI 场景测试 Harness。v0.6.1 支持同一管理员可管理多个 GitHub 项目，项目数据、凭据、任务、证据和执行镜像分别归属。两个 Node 目标及一个 Python 目标已完成交替真实 Run 和故障隔离，历史持久测试实例副本已完成升级与回退验收。正式版本见 [GitHub Releases](https://github.com/cynos-ai/luowang/releases)。
 
-v0.6.0 加入随版本维护的代码深读方法：Main 追踪业务规则与相关调用，并在计划中引用固定版本的读取回执；Reviewer 可以核对引用来源和阅读范围。回执只说明材料返回过，模型是否理解正确仍需单独评测。[实施与验收记录](docs/changes/luowang-code-understanding/plan.md)保留完整过程；多项目支持正在 v0.6.1 开发分支实施，尚未发布。
+v0.6.0 加入随版本维护的代码深读方法：Main 追踪业务规则与相关调用，并在计划中引用固定版本的读取回执；Reviewer 可以核对引用来源和阅读范围。回执只说明材料返回过，模型是否理解正确仍需单独评测。[实施与验收记录](docs/changes/luowang-code-understanding/plan.md)保留完整过程；多项目的功能边界与验收结果见[多项目计划](docs/changes/luowang-multi-project/plan.md)。
 
 v0.6.1 虽使用补丁版本号，仍包含数据库与 HTTP 接口变化；部署前必须完成离线升级，旧的无项目 ID 业务 API 不继续兼容。这个编号不表示向后兼容。
 
 ## 本地启动
 
-优先使用下文的 Docker Compose 或固定 quality/runtime 镜像复现。原生运行需要 Node.js 24 和 npm；当 `better-sqlite3` 没有匹配的预编译包时，还需要 `python3`、`make` 和 `g++`。当前开发分支的启动入口只接受已完成离线升级的数据库，不会自动迁移旧实例或创建空库。以下命令仅用于开发或已升级的隔离实例；真实旧实例应在 v0.6.1 联合验收和发布后按[多项目升级计划](docs/changes/luowang-multi-project/plan.md)执行备份、归属核对与离线升级。
+优先使用下文的 Docker Compose 或固定 quality/runtime 镜像复现。原生运行需要 Node.js 24 和 npm；当 `better-sqlite3` 没有匹配的预编译包时，还需要 `python3`、`make` 和 `g++`。v0.6.1 的启动入口只接受已完成离线升级的数据库，不会自动迁移旧实例或创建空库。以下命令仅用于开发或已升级的隔离实例；真实旧实例应使用正式发布版本，按[多项目升级计划](docs/changes/luowang-multi-project/plan.md)执行备份、归属核对与离线升级。
 
 ```bash
 npm ci
@@ -129,7 +129,7 @@ Agent 仍只有 Main、Runner、Reviewer 三组，正常 Run 的阶段策略为�
 
 多项目 HTTP 入口均要求管理员会话。账号使用 `/api/account`，部署配置及 Provider/OSS Secret 使用 `/api/deployment` 和 `/api/deployment/secrets/:key`；项目列表与创建使用 `/api/projects`，详情、就绪、暂停、恢复、配置、项目 Secret 和镜像准备位于 `/api/projects/:projectId/...`。场景、报告、索引、队列、Run 和证据读取也必须带明确 `projectId`；旧版无项目 ID 的业务路由不再注册。项目 Secret 只接受 Git Token、测试账号和清理 Token；API 只返回配置状态和掩码，不返回明文。页面切换不会改变已有请求的归属或固定目标。一个部署同一时间最多执行一个 Run，但不同项目各有队列、进度与归档状态。
 
-旧 v0.6.0 实例须停服务后离线升级：先运行 `npm run db:multi-project -- inspect` 记录预检和 fingerprint，再用 `backup <新目录>` 保存一致的数据库、repo 与 report 副本；逐条核对历史仓库归属后，有项目历史的实例使用 `upgrade-project <备份目录> <已审 fingerprint>`，空实例使用 `upgrade-empty <备份目录>`，最后运行 `verify`。升级命令不会创建缺失数据库，也不会代替人工历史归属核对。恢复旧版本时须同时恢复数据库、repo、report 和对应主密钥材料，不能只回退数据库；不要在尚未完成真实联合验收的持久实例上提前执行切换。具体风险和证明见[多项目计划](docs/changes/luowang-multi-project/plan.md)。
+旧 v0.6.0 实例须停服务后离线升级：先运行 `npm run db:multi-project -- inspect` 记录预检和 fingerprint，再用 `backup <新目录>` 保存一致的数据库、repo 与 report 副本；逐条核对历史仓库归属后，有项目历史的实例使用 `upgrade-project <备份目录> <已审 fingerprint>`，空实例使用 `upgrade-empty <备份目录>`，最后运行 `verify`。升级命令不会创建缺失数据库，也不会代替人工历史归属核对。恢复旧版本时须同时恢复数据库、repo、report 和对应主密钥材料，不能只回退数据库；应先在隔离副本完成升级及回退验证，再切换需要保留的持久实例。具体风险和证明见[多项目计划](docs/changes/luowang-multi-project/plan.md)。
 
 若已使用早期 v0.6.1 开发版完成多项目离线切换，升级到带项目报告索引修复的版本前也须停服务，运行 `npm run db:multi-project -- upgrade-index <新的备份目录>`，再运行 `verify` 后重启。命令先备份当前 SQLite，再将外部仓库历史报告的索引键改为项目内唯一；它不会改写目标仓库报告、Run 记录或 OSS 证据。备份目录必须不存在，失败时保留备份以供恢复；已完成时重复执行返回 `already_complete`。首次从 v0.6.0 切换的实例会在原升级事务中完成此项，不需要另跑 `upgrade-index`。
 
