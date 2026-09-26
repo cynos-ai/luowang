@@ -14,6 +14,7 @@
     "build:server": "node scripts/patch-playwright-request-headers.mjs && tsc -p tsconfig.json && node scripts/build-pi-mcp-adapter.mjs && node scripts/copy-agent-role-resources.mjs",
     "db:migrate": "node dist/server/db/migrate-cli.js",
     "db:multi-project": "node dist/server/projects/upgrade-cli.js",
+    "ops:inventory": "node dist/server/projects/resource-inventory.js",
     "dev": "concurrently -k \"npm run dev:server\" \"vite\"",
     "dev:server": "tsx watch src/server/projects/main.ts",
     "format": "prettier --write .",

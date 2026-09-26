@@ -187,6 +187,8 @@ bash scripts/run-browser-sandbox.sh --network none --entrypoint node luowang:run
 
 服务启动时先按数据库 `instance_id` 标签核验并删除本实例遗留的 Run 容器，再恢复队列。镜像只在同实例、同项目、构建标签与 `luowang-project-<projectId>:<targetCommit>` 标签吻合，且未被 ready 镜像状态或任何 Run 镜像记录引用时尝试删除；Docker 拒绝删除的镜像会保留。旧版没有实例标签的资源以及无标签的构建缓存不会被自动清理，应在确认归属和容量后由运维人员手工处理，不要对共享 Engine 执行全局 `docker image prune`。
 
+可用 `npm run ops:inventory` 只读查看本实例项目容器、镜像引用和候选容量；恢复演练步骤及容量解释见[运维检查与恢复演练](docs/operations.md)。
+
 ## 许可证
 
 本项目使用 GNU Affero General Public License v3.0-only（AGPL-3.0-only）。它允许个人和商业使用、修改、分发和收费，但分发衍生作品以及通过网络向用户提供修改版时，必须按 AGPL 提供完整对应源码并保留版权与许可证声明。详见根目录 [`LICENSE`](./LICENSE)。
