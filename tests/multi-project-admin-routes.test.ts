@@ -6,6 +6,7 @@ import Fastify from 'fastify';
 import { describe, it } from 'vitest';
 
 import { createProjectTestRequestQueue } from '../src/server/automation/queue.js';
+import { GitHubApiError } from '../src/server/repository/github.js';
 import { runMigrations } from '../src/server/db/migrate.js';
 import { projectIdentityMigration } from '../src/server/db/migrations/0009-project-identity.js';
 import { migrateLegacyRunOwnership } from '../src/server/db/migrations/0011-project-run-ownership.js';
@@ -59,6 +60,7 @@ describe('project administration routes', () => {
         },
         verifyRepository: async (url, token) => {
           verifiedTokens.push(token);
+          if (url.endsWith('/unavailable')) throw new GitHubApiError(401, 'private-token-canary');
           return {
             githubRepositoryId: url.endsWith('/a') ? '101' : '102',
             owner: 'example',
@@ -101,6 +103,20 @@ describe('project administration routes', () => {
       assert.equal(projects.get(a.projectId)?.status, 'paused');
       assert.equal(secrets.project(a.projectId).get('gitToken'), 'private-token-a');
       assert.deepEqual(verifiedTokens, ['private-token-a']);
+      const rejected = await app.inject({
+        method: 'POST',
+        url: '/api/projects',
+        headers: cookie,
+        payload: {
+          displayName: 'Unavailable',
+          repositoryUrl: 'https://github.com/example/unavailable',
+          gitToken: 'private-token-canary',
+        },
+      });
+      assert.equal(rejected.statusCode, 502);
+      assert.match(rejected.body, /Token 认证失败/);
+      assert.doesNotMatch(rejected.body, /private-token-canary/);
+      assert.equal(projects.list().length, 1);
       assert.equal(
         (
           await app.inject({

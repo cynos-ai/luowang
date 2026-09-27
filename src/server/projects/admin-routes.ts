@@ -5,6 +5,7 @@ import { ConfigurationError, type ConfigurationStore } from '../configuration.js
 import { AppError, toErrorResponse } from '../errors.js';
 import {
   GitHubClient,
+  describeGitHubRepositoryFailure,
   parseGitHubRepository,
   type VerifiedGitHubRepositoryIdentity,
 } from '../repository/github.js';
@@ -77,7 +78,16 @@ export async function registerProjectAdminRoutes(
       }
       parseGitHubRepository(body.repositoryUrl);
       const token = body.gitToken as string | undefined;
-      const repository = await verifyRepository(body.repositoryUrl, token);
+      let repository: VerifiedGitHubRepositoryIdentity;
+      try {
+        repository = await verifyRepository(body.repositoryUrl, token);
+      } catch (error) {
+        throw new RepositoryError(
+          'REPOSITORY_INVALID',
+          describeGitHubRepositoryFailure(error),
+          502,
+        );
+      }
       const project = options.database.transaction(() => {
         const created = options.projects.createVerified({
           displayName: body.displayName as string,

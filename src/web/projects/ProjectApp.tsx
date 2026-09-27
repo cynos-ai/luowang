@@ -59,6 +59,19 @@ const SECRET_LABELS: Array<[ProjectSecret, string]> = [
   ['testPassword', '测试密码'],
   ['testDataCleanupToken', '清理 Token'],
 ];
+const CHECK_LABELS: Record<string, string> = {
+  repository: 'GitHub 仓库',
+  deployment: '模型、浏览器和对象存储',
+  environment: '非生产测试环境',
+  image: '项目执行镜像',
+  credentials: '测试与清理凭据',
+};
+const CHECK_STATUSES: Record<string, string> = {
+  ok: '通过',
+  not_configured: '未配置',
+  failed: '失败',
+  needs_recheck: '待重检',
+};
 
 function projectFromHash(): string | null {
   const match = window.location.hash.match(/^#\/projects\/([0-9a-f-]{36})$/i);
@@ -318,6 +331,9 @@ function ProjectView({
   const [reports, setReports] = useState<IndexedReport[]>([]);
   const [secretValues, setSecretValues] = useState<Partial<Record<ProjectSecret, string>>>({});
   const [runRequest, setRunRequest] = useState('');
+  const [sourceRef, setSourceRef] = useState('');
+  const [initializeFromSource, setInitializeFromSource] = useState(false);
+  const [sourceConfirmed, setSourceConfirmed] = useState(false);
   const [busy, setBusy] = useState('');
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
@@ -493,8 +509,8 @@ function ProjectView({
         <div className="project-checks">
           {readiness?.checks.map((check) => (
             <div key={check.id}>
-              <strong>{check.id}</strong>
-              <span>{check.status}</span>
+              <strong>{CHECK_LABELS[check.id] ?? check.id}</strong>
+              <span>{CHECK_STATUSES[check.status] ?? check.status}</span>
               <p>{check.message}</p>
             </div>
           ))}
@@ -711,6 +727,65 @@ function ProjectView({
       </section>
       <section className="panel">
         <h3>测试与历史</h3>
+        <p>
+          首次测试且场景分支尚不存在时，从可信的来源分支、tag
+          或提交创建，并勾选“首次初始化”。已有场景分支时，也可先纳入来源再测试；普通重测使用下方的“提交
+          Run”。
+        </p>
+        <form
+          onSubmit={(event) => {
+            event.preventDefault();
+            if (!sourceConfirmed || !sourceRef.trim()) return;
+            void action('提交来源并测试', async () => {
+              await requestJson(`${base}/merge`, {
+                method: 'POST',
+                body: JSON.stringify({
+                  sourceRef: sourceRef.trim(),
+                  confirmed: true,
+                  initialization: initializeFromSource,
+                }),
+              });
+              setSourceRef('');
+              setSourceConfirmed(false);
+              setInitializeFromSource(false);
+            });
+          }}
+        >
+          <label className="field">
+            来源分支、tag 或提交
+            <input
+              value={sourceRef}
+              onChange={(event) => setSourceRef(event.target.value)}
+              placeholder="main"
+              required
+            />
+          </label>
+          <label className="field project-checkbox">
+            <input
+              type="checkbox"
+              checked={initializeFromSource}
+              onChange={(event) => setInitializeFromSource(event.target.checked)}
+            />
+            首次初始化（场景分支尚不存在时必须勾选）
+          </label>
+          <label className="field project-checkbox">
+            <input
+              type="checkbox"
+              checked={sourceConfirmed}
+              onChange={(event) => setSourceConfirmed(event.target.checked)}
+            />
+            我确认要把此来源纳入当前项目的场景测试分支
+          </label>
+          <button
+            className="button button-secondary"
+            type="submit"
+            disabled={
+              Boolean(busy) || project.status !== 'active' || !sourceRef.trim() || !sourceConfirmed
+            }
+          >
+            提交来源并测试
+          </button>
+        </form>
         <form
           onSubmit={(event) => {
             event.preventDefault();

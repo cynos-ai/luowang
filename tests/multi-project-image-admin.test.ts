@@ -5,6 +5,7 @@ import Database from 'better-sqlite3';
 import Fastify from 'fastify';
 import { it } from 'vitest';
 
+import { GitHubApiError } from '../src/server/repository/github.js';
 import { ensureSystemMetadata, runMigrations } from '../src/server/db/migrate.js';
 import { projectIdentityMigration } from '../src/server/db/migrations/0009-project-identity.js';
 import { migrateLegacyRunOwnership } from '../src/server/db/migrations/0011-project-run-ownership.js';
@@ -58,6 +59,7 @@ it('prepares only the authenticated project image at the resolved fixed commit',
     });
     const branches: string[] = [];
     let identityMatches = true;
+    let identityUnavailable = false;
     let branchUnavailable = false;
     let dockerUnavailable = false;
     let builds = 0;
@@ -72,6 +74,7 @@ it('prepares only the authenticated project image at the resolved fixed commit',
       github: (project, token) => ({
         verifyIdentity: async () => {
           assert.equal(token, `token-${project.repositoryName}`);
+          if (identityUnavailable) throw new GitHubApiError(403, 'private-token-canary');
           return {
             githubRepositoryId: identityMatches ? project.githubRepositoryId : '999',
             owner: project.repositoryOwner,
@@ -185,6 +188,12 @@ it('prepares only the authenticated project image at the resolved fixed commit',
     identityMatches = false;
     assert.equal((await app.inject({ method: 'POST', url, headers: cookie })).statusCode, 409);
     identityMatches = true;
+    identityUnavailable = true;
+    const inaccessible = await app.inject({ method: 'POST', url, headers: cookie });
+    assert.equal(inaccessible.statusCode, 503);
+    assert.match(inaccessible.body, /权限或 API 限额/);
+    assert.doesNotMatch(inaccessible.body, /private-token-canary/);
+    identityUnavailable = false;
     branchUnavailable = true;
     assert.equal((await app.inject({ method: 'POST', url, headers: cookie })).statusCode, 503);
     branchUnavailable = false;

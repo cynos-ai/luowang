@@ -265,3 +265,7 @@ round5d 冻结质量镜像的 `format:check`、lint、typecheck 和完整本地 
 原始失败均保留：两次 Git 前置故障、一次维护脚本 target 写错、双缺陷脚本误挂旧账本、四次模型 503，以及旧验收驱动误读 Run 快照字段和 blocked 归档后 Git 查询失败。后两者用同一 Run 的正式 RunStore、队列和远端 HEAD 独立核对，不篡改原验收输出。旧账本污染副本保留，原 617 次历史账本已恢复；本轮共 643 次模型请求，含所有失败尝试和一次连通检查。完整逐项报告在本机 `.cynos/code-understanding-v060-round10-review.md`。
 
 负责人已审阅本轮报告并批准发布，PR #75 的 quality CI 通过，合并提交为 `752aa6f`。下一步完成版本文件、`develop → main` 发布 PR、CI 与 annotated `v0.6.0` tag；发布前不启动 v0.6.1 多项目。
+
+## 评测复核工具（2026-09-26）
+
+已有冻结轮可用 `node tests/acceptance/code-understanding/summarize.mjs <frozen-round-directory>` 只读复核。工具核对 manifest、计划哈希、全部案例和请求次数，从原始调用记录重算 Token/耗时，仅把双方都有已审计划的案例计入质量配对；失败案例与失败请求另列，人工评分状态原样保留。它不调用模型、不改写原始工件，也不把等材料语义对照冒充自主源码导航或真实联合 Run。新增轮仍按本 Plan 的冻结、零模型 preflight、pilot、正式配对与人工审核顺序执行。

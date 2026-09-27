@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 import type Database from 'better-sqlite3';
 
 import type { VerifiedGitHubRepositoryIdentity } from '../repository/github.js';
+import { describeGitHubRepositoryFailure } from '../repository/github.js';
 import type { ScopedSecretStore } from '../security/scoped-secret-store.js';
 import type { ProjectConfiguration, ProjectConfigurationStore } from './configuration.js';
 import type { ProjectRecord, ProjectStore } from './store.js';
@@ -87,8 +88,12 @@ export function createProjectReadinessService(input: {
           status: matches ? 'ok' : 'failed',
           message: matches ? '仓库身份已核验' : 'GitHub 仓库身份与项目绑定不一致',
         });
-      } catch {
-        checks.push({ id: 'repository', status: 'failed', message: 'GitHub 仓库身份核验失败' });
+      } catch (error) {
+        checks.push({
+          id: 'repository',
+          status: 'failed',
+          message: describeGitHubRepositoryFailure(error),
+        });
       }
     }
     const username = secrets.has('testUsername');

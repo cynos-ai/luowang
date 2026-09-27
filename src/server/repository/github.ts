@@ -92,7 +92,10 @@ export class GitHubClient {
 
   async verifyIdentity(): Promise<VerifiedGitHubRepositoryIdentity> {
     const response = await this.request(`/repos/${this.repository.owner}/${this.repository.name}`);
-    if (response.status !== 200 || !isRecord(response.body)) {
+    if (response.status !== 200) {
+      throw new GitHubApiError(response.status, 'GitHub 仓库身份读取失败');
+    }
+    if (!isRecord(response.body)) {
       throw new RepositoryError('REPOSITORY_INVALID', '无法验证 GitHub 仓库身份', 502);
     }
     const id = response.body.id;
@@ -419,7 +422,7 @@ export function isGitHubRepository(value: string): boolean {
   }
 }
 
-class GitHubApiError extends Error {
+export class GitHubApiError extends Error {
   constructor(
     readonly status: number,
     message: string,
@@ -427,6 +430,26 @@ class GitHubApiError extends Error {
     super(message);
     this.name = 'GitHubApiError';
   }
+}
+
+/** Only classify transport/status facts; never return GitHub response bodies or raw errors. */
+export function describeGitHubRepositoryFailure(error: unknown): string {
+  if (error instanceof GitHubApiError) {
+    switch (error.status) {
+      case 0:
+        return 'GitHub API 不可达，请检查网络连接';
+      case 401:
+        return 'GitHub Token 认证失败，请检查或更新项目 Token';
+      case 403:
+        return 'GitHub 拒绝读取仓库，请检查 Token 权限或 API 限额';
+      case 404:
+        return 'GitHub 仓库不存在，或当前 Token 无权读取';
+      default:
+        return 'GitHub 仓库读取失败，请稍后重试';
+    }
+  }
+  if (error instanceof RepositoryError) return 'GitHub 仓库身份响应无效，请稍后重试';
+  return 'GitHub 仓库身份核验失败，请稍后重试';
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

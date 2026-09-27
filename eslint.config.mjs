@@ -9,6 +9,8 @@ export default tseslint.config(
       'dist/**',
       'coverage/**',
       'node_modules/**',
+      '.cynos/**',
+      '.cache/**',
       'test-results/**',
       'playwright-report/**',
     ],
