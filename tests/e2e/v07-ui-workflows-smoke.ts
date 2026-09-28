@@ -56,6 +56,32 @@ const secrets = {
   testPassword: { configured: false, masked: null },
   testDataCleanupToken: { configured: false, masked: null },
 };
+const deploymentConfiguration = {
+  language: 'zh-CN',
+  provider: 'openai-compatible',
+  providerBaseUrl: 'https://provider.example.test/v1',
+  agents: {
+    main: { model: 'deepseek-v4-flash', thinking: 'medium' },
+    runner: { model: 'deepseek-v4-flash', thinking: 'low' },
+    reviewer: { model: 'deepseek-v4-flash-vision-exp', thinking: 'high' },
+  },
+  local: { repoDir: '/data/repositories', reportDir: '/data/reports', retentionDays: 30 },
+  mcp: { enabled: true, browser: 'chromium', headless: true, timeoutMs: 30000 },
+  oss: {
+    endpoint: 'https://oss.example.test',
+    region: 'fixture',
+    bucket: 'evidence',
+    publicBaseUrl: 'https://evidence.example.test',
+    accessMode: 'private',
+    objectPrefix: 'luowang',
+  },
+};
+const deploymentSecrets = {
+  providerApiKey: { configured: true, masked: '••••' },
+  ossAccessKeyId: { configured: false, masked: null },
+  ossAccessKeySecret: { configured: false, masked: null },
+};
+let adminDisplayName = '管理员';
 let created = false;
 let ready = false;
 let resumeCalls = 0;
@@ -67,6 +93,8 @@ let zeroProgressRun = false;
 let projectACurrentReads = 0;
 let holdWorkspace = false;
 let holdConfiguration = false;
+let globalSettingsUnlocked = false;
+let resourceInventoryFailure = false;
 let releaseWorkspace: () => void = () => undefined;
 let releaseConfiguration: () => void = () => undefined;
 const workspaceGate = new Promise<void>((resolve) => {
@@ -125,11 +153,69 @@ try {
       if (emptyWorkspace) return route.fulfill({ json: emptyFixture.workspace });
       const workspace = structuredClone(fixture.workspace);
       workspace.projects[0].project.status = projects[0].status;
+      if (globalSettingsUnlocked) workspace.activeRun = null;
       if (zeroProgressRun && workspace.activeRun) {
         workspace.activeRun.progress = { completed: 0, total: 0 };
         workspace.activeRun.currentScenario = null;
       }
       return route.fulfill({ json: workspace });
+    }
+    if (pathname === '/api/system/status' && method === 'GET') {
+      return route.fulfill({ json: fixture.systemStatus });
+    }
+    if (pathname === '/api/system/resources' && method === 'GET') {
+      if (resourceInventoryFailure) {
+        return route.fulfill({
+          status: 503,
+          json: { error: { message: '无法确认 Docker 资源归属' } },
+        });
+      }
+      return route.fulfill({ json: fixture.systemResources });
+    }
+    if (/^\/api\/system\/checks\/(provider|browser|oss)$/.test(pathname) && method === 'POST') {
+      const id = pathname.split('/').at(-1);
+      return route.fulfill({
+        json: fixture.systemStatus.dependencies.find((item) => item.id === id),
+      });
+    }
+    if (pathname === '/api/deployment' && method === 'GET') {
+      return route.fulfill({
+        json: { configuration: deploymentConfiguration, secrets: deploymentSecrets },
+      });
+    }
+    if (pathname === '/api/deployment' && method === 'PUT') {
+      const patch = request.postDataJSON();
+      if (patch.agents) deploymentConfiguration.agents = patch.agents;
+      if (patch.mcp) deploymentConfiguration.mcp = patch.mcp;
+      if (patch.oss) deploymentConfiguration.oss = patch.oss;
+      if (patch.local)
+        deploymentConfiguration.local = { ...deploymentConfiguration.local, ...patch.local };
+      if (patch.provider !== undefined) deploymentConfiguration.provider = patch.provider;
+      if (patch.providerBaseUrl !== undefined)
+        deploymentConfiguration.providerBaseUrl = patch.providerBaseUrl;
+      return route.fulfill({ json: { configuration: deploymentConfiguration } });
+    }
+    const deploymentSecretMatch = pathname.match(
+      /^\/api\/deployment\/secrets\/(providerApiKey|ossAccessKeyId|ossAccessKeySecret)$/,
+    );
+    if (deploymentSecretMatch && ['PUT', 'DELETE'].includes(method)) {
+      const key = deploymentSecretMatch[1] as keyof typeof deploymentSecrets;
+      deploymentSecrets[key] =
+        method === 'PUT'
+          ? { configured: true, masked: '••••' }
+          : { configured: false, masked: null };
+      return route.fulfill({ json: { key, metadata: deploymentSecrets[key] } });
+    }
+    if (pathname === '/api/account' && method === 'GET') {
+      return route.fulfill({ json: { profile: { displayName: adminDisplayName } } });
+    }
+    if (pathname === '/api/account' && method === 'PUT') {
+      adminDisplayName = request.postDataJSON().displayName;
+      return route.fulfill({ json: { profile: { displayName: adminDisplayName } } });
+    }
+    if (pathname === '/api/auth/password' && method === 'POST') {
+      assert.equal(request.postDataJSON().currentPassword, 'current-password');
+      return route.fulfill({ json: { authenticated: false, passwordChanged: true } });
     }
     if (pathname === '/api/projects' && method === 'GET') {
       return route.fulfill({ json: { projects: created ? [...projects, newProject] : projects } });
@@ -625,6 +711,40 @@ try {
   await page.goto(`${origin}/projects/${projects[1].projectId}/scenarios/AUTH-LOGIN-001`);
   await page.getByText('读取失败').waitFor();
 
+  resourceInventoryFailure = true;
+  await page.goto(`${origin}/system`);
+  await page.getByRole('heading', { name: '系统状态' }).waitFor();
+  await page.getByText('无法确认 Docker 资源归属').waitFor();
+  assert.equal(await page.getByText(`sha256:${'d'.repeat(64)}`).count(), 0);
+  resourceInventoryFailure = false;
+  await page.getByRole('button', { name: '重试' }).click();
+  await page.getByText('正在引用').waitFor();
+  await page.getByRole('button', { name: '立即检查' }).last().click();
+  assert.ok(writes.includes('POST /api/system/checks/oss'));
+
+  await page.goto(`${origin}/settings/models`);
+  await page.getByText(/全局执行配置已锁定，相关测试记录/).waitFor();
+  assert.equal(await page.getByRole('button', { name: '保存本分组' }).isDisabled(), true);
+  globalSettingsUnlocked = true;
+  await page.reload();
+  await page.getByText('Final Main 复用 Main 配置，不创建第四组 Agent 配置。').waitFor();
+  await page.getByLabel('Provider', { exact: true }).fill('fixture-provider');
+  await page.getByRole('button', { name: '保存本分组' }).click();
+  await page.getByText('配置已保存。保存不等于连接检查通过。').waitFor();
+  assert.ok(writes.includes('PUT /api/deployment'));
+  await page.goto(`${origin}/settings/credentials`);
+  assert.equal((await page.locator('body').innerText()).includes('GitHub Token'), false);
+  assert.equal((await page.locator('body').innerText()).includes('测试账号'), false);
+  await page.getByLabel('新值（不会回显）').nth(1).fill('synthetic-oss-key');
+  await page.getByRole('button', { name: '保存', exact: true }).nth(0).click();
+  await page.getByText('凭据已更新。凭据不会回显；请另行执行连接检查。').waitFor();
+  assert.equal((await page.locator('body').innerText()).includes('synthetic-oss-key'), false);
+
+  await page.goto(`${origin}/account`);
+  await page.getByLabel('管理员显示名称').fill('罗网管理员');
+  await page.getByRole('button', { name: '保存显示名称' }).click();
+  await page.getByText('显示名称已更新为“罗网管理员”。').waitFor();
+
   holdWorkspace = true;
   const delayedRequest = page.waitForRequest((request) => request.url().endsWith('/api/workspace'));
   await page.getByRole('link', { name: '工作台', exact: true }).click();
@@ -646,15 +766,31 @@ try {
     `/projects/${projects[0].projectId}/runs`,
     `/projects/${projects[0].projectId}/runs/${fixtureRunId}/evidence`,
     `/projects/${projects[0].projectId}/scenarios/AUTH-LOGIN-001`,
+    '/system',
+    '/settings/models',
+    '/settings/credentials',
+    '/account',
   ]) {
     await page.goto(`${origin}${path}`);
+    await page.locator('h1').waitFor();
     const dimensions = await page.evaluate(() => ({
       scrollWidth: document.documentElement.scrollWidth,
       clientWidth: document.documentElement.clientWidth,
     }));
     assert.equal(dimensions.scrollWidth, dimensions.clientWidth);
-    assert.equal(await page.locator('h1').count(), 1);
+    assert.equal(await page.locator('h1').count(), 1, `expected one h1 at ${path}`);
   }
+  await page.goto(`${origin}/account`);
+  await page.getByLabel('当前密码').fill('current-password');
+  await page.getByLabel('新密码', { exact: true }).fill('new-password-123');
+  await page.getByLabel('确认新密码').fill('different-password');
+  await page.getByRole('button', { name: '更新密码并退出' }).click();
+  await page.getByText('两次输入的新密码不一致').waitFor();
+  await page.getByLabel('确认新密码').fill('new-password-123');
+  await page.getByRole('button', { name: '更新密码并退出' }).click();
+  await page.getByRole('heading', { name: '管理员登录' }).waitFor();
+  assert.ok(writes.includes('POST /api/auth/password'));
+
   assert.deepEqual(pageErrors, []);
 } finally {
   await browser.close();

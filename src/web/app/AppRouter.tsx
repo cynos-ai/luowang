@@ -5,8 +5,11 @@ import { requestJson, toUserMessage } from '../api';
 import { AppShell } from '../components/AppShell';
 import { LoginPanel } from '../components/LoginPanel';
 import { PageHeading } from '../components/PageHeading';
+import { AccountSettingsPage } from '../pages/AccountSettingsPage';
+import { GlobalSettingsPage } from '../pages/GlobalSettingsPage';
 import { ProjectOnboardingPage } from '../pages/ProjectOnboardingPage';
 import { ProjectsPage } from '../pages/ProjectsPage';
+import { SystemStatusPage } from '../pages/SystemStatusPage';
 import { WorkspacePage } from '../pages/WorkspacePage';
 import { ProjectOverviewPage } from '../pages/project/ProjectOverviewPage';
 import { ProjectReadinessPage } from '../pages/project/ProjectReadinessPage';
@@ -192,7 +195,16 @@ export default function AppRouter() {
             {error}
           </p>
         )}
-        <RoutePage route={route} projects={projects} reloadProjects={() => loadProjects()} />
+        <RoutePage
+          route={route}
+          projects={projects}
+          reloadProjects={() => loadProjects()}
+          onPasswordChanged={() => {
+            setAuth({ configured: true, authenticated: false });
+            setProjects([]);
+            setError('密码已更新，请重新登录');
+          }}
+        />
       </AppShell>
     </NavigationProvider>
   );
@@ -202,10 +214,12 @@ function RoutePage({
   route,
   projects,
   reloadProjects,
+  onPasswordChanged,
 }: {
   route: AppRoute;
   projects: ProjectReference[];
   reloadProjects: () => Promise<void>;
+  onPasswordChanged: () => void;
 }) {
   if (route.name === 'not-found') {
     return (
@@ -215,6 +229,11 @@ function RoutePage({
     );
   }
   if (route.name === 'workspace') return <WorkspacePage />;
+  if (route.name === 'system') return <SystemStatusPage />;
+  if (route.name === 'global-settings') return <GlobalSettingsPage section={route.section} />;
+  if (route.name === 'account') {
+    return <AccountSettingsPage onPasswordChanged={onPasswordChanged} />;
+  }
   if (route.name === 'projects') {
     return <ProjectsPage onProjectsChanged={reloadProjects} />;
   }
@@ -318,7 +337,7 @@ function pageCopy(route: Exclude<AppRoute, { name: 'not-found' }>): {
     case 'system':
       return { title: '系统状态', scope: '全局', description: '查看依赖和本地资源状态。' };
     case 'global-settings':
-      return { title: '设置', scope: '全局配置', description: '这些设置影响全部项目。' };
+      return { title: '全局设置', scope: '影响全部项目', description: '这些设置影响全部项目。' };
     case 'account':
       return { title: '账号设置', scope: '管理员', description: '更新当前管理员密码。' };
     case 'project-overview':

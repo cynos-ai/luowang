@@ -504,7 +504,7 @@ src/web/
 
 完成证明：项目级 Run API 已将活动、持久化、恢复和失败队列记录统一投影为完整详情，并保留 archive、progressed、scenario PR、Issues、活动、工件和清理告警等独立事实；项目级场景 API 聚合 Git 只读定义、Run/报告执行历史和待审核场景 PR，跨项目 Run、场景和 Evidence 继续返回 404。前端已实现测试记录列表、六个稳定详情 tab、场景目录及详情；AI Reviewer 明示不是人工评分，`humanScoring` 未被改写，清理或 Evidence 异常不改写功能结论。Markdown 使用 `react-markdown@10.1.0` 安全渲染，不启用 raw HTML，不直接加载 Markdown 图片，并保留脚本文字但不执行。`tests/multi-project-app.test.ts` 覆盖真实后端归属、归档数据和场景历史，`tests/e2e/v07-ui-workflows-smoke.ts` 覆盖深链接、六 tab、清理告警、Evidence、Markdown XSS、跨项目拒绝及 768px 无整页横向溢出。合成 fixture 截图 `.cynos/browser-evidence/v07-phase6-run-evidence-1440.png` 和 `.cynos/browser-evidence/v07-phase6-scenario-1440.png` 已人工检查。Docker quality 环境全量 Vitest 为 465 项通过、2 项跳过，完整 E2E、格式、lint、typecheck、build 和 `git diff --check` 通过。
 
-### Phase 7：系统状态、全局设置和账号
+### Phase 7：系统状态、全局设置和账号（已完成）
 
 #### 修改范围
 
@@ -525,6 +525,8 @@ src/web/
 - 保存配置不等于检查通过；
 - 资源盘点只读且归属失败 fail closed；
 - 不显示虚假启动时间或恢复演练记录。
+
+完成证明：系统状态页已绑定只读服务、数据库、Secret Store、调度器、共享依赖快照和 Docker 资源盘点 API；外部连接只由显式检查触发，资源归属失败时 fail closed，不提供删除操作，也不虚构启动时间或恢复演练历史。全局设置按模型与角色、浏览器、对象存储、本地数据和全局凭据五个稳定 URL 分组独立保存，持续标记“影响全部项目”；Final Main 明示复用 Main，项目凭据不进入全局凭据，Secret 只写不回显，保存与连接状态分离，活动执行锁定普通配置，OSS 历史证据保护继续由既有后端 guard 执行。本地根目录只读，账号页支持显示名称和经当前密码验证的改密后退出。`tests/e2e/v07-ui-workflows-smoke.ts` 覆盖资源盘点失败、显式依赖检查、全局配置保存、凭据隔离与不回显、账号资料、密码确认和退出，以及新增页面 768px 无整页横向溢出；合成 fixture 截图 `.cynos/browser-evidence/v07-phase7-system-1440.png`、`.cynos/browser-evidence/v07-phase7-global-settings-1440.png` 和 `.cynos/browser-evidence/v07-phase7-account-1440.png` 已人工检查。Docker quality 环境全量 Vitest 为 465 项通过、2 项跳过，完整 E2E、格式、lint、typecheck、build 和 `git diff --check` 通过。
 
 ### Phase 8：状态完善、可访问性与全量回归
 

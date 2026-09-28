@@ -1,6 +1,9 @@
 import Markdown, { type Components } from 'react-markdown';
 
 const components: Components = {
+  h1({ children }) {
+    return <h2 className="markdown-title">{children}</h2>;
+  },
   a({ href = '', children }) {
     const external = /^https?:\/\//i.test(href);
     return (
