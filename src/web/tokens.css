@@ -1,0 +1,78 @@
+:root {
+  --lw-canvas: #070707;
+  --lw-paper: #fffdf4;
+  --lw-paper-soft: #f2efe5;
+  --lw-ink: #070707;
+  --lw-muted: #62615b;
+  --lw-line: #aaa79e;
+  --lw-red: #e51c23;
+  --lw-red-soft: #f6c9c5;
+  --lw-green: #286956;
+  --lw-amber: #9a5b0b;
+  --lw-focus: #e51c23;
+  --lw-display: 'Arial Narrow', 'Noto Sans CJK SC', 'Microsoft YaHei', sans-serif;
+  --lw-body: Inter, 'Noto Sans CJK SC', 'Microsoft YaHei', sans-serif;
+  --lw-mono: 'JetBrains Mono', 'SFMono-Regular', Consolas, monospace;
+  --lw-page-pad: clamp(20px, 3vw, 44px);
+  --lw-panel-pad: clamp(18px, 2vw, 28px);
+  --lw-gap: clamp(14px, 1.5vw, 22px);
+  color: var(--lw-ink);
+  background: var(--lw-canvas);
+  font-family: var(--lw-body);
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+}
+
+html,
+body,
+#root {
+  min-width: 768px;
+  min-height: 100%;
+  margin: 0;
+}
+
+body {
+  background-color: var(--lw-canvas);
+  background-image: repeating-linear-gradient(
+    -16deg,
+    transparent 0 42px,
+    rgb(255 255 255 / 4%) 43px 45px
+  );
+}
+
+button,
+input,
+select,
+textarea {
+  color: inherit;
+  font: inherit;
+}
+
+button,
+a,
+select,
+input,
+textarea,
+[tabindex] {
+  outline-offset: 3px;
+}
+
+button:focus-visible,
+a:focus-visible,
+select:focus-visible,
+input:focus-visible,
+textarea:focus-visible,
+[tabindex]:focus-visible {
+  outline: 3px solid var(--lw-focus);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

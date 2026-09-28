@@ -1,7 +1,7 @@
 # LuoWang v0.7.0 UI 重构实施计划
 
 - 版本：v0.7.0
-- 状态：Implementation Plan v1；Phase 0–1 已完成
+- 状态：Implementation Plan v1；Phase 0–2 已完成
 - 日期：2026-09-27
 - 关联规格：[spec.md](./spec.md)
 - 视觉设计：[design.md](./design.md)
@@ -386,7 +386,7 @@ src/web/
 
 完成证明：`GET /api/workspace`、系统状态/资源、显式 readiness 检查和缓存失效已接入生产 app；清理失败使用 Harness 写入的结构化 activity code 聚合，不解析 Agent 文本；Git 本地、远程读写命令采用分级超时并清理 askpass。Docker quality 环境全量 Vitest 为 465 项通过、2 项跳过，格式、lint、typecheck、build 和 `git diff --check` 通过。
 
-### Phase 2：路由、Shell 与设计系统
+### Phase 2：路由、Shell 与设计系统（已完成）
 
 #### 修改范围
 
@@ -404,6 +404,8 @@ src/web/
 - 浏览器前进、后退和旧 Hash 重定向正确；
 - 键盘可进入全部顶层导航；
 - 新 Shell 不显示旧营销眉题或蓝紫主题。
+
+完成证明：多项目入口已切换至类型化 History router 和新 Shell；全部稳定路由由浏览器直接打开，旧项目 Hash 迁移、前进后退、刷新、404、未认证返回原目标和键盘顶层导航均由 `tests/e2e/v07-ui-navigation-smoke.ts` 覆盖。1440px 与 768px 浏览器证据确认单一主标题、显式项目作用域和无整页横向溢出；新 token、基础组件和 reduced-motion 规则已进入生产 CSS。Docker quality 环境全量 Vitest 为 465 项通过、2 项跳过，新的 E2E 导航 smoke、格式、lint、typecheck、build 和 `git diff --check` 通过。
 
 ### Phase 3：登录、工作台、项目列表与接入向导
 

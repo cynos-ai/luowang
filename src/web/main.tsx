@@ -1,8 +1,11 @@
 import { createRoot } from 'react-dom/client';
 
 import App from './App';
-import ProjectApp from './projects/ProjectApp';
+import AppRouter from './app/AppRouter';
 import './styles.css';
+import './tokens.css';
+import './components.css';
+import './pages.css';
 
 const root = createRoot(document.getElementById('root')!);
 async function start() {
@@ -15,7 +18,7 @@ async function start() {
     if (!response.ok) throw new Error('无法识别服务模式');
     const value = (await response.json()) as { mode?: string };
     if (value.mode !== 'multi-project') throw new Error('服务模式不受支持');
-    root.render(<ProjectApp />);
+    root.render(<AppRouter />);
   } catch {
     root.render(
       <main className="app-shell">
