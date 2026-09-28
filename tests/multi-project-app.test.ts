@@ -528,7 +528,7 @@ it('uses only new-schema administration routes, scoped Secrets, and the existing
       finishedAt: '2026-01-01T00:01:00.000Z',
       completedDirectory: '/tmp/RUN-A',
       artifacts: {},
-      scenarioResults: [],
+      scenarioResults: [{ id: 'SHARED', result: 'passed' }],
       confirmedBugs: [],
       evidence: [
         {
@@ -628,10 +628,26 @@ it('uses only new-schema administration routes, scoped Secrets, and the existing
       ).statusCode,
       404,
     );
+    const storedRunDetail = await app.inject({
+      method: 'GET',
+      url: `/api/projects/${projectId}/runs/RUN-A`,
+      headers,
+    });
+    assert.equal(storedRunDetail.statusCode, 200);
+    assert.equal(storedRunDetail.json().run.phase, 'completed');
+    assert.equal(storedRunDetail.json().run.archive.reportStatus, 'pending');
+    assert.deepEqual(storedRunDetail.json().run.scenarioResults, [
+      { id: 'SHARED', result: 'passed' },
+    ]);
     assert.equal(
-      (await app.inject({ method: 'GET', url: `/api/projects/${projectId}/runs/RUN-A`, headers }))
-        .statusCode,
-      200,
+      (
+        await app.inject({
+          method: 'GET',
+          url: `/api/projects/${projectId}/scenarios/SHARED`,
+          headers,
+        })
+      ).json().scenario.history[0].runId,
+      'RUN-A',
     );
     assert.equal(
       (await app.inject({ method: 'GET', url: `/api/projects/${projectB}/runs/RUN-A`, headers }))

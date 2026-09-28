@@ -10,6 +10,10 @@ import { ProjectsPage } from '../pages/ProjectsPage';
 import { WorkspacePage } from '../pages/WorkspacePage';
 import { ProjectOverviewPage } from '../pages/project/ProjectOverviewPage';
 import { ProjectReadinessPage } from '../pages/project/ProjectReadinessPage';
+import { ProjectRunPage } from '../pages/project/ProjectRunPage';
+import { ProjectRunsPage } from '../pages/project/ProjectRunsPage';
+import { ProjectScenarioPage } from '../pages/project/ProjectScenarioPage';
+import { ProjectScenariosPage } from '../pages/project/ProjectScenariosPage';
 import { ProjectSettingsPage } from '../pages/project/ProjectSettingsPage';
 import { ProjectTestPage } from '../pages/project/ProjectTestPage';
 import type { ProjectReference } from '../project-types';
@@ -225,6 +229,18 @@ function RoutePage({
   }
   if (route.name === 'project-test') {
     return <ProjectTestPage projectId={route.projectId} />;
+  }
+  if (route.name === 'project-runs') {
+    return <ProjectRunsPage projectId={route.projectId} />;
+  }
+  if (route.name === 'project-run') {
+    return <ProjectRunPage projectId={route.projectId} runId={route.runId} tab={route.tab} />;
+  }
+  if (route.name === 'project-scenarios') {
+    return <ProjectScenariosPage projectId={route.projectId} />;
+  }
+  if (route.name === 'project-scenario') {
+    return <ProjectScenarioPage projectId={route.projectId} scenarioId={route.scenarioId} />;
   }
   if (route.name === 'project-settings') {
     return (

@@ -479,7 +479,7 @@ src/web/
 
 完成证明：项目测试页已使用真实项目详情、readiness 快照、项目 Queue/Run 和跨项目工作台读模型，在同一稳定 URL 呈现 idle、queued、running 和 completed 四种主状态。空闲态支持当前场景分支与明确确认的 merge-source 两类既有请求；排队态显示全局真实位置、当前占用项目、来源和等待原因；执行态映射八阶段并显示准确角色名、场景计数、固定提交、时间、脱敏活动和阻塞原因；完成态只提供测试记录入口和重新进入空闲表单。页面仅在可见时每 2 秒轮询，离页停止；刷新失败保留最后可信状态并标记陈旧。`tests/e2e/v07-ui-workflows-smoke.ts` 覆盖两类表单中的 merge-source 请求、队列位置、八阶段、`3/8`、`0/0`、Agent 异常、最后活动、轮询失败保留、离页停止、完成态和 768px 无整页横向溢出。Docker quality 环境全量 Vitest 为 465 项通过、2 项跳过，完整 E2E、格式、lint、typecheck、build 和 `git diff --check` 通过。
 
-### Phase 6：测试记录、场景、报告和 Evidence
+### Phase 6：测试记录、场景、报告和 Evidence（已完成）
 
 #### 修改范围
 
@@ -501,6 +501,8 @@ src/web/
 - Evidence 缺失或读取失败不自动等同于场景失败；
 - 场景和报告中的 HTML/脚本不能执行；
 - 其他项目的 Run、场景和 Evidence 返回 404。
+
+完成证明：项目级 Run API 已将活动、持久化、恢复和失败队列记录统一投影为完整详情，并保留 archive、progressed、scenario PR、Issues、活动、工件和清理告警等独立事实；项目级场景 API 聚合 Git 只读定义、Run/报告执行历史和待审核场景 PR，跨项目 Run、场景和 Evidence 继续返回 404。前端已实现测试记录列表、六个稳定详情 tab、场景目录及详情；AI Reviewer 明示不是人工评分，`humanScoring` 未被改写，清理或 Evidence 异常不改写功能结论。Markdown 使用 `react-markdown@10.1.0` 安全渲染，不启用 raw HTML，不直接加载 Markdown 图片，并保留脚本文字但不执行。`tests/multi-project-app.test.ts` 覆盖真实后端归属、归档数据和场景历史，`tests/e2e/v07-ui-workflows-smoke.ts` 覆盖深链接、六 tab、清理告警、Evidence、Markdown XSS、跨项目拒绝及 768px 无整页横向溢出。合成 fixture 截图 `.cynos/browser-evidence/v07-phase6-run-evidence-1440.png` 和 `.cynos/browser-evidence/v07-phase6-scenario-1440.png` 已人工检查。Docker quality 环境全量 Vitest 为 465 项通过、2 项跳过，完整 E2E、格式、lint、typecheck、build 和 `git diff --check` 通过。
 
 ### Phase 7：系统状态、全局设置和账号
 

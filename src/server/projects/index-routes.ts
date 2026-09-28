@@ -1,6 +1,7 @@
 import type Database from 'better-sqlite3';
 import type { FastifyInstance } from 'fastify';
 
+import type { OperationsScenario, ScenarioRunHistory } from '../../shared/types.js';
 import type { RepositoryIndexer } from '../repository/indexer.js';
 import { createProjectRepositoryIndexer } from '../repository/indexer.js';
 import { createProjectRepositoryService } from '../repository/service.js';
@@ -8,6 +9,7 @@ import { AppError } from '../errors.js';
 import { SESSION_COOKIE_NAME, type AuthService } from '../security/auth.js';
 import type { ScopedSecretStore } from '../security/scoped-secret-store.js';
 import type { ProjectConfigurationStore } from './configuration.js';
+import { createProjectRunStore } from '../runs/store.js';
 import type { ProjectStore } from './store.js';
 
 /** Project-bound Git read model. Remote sync never changes another project's cache. */
@@ -73,14 +75,22 @@ export async function registerProjectIndexRoutes(
     );
     routes.get<{ Params: { projectId: string } }>(
       '/api/projects/:projectId/scenarios',
-      async (request) => ({ scenarios: indexerFor(request.params.projectId).listScenarios() }),
+      async (request) => ({
+        scenarios: presentScenarios(
+          indexerFor(request.params.projectId),
+          options.database,
+          request.params.projectId,
+        ),
+      }),
     );
     routes.get<{ Params: { projectId: string; scenarioId: string } }>(
       '/api/projects/:projectId/scenarios/:scenarioId',
       async (request) => {
-        const scenario = indexerFor(request.params.projectId).getScenario(
-          request.params.scenarioId,
-        );
+        const scenario = presentScenarios(
+          indexerFor(request.params.projectId),
+          options.database,
+          request.params.projectId,
+        ).find((item) => item.id === request.params.scenarioId);
         if (!scenario) throw new AppError('SCENARIO_NOT_FOUND', '场景不存在', 404);
         return { scenario };
       },
@@ -98,4 +108,58 @@ export async function registerProjectIndexRoutes(
       },
     );
   });
+}
+
+function presentScenarios(
+  indexer: RepositoryIndexer,
+  database: Database.Database,
+  projectId: string,
+): OperationsScenario[] {
+  const runs = createProjectRunStore(database, projectId).list();
+  const reports = indexer.listReports();
+  const history = new Map<string, ScenarioRunHistory[]>();
+  for (const run of runs) {
+    for (const result of run.scenarioResults) {
+      const items = history.get(result.id) ?? [];
+      items.push({
+        runId: run.runId,
+        result: result.result,
+        finishedAt: run.finishedAt,
+        targetCommit: run.targetCommit,
+      });
+      history.set(result.id, items);
+    }
+  }
+  for (const report of reports) {
+    for (const result of report.scenarioResults) {
+      const items = history.get(result.id) ?? [];
+      if (!items.some((item) => item.runId === report.runId)) {
+        items.push({
+          runId: report.runId,
+          result: result.result,
+          finishedAt: report.finishedAt,
+          targetCommit: report.targetCommit,
+        });
+      }
+      history.set(result.id, items);
+    }
+  }
+  return indexer.listScenarios().map((scenario) => ({
+    ...scenario,
+    history: (history.get(scenario.id) ?? []).sort((left, right) =>
+      right.finishedAt.localeCompare(left.finishedAt),
+    ),
+    pendingPullRequests: runs
+      .filter(
+        (run) =>
+          run.scenarioStatus === 'pull_request' &&
+          Boolean(run.scenarioPrUrl) &&
+          run.scenarioResults.some((result) => result.id === scenario.id),
+      )
+      .map((run) => ({
+        runId: run.runId,
+        url: run.scenarioPrUrl as string,
+        targetCommit: run.targetCommit,
+      })),
+  }));
 }

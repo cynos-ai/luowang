@@ -204,6 +204,19 @@ try {
                 phase: 'completed',
                 result: 'passed',
                 finishedAt: fixture.now,
+                scenarioResults: [{ id: 'AUTH-LOGIN-001', result: 'passed' }],
+                archive: {
+                  reportStatus: 'published',
+                  reportCommitSha: 'f'.repeat(40),
+                  archiveStatus: 'completed',
+                  archiveError: null,
+                  progressed: true,
+                  progressedAt: fixture.now,
+                  scenarioStatus: 'pull_request',
+                  scenarioCommitSha: null,
+                  scenarioPrUrl: 'https://github.com/cynos-ai/cynos-website/pull/123',
+                  scenarioError: null,
+                },
               },
             ]
           : [currentRun];
@@ -234,6 +247,70 @@ try {
       if (suffix === '/queue') return route.fulfill({ json: { queue: projectData.queue } });
       if (suffix === '/scenarios') {
         return route.fulfill({ json: { scenarios: projectData.scenarios } });
+      }
+      const scenarioMatch = suffix.match(/^\/scenarios\/(.+)$/);
+      if (scenarioMatch) {
+        const scenario = structuredClone(projectData.scenarios[0]);
+        scenario.content += '\n\n<script>window.__v07Xss = true</script>';
+        return route.fulfill({ json: { scenario } });
+      }
+      if (suffix === '/reports') {
+        return route.fulfill({ json: { reports: projectData.reports } });
+      }
+      if (suffix === `/reports/${projectData.runs[0].runId}`) {
+        const report = structuredClone(projectData.reports[0]);
+        report.content += '\n\n<img src=x onerror="window.__v07Xss=true">';
+        return route.fulfill({ json: { report } });
+      }
+      if (suffix.startsWith(`/runs/${projectData.runs[0].runId}/evidence/`)) {
+        return route.fulfill({
+          contentType: 'image/png',
+          body: Buffer.from(
+            'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+            'base64',
+          ),
+        });
+      }
+      if (suffix === `/runs/${projectData.runs[0].runId}`) {
+        const baseRun = projectData.runs[0];
+        return route.fulfill({
+          json: {
+            run: {
+              ...baseRun,
+              status: 'completed',
+              phase: 'completed',
+              result: 'passed',
+              finishedAt: fixture.now,
+              scenarioResults: [{ id: 'AUTH-LOGIN-001', result: 'passed' }],
+              activities: [
+                ...(baseRun.activities ?? []),
+                {
+                  at: fixture.now,
+                  message: '合成清理告警',
+                  kind: 'warning',
+                  code: 'test_data_cleanup_failed',
+                },
+              ],
+              archive: {
+                reportStatus: 'published',
+                reportCommitSha: 'f'.repeat(40),
+                archiveStatus: 'completed',
+                archiveError: null,
+                progressed: true,
+                progressedAt: fixture.now,
+                scenarioStatus: 'pull_request',
+                scenarioCommitSha: null,
+                scenarioPrUrl: 'https://github.com/cynos-ai/cynos-website/pull/123',
+                scenarioError: null,
+              },
+              issues: [],
+              artifacts: {
+                'review.md': '# AI Reviewer 审核\n\n审核结论：通过。',
+                'report.md': '# 正式报告\n\n通过。',
+              },
+            },
+          },
+        });
       }
       if (suffix === '/repository/sync' && method === 'POST') {
         return route.fulfill({
@@ -509,6 +586,45 @@ try {
   await page.getByText('刚刚完成').waitFor();
   await page.getByRole('button', { name: '发起新测试' }).waitFor();
 
+  const fixtureRunId = fixture.projectData[projects[0].projectId].runs[0].runId;
+  await page.goto(`${origin}/projects/${projects[0].projectId}/runs`);
+  await page.getByRole('heading', { name: '测试记录' }).waitFor();
+  await page.getByText('正式报告已发布').waitFor();
+  await page.goto(`${origin}/projects/${projects[0].projectId}/runs/${fixtureRunId}`);
+  await page.getByText('数据清理告警：合成清理告警。该告警不改写正式测试结论。').waitFor();
+  await page.getByRole('link', { name: '审核', exact: true }).click();
+  await page
+    .locator('.detail-panel > header')
+    .getByRole('heading', { name: 'AI Reviewer 审核' })
+    .waitFor();
+  await page.getByText('这是 AI 角色工件，不是人工评分。').waitFor();
+  await page.getByRole('link', { name: '正式报告', exact: true }).click();
+  await page.locator('.detail-panel > header').getByRole('heading', { name: '正式报告' }).waitFor();
+  assert.equal(await page.locator('.markdown-view script').count(), 0);
+  assert.equal(
+    await page.evaluate(() => (window as Window & { __v07Xss?: boolean }).__v07Xss),
+    undefined,
+  );
+  await page.getByRole('link', { name: '证据', exact: true }).click();
+  await page.getByText('页面含可见表单值').waitFor();
+  await page.getByAltText('证据 login.png').waitFor();
+  await page.getByRole('link', { name: '技术信息', exact: true }).click();
+  await page.getByText(projects[0].projectId, { exact: true }).waitFor();
+
+  await page.goto(`${origin}/projects/${projects[0].projectId}/scenarios`);
+  await page.getByRole('link', { name: /AUTH-LOGIN-001 · 登录状态恢复/ }).click();
+  await page.getByRole('heading', { name: '场景定义' }).waitFor();
+  assert.equal(await page.locator('.markdown-view script').count(), 0);
+  assert.equal(
+    await page.evaluate(() => (window as Window & { __v07Xss?: boolean }).__v07Xss),
+    undefined,
+  );
+
+  await page.goto(`${origin}/projects/${projects[1].projectId}/runs/${fixtureRunId}`);
+  await page.getByText('读取失败').waitFor();
+  await page.goto(`${origin}/projects/${projects[1].projectId}/scenarios/AUTH-LOGIN-001`);
+  await page.getByText('读取失败').waitFor();
+
   holdWorkspace = true;
   const delayedRequest = page.waitForRequest((request) => request.url().endsWith('/api/workspace'));
   await page.getByRole('link', { name: '工作台', exact: true }).click();
@@ -527,6 +643,9 @@ try {
     `/projects/${projects[0].projectId}/readiness`,
     `/projects/${newProject.projectId}/settings/credentials`,
     `/projects/${projects[0].projectId}/test`,
+    `/projects/${projects[0].projectId}/runs`,
+    `/projects/${projects[0].projectId}/runs/${fixtureRunId}/evidence`,
+    `/projects/${projects[0].projectId}/scenarios/AUTH-LOGIN-001`,
   ]) {
     await page.goto(`${origin}${path}`);
     const dimensions = await page.evaluate(() => ({
