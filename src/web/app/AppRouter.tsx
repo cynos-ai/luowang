@@ -8,6 +8,9 @@ import { PageHeading } from '../components/PageHeading';
 import { ProjectOnboardingPage } from '../pages/ProjectOnboardingPage';
 import { ProjectsPage } from '../pages/ProjectsPage';
 import { WorkspacePage } from '../pages/WorkspacePage';
+import { ProjectOverviewPage } from '../pages/project/ProjectOverviewPage';
+import { ProjectReadinessPage } from '../pages/project/ProjectReadinessPage';
+import { ProjectSettingsPage } from '../pages/project/ProjectSettingsPage';
 import type { ProjectReference } from '../project-types';
 import { NavigationProvider, type NavigableRoute } from './navigation';
 import { appPath, legacyHashRedirect, parseAppPath, type AppRoute } from './route';
@@ -20,16 +23,29 @@ export default function AppRouter() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const returnRoute = useRef<AppRoute | null>(null);
+  const routeRef = useRef(route);
+  const blockerRef = useRef<(() => boolean) | null>(null);
+  routeRef.current = route;
 
+  const mayNavigate = useCallback(() => blockerRef.current?.() ?? true, []);
+  const registerBlocker = useCallback((blocker: () => boolean) => {
+    blockerRef.current = blocker;
+    return () => {
+      if (blockerRef.current === blocker) blockerRef.current = null;
+    };
+  }, []);
   const navigate = useCallback(
     (target: NavigableRoute | string, options: { replace?: boolean } = {}) => {
+      if (!mayNavigate()) return;
       const pathname = typeof target === 'string' ? target : appPath(target);
       if (options.replace) window.history.replaceState(null, '', pathname);
       else window.history.pushState(null, '', pathname);
-      setRoute(parseAppPath(pathname));
+      const next = parseAppPath(pathname);
+      routeRef.current = next;
+      setRoute(next);
       window.scrollTo({ top: 0 });
     },
-    [],
+    [mayNavigate],
   );
 
   const loadProjects = useCallback(async (signal?: AbortSignal) => {
@@ -57,7 +73,15 @@ export default function AppRouter() {
         setAuth({ configured: true, authenticated: false });
         setError(toUserMessage(cause, '暂时无法连接罗网'));
       });
-    const onPopState = () => setRoute(parseAppPath(window.location.pathname));
+    const onPopState = () => {
+      if (!mayNavigate()) {
+        window.history.pushState(null, '', routePath(routeRef.current));
+        return;
+      }
+      const next = parseAppPath(window.location.pathname);
+      routeRef.current = next;
+      setRoute(next);
+    };
     const onUnauthorized = () => {
       setAuth({ configured: true, authenticated: false });
       setProjects([]);
@@ -70,7 +94,7 @@ export default function AppRouter() {
       window.removeEventListener('popstate', onPopState);
       window.removeEventListener('luowang:unauthorized', onUnauthorized);
     };
-  }, [loadProjects]);
+  }, [loadProjects, mayNavigate]);
 
   useEffect(() => {
     if (!auth) return;
@@ -117,6 +141,8 @@ export default function AppRouter() {
   }
 
   async function logout() {
+    if (!mayNavigate()) return;
+    blockerRef.current = null;
     try {
       await requestJson('/api/auth/logout', { method: 'POST' });
     } finally {
@@ -154,7 +180,7 @@ export default function AppRouter() {
   }
 
   return (
-    <NavigationProvider navigate={navigate}>
+    <NavigationProvider navigate={navigate} registerBlocker={registerBlocker}>
       <AppShell route={route} project={project} onLogout={() => void logout()}>
         {error && (
           <p className="app-banner" role="alert">
@@ -189,6 +215,21 @@ function RoutePage({
   }
   if (route.name === 'project-new') {
     return <ProjectOnboardingPage projects={projects} onProjectsChanged={reloadProjects} />;
+  }
+  if (route.name === 'project-overview') {
+    return <ProjectOverviewPage projectId={route.projectId} />;
+  }
+  if (route.name === 'project-readiness') {
+    return <ProjectReadinessPage projectId={route.projectId} />;
+  }
+  if (route.name === 'project-settings') {
+    return (
+      <ProjectSettingsPage
+        projectId={route.projectId}
+        section={route.section}
+        onProjectChanged={reloadProjects}
+      />
+    );
   }
   const page = pageCopy(route);
   return (
@@ -230,6 +271,10 @@ function initialRoute(): AppRoute {
     return { name: 'workspace' };
   }
   return parseAppPath(window.location.pathname);
+}
+
+function routePath(route: AppRoute): string {
+  return route.name === 'not-found' ? route.pathname : appPath(route);
 }
 
 function routeTitle(route: AppRoute): string {

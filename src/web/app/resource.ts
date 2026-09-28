@@ -13,6 +13,8 @@ export function useResource<T>(
   errorMessage: (cause: unknown) => string,
 ): ResourceState<T> {
   const generation = useRef(0);
+  const errorMessageRef = useRef(errorMessage);
+  errorMessageRef.current = errorMessage;
   const [revision, setRevision] = useState(0);
   const [state, setState] = useState<Omit<ResourceState<T>, 'reload'>>({
     value: null,
@@ -36,13 +38,13 @@ export function useResource<T>(
           setState((current) => ({
             value: current.value,
             loading: false,
-            error: errorMessage(cause),
+            error: errorMessageRef.current(cause),
           }));
         }
       },
     );
     return () => controller.abort();
-  }, [errorMessage, key, load, revision]);
+  }, [key, load, revision]);
 
   return { ...state, reload };
 }

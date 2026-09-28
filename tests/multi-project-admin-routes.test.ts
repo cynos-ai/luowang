@@ -153,6 +153,27 @@ describe('project administration routes', () => {
       });
       assert.equal(aDetail.json().secrets.gitToken.configured, true);
       assert.ok(!aDetail.body.includes('private-token-a'));
+      const renamed = await app.inject({
+        method: 'PUT',
+        url: `/api/projects/${a.projectId}/profile`,
+        headers: cookie,
+        payload: { displayName: '项目 A' },
+      });
+      assert.equal(renamed.statusCode, 200);
+      assert.equal(renamed.json().project.displayName, '项目 A');
+      assert.equal(renamed.json().project.githubRepositoryId, a.githubRepositoryId);
+      assert.equal(projects.get(a.projectId)?.displayName, '项目 A');
+      assert.equal(
+        (
+          await app.inject({
+            method: 'PUT',
+            url: `/api/projects/${a.projectId}/profile`,
+            headers: cookie,
+            payload: { displayName: '', repositoryOwner: 'attacker' },
+          })
+        ).statusCode,
+        400,
+      );
       assert.equal(
         (
           await app.inject({

@@ -7,6 +7,8 @@ export type ProjectReference = {
   repositoryName: string;
   status: 'active' | 'paused';
   configRevision: number;
+  createdAt?: string;
+  updatedAt?: string;
 };
 
 export type ProjectConfiguration = Omit<RepositoryConfig, 'repository'> & {

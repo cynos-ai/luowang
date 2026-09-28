@@ -111,6 +111,20 @@ export async function registerProjectAdminRoutes(
       };
     });
 
+    routes.put<{ Params: { projectId: string } }>(
+      '/api/projects/:projectId/profile',
+      async (request) => {
+        requireProject(options.projects, request.params.projectId);
+        const body = readRecord(request.body);
+        if (Object.keys(body).length !== 1 || typeof body.displayName !== 'string') {
+          throw new AppError('PROJECT_INPUT_INVALID', '项目名称无效', 400);
+        }
+        return {
+          project: options.projects.rename(request.params.projectId, body.displayName),
+        };
+      },
+    );
+
     routes.get<{ Params: { projectId: string } }>(
       '/api/projects/:projectId/readiness',
       async (request) =>

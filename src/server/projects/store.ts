@@ -27,6 +27,7 @@ export interface ProjectStore {
   }): ProjectRecord;
   get(projectId: string): ProjectRecord | null;
   list(): ProjectRecord[];
+  rename(projectId: string, displayName: string): ProjectRecord;
 }
 
 export class ProjectStoreError extends Error {
@@ -117,6 +118,19 @@ export function createProjectStore(
           .prepare('SELECT * FROM projects ORDER BY created_at, project_id')
           .all() as ProjectRow[]
       ).map(toProject);
+    },
+    rename(projectId, value) {
+      const displayName = value.trim();
+      if (displayName.length < 1 || displayName.length > 120) {
+        throw new ProjectStoreError('PROJECT_INVALID', '项目名称无效');
+      }
+      const result = database
+        .prepare('UPDATE projects SET display_name = ?, updated_at = ? WHERE project_id = ?')
+        .run(displayName, now(), projectId);
+      if (result.changes !== 1) {
+        throw new ProjectStoreError('PROJECT_INVALID', '项目不存在');
+      }
+      return requireProject(database, projectId);
     },
   };
 }

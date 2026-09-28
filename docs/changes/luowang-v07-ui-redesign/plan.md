@@ -1,7 +1,7 @@
 # LuoWang v0.7.0 UI 重构实施计划
 
 - 版本：v0.7.0
-- 状态：Implementation Plan v1；Phase 0–3 已完成
+- 状态：Implementation Plan v1；Phase 0–4 已完成
 - 日期：2026-09-27
 - 关联规格：[spec.md](./spec.md)
 - 视觉设计：[design.md](./design.md)
@@ -434,7 +434,7 @@ src/web/
 
 完成证明：登录、异常优先工作台、项目筛选/排序/暂停确认和四步接入向导已绑定真实 API；零项目页只展示连接仓库、配置非生产环境、检查并启用三个真实步骤。向导以项目详情和 readiness 快照恢复，Secret 只写不回显，检查通过后仍需单独点击启用。`tests/e2e/v07-ui-workflows-smoke.ts` 覆盖合成工作台、空状态、暂停确认、创建项目、配置、Secret、镜像、刷新恢复、显式启用、迟到响应丢弃以及 768px 无横向溢出；1440px/768px 浏览器截图确认工作台构图。Docker quality 环境全量 Vitest 为 465 项通过、2 项跳过，完整 `npm run test:e2e`、格式、lint、typecheck、build 和 `git diff --check` 通过。
 
-### Phase 4：项目概览、运行准备与项目设置
+### Phase 4：项目概览、运行准备与项目设置（已完成）
 
 #### 修改范围
 
@@ -454,6 +454,8 @@ src/web/
 - 已保存、已配置、连通和就绪四种事实可区分；
 - readiness 局部超时不遮挡项目其他信息；
 - 项目 ID 不从显示名称推导。
+
+完成证明：项目概览以真实项目、Run、Queue、索引、场景和 readiness 数据给出唯一推荐行动；运行准备页只执行显式检查、仓库同步和受确认保护的镜像准备，不提供配置编辑；项目设置拆为六个稳定 URL 分组，普通配置、项目资料和四类项目 Secret 分别提交，Secret 原值不回显。新增受认证和 origin guard 保护的项目显示名称更新接口，仓库稳定身份保持只读。待处理队列或活动 Run 会显示具体测试记录并锁定配置；未保存草稿拦截站内导航和浏览器离开，写入期间拒绝切换。`tests/e2e/v07-ui-workflows-smoke.ts` 覆盖唯一行动、运行准备无编辑控件、局部 readiness 超时、活动 Run 锁定、草稿确认、写入锁和 768px 无横向溢出；1440px、1024px、768px 浏览器截图确认三类页面构图。Docker quality 环境全量 Vitest 为 465 项通过、2 项跳过，导航与工作流 E2E、格式、lint、typecheck、build 和 `git diff --check` 通过。
 
 ### Phase 5：测试页和实时任务
 

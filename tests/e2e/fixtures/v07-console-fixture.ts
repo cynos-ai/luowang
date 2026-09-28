@@ -109,6 +109,20 @@ export function createV07ConsoleFixture(
         message: '通过',
         checkedAt: now,
       },
+      {
+        id: 'credentials',
+        label: '测试与清理凭据',
+        status: 'ok' as const,
+        message: '配置一致',
+        checkedAt: now,
+      },
+      {
+        id: 'deployment',
+        label: '共享依赖',
+        status: 'ok' as const,
+        message: '模型、浏览器和对象存储可用',
+        checkedAt: now,
+      },
     ],
   };
   const readinessB = {

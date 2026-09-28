@@ -1,4 +1,4 @@
-import { createContext, useContext, type MouseEvent, type ReactNode } from 'react';
+import { createContext, useContext, useEffect, type MouseEvent, type ReactNode } from 'react';
 
 import type { AppRoute } from './route';
 import { appPath } from './route';
@@ -7,15 +7,21 @@ export type NavigableRoute = Exclude<AppRoute, { name: 'not-found' }>;
 
 type NavigationContextValue = {
   navigate: (target: NavigableRoute | string, options?: { replace?: boolean }) => void;
+  registerBlocker: (blocker: () => boolean) => () => void;
 };
 
 const NavigationContext = createContext<NavigationContextValue | null>(null);
 
 export function NavigationProvider({
   navigate,
+  registerBlocker,
   children,
 }: NavigationContextValue & { children: ReactNode }) {
-  return <NavigationContext.Provider value={{ navigate }}>{children}</NavigationContext.Provider>;
+  return (
+    <NavigationContext.Provider value={{ navigate, registerBlocker }}>
+      {children}
+    </NavigationContext.Provider>
+  );
 }
 
 export function AppLink({
@@ -61,4 +67,12 @@ export function useNavigation(): NavigationContextValue {
   const value = useContext(NavigationContext);
   if (!value) throw new Error('NavigationProvider is missing');
   return value;
+}
+
+export function useNavigationBlocker(blocker: (() => boolean) | null): void {
+  const { registerBlocker } = useNavigation();
+  useEffect(() => {
+    if (!blocker) return;
+    return registerBlocker(blocker);
+  }, [blocker, registerBlocker]);
 }

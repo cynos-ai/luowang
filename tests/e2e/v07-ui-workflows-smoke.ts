@@ -22,6 +22,20 @@ const newProject = {
   createdAt: fixture.now,
   updatedAt: fixture.now,
 };
+const projectAConfiguration = {
+  language: 'zh-CN',
+  scenarioBranch: 'scenario-testing',
+  scenarioMode: 'autonomous',
+  scenarioLabels: ['core'],
+  pollIntervalSeconds: 60,
+  cron: '',
+  triggerOnCommit: true,
+  environmentDescription: '合成非生产环境',
+  baseUrl: 'https://fixture.example.test',
+  externalDatabase: '',
+  testDataCleanupUrl: '',
+  executionDockerfile: 'Dockerfile',
+};
 const configuration = {
   language: 'zh-CN',
   scenarioBranch: 'scenario-testing',
@@ -46,12 +60,19 @@ let created = false;
 let ready = false;
 let resumeCalls = 0;
 let emptyWorkspace = false;
+let readinessFailure = false;
 let holdWorkspace = false;
+let holdConfiguration = false;
 let releaseWorkspace: () => void = () => undefined;
+let releaseConfiguration: () => void = () => undefined;
 const workspaceGate = new Promise<void>((resolve) => {
   releaseWorkspace = resolve;
 });
+const configurationGate = new Promise<void>((resolve) => {
+  releaseConfiguration = resolve;
+});
 const writes: string[] = [];
+const apiRequests: string[] = [];
 
 const server = createServer(async (request, response) => {
   const pathname = new URL(request.url ?? '/', 'http://localhost').pathname;
@@ -89,6 +110,7 @@ try {
     const request = route.request();
     const pathname = new URL(request.url()).pathname;
     const method = request.method();
+    apiRequests.push(`${method} ${pathname}`);
     if (method !== 'GET') writes.push(`${method} ${pathname}`);
     if (pathname === '/api/mode') return route.fulfill({ json: { mode: 'multi-project' } });
     if (pathname === '/api/auth/status') {
@@ -115,6 +137,61 @@ try {
       projects[0].status = 'paused';
       return route.fulfill({ json: { project: projects[0] } });
     }
+    const projectABase = `/api/projects/${projects[0].projectId}`;
+    if (pathname.startsWith(projectABase)) {
+      const suffix = pathname.slice(projectABase.length);
+      const projectData = fixture.projectData[projects[0].projectId];
+      if (suffix === '' && method === 'GET') {
+        return route.fulfill({
+          json: {
+            project: projects[0],
+            configuration: projectAConfiguration,
+            secrets: {
+              gitToken: { configured: true, masked: '••••' },
+              testUsername: { configured: true, masked: '••••' },
+              testPassword: { configured: true, masked: '••••' },
+              testDataCleanupToken: { configured: false, masked: null },
+            },
+          },
+        });
+      }
+      if (suffix === '/readiness/status') {
+        if (readinessFailure) {
+          return route.fulfill({
+            status: 504,
+            json: { error: { code: 'GIT_REMOTE_TIMEOUT', message: 'Git 远程检查超时' } },
+          });
+        }
+        return route.fulfill({ json: { readiness: projectData.readiness } });
+      }
+      if (suffix === '/index') {
+        return route.fulfill({
+          json: {
+            index: {
+              commitSha: fixture.workspace.projects[0].indexedCommit,
+              syncedAt: fixture.now,
+              errors: [],
+            },
+          },
+        });
+      }
+      if (suffix === '/runs') return route.fulfill({ json: { runs: projectData.runs } });
+      if (suffix === '/runs/current') {
+        return route.fulfill({ json: { run: projectData.runs[0] } });
+      }
+      if (suffix === '/queue') return route.fulfill({ json: { queue: projectData.queue } });
+      if (suffix === '/scenarios') {
+        return route.fulfill({ json: { scenarios: projectData.scenarios } });
+      }
+      if (suffix === '/repository/sync' && method === 'POST') {
+        return route.fulfill({
+          json: { sync: { status: 'synced', commitSha: 'a'.repeat(40), errors: [] } },
+        });
+      }
+      if (suffix === '/readiness/check' && method === 'POST') {
+        return route.fulfill({ json: { readiness: projectData.readiness } });
+      }
+    }
     const base = `/api/projects/${newProject.projectId}`;
     if (!pathname.startsWith(base)) {
       return route.fulfill({ status: 404, json: { error: { message: '不存在' } } });
@@ -126,7 +203,29 @@ try {
     if (suffix === '/readiness/status' && method === 'GET') {
       return route.fulfill({ json: { readiness: readiness() } });
     }
+    if (suffix === '/index' && method === 'GET') {
+      return route.fulfill({
+        json: { index: { commitSha: 'a'.repeat(40), syncedAt: fixture.now, errors: [] } },
+      });
+    }
+    if (suffix === '/runs' && method === 'GET') {
+      return route.fulfill({ json: { runs: [] } });
+    }
+    if (suffix === '/runs/current' && method === 'GET') {
+      return route.fulfill({ json: { run: null } });
+    }
+    if (suffix === '/queue' && method === 'GET') {
+      return route.fulfill({ json: { queue: [] } });
+    }
+    if (suffix === '/scenarios' && method === 'GET') {
+      return route.fulfill({ json: { scenarios: [] } });
+    }
+    if (suffix === '/profile' && method === 'PUT') {
+      newProject.displayName = request.postDataJSON().displayName;
+      return route.fulfill({ json: { project: newProject } });
+    }
     if (suffix === '/configuration' && method === 'PUT') {
+      if (holdConfiguration) await configurationGate;
       Object.assign(configuration, request.postDataJSON());
       newProject.configRevision += 1;
       return route.fulfill({ json: { project: newProject, configuration } });
@@ -229,6 +328,60 @@ try {
   assert.equal(resumeCalls, 1);
   await page.getByRole('button', { name: '项目已启用' }).waitFor();
 
+  await page.goto(`${origin}/projects/${projects[0].projectId}/overview`);
+  await page
+    .getByRole('heading', { name: '测试正在执行' })
+    .waitFor({ timeout: 5_000 })
+    .catch(async () => {
+      throw new Error(
+        `${await page.locator('body').innerText()}\n${apiRequests.slice(-12).join('\n')}`,
+      );
+    });
+  assert.equal(await page.locator('.overview-hero .button').count(), 1);
+  await page.getByRole('link', { name: '运行准备', exact: true }).click();
+  await page.getByRole('heading', { name: '仓库与同步' }).waitFor();
+  assert.equal(await page.getByLabel('场景维护模式').count(), 0);
+  await page.getByRole('button', { name: '同步场景与报告' }).click();
+  await page.getByText(/同步场景与报告完成/).waitFor();
+  await page.getByRole('button', { name: '准备或重建镜像' }).click();
+  await page.getByRole('dialog').getByRole('button', { name: '返回' }).click();
+  readinessFailure = true;
+  await page.reload();
+  await page.getByText('Git 远程检查超时').waitFor();
+  await page.getByRole('heading', { name: '仓库与同步' }).waitFor();
+  readinessFailure = false;
+
+  await page.goto(`${origin}/projects/${projects[0].projectId}/settings/testing`);
+  await page.getByText('设置暂时锁定').waitFor();
+  assert.equal(await page.getByLabel('场景分支').isDisabled(), true);
+  assert.ok(
+    (await page.locator('.lock-notice').innerText()).includes(
+      fixture.projectData[projects[0].projectId].runs[0].runId,
+    ),
+  );
+
+  await page.goto(`${origin}/projects/${newProject.projectId}/settings/environment`);
+  await page.getByLabel('环境说明').fill('有未保存修改的合成环境');
+  page.once('dialog', async (dialog) => {
+    assert.match(dialog.message(), /未保存/);
+    await dialog.dismiss();
+  });
+  await page.getByRole('link', { name: '概览', exact: true }).click();
+  assert.match(page.url(), /\/settings\/environment$/);
+  holdConfiguration = true;
+  const pendingWrite = page.waitForRequest(
+    (request) =>
+      request.method() === 'PUT' &&
+      request.url().endsWith(`/api/projects/${newProject.projectId}/configuration`),
+  );
+  await page.getByRole('button', { name: '保存测试环境' }).click();
+  await pendingWrite;
+  await page.getByRole('link', { name: '项目', exact: true }).click();
+  assert.match(page.url(), /\/settings\/environment$/);
+  releaseConfiguration();
+  await page.getByText(/已保存不代表连通或就绪/).waitFor();
+  assert.ok(writes.includes(`PUT /api/projects/${newProject.projectId}/configuration`));
+
   holdWorkspace = true;
   const delayedRequest = page.waitForRequest((request) => request.url().endsWith('/api/workspace'));
   await page.getByRole('link', { name: '工作台', exact: true }).click();
@@ -240,7 +393,13 @@ try {
   assert.equal(await page.getByText('Runner 执行').count(), 0);
 
   await page.setViewportSize({ width: 768, height: 900 });
-  for (const path of ['/workspace', `/projects/new?projectId=${newProject.projectId}`]) {
+  for (const path of [
+    '/workspace',
+    `/projects/new?projectId=${newProject.projectId}`,
+    `/projects/${projects[0].projectId}/overview`,
+    `/projects/${projects[0].projectId}/readiness`,
+    `/projects/${newProject.projectId}/settings/credentials`,
+  ]) {
     await page.goto(`${origin}${path}`);
     const dimensions = await page.evaluate(() => ({
       scrollWidth: document.documentElement.scrollWidth,
