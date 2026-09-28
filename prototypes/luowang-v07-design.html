@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="zh-CN" data-design="luowang-v07">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="light dark" />
+    <link rel="icon" href="data:," />
+    <title>罗网 v0.7.0 · 怪盗动态构成</title>
+    <link rel="stylesheet" href="./luowang-v07-design-base.css?v=3" />
+    <link rel="stylesheet" href="./luowang-v07-design.css?v=4" />
+    <link rel="stylesheet" href="./luowang-v07-design-pages.css?v=1" />
+    <link rel="stylesheet" href="./luowang-v07-design-responsive.css?v=4" />
+  </head>
+  <body>
+    <aside class="prototype-toolbar" aria-label="原型控制">
+      <div class="prototype-title">
+        <strong>罗网 v0.7.0</strong>
+        <span>怪盗动态构成</span>
+      </div>
+      <div class="prototype-controls">
+        <label>
+          页面
+          <select id="page-select" aria-label="选择样例页面">
+            <optgroup label="入口与全局">
+              <option value="login">登录</option>
+              <option value="workspace">工作台</option>
+              <option value="projects">项目列表</option>
+              <option value="system-status">系统状态</option>
+              <option value="global-settings">全局设置</option>
+              <option value="account">账号设置</option>
+            </optgroup>
+            <optgroup label="项目接入">
+              <option value="onboarding-repo">01 连接仓库</option>
+              <option value="onboarding-test">02 配置测试</option>
+              <option value="onboarding-env">03 配置环境</option>
+              <option value="onboarding-ready">04 准备并启用</option>
+            </optgroup>
+            <optgroup label="项目页面">
+              <option value="project-overview">项目概览</option>
+              <option value="test-idle">测试 · 空闲</option>
+              <option value="test-queued">测试 · 排队</option>
+              <option value="test-running">测试 · 执行中</option>
+              <option value="test-completed">测试 · 已完成</option>
+              <option value="runs">测试记录</option>
+              <option value="run">测试记录详情</option>
+              <option value="scenarios">场景列表</option>
+              <option value="scenario">场景详情</option>
+              <option value="readiness">运行准备</option>
+              <option value="project-settings">项目设置</option>
+            </optgroup>
+            <optgroup label="规范与状态">
+              <option value="states">界面状态</option>
+              <option value="design-system">设计规范</option>
+            </optgroup>
+          </select>
+        </label>
+        <button id="modal-trigger" type="button">查看弹框</button>
+      </div>
+      <div class="prototype-note">设计原型数据，不代表真实运行</div>
+    </aside>
+
+    <div id="app" class="prototype-stage"></div>
+
+    <dialog id="confirm-dialog" class="confirm-dialog" aria-labelledby="dialog-title">
+      <form method="dialog">
+        <div class="dialog-mark" aria-hidden="true"><span></span><span></span><span></span></div>
+        <p class="dialog-context">官网非生产测试 · cynos-ai/cynos-website</p>
+        <h2 id="dialog-title">发起测试</h2>
+        <dl>
+          <div>
+            <dt>来源</dt>
+            <dd>develop</dd>
+          </div>
+          <div>
+            <dt>请求</dt>
+            <dd>验证登录状态恢复与注册错误处理</dd>
+          </div>
+          <div>
+            <dt>项目状态</dt>
+            <dd>已就绪</dd>
+          </div>
+        </dl>
+        <p class="dialog-warning">请求进入全局队列后将固定项目配置；本版不提供取消。</p>
+        <div class="dialog-actions">
+          <button value="cancel" class="button-secondary">返回</button>
+          <button value="confirm" class="button-primary">发起测试</button>
+        </div>
+      </form>
+    </dialog>
+
+    <script type="module" src="./luowang-v07-design.js?v=4"></script>
+  </body>
+</html>

@@ -528,3 +528,167 @@ export interface OperationsDashboardResponse {
   dependencies: OperationsDependencyHealth[];
   recentRuns: OperationsRunSummary[];
 }
+
+export interface ConsoleProjectReference {
+  projectId: string;
+  displayName: string;
+  repositoryOwner: string;
+  repositoryName: string;
+  status: 'active' | 'paused';
+}
+
+export type ConsoleCheckStatus =
+  'ok' | 'degraded' | 'unavailable' | 'not_configured' | 'unknown' | 'not_checked';
+
+export interface ConsoleReadinessCheck {
+  id: string;
+  label: string;
+  status: ConsoleCheckStatus;
+  message: string;
+  checkedAt: string | null;
+}
+
+export interface ConsoleReadinessSnapshot {
+  status: 'ready' | 'not_ready' | 'stale' | 'not_checked' | 'error';
+  checkedAt: string | null;
+  staleReason: string | null;
+  checks: ConsoleReadinessCheck[];
+}
+
+export interface ConsoleRunReference {
+  runId: string;
+  status: RunLifecycleStatus;
+  phase: RunPhase;
+  result: RunResult | null;
+  targetCommit: string | null;
+  startedAt: string;
+  finishedAt: string | null;
+}
+
+export interface WorkspaceActiveRun extends ConsoleRunReference {
+  project: ConsoleProjectReference;
+  role: 'main-a' | 'runner' | 'reviewer' | 'main-b' | null;
+  stage: string;
+  currentScenario: string | null;
+  progress: {
+    completed: number;
+    total: number;
+  };
+  updatedAt: string;
+}
+
+export interface WorkspaceQueueItem {
+  position: number;
+  queueId: number;
+  requestId: string;
+  project: ConsoleProjectReference;
+  request: string;
+  trigger: RunTrigger;
+  status: 'queued' | 'running' | 'waiting_archive';
+  createdAt: string;
+}
+
+export interface WorkspaceProjectSummary {
+  project: ConsoleProjectReference;
+  activity: 'running' | 'queued' | 'idle' | 'paused';
+  queuePosition: number | null;
+  recentRun: ConsoleRunReference | null;
+  readiness: ConsoleReadinessSnapshot;
+  attentionCount: number;
+  indexedCommit: string | null;
+  lastIndexedAt: string | null;
+  staleReason: string | null;
+  readError: {
+    code: string;
+    message: string;
+  } | null;
+}
+
+export type WorkspaceAttentionKind =
+  | 'not_ready'
+  | 'blocked_run'
+  | 'cleanup_failed'
+  | 'archive_failed'
+  | 'index_error'
+  | 'scenario_review'
+  | 'background_error';
+
+export type ConsoleTarget =
+  | { kind: 'project-overview' | 'project-readiness'; projectId: string }
+  | { kind: 'run'; projectId: string; runId: string }
+  | { kind: 'scenario'; projectId: string; scenarioId: string }
+  | { kind: 'system' };
+
+export interface WorkspaceAttentionItem {
+  id: string;
+  kind: WorkspaceAttentionKind;
+  severity: 'warning' | 'error';
+  title: string;
+  detail: string;
+  occurredAt: string | null;
+  project: ConsoleProjectReference | null;
+  target: ConsoleTarget;
+}
+
+export interface WorkspaceRecentRun extends ConsoleRunReference {
+  project: ConsoleProjectReference;
+}
+
+export interface WorkspaceResponse {
+  fetchedAt: string;
+  activeRun: WorkspaceActiveRun | null;
+  queue: WorkspaceQueueItem[];
+  projects: WorkspaceProjectSummary[];
+  recentRuns: WorkspaceRecentRun[];
+  attention: WorkspaceAttentionItem[];
+  partialErrors: Array<{
+    projectId: string | null;
+    code: string;
+    message: string;
+  }>;
+}
+
+export interface SystemDependencyStatus {
+  id: 'provider' | 'browser' | 'oss';
+  label: string;
+  status: ConsoleCheckStatus;
+  message: string;
+  checkedAt: string | null;
+  lastSucceededAt: string | null;
+  settingsSection: 'models' | 'browser' | 'object-storage';
+}
+
+export interface SystemStatusResponse {
+  fetchedAt: string;
+  service: {
+    name: 'luowang';
+    version: string;
+    build: string | null;
+  };
+  database: DatabaseStatus;
+  secretStore: 'available' | 'unavailable';
+  scheduler: OperationsSchedulerStatus;
+  dependencies: SystemDependencyStatus[];
+  recovery: {
+    guideId: 'multi-project-recovery';
+    available: boolean;
+  };
+}
+
+export interface SystemResourcesResponse {
+  fetchedAt: string;
+  instanceId: string;
+  projects: string[];
+  containers: Array<{
+    containerId: string;
+    projectId: string;
+    runId: string;
+  }>;
+  images: Array<{
+    imageId: string;
+    projectId: string;
+    sizeBytes: number | null;
+    disposition: 'referenced' | 'restart-candidate' | 'manual-review';
+  }>;
+  candidateImageBytes: number;
+}
