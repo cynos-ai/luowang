@@ -1,7 +1,7 @@
 # LuoWang v0.7.0 UI 重构实施计划
 
 - 版本：v0.7.0
-- 状态：Implementation Plan v1；Phase 0–5 已完成
+- 状态：Implementation Plan v1；Phase 0–8 已完成，真实外部 live/release 验收待授权输入
 - 日期：2026-09-27
 - 关联规格：[spec.md](./spec.md)
 - 视觉设计：[design.md](./design.md)
@@ -528,7 +528,7 @@ src/web/
 
 完成证明：系统状态页已绑定只读服务、数据库、Secret Store、调度器、共享依赖快照和 Docker 资源盘点 API；外部连接只由显式检查触发，资源归属失败时 fail closed，不提供删除操作，也不虚构启动时间或恢复演练历史。全局设置按模型与角色、浏览器、对象存储、本地数据和全局凭据五个稳定 URL 分组独立保存，持续标记“影响全部项目”；Final Main 明示复用 Main，项目凭据不进入全局凭据，Secret 只写不回显，保存与连接状态分离，活动执行锁定普通配置，OSS 历史证据保护继续由既有后端 guard 执行。本地根目录只读，账号页支持显示名称和经当前密码验证的改密后退出。`tests/e2e/v07-ui-workflows-smoke.ts` 覆盖资源盘点失败、显式依赖检查、全局配置保存、凭据隔离与不回显、账号资料、密码确认和退出，以及新增页面 768px 无整页横向溢出；合成 fixture 截图 `.cynos/browser-evidence/v07-phase7-system-1440.png`、`.cynos/browser-evidence/v07-phase7-global-settings-1440.png` 和 `.cynos/browser-evidence/v07-phase7-account-1440.png` 已人工检查。Docker quality 环境全量 Vitest 为 465 项通过、2 项跳过，完整 E2E、格式、lint、typecheck、build 和 `git diff --check` 通过。
 
-### Phase 8：状态完善、可访问性与全量回归
+### Phase 8：状态完善、可访问性与全量回归（已完成）
 
 #### 修改范围
 
@@ -550,6 +550,8 @@ src/web/
 - reduced motion 下无非必要位移动画；
 - 新 UI E2E、现有单元测试和 release 相关 local 验收通过；
 - 未运行的 live 验收明确记录为未运行，不冒充通过。
+
+完成证明：全页面工作流 E2E 已覆盖 1024px 与最低 768 CSS px，无整页横向溢出且每页保持唯一 `h1`；Chromium CDP 以 2 倍 device scale 和 768 CSS px 验证 200% 条件下的重排、内容与操作，截图为 `.cynos/browser-evidence/v07-phase8-200-percent.png`。键盘验收覆盖全局导航、跳到主要内容、可见焦点、原生 modal 焦点锁定及关闭后焦点归还；`prefers-reduced-motion: reduce` 下全局动画和 transition 被压缩至 0.01ms。Markdown 一级标题已降为页面内二级标题，避免不可信工件制造重复主标题。已删除未引用的旧多项目 `src/web/projects/ProjectApp.tsx`，保留仍由旧单项目模式使用的 `App.tsx`、`Shell` 和旧设置实现；README 已更新为“工作台｜项目｜系统状态｜设置”、全局设置、运行准备、测试与测试记录的新路径。Docker quality 环境最终全量 Vitest 为 465 项通过、2 项跳过，完整 E2E、格式、lint、typecheck、build 和宿主 `git diff --check` 通过。`npm run test:acceptance:local` 返回 `local=passed`；因未提供 39 项真实外部输入，`live=blocked`、`release=blocked`，未冒充真实联合或发布验收通过；`humanScoring` 仍为 `not_run`。
 
 ## 8. 验收矩阵
 

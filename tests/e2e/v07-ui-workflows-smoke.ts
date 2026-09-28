@@ -529,7 +529,12 @@ try {
   await page.getByRole('button', { name: '全部' }).click();
   const firstProject = page.locator('.project-directory > li').first();
   assert.ok((await firstProject.innerText()).includes('官网非生产测试'));
-  await firstProject.getByRole('button', { name: '暂停', exact: true }).click();
+  const pauseButton = firstProject.getByRole('button', { name: '暂停', exact: true });
+  await pauseButton.click();
+  await page.keyboard.press('Escape');
+  await page.getByRole('dialog').waitFor({ state: 'hidden' });
+  assert.equal(await pauseButton.evaluate((element) => element === document.activeElement), true);
+  await pauseButton.click();
   await page.getByRole('dialog').getByRole('button', { name: '确认暂停' }).click();
   await page.getByText('官网非生产测试').waitFor();
   assert.ok(writes.includes(`POST /api/projects/${projects[0].projectId}/pause`));
@@ -755,8 +760,7 @@ try {
   await page.waitForTimeout(100);
   assert.equal(await page.getByText('Runner 执行').count(), 0);
 
-  await page.setViewportSize({ width: 768, height: 900 });
-  for (const path of [
+  const responsivePaths = [
     '/workspace',
     `/projects/new?projectId=${newProject.projectId}`,
     `/projects/${projects[0].projectId}/overview`,
@@ -770,16 +774,69 @@ try {
     '/settings/models',
     '/settings/credentials',
     '/account',
-  ]) {
-    await page.goto(`${origin}${path}`);
-    await page.locator('h1').waitFor();
-    const dimensions = await page.evaluate(() => ({
-      scrollWidth: document.documentElement.scrollWidth,
-      clientWidth: document.documentElement.clientWidth,
-    }));
-    assert.equal(dimensions.scrollWidth, dimensions.clientWidth);
-    assert.equal(await page.locator('h1').count(), 1, `expected one h1 at ${path}`);
+  ];
+  for (const width of [1024, 768]) {
+    await page.setViewportSize({ width, height: 900 });
+    for (const path of responsivePaths) {
+      await page.goto(`${origin}${path}`);
+      await page.locator('h1').waitFor();
+      const dimensions = await page.evaluate(() => ({
+        scrollWidth: document.documentElement.scrollWidth,
+        clientWidth: document.documentElement.clientWidth,
+      }));
+      assert.equal(
+        dimensions.scrollWidth,
+        dimensions.clientWidth,
+        `overflow at ${width}px: ${path}`,
+      );
+      assert.equal(await page.locator('h1').count(), 1, `expected one h1 at ${path}`);
+    }
   }
+
+  const cdp = await page.context().newCDPSession(page);
+  await cdp.send('Emulation.setDeviceMetricsOverride', {
+    width: 768,
+    height: 900,
+    deviceScaleFactor: 2,
+    mobile: false,
+    screenWidth: 1536,
+    screenHeight: 1800,
+  });
+  await page.goto(`${origin}/settings/models`);
+  await page.getByRole('heading', { name: '全局设置' }).waitFor();
+  await page.keyboard.press('Tab');
+  assert.equal(
+    await page.evaluate(() => document.activeElement?.textContent?.trim()),
+    '跳到主要内容',
+  );
+  assert.equal(
+    await page.evaluate(() => getComputedStyle(document.activeElement!).outlineStyle),
+    'solid',
+  );
+  await page.keyboard.press('Enter');
+  assert.equal(await page.evaluate(() => document.activeElement?.id), 'main-content');
+  assert.equal(await page.evaluate(() => window.devicePixelRatio), 2);
+  assert.equal(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth === document.documentElement.clientWidth,
+    ),
+    true,
+  );
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  const reducedMotion = await page.evaluate(() => {
+    const probe = document.createElement('div');
+    probe.style.animationDuration = '10s';
+    probe.style.transitionDuration = '10s';
+    document.body.append(probe);
+    const style = getComputedStyle(probe);
+    const result = { animation: style.animationDuration, transition: style.transitionDuration };
+    probe.remove();
+    return result;
+  });
+  assert.ok(['0.01ms', '1e-05s'].includes(reducedMotion.animation));
+  assert.ok(['0.01ms', '1e-05s'].includes(reducedMotion.transition));
+  await cdp.detach();
+
   await page.goto(`${origin}/account`);
   await page.getByLabel('当前密码').fill('current-password');
   await page.getByLabel('新密码', { exact: true }).fill('new-password-123');
