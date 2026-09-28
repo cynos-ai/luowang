@@ -61,6 +61,10 @@ let ready = false;
 let resumeCalls = 0;
 let emptyWorkspace = false;
 let readinessFailure = false;
+let testPollingFailure = false;
+let completedRun = false;
+let zeroProgressRun = false;
+let projectACurrentReads = 0;
 let holdWorkspace = false;
 let holdConfiguration = false;
 let releaseWorkspace: () => void = () => undefined;
@@ -121,6 +125,10 @@ try {
       if (emptyWorkspace) return route.fulfill({ json: emptyFixture.workspace });
       const workspace = structuredClone(fixture.workspace);
       workspace.projects[0].project.status = projects[0].status;
+      if (zeroProgressRun && workspace.activeRun) {
+        workspace.activeRun.progress = { completed: 0, total: 0 };
+        workspace.activeRun.currentScenario = null;
+      }
       return route.fulfill({ json: workspace });
     }
     if (pathname === '/api/projects' && method === 'GET') {
@@ -175,9 +183,53 @@ try {
           },
         });
       }
-      if (suffix === '/runs') return route.fulfill({ json: { runs: projectData.runs } });
+      if (suffix === '/runs') {
+        const currentRun = zeroProgressRun
+          ? {
+              ...projectData.runs[0],
+              scenarioProgress: { completed: 0, total: 0 },
+              currentScenario: null,
+              blockingReasons: ['Agent 会话异常，等待 Harness 收敛'],
+              activities: [
+                ...(projectData.runs[0].activities ?? []),
+                { at: fixture.now, message: 'Agent 会话异常', kind: 'warning' },
+              ],
+            }
+          : projectData.runs[0];
+        const runs = completedRun
+          ? [
+              {
+                ...currentRun,
+                status: 'completed',
+                phase: 'completed',
+                result: 'passed',
+                finishedAt: fixture.now,
+              },
+            ]
+          : [currentRun];
+        return route.fulfill({ json: { runs } });
+      }
       if (suffix === '/runs/current') {
-        return route.fulfill({ json: { run: projectData.runs[0] } });
+        projectACurrentReads += 1;
+        if (testPollingFailure) {
+          return route.fulfill({
+            status: 503,
+            json: { error: { code: 'TEMPORARY', message: '合成轮询失败' } },
+          });
+        }
+        const run = zeroProgressRun
+          ? {
+              ...projectData.runs[0],
+              scenarioProgress: { completed: 0, total: 0 },
+              currentScenario: null,
+              blockingReasons: ['Agent 会话异常，等待 Harness 收敛'],
+              activities: [
+                ...(projectData.runs[0].activities ?? []),
+                { at: fixture.now, message: 'Agent 会话异常', kind: 'warning' },
+              ],
+            }
+          : projectData.runs[0];
+        return route.fulfill({ json: { run: completedRun ? null : run } });
       }
       if (suffix === '/queue') return route.fulfill({ json: { queue: projectData.queue } });
       if (suffix === '/scenarios') {
@@ -191,6 +243,26 @@ try {
       if (suffix === '/readiness/check' && method === 'POST') {
         return route.fulfill({ json: { readiness: projectData.readiness } });
       }
+    }
+    const projectBBase = `/api/projects/${projects[1].projectId}`;
+    if (pathname.startsWith(projectBBase)) {
+      const suffix = pathname.slice(projectBBase.length);
+      const projectData = fixture.projectData[projects[1].projectId];
+      if (suffix === '' && method === 'GET') {
+        return route.fulfill({
+          json: {
+            project: projects[1],
+            configuration: projectAConfiguration,
+            secrets,
+          },
+        });
+      }
+      if (suffix === '/readiness/status') {
+        return route.fulfill({ json: { readiness: projectData.readiness } });
+      }
+      if (suffix === '/runs/current') return route.fulfill({ json: { run: null } });
+      if (suffix === '/runs') return route.fulfill({ json: { runs: projectData.runs } });
+      if (suffix === '/queue') return route.fulfill({ json: { queue: projectData.queue } });
     }
     const base = `/api/projects/${newProject.projectId}`;
     if (!pathname.startsWith(base)) {
@@ -210,6 +282,16 @@ try {
     }
     if (suffix === '/runs' && method === 'GET') {
       return route.fulfill({ json: { runs: [] } });
+    }
+    if (suffix === '/runs' && method === 'POST') {
+      assert.ok(request.postDataJSON().request);
+      return route.fulfill({ status: 202, json: { queue: { queueId: 31 } } });
+    }
+    if (suffix === '/merge' && method === 'POST') {
+      const body = request.postDataJSON();
+      assert.equal(body.confirmed, true);
+      assert.equal(body.sourceRef, 'refs/heads/feat/synthetic');
+      return route.fulfill({ status: 202, json: { queue: { queueId: 32 } } });
     }
     if (suffix === '/runs/current' && method === 'GET') {
       return route.fulfill({ json: { run: null } });
@@ -382,6 +464,51 @@ try {
   await page.getByText(/已保存不代表连通或就绪/).waitFor();
   assert.ok(writes.includes(`PUT /api/projects/${newProject.projectId}/configuration`));
 
+  await page.goto(`${origin}/projects/${newProject.projectId}/test`);
+  await page.getByRole('heading', { name: '发起测试' }).waitFor();
+  await page.getByRole('button', { name: '纳入来源后测试' }).click();
+  await page.getByLabel('测试要求').fill('验证合成来源变更');
+  await page.getByLabel('来源 branch、tag 或 commit').fill('refs/heads/feat/synthetic');
+  await page.getByLabel('我确认把该来源纳入当前项目场景测试分支后再测试').check();
+  await page.getByRole('button', { name: '检查请求' }).click();
+  const requestDialog = page.getByRole('dialog');
+  await requestDialog.getByText('refs/heads/feat/synthetic').waitFor();
+  await requestDialog.getByRole('button', { name: '确认进入队列' }).click();
+  await page.getByText('测试请求已进入全局顺序队列。').waitFor();
+  assert.ok(writes.includes(`POST /api/projects/${newProject.projectId}/merge`));
+
+  await page.goto(`${origin}/projects/${projects[1].projectId}/test`);
+  await page.getByRole('heading', { name: '测试请求正在等待' }).waitFor();
+  await page.getByText(/全局执行槽正由\s*官网非生产测试\s*使用/).waitFor();
+  await page.getByLabel('队列第 1 位').waitFor();
+
+  await page.goto(`${origin}/projects/${projects[0].projectId}/test`);
+  await page.getByRole('heading', { name: '验证登录状态恢复与注册错误处理' }).waitFor();
+  assert.equal(await page.locator('.run-stages > li').count(), 8);
+  await page.getByText('3/8').waitFor();
+  zeroProgressRun = true;
+  await page.reload();
+  await page.getByText('0/0').waitFor();
+  await page.getByText('Agent 会话异常', { exact: true }).waitFor();
+  await page.getByText('Agent 会话异常，等待 Harness 收敛').waitFor();
+  zeroProgressRun = false;
+  await page.reload();
+  await page.getByText('3/8').waitFor();
+  testPollingFailure = true;
+  await page.getByText(/自动刷新失败.*合成轮询失败/).waitFor({ timeout: 5_000 });
+  await page.getByText('3/8').waitFor();
+  testPollingFailure = false;
+  const readsBeforeLeaving = projectACurrentReads;
+  await page.getByRole('link', { name: '概览', exact: true }).click();
+  await page.waitForTimeout(2_200);
+  assert.equal(projectACurrentReads, readsBeforeLeaving);
+
+  completedRun = true;
+  await page.goto(`${origin}/projects/${projects[0].projectId}/test`);
+  await page.getByRole('heading', { name: '验证登录状态恢复与注册错误处理' }).waitFor();
+  await page.getByText('刚刚完成').waitFor();
+  await page.getByRole('button', { name: '发起新测试' }).waitFor();
+
   holdWorkspace = true;
   const delayedRequest = page.waitForRequest((request) => request.url().endsWith('/api/workspace'));
   await page.getByRole('link', { name: '工作台', exact: true }).click();
@@ -399,6 +526,7 @@ try {
     `/projects/${projects[0].projectId}/overview`,
     `/projects/${projects[0].projectId}/readiness`,
     `/projects/${newProject.projectId}/settings/credentials`,
+    `/projects/${projects[0].projectId}/test`,
   ]) {
     await page.goto(`${origin}${path}`);
     const dimensions = await page.evaluate(() => ({

@@ -1,7 +1,7 @@
 # LuoWang v0.7.0 UI 重构实施计划
 
 - 版本：v0.7.0
-- 状态：Implementation Plan v1；Phase 0–4 已完成
+- 状态：Implementation Plan v1；Phase 0–5 已完成
 - 日期：2026-09-27
 - 关联规格：[spec.md](./spec.md)
 - 视觉设计：[design.md](./design.md)
@@ -457,7 +457,7 @@ src/web/
 
 完成证明：项目概览以真实项目、Run、Queue、索引、场景和 readiness 数据给出唯一推荐行动；运行准备页只执行显式检查、仓库同步和受确认保护的镜像准备，不提供配置编辑；项目设置拆为六个稳定 URL 分组，普通配置、项目资料和四类项目 Secret 分别提交，Secret 原值不回显。新增受认证和 origin guard 保护的项目显示名称更新接口，仓库稳定身份保持只读。待处理队列或活动 Run 会显示具体测试记录并锁定配置；未保存草稿拦截站内导航和浏览器离开，写入期间拒绝切换。`tests/e2e/v07-ui-workflows-smoke.ts` 覆盖唯一行动、运行准备无编辑控件、局部 readiness 超时、活动 Run 锁定、草稿确认、写入锁和 768px 无横向溢出；1440px、1024px、768px 浏览器截图确认三类页面构图。Docker quality 环境全量 Vitest 为 465 项通过、2 项跳过，导航与工作流 E2E、格式、lint、typecheck、build 和 `git diff --check` 通过。
 
-### Phase 5：测试页和实时任务
+### Phase 5：测试页和实时任务（已完成）
 
 #### 修改范围
 
@@ -476,6 +476,8 @@ src/web/
 - `Runner` 只作为角色名；
 - 页面不显示思维链、Prompt、Secret 或未脱敏参数；
 - 正常 Run 阶段显示名为 Main · 规划、Runner、Reviewer、Main · 最终汇总。
+
+完成证明：项目测试页已使用真实项目详情、readiness 快照、项目 Queue/Run 和跨项目工作台读模型，在同一稳定 URL 呈现 idle、queued、running 和 completed 四种主状态。空闲态支持当前场景分支与明确确认的 merge-source 两类既有请求；排队态显示全局真实位置、当前占用项目、来源和等待原因；执行态映射八阶段并显示准确角色名、场景计数、固定提交、时间、脱敏活动和阻塞原因；完成态只提供测试记录入口和重新进入空闲表单。页面仅在可见时每 2 秒轮询，离页停止；刷新失败保留最后可信状态并标记陈旧。`tests/e2e/v07-ui-workflows-smoke.ts` 覆盖两类表单中的 merge-source 请求、队列位置、八阶段、`3/8`、`0/0`、Agent 异常、最后活动、轮询失败保留、离页停止、完成态和 768px 无整页横向溢出。Docker quality 环境全量 Vitest 为 465 项通过、2 项跳过，完整 E2E、格式、lint、typecheck、build 和 `git diff --check` 通过。
 
 ### Phase 6：测试记录、场景、报告和 Evidence
 

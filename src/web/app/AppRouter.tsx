@@ -11,6 +11,7 @@ import { WorkspacePage } from '../pages/WorkspacePage';
 import { ProjectOverviewPage } from '../pages/project/ProjectOverviewPage';
 import { ProjectReadinessPage } from '../pages/project/ProjectReadinessPage';
 import { ProjectSettingsPage } from '../pages/project/ProjectSettingsPage';
+import { ProjectTestPage } from '../pages/project/ProjectTestPage';
 import type { ProjectReference } from '../project-types';
 import { NavigationProvider, type NavigableRoute } from './navigation';
 import { appPath, legacyHashRedirect, parseAppPath, type AppRoute } from './route';
@@ -221,6 +222,9 @@ function RoutePage({
   }
   if (route.name === 'project-readiness') {
     return <ProjectReadinessPage projectId={route.projectId} />;
+  }
+  if (route.name === 'project-test') {
+    return <ProjectTestPage projectId={route.projectId} />;
   }
   if (route.name === 'project-settings') {
     return (
