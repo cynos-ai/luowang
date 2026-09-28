@@ -6,6 +6,7 @@ import Fastify, { type FastifyBaseLogger, type FastifyRequest } from 'fastify';
 import type { Logger } from 'pino';
 
 import type { AppConfig } from '../config.js';
+import { createConnectivityRegistry, type ConnectivityRegistry } from '../connectivity.js';
 import {
   createProjectAutomationDispatcher,
   type ProjectAutomationDispatcher,
@@ -31,8 +32,12 @@ import {
 } from '../security/scoped-secret-store.js';
 import { SecretStoreError } from '../security/secret-store.js';
 import { createOssAdapter, OssError, type OssAdapter, type OssObject } from '../storage/oss.js';
+import { createPlaywrightMcpAdapter } from '../browser/playwright-mcp.js';
+import { createProviderAdapter } from '../runs/provider.js';
 import { registerProjectAdminRoutes, type ProjectAdminRouteOptions } from './admin-routes.js';
 import { createProjectConfigurationStore } from './configuration.js';
+import { registerProjectConsoleRoutes } from './console-routes.js';
+import { createProjectConsoleService } from './console-service.js';
 import {
   createProjectBackgroundScheduler,
   type ProjectBackgroundScheduler,
@@ -43,8 +48,16 @@ import { createGuardedScopedSecretStore } from './guarded-secrets.js';
 import { createProjectImageAdminService, type ProjectImageAdminService } from './image-admin.js';
 import { registerProjectIndexRoutes } from './index-routes.js';
 import { createLiveProjectReadinessAdapters } from './readiness-adapters.js';
-import { createProjectReadinessService, type ProjectReadinessDependencies } from './readiness.js';
-import { createProjectRuntimeSecretStore } from './runtime-access.js';
+import {
+  createProjectReadinessService,
+  invalidateAllProjectReadiness,
+  type ProjectReadinessDependencies,
+} from './readiness.js';
+import {
+  createDeploymentRuntimeSecretStore,
+  createProjectRuntimeSecretStore,
+} from './runtime-access.js';
+import { inspectProjectResources, type ProjectResourceInventory } from './resource-inventory.js';
 import { registerProjectRunRoutes } from './run-routes.js';
 import { assertProjectSchema } from './schema-mode.js';
 import { createProjectStore } from './store.js';
@@ -62,6 +75,8 @@ export interface ProjectAppOptions {
   backgroundTasks?: boolean;
   verifyRepository?: ProjectAdminRouteOptions['verifyRepository'];
   readEvidence?: (projectId: string, key: string) => Promise<OssObject>;
+  connectivity?: ConnectivityRegistry;
+  inspectResources?: () => Promise<ProjectResourceInventory>;
 }
 
 /** New-schema project app. */
@@ -73,6 +88,18 @@ export async function createProjectApp(options: ProjectAppOptions) {
   const scoped = options.secrets ?? createScopedSecretStore(database, options.config.masterKey);
   const guarded = createGuardedScopedSecretStore(database, scoped);
   const deployment = createDeploymentConfigurationStore(database, options.config);
+  const deploymentSecrets = guarded.deployment();
+  const deploymentRuntimeSecrets = createDeploymentRuntimeSecretStore(guarded);
+  const connectivity =
+    options.connectivity ??
+    createConnectivityRegistry(
+      database,
+      deployment,
+      undefined,
+      createProviderAdapter(deployment, deploymentRuntimeSecrets),
+      createPlaywrightMcpAdapter(deployment),
+      createOssAdapter(deployment, deploymentRuntimeSecrets),
+    );
   const projects = createProjectStore(database);
   const configuration = createProjectConfigurationStore(database);
   const profile = createAdminProfileStore(database);
@@ -261,7 +288,10 @@ export async function createProjectApp(options: ProjectAppOptions) {
   });
   app.put('/api/deployment', async (request) => {
     requireAuth(request, auth);
-    return { configuration: deployment.updateHarness(readBody(request)) };
+    const configuration = deployment.updateHarness(readBody(request));
+    connectivity.invalidate?.(['provider-model', 'playwright-mcp', 'oss']);
+    invalidateAllProjectReadiness(database, ['deployment']);
+    return { configuration };
   });
   app.put<{ Params: { key: string } }>('/api/deployment/secrets/:key', async (request) => {
     requireAuth(request, auth);
@@ -271,14 +301,44 @@ export async function createProjectApp(options: ProjectAppOptions) {
       throw new AppError('SECRET_INPUT_INVALID', '凭据值无效', 400);
     }
     guarded.deployment().set(key, body.value);
+    connectivity.invalidate?.([key === 'providerApiKey' ? 'provider-model' : 'oss']);
+    invalidateAllProjectReadiness(database, ['deployment']);
     return { key, metadata: guarded.deployment().metadata()[key] };
   });
   app.delete<{ Params: { key: string } }>('/api/deployment/secrets/:key', async (request) => {
     requireAuth(request, auth);
     const key = deploymentSecretKey(request.params.key);
     guarded.deployment().delete(key);
+    connectivity.invalidate?.([key === 'providerApiKey' ? 'provider-model' : 'oss']);
+    invalidateAllProjectReadiness(database, ['deployment']);
     return { key, metadata: guarded.deployment().metadata()[key] };
   });
+
+  const consoleService = createProjectConsoleService({
+    database,
+    projects,
+    dispatcher,
+    connectivity,
+    schedulerStatus: () =>
+      background.status?.() ?? {
+        running: false,
+        lastPollAt: null,
+        nextPollAt: null,
+        lastArchiveAt: null,
+        nextArchiveAt: null,
+        lastIndexerAt: null,
+        nextIndexerAt: null,
+        lastCleanupAt: null,
+        nextCleanupAt: null,
+        lastCronKey: null,
+        lastError: null,
+      },
+    inspectResources: options.inspectResources ?? (() => inspectProjectResources(database)),
+    version: options.config.version,
+    databaseHealthy: options.database.isHealthy,
+    secretStoreAvailable: deploymentSecrets.isAvailable,
+  });
+  await registerProjectConsoleRoutes(app, { auth, console: consoleService });
 
   await registerProjectAdminRoutes(app, {
     database,

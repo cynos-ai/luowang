@@ -331,6 +331,8 @@ export interface RunActivity {
   at: string;
   message: string;
   kind: 'phase' | 'info' | 'warning';
+  code?:
+    'test_data_cleanup_completed' | 'test_data_cleanup_failed' | 'test_data_cleanup_record_failed';
 }
 
 export type StoredReportStatus = 'pending' | 'published' | 'not_applicable' | 'conflict' | 'failed';

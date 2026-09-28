@@ -12,6 +12,12 @@ const PROJECT_SECRET_KEYS = new Set<SecretKey>([
   'testPassword',
   'testDataCleanupToken',
 ]);
+const EMPTY_PROJECT_SECRET_METADATA = {
+  gitToken: { configured: false, masked: null },
+  testUsername: { configured: false, masked: null },
+  testPassword: { configured: false, masked: null },
+  testDataCleanupToken: { configured: false, masked: null },
+} as const;
 
 /** Read-only view of one project's runtime settings. Paths come from the deployment, not project input. */
 export function createProjectRuntimeConfiguration(
@@ -65,6 +71,24 @@ function projectRepositoryUrl(projectId: string, projects: ProjectConfigurationS
 }
 
 /** Legacy SecretStore interface for runtime consumers; no mutation or cross-scope fallback. */
+export function createDeploymentRuntimeSecretStore(scoped: ScopedSecretStore): SecretStore {
+  const deployment = scoped.deployment();
+  const isDeploymentKey = (key: SecretKey) => !PROJECT_SECRET_KEYS.has(key);
+  return {
+    isAvailable: () => deployment.isAvailable(),
+    get: (key) => (isDeploymentKey(key) ? deployment.get(key as never) : undefined),
+    has: (key) => isDeploymentKey(key) && deployment.has(key as never),
+    metadata: () =>
+      ({ ...EMPTY_PROJECT_SECRET_METADATA, ...deployment.metadata() }) as SecretMetadataMap,
+    set() {
+      throw new Error('部署运行时 Secret 只读');
+    },
+    delete() {
+      throw new Error('部署运行时 Secret 只读');
+    },
+  };
+}
+
 export function createProjectRuntimeSecretStore(
   projectId: string,
   scoped: ScopedSecretStore,

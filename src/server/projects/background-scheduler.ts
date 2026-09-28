@@ -1,6 +1,8 @@
 import type Database from 'better-sqlite3';
 import type { Logger } from 'pino';
 
+import type { OperationsSchedulerStatus } from '../../shared/types.js';
+
 import type { ConfigurationStore } from '../configuration.js';
 import type { ProjectAutomationDispatcher } from '../automation/project-dispatcher.js';
 import { createGitPoller, type GitPoller } from '../automation/poller.js';
@@ -27,6 +29,7 @@ export interface ProjectBackgroundScheduler {
   tick(at?: Date): Promise<void>;
   start(): void;
   stop(): Promise<void>;
+  status?(): OperationsSchedulerStatus;
 }
 
 /** One timer scans projects; only the global dispatcher can claim a Run. */
@@ -190,6 +193,28 @@ export function createProjectBackgroundScheduler(input: {
       if (timer) clearInterval(timer);
       timer = undefined;
       await activeTick;
+    },
+    status() {
+      const values = input.database
+        .prepare(
+          `SELECT key, value FROM project_automation_state
+           WHERE key IN (?, ?, ?) ORDER BY updated_at DESC`,
+        )
+        .all(LAST_POLL, LAST_INDEX, LAST_ERROR) as Array<{ key: string; value: string }>;
+      const latest = (key: string) => values.find((item) => item.key === key)?.value ?? null;
+      return {
+        running: timer !== undefined,
+        lastPollAt: latest(LAST_POLL),
+        nextPollAt: null,
+        lastArchiveAt: null,
+        nextArchiveAt: null,
+        lastIndexerAt: latest(LAST_INDEX),
+        nextIndexerAt: null,
+        lastCleanupAt: null,
+        nextCleanupAt: null,
+        lastCronKey: null,
+        lastError: latest(LAST_ERROR) === null ? null : '项目后台任务失败',
+      };
     },
   };
 }

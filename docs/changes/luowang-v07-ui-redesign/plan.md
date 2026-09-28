@@ -1,7 +1,7 @@
 # LuoWang v0.7.0 UI 重构实施计划
 
 - 版本：v0.7.0
-- 状态：Implementation Plan v1；Phase 0 已完成
+- 状态：Implementation Plan v1；Phase 0–1 已完成
 - 日期：2026-09-27
 - 关联规格：[spec.md](./spec.md)
 - 视觉设计：[design.md](./design.md)
@@ -218,7 +218,16 @@ POST /api/system/checks/:checkId
 
 ### 5.3 项目页面
 
-优先复用现有项目接口。仅在以下情况增加聚合字段：
+项目 readiness 增加显式读写分离接口：
+
+```text
+GET /api/projects/:projectId/readiness/status
+POST /api/projects/:projectId/readiness/checks/:checkId
+```
+
+`status` 只读取最近持久结果；`checks/:checkId` 只执行固定检查 ID。现有 `GET /api/projects/:projectId/readiness` 保留已有行为，新页面不得通过轮询该旧接口隐式触发外部检查。
+
+其余优先复用现有项目接口。仅在以下情况增加聚合字段：
 
 - 项目列表需要 current/queued/recent/index summary；
 - Run 详情需要明确输出现有 archive、scenario PR、issues、blocking reasons 和 Evidence metadata；
@@ -355,7 +364,7 @@ src/web/
 - `node --check`、格式和类型检查通过；
 - 后续页面不需要各自复制 API 假数据。
 
-### Phase 1：读模型、系统状态与 Git 超时
+### Phase 1：读模型、系统状态与 Git 超时（已完成）
 
 #### 修改范围
 
@@ -374,6 +383,8 @@ src/web/
 - Docker 归属失败时 fail closed；
 - 挂起 Git readiness 在 30 秒上限内结束，测试使用更短注入值；
 - 现有项目 API 与队列测试通过。
+
+完成证明：`GET /api/workspace`、系统状态/资源、显式 readiness 检查和缓存失效已接入生产 app；清理失败使用 Harness 写入的结构化 activity code 聚合，不解析 Agent 文本；Git 本地、远程读写命令采用分级超时并清理 askpass。Docker quality 环境全量 Vitest 为 465 项通过、2 项跳过，格式、lint、typecheck、build 和 `git diff --check` 通过。
 
 ### Phase 2：路由、Shell 与设计系统
 
