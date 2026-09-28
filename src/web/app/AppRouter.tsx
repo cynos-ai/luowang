@@ -5,15 +5,12 @@ import { requestJson, toUserMessage } from '../api';
 import { AppShell } from '../components/AppShell';
 import { LoginPanel } from '../components/LoginPanel';
 import { PageHeading } from '../components/PageHeading';
+import { ProjectOnboardingPage } from '../pages/ProjectOnboardingPage';
+import { ProjectsPage } from '../pages/ProjectsPage';
+import { WorkspacePage } from '../pages/WorkspacePage';
+import type { ProjectReference } from '../project-types';
 import { NavigationProvider, type NavigableRoute } from './navigation';
 import { appPath, legacyHashRedirect, parseAppPath, type AppRoute } from './route';
-
-type ProjectReference = {
-  projectId: string;
-  displayName: string;
-  repositoryOwner: string;
-  repositoryName: string;
-};
 
 export default function AppRouter() {
   const [route, setRoute] = useState<AppRoute>(initialRoute);
@@ -164,19 +161,34 @@ export default function AppRouter() {
             {error}
           </p>
         )}
-        <RoutePage route={route} />
+        <RoutePage route={route} projects={projects} reloadProjects={() => loadProjects()} />
       </AppShell>
     </NavigationProvider>
   );
 }
 
-function RoutePage({ route }: { route: AppRoute }) {
+function RoutePage({
+  route,
+  projects,
+  reloadProjects,
+}: {
+  route: AppRoute;
+  projects: ProjectReference[];
+  reloadProjects: () => Promise<void>;
+}) {
   if (route.name === 'not-found') {
     return (
       <section className="page-content">
         <PageHeading title="页面不存在" scope="404" description="这个地址不属于罗网控制台。" />
       </section>
     );
+  }
+  if (route.name === 'workspace') return <WorkspacePage />;
+  if (route.name === 'projects') {
+    return <ProjectsPage onProjectsChanged={reloadProjects} />;
+  }
+  if (route.name === 'project-new') {
+    return <ProjectOnboardingPage projects={projects} onProjectsChanged={reloadProjects} />;
   }
   const page = pageCopy(route);
   return (

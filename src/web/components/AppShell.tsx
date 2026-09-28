@@ -2,13 +2,7 @@ import type { ReactNode } from 'react';
 
 import type { AppRoute } from '../app/route';
 import { AppLink } from '../app/navigation';
-
-type ProjectReference = {
-  projectId: string;
-  displayName: string;
-  repositoryOwner: string;
-  repositoryName: string;
-};
+import type { ProjectReference } from '../project-types';
 
 export function AppShell({
   route,

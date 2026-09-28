@@ -1,7 +1,7 @@
 # LuoWang v0.7.0 UI 重构实施计划
 
 - 版本：v0.7.0
-- 状态：Implementation Plan v1；Phase 0–2 已完成
+- 状态：Implementation Plan v1；Phase 0–3 已完成
 - 日期：2026-09-27
 - 关联规格：[spec.md](./spec.md)
 - 视觉设计：[design.md](./design.md)
@@ -222,10 +222,10 @@ POST /api/system/checks/:checkId
 
 ```text
 GET /api/projects/:projectId/readiness/status
-POST /api/projects/:projectId/readiness/checks/:checkId
+POST /api/projects/:projectId/readiness/check
 ```
 
-`status` 只读取最近持久结果；`checks/:checkId` 只执行固定检查 ID。现有 `GET /api/projects/:projectId/readiness` 保留已有行为，新页面不得通过轮询该旧接口隐式触发外部检查。
+`status` 只读取最近持久结果；`check` 执行该项目的固定检查集合，不接受任意检查 ID、URL、命令或路径。现有 `GET /api/projects/:projectId/readiness` 保留已有行为，新页面不得通过轮询该旧接口隐式触发外部检查。
 
 其余优先复用现有项目接口。仅在以下情况增加聚合字段：
 
@@ -407,7 +407,7 @@ src/web/
 
 完成证明：多项目入口已切换至类型化 History router 和新 Shell；全部稳定路由由浏览器直接打开，旧项目 Hash 迁移、前进后退、刷新、404、未认证返回原目标和键盘顶层导航均由 `tests/e2e/v07-ui-navigation-smoke.ts` 覆盖。1440px 与 768px 浏览器证据确认单一主标题、显式项目作用域和无整页横向溢出；新 token、基础组件和 reduced-motion 规则已进入生产 CSS。Docker quality 环境全量 Vitest 为 465 项通过、2 项跳过，新的 E2E 导航 smoke、格式、lint、typecheck、build 和 `git diff --check` 通过。
 
-### Phase 3：登录、工作台、项目列表与接入向导
+### Phase 3：登录、工作台、项目列表与接入向导（已完成）
 
 #### 修改范围
 
@@ -431,6 +431,8 @@ src/web/
 - 全部检查通过后仍需用户明确启用；
 - 工作台不显示统计图或模拟项目；
 - 项目切换和迟到响应回归通过。
+
+完成证明：登录、异常优先工作台、项目筛选/排序/暂停确认和四步接入向导已绑定真实 API；零项目页只展示连接仓库、配置非生产环境、检查并启用三个真实步骤。向导以项目详情和 readiness 快照恢复，Secret 只写不回显，检查通过后仍需单独点击启用。`tests/e2e/v07-ui-workflows-smoke.ts` 覆盖合成工作台、空状态、暂停确认、创建项目、配置、Secret、镜像、刷新恢复、显式启用、迟到响应丢弃以及 768px 无横向溢出；1440px/768px 浏览器截图确认工作台构图。Docker quality 环境全量 Vitest 为 465 项通过、2 项跳过，完整 `npm run test:e2e`、格式、lint、typecheck、build 和 `git diff --check` 通过。
 
 ### Phase 4：项目概览、运行准备与项目设置
 
