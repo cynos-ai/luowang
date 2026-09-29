@@ -1,6 +1,6 @@
 # v0.7.1 发布复核小修复 Plan
 
-- 状态：发布前验证完成；已获项目负责人明确授权合并发布 PR 并创建 `v0.7.1`，main/tag 待执行
+- 状态：v0.7.1 已发布；发布后核验通过；仅将收尾记录补入 develop，不改动 main/tag
 - [Intent](./intent.md) · [Spec](./spec.md)
 - 分支：`fix/v071-release-verification`，从最新 `origin/develop`（`4668ff112ac3cf01ad89ea47e3ee014d2f09662c`）创建
 - 目标：一次小修复，不改生产 API/数据库/Run 行为，不升级依赖
@@ -66,3 +66,11 @@
 - 完整 release 第一轮 `.cynos/acceptance/v071-release-candidate/attempt-1/report.json`：直接执行 tsx 缺 `npm_execpath`，local=failed/live=passed/release=failed；原记录保留，不修改。第二轮使用标准 `npm run test:acceptance:release`，见 `attempt-2/report.json`：local=passed/live=passed/release=passed（命令退出 0），检查器对已完成 Run/归档/GitHub/OSS/清理/Secret 值进行了独立复核。`AC-CLOSURE-RELEASE-01` 仍 blocked，待人类合并 main 和创建 tag 后复核；报告内部分 SDQ 模型效果 AC 为 `not_run`，不得宣称该类评估通过。候选实例仍为 `luowang:0.7.0-candidate`；正式 0.7.1 构建与候选一致性需另行核对，不能仅凭这些结果认定新部署已经 live 通过。
 - 凭据仍只在忽略的本地环境文件/受控容器读取，不入 Git。已获负责人 800 次模型调用授权，本轮没有为检查器复核重新排队模型 Run，只有正式 readiness 的有限模型探测。此记录形成时无新 tag/Release，`package.json` 与 lockfile 已更新为 0.7.1，仅为发布准备。
 - v0.7.0 的历史 Run、核验产物和 tag 不修改。
+
+### 发布与发布后证明（2026-09-29）
+
+- 负责人明确授权 AI 合并发布 PR、创建 `v0.7.1` tag。授权规则澄清经 [PR #108](https://github.com/cynos-ai/luowang/pull/108) 合入 develop；[PR #107](https://github.com/cynos-ai/luowang/pull/107) 在两个 [quality](https://github.com/cynos-ai/luowang/actions/runs/36543253813) [工作流](https://github.com/cynos-ai/luowang/actions/runs/36543258956)通过后以 merge commit `857697b00c61af6bdab30738581630fb5cc6ab6b` 合入 main。未直接提交或 force-push main。
+- 新增注释 tag `v0.7.1`（tag object `5c41b41780ee6b16fcd418ebf2cae748df1b1275`），peel 到同一 main 发布提交 `857697b00c61af6bdab30738581630fb5cc6ab6b`；[GitHub Release](https://github.com/cynos-ai/luowang/releases/tag/v0.7.1) 已发布。旧 `v0.7.0` tag object 仍为 `28a644c5ba77cc424558de9522bd23b44ecc9be6`，`v0.1.0` 仍为 `388c54741e86e10f252bac4f15b353d4ef2f7037`。
+- 发布后独立 live 报告：`.cynos/acceptance/v071-post-tag/live-1/report.json`，`live=passed`，`AC-CLOSURE-RELEASE-01=passed`；该命令未跑 local，`release=blocked` 是分层正确结果。
+- 发布后标准完整 `npm run test:acceptance:release` 报告：`.cynos/acceptance/v071-post-tag/release-1/report.json`、`report.md`；退出码 0，`local=passed/live=passed/release=passed`，18 个 Closure AC 全部 passed。该次复核重读既有非生产候选与 Run 事实、实时检查外部依赖及 tag/main/旧 tag，不重新执行历史模型 Run、不改写任何原失败。报告中 5 个 SDQ 模型效果 AC 仍 `not_run`，不能写成通过；也不证明新部署的 v0.7.1 实例已单独 live 验收。凭据只在本机忽略文件及受控容器内使用，未进入 Git。
+- 本节是发布后的追加记录，仅通过 `chore/* → develop` PR 提交；正式 `v0.7.1` tag 和 main 发布提交保持不可变。
