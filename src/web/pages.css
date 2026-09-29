@@ -99,11 +99,19 @@
   padding: 12px;
   border: 2px solid var(--lw-ink);
   background: var(--lw-paper-soft);
+  color: var(--lw-ink);
 }
 
-.notice-error,
-.notice-warning {
+.notice-success {
+  border-color: var(--lw-green);
+}
+
+.notice-error {
   border-color: var(--lw-red);
+}
+
+.notice-warning {
+  border-color: var(--lw-amber);
 }
 
 .boot-screen {
@@ -459,6 +467,39 @@
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
   gap: 16px;
+}
+
+.catalog-summary {
+  margin: 0;
+  border: 2px solid var(--lw-line);
+  background: var(--lw-paper);
+  color: var(--lw-ink);
+  font-size: 0.8rem;
+}
+
+.role-requirement,
+.capability-badge {
+  border: 1px solid var(--lw-ink);
+  background: var(--lw-paper);
+  color: var(--lw-ink);
+}
+
+.role-requirement-vision,
+.capability-vision {
+  border-color: var(--lw-red);
+  background: var(--lw-paper);
+  color: var(--lw-ink);
+}
+
+.capability-reasoning {
+  border-color: var(--lw-amber);
+  background: var(--lw-paper);
+  color: var(--lw-ink);
+}
+
+.model-meta small,
+.model-capabilities-empty {
+  color: var(--lw-muted);
 }
 
 .compact-form {

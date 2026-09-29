@@ -26,6 +26,13 @@
 - 浏览器 E2E（v07 workflows）与完整 `npm run test:e2e` 通过。
 - 4180 预览实例更新后健康，页面显示自动填充的 Base URL、API Key 输入与精简文案；真实登录状态由操作者确认。
 
+## 第二轮反馈（预览实测）
+
+- 问题：提示条沿用旧深色主题文字色，在纸白底上不可读；目录状态和能力标签同样对比度不足；保存提示仍带“保存不等于连接检查通过”等解释句。
+- 修改：`src/web/pages.css` 用 v0.7 令牌覆盖 `.notice`、`.catalog-summary`、`.role-requirement`、`.capability-*`、`.model-meta` 的颜色；`src/web/pages.css`/`GlobalSettingsPage.tsx` 移除各分组标题说明段并精简保存提示。
+- 客观证据：容器内构建后以无头浏览器读取计算样式，通知条 17.51:1、目录状态 19.77:1、能力标签 19.77:1、字段提示 6.1:1、模型描述 6.1:1，均高于 WCAG AA 4.5:1；全页截图见 `.cynos/settings-preview.png`（本地验证产物，不入库）。
+- 预览脚本 `.cynos/settings-preview.ts` 仅为本地验证，使用模拟 API，不连接真实凭据。
+
 ## 风险与边界
 
 - 自动填充来自 Pi 目录的公开默认地址；自定义代理写入后按普通配置保存，不改变 Secret 与检查语义。
