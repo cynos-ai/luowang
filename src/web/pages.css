@@ -454,6 +454,13 @@
   max-width: 780px;
 }
 
+.model-service-fields {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 16px;
+}
+
 .compact-form {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }

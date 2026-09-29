@@ -146,6 +146,11 @@ it('uses only new-schema administration routes, scoped Secrets, and the existing
     const providers = await app.inject({ method: 'GET', url: '/api/provider/providers', headers });
     assert.equal(providers.statusCode, 200);
     assert.ok(providers.json().providers.some((item: { id: string }) => item.id === 'openai'));
+    const openAiCatalog = providers
+      .json()
+      .providers.find((item: { id: string }) => item.id === 'openai') as { baseUrl?: string };
+    assert.equal(typeof openAiCatalog.baseUrl, 'string');
+    assert.ok(openAiCatalog.baseUrl?.startsWith('http'));
     const models = await app.inject({
       method: 'GET',
       url: '/api/provider/models?provider=openai',

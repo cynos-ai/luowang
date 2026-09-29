@@ -184,8 +184,12 @@ try {
       return route.fulfill({
         json: {
           providers: [
-            { id: 'openai-compatible', name: 'OpenAI compatible' },
-            { id: 'openai', name: 'OpenAI' },
+            {
+              id: 'openai-compatible',
+              name: 'OpenAI compatible',
+              baseUrl: 'https://provider.example.test/v1',
+            },
+            { id: 'openai', name: 'OpenAI', baseUrl: 'https://api.openai.example.test/v1' },
           ],
         },
       });
@@ -793,8 +797,8 @@ try {
   assert.equal(await page.getByRole('button', { name: '保存本分组' }).isDisabled(), true);
   globalSettingsUnlocked = true;
   await page.reload();
-  await page.getByText('Final Main 复用 Main 配置，不创建第四组 Agent 配置。').waitFor();
-  await page.getByText('已载入 2 个已知模型；目录不代表账号调用权限。').waitFor();
+  await page.getByRole('heading', { name: '模型与角色' }).waitFor();
+  await page.getByText('已载入 2 个已知模型').waitFor();
   assert.equal(await page.locator('#global-provider-catalog option').count(), 2);
   assert.equal(await page.locator('#global-model-catalog-reviewer option').count(), 2);
   const roleModels = page.locator('.agent-config input[type="search"]');
@@ -802,15 +806,19 @@ try {
   await page.getByText('该模型不支持图像输入，视觉场景将被阻塞。').waitFor();
   await roleModels.nth(2).fill('deepseek-v4-flash-vision-exp');
   assert.equal(await page.getByText('该模型不支持图像输入，视觉场景将被阻塞。').count(), 0);
-  delayOpenAiCatalog = true;
   const providerInput = page.locator('input[list="global-provider-catalog"]');
+  const baseUrlInput = page.getByLabel('Provider Base URL');
+  assert.equal(await baseUrlInput.inputValue(), 'https://provider.example.test/v1');
+  delayOpenAiCatalog = true;
   const pendingCatalog = page.waitForRequest((request) =>
     request.url().includes('/api/provider/models?provider=openai'),
   );
   await providerInput.fill('openai');
+  assert.equal(await baseUrlInput.inputValue(), 'https://api.openai.example.test/v1');
   await pendingCatalog;
   await providerInput.fill('openai-compatible');
-  await page.getByText('已载入 2 个已知模型；目录不代表账号调用权限。').waitFor();
+  assert.equal(await baseUrlInput.inputValue(), 'https://provider.example.test/v1');
+  await page.getByText('已载入 2 个已知模型').waitFor();
   await page.waitForTimeout(550);
   assert.equal(
     await page.locator('#global-model-catalog-main option[value="gpt-vision-fixture"]').count(),
@@ -819,17 +827,21 @@ try {
   delayOpenAiCatalog = false;
   catalogFailure = true;
   await providerInput.fill('openai');
-  await page.getByText(/目录暂不可用；可保留手工输入/).waitFor();
+  await page.getByText(/目录加载失败：目录暂不可用/).waitFor();
   await roleModels.nth(0).fill('manual-model-id');
   assert.equal(await roleModels.nth(0).inputValue(), 'manual-model-id');
   catalogFailure = false;
   await providerInput.fill('openai-compatible');
-  await page.getByText('已载入 2 个已知模型；目录不代表账号调用权限。').waitFor();
+  await page.getByText('已载入 2 个已知模型').waitFor();
   await roleModels.nth(0).fill('deepseek-v4-flash');
   await providerInput.fill('fixture-provider');
+  assert.equal(await baseUrlInput.inputValue(), '');
+  await page.getByLabel('Provider API Key').fill('synthetic-provider-key');
   await page.getByRole('button', { name: '保存本分组' }).click();
-  await page.getByText('配置已保存。保存不等于连接检查通过。').waitFor();
+  await page.getByText('配置与 Provider API Key 已保存。保存不等于连接检查通过。').waitFor();
   assert.ok(writes.includes('PUT /api/deployment'));
+  assert.ok(writes.includes('PUT /api/deployment/secrets/providerApiKey'));
+  assert.equal((await page.locator('body').innerText()).includes('synthetic-provider-key'), false);
   await page.goto(`${origin}/settings/credentials`);
   assert.equal((await page.locator('body').innerText()).includes('GitHub Token'), false);
   assert.equal((await page.locator('body').innerText()).includes('测试账号'), false);
