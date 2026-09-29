@@ -106,7 +106,7 @@ export function GlobalSettingsPage({ section }: { section: GlobalSettingSection 
           });
           setSecretDraft((current) => ({ ...current, providerApiKey: '' }));
           resource.reload();
-          setMessage('配置与 Provider API Key 已保存。保存不等于连接检查通过。');
+          setMessage('配置与 Provider API Key 已保存。');
         } catch (cause) {
           resource.reload();
           setError(`配置已保存；${toUserMessage(cause, 'Provider API Key 保存失败')}`);
@@ -114,7 +114,7 @@ export function GlobalSettingsPage({ section }: { section: GlobalSettingSection 
         return;
       }
       resource.reload();
-      setMessage('配置已保存。保存不等于连接检查通过。');
+      setMessage('配置已保存。');
     } catch (cause) {
       setError(toUserMessage(cause, '全局设置保存失败'));
     } finally {
@@ -135,7 +135,7 @@ export function GlobalSettingsPage({ section }: { section: GlobalSettingSection 
       });
       setSecretDraft((current) => ({ ...current, [key]: '' }));
       resource.reload();
-      setMessage('凭据已更新。凭据不会回显；请另行执行连接检查。');
+      setMessage('凭据已更新。');
     } catch (cause) {
       setError(toUserMessage(cause, '凭据更新失败'));
     } finally {
@@ -501,7 +501,7 @@ function GlobalSection({
   if (section === 'browser')
     return (
       <>
-        <SectionTitle title="浏览器" text="保存配置不会自动启动浏览器或执行检查。" />
+        <SectionTitle title="浏览器" />
         <div className="form-grid">
           <Check
             label="启用浏览器 MCP"
@@ -551,10 +551,7 @@ function GlobalSection({
   if (section === 'object-storage')
     return (
       <>
-        <SectionTitle
-          title="对象存储"
-          text="已有历史证据时，后端会阻止破坏旧证据地址的原位修改。"
-        />
+        <SectionTitle title="对象存储" />
         <div className="form-grid">
           {(
             [
@@ -592,7 +589,7 @@ function GlobalSection({
     );
   return (
     <>
-      <SectionTitle title="本地数据" text="受控根目录只读，不能在网页中输入任意本机路径。" />
+      <SectionTitle title="本地数据" />
       <dl className="fact-list">
         <Fact label="受控仓库目录" value={value.local.repoDir} />
         <Fact label="报告目录" value={value.local.reportDir} />
@@ -636,10 +633,7 @@ function CredentialsSection({
   };
   return (
     <section>
-      <SectionTitle
-        title="全局凭据"
-        text="只包含部署级 Provider 与 OSS 凭据；项目级凭据不在这里。"
-      />
+      <SectionTitle title="全局凭据" />
       <div className="secret-list">
         {(Object.keys(labels) as DeploymentSecret[]).map((key) => (
           <article className="secret-row" key={key}>

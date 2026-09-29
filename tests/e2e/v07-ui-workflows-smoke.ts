@@ -838,7 +838,7 @@ try {
   assert.equal(await baseUrlInput.inputValue(), '');
   await page.getByLabel('Provider API Key').fill('synthetic-provider-key');
   await page.getByRole('button', { name: '保存本分组' }).click();
-  await page.getByText('配置与 Provider API Key 已保存。保存不等于连接检查通过。').waitFor();
+  await page.getByText('配置与 Provider API Key 已保存。').waitFor();
   assert.ok(writes.includes('PUT /api/deployment'));
   assert.ok(writes.includes('PUT /api/deployment/secrets/providerApiKey'));
   assert.equal((await page.locator('body').innerText()).includes('synthetic-provider-key'), false);
@@ -847,7 +847,7 @@ try {
   assert.equal((await page.locator('body').innerText()).includes('测试账号'), false);
   await page.getByLabel('新值（不会回显）').nth(1).fill('synthetic-oss-key');
   await page.getByRole('button', { name: '保存', exact: true }).nth(0).click();
-  await page.getByText('凭据已更新。凭据不会回显；请另行执行连接检查。').waitFor();
+  await page.getByText('凭据已更新。', { exact: true }).waitFor();
   assert.equal((await page.locator('body').innerText()).includes('synthetic-oss-key'), false);
 
   await page.goto(`${origin}/account`);
