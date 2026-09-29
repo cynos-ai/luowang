@@ -218,8 +218,7 @@ describe('Closure 6 acceptance status layering', () => {
         status: 'completed',
         result: 'blocked',
         scenarioResults: [{ id: 'AUTH-001', result: 'blocked' }],
-        archiveStatus: 'completed',
-        progressed: false,
+        archive: { archiveStatus: 'completed', progressed: false },
       },
       {
         runId: 'review-run',
@@ -227,10 +226,12 @@ describe('Closure 6 acceptance status layering', () => {
         result: 'blocked',
         artifacts: { 'scenario-changes.patch': 'patch', 'report.md': 'report' },
         scenarioPrUrl: 'https://github.com/example/repo/pull/1',
-        reportStatus: 'not_applicable',
-        archiveStatus: 'completed',
-        scenarioStatus: 'pull_request',
-        progressed: false,
+        archive: {
+          reportStatus: 'not_applicable',
+          archiveStatus: 'completed',
+          scenarioStatus: 'pull_request',
+          progressed: false,
+        },
       },
     ];
     const facts = selectLiveFacts(queue, runs);
