@@ -10,6 +10,7 @@ export function LoginPanel({
   error,
   onPasswordChange,
   onSubmit,
+  titleAsHeading1 = false,
 }: {
   configured: boolean;
   password: string;
@@ -18,13 +19,15 @@ export function LoginPanel({
   error: string;
   onPasswordChange: (value: string) => void;
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
+  titleAsHeading1?: boolean;
 }) {
+  const Title = titleAsHeading1 ? 'h1' : 'h2';
   return (
     <div className="login-layout">
       <section className="panel login-panel" aria-labelledby="login-title">
         <div className="login-heading">
           <p className="eyebrow">SECURE CONSOLE</p>
-          <h2 id="login-title">管理员登录</h2>
+          <Title id="login-title">管理员登录</Title>
           <p>登录后配置项目依赖、发起测试并查看实时进展。</p>
         </div>
         {!configured && (

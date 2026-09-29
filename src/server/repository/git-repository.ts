@@ -19,6 +19,17 @@ const SHA_PATTERN = /^[0-9a-f]{40}$/i;
 const REF_PATTERN = /^[^\s~^:?*\\[\]]{1,255}$/;
 const REPORT_FILE_NAMES = ['review.md', 'report.md'] as const;
 const MAX_TARGET_FILE_BYTES = 512 * 1024;
+const DEFAULT_GIT_TIMEOUTS = {
+  localMs: 30_000,
+  remoteReadMs: 30_000,
+  transferMs: 5 * 60_000,
+} as const;
+
+export interface GitCommandTimeouts {
+  localMs: number;
+  remoteReadMs: number;
+  transferMs: number;
+}
 
 export type ReportFileName = (typeof REPORT_FILE_NAMES)[number];
 
@@ -26,6 +37,7 @@ export interface GitRepositoryOptions {
   directory: string;
   remoteUrl: string;
   tokenProvider?: () => string | undefined;
+  timeouts?: Partial<GitCommandTimeouts>;
 }
 
 export interface GitLogEntry {
@@ -93,11 +105,17 @@ export class GitRepository {
   readonly directory: string;
   readonly remoteUrl: string;
   private readonly tokenProvider?: () => string | undefined;
+  private readonly timeouts: GitCommandTimeouts;
 
   constructor(options: GitRepositoryOptions) {
     this.directory = resolve(options.directory);
     this.remoteUrl = options.remoteUrl;
     this.tokenProvider = options.tokenProvider;
+    this.timeouts = {
+      localMs: timeoutValue(options.timeouts?.localMs, DEFAULT_GIT_TIMEOUTS.localMs),
+      remoteReadMs: timeoutValue(options.timeouts?.remoteReadMs, DEFAULT_GIT_TIMEOUTS.remoteReadMs),
+      transferMs: timeoutValue(options.timeouts?.transferMs, DEFAULT_GIT_TIMEOUTS.transferMs),
+    };
   }
 
   async ensureClone(): Promise<void> {
@@ -1269,13 +1287,35 @@ export class GitRepository {
         windowsHide: true,
         maxBuffer: 16 * 1024 * 1024,
         encoding: 'utf8',
+        timeout: commandTimeout(args, this.timeouts),
+        killSignal: 'SIGKILL',
       });
       return { stdout: result.stdout, stderr: result.stderr };
     } catch (error: unknown) {
-      const details = error as { stdout?: string; stderr?: string; code?: number | string };
-      const stderr = sanitize(String(details.stderr ?? ''), token);
+      const details = error as {
+        stdout?: string;
+        stderr?: string;
+        code?: number | string;
+        killed?: boolean;
+        signal?: string;
+      };
+      const stderr = sanitizeGitFailure(String(details.stderr ?? ''), {
+        secret: token,
+        remoteUrl: this.remoteUrl,
+        directory: cwd,
+      });
       const exitCode = typeof details.code === 'number' ? details.code : null;
-      throw new GitCommandError(args, stderr, exitCode);
+      const safeArgs = args.map((argument) =>
+        sanitizeGitFailure(argument, {
+          secret: token,
+          remoteUrl: this.remoteUrl,
+          directory: cwd,
+        }),
+      );
+      if (details.killed || details.code === 'ETIMEDOUT') {
+        throw new GitCommandError(safeArgs, '', null, timeoutMessage(args));
+      }
+      throw new GitCommandError(safeArgs, stderr, exitCode);
     } finally {
       if (authDir) await rm(authDir, { recursive: true, force: true }).catch(() => undefined);
     }
@@ -1310,8 +1350,42 @@ function safeGitEnvironment(): NodeJS.ProcessEnv {
   return env;
 }
 
-function sanitize(value: string, secret: string | undefined): string {
-  return secret ? value.split(secret).join('[REDACTED]') : value;
+function sanitizeGitFailure(
+  value: string,
+  sensitive: { secret: string | undefined; remoteUrl: string; directory: string },
+): string {
+  let safe = value;
+  for (const secret of [sensitive.secret, sensitive.remoteUrl, sensitive.directory]) {
+    if (secret) safe = safe.split(secret).join('[REDACTED]');
+  }
+  return safe
+    .replace(/https?:\/\/[^\s@/]+@/gi, 'https://')
+    .replace(/(?:github_pat_|gh[opsur]_|sk-)[A-Za-z0-9_-]+/gi, '[REDACTED]')
+    .replace(/\/(?:home|Users)\/[^\s]+/g, '[PATH]')
+    .slice(0, 16_384);
+}
+
+function timeoutValue(value: number | undefined, fallback: number): number {
+  if (value === undefined) return fallback;
+  if (!Number.isSafeInteger(value) || value < 1 || value > 30 * 60_000) {
+    throw new TypeError('Git 命令超时配置无效');
+  }
+  return value;
+}
+
+function commandTimeout(args: readonly string[], timeouts: GitCommandTimeouts): number {
+  const command = args[0];
+  if (command === 'ls-remote') return timeouts.remoteReadMs;
+  if (command === 'clone' || command === 'fetch' || command === 'push') return timeouts.transferMs;
+  return timeouts.localMs;
+}
+
+function timeoutMessage(args: readonly string[]): string {
+  if (args[0] === 'ls-remote') return 'Git 远程检查超时';
+  if (args[0] === 'clone' || args[0] === 'fetch' || args[0] === 'push') {
+    return 'Git 远程操作超时';
+  }
+  return 'Git 本地操作超时';
 }
 
 function normalizeSha(value: string): string {

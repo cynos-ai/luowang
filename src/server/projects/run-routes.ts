@@ -8,11 +8,11 @@ import { createProjectTestRequestQueue } from '../automation/queue.js';
 import type { TestRequestRecord } from '../automation/queue.js';
 import { createProjectRunRecoveryStore } from '../automation/recovery.js';
 import { AppError } from '../errors.js';
-import { createProjectRunStore } from '../runs/store.js';
+import { createProjectRunStore, type StoredRun } from '../runs/store.js';
 import { SESSION_COOKIE_NAME, type AuthService } from '../security/auth.js';
 import { encodeStableEvidenceId } from '../storage/oss.js';
 import type { ProjectStore } from './store.js';
-import type { RunDetail, RunSummary } from '../../shared/types.js';
+import type { OperationsRunDetail, RunDetail, RunSummary } from '../../shared/types.js';
 
 function failedQueueRun(item: TestRequestRecord | undefined): RunDetail | null {
   if (item?.status !== 'failed' || !item.runId) return null;
@@ -64,18 +64,25 @@ export async function registerProjectRunRoutes(
       createProjectRunStore(options.database, requireProject(projectId).projectId);
     const recoveryFor = (projectId: string) =>
       createProjectRunRecoveryStore(options.database, requireProject(projectId).projectId);
-    const readRun = async (projectId: string, runId: string) => {
+    const readRun = async (
+      projectId: string,
+      runId: string,
+    ): Promise<OperationsRunDetail | null> => {
       requireProject(projectId);
-      return (
-        (await options.dispatcher.getActiveRun(projectId, runId)) ??
-        runStoreFor(projectId).get(runId) ??
-        recoveryFor(projectId).get(runId) ??
-        failedQueueRun(
-          queueFor(projectId)
-            .list()
-            .find((item) => item.runId === runId),
-        )
+      const store = runStoreFor(projectId);
+      const [runtime, stored] = await Promise.all([
+        options.dispatcher.getActiveRun(projectId, runId),
+        Promise.resolve(store.get(runId)),
+      ]);
+      if (runtime || stored) return presentRun(runtime, stored);
+      const recovered = recoveryFor(projectId).get(runId);
+      if (recovered) return presentRun(recovered, null);
+      const failed = failedQueueRun(
+        queueFor(projectId)
+          .list()
+          .find((item) => item.runId === runId),
       );
+      return failed ? presentRun(failed, null) : null;
     };
     const startDrain = () => {
       void options.dispatcher.drain().catch((error: unknown) => {
@@ -177,13 +184,19 @@ export async function registerProjectRunRoutes(
           .filter((run): run is RunDetail => run !== null && !known.has(run.runId));
         return {
           runs: [
-            ...(active ? [active] : []),
-            ...stored.filter((run) => run.runId !== active?.runId),
-            ...interrupted.filter(
-              (run) =>
-                run.runId !== active?.runId && !stored.some((item) => item.runId === run.runId),
-            ),
-            ...failed,
+            ...(active
+              ? [presentRun(active, stored.find((run) => run.runId === active.runId) ?? null)]
+              : []),
+            ...stored
+              .filter((run) => run.runId !== active?.runId)
+              .map((run) => presentRun(null, run)),
+            ...interrupted
+              .filter(
+                (run) =>
+                  run.runId !== active?.runId && !stored.some((item) => item.runId === run.runId),
+              )
+              .map((run) => presentRun(run, null)),
+            ...failed.map((run) => presentRun(run, null)),
           ].sort((left, right) => right.startedAt.localeCompare(left.startedAt)),
         };
       },
@@ -226,6 +239,80 @@ export async function registerProjectRunRoutes(
       },
     );
   });
+}
+
+function presentRun(
+  runtime: RunDetail | RunSummary | null,
+  stored: StoredRun | null,
+): OperationsRunDetail {
+  const base: RunSummary = runtime ?? {
+    runId: stored!.runId,
+    status: 'completed',
+    phase: 'completed',
+    result: stored!.result,
+    trigger: stored!.trigger,
+    request: stored!.request,
+    baseCommit: stored!.baseCommit,
+    targetCommit: stored!.targetCommit,
+    includedCommits: stored!.includedCommits,
+    startedAt: stored!.startedAt,
+    finishedAt: stored!.finishedAt,
+    errorMessage: null,
+    artifactNames: Object.keys(stored!.artifacts),
+    updatedAt: stored!.updatedAt,
+  };
+  const artifacts =
+    runtime && 'artifacts' in runtime ? runtime.artifacts : (stored?.artifacts ?? {});
+  return {
+    ...base,
+    request: base.request || stored?.request || '',
+    baseCommit: base.baseCommit ?? stored?.baseCommit ?? null,
+    targetCommit: base.targetCommit ?? stored?.targetCommit ?? null,
+    includedCommits:
+      base.includedCommits.length > 0 ? base.includedCommits : (stored?.includedCommits ?? []),
+    artifactNames:
+      base.artifactNames.length > 0 ? base.artifactNames : Object.keys(stored?.artifacts ?? {}),
+    evidence: base.evidence ?? stored?.evidence,
+    scenarioMode: base.scenarioMode ?? stored?.scenarioMode,
+    initialization: base.initialization ?? stored?.initialization,
+    scenarioPrUrl: base.scenarioPrUrl ?? stored?.scenarioPrUrl,
+    currentScenario: base.currentScenario ?? null,
+    scenarioProgress: base.scenarioProgress ?? stored?.scenarioProgress ?? undefined,
+    activities:
+      base.activities && base.activities.length > 0 ? base.activities : stored?.activities,
+    blockingReasons: base.blockingReasons ?? stored?.blockingReasons,
+    updatedAt: base.updatedAt ?? stored?.updatedAt,
+    archive: stored
+      ? {
+          reportStatus: stored.reportStatus,
+          reportCommitSha: stored.reportCommitSha,
+          archiveStatus: stored.archiveStatus,
+          archiveError: stored.archiveError,
+          progressed: stored.progressed,
+          progressedAt: stored.progressedAt,
+          scenarioStatus: stored.scenarioStatus,
+          scenarioCommitSha: stored.scenarioCommitSha,
+          scenarioPrUrl: stored.scenarioPrUrl,
+          scenarioError: stored.scenarioError,
+        }
+      : null,
+    scenarioResults: stored?.scenarioResults ?? [],
+    confirmedBugs: stored?.confirmedBugs ?? [],
+    issues:
+      stored?.issues.map((issue) => ({
+        bugKey: issue.bugKey,
+        title: issue.title,
+        scenarioIds: issue.scenarioIds,
+        issueAction: issue.issueAction,
+        requestedIssueUrl: issue.requestedIssueUrl,
+        status: issue.status,
+        issueNumber: issue.issueNumber,
+        issueUrl: issue.issueUrl,
+        errorMessage: issue.errorMessage,
+        attempts: issue.attempts,
+      })) ?? [],
+    artifacts,
+  };
 }
 
 function safeContentType(value: string): string {
