@@ -38,7 +38,7 @@
 - [ ] 新 quality/runtime 镜像构建：quality 在 npm 原生依赖头文件下载阶段受阻，runtime 未执行；不能将旧镜像回归写成新镜像构建成功。
 - [x] `git diff --check`、新增行高置信凭据模式扫描和 Markdown 本地链接检查通过。
 - [x] 更新本 Plan 为实际检查结果；未执行、失败、受阻单独记录。
-- [ ] 提交 fix PR 到 develop；不直接提交 develop/main，不自动打 tag。
+- [x] 提交草稿 [PR #105](https://github.com/cynos-ai/luowang/pull/105) 到 develop；实现提交 `962f4c1`。构建缺口未补齐前保持 Draft，不直接提交 develop/main，不自动打 tag。
 
 证明：AC-V071-06。测试使用本地合成数据，不在罗网自身创建 scenario-testing 或测试资产。
 
@@ -59,7 +59,7 @@
 
 ### 失败、受阻与未运行
 
-- 新 `docker build --target quality --tag luowang:v071-quality .` 首次失败：`better-sqlite3` 回退 node-gyp 时，Node 24.14.1 headers 下载连接中断（`Error: aborted`）。一次重试仍停留于 npm 安装阶段，超过 6 分钟后由操作者工具终止，没有进一步重试或修改 Dockerfile 绕过；首次失败与重试日志分别保存为同目录 `build-quality-failed.log`、`build-quality-retry-stopped.log`。
+- 新 `docker build --target quality --tag luowang:v071-quality .` 首次失败：`better-sqlite3` 回退 node-gyp 时，Node 24.14.1 headers 下载连接中断（`Error: aborted`）。一次重试仍停留于 npm 安装阶段，超过 6 分钟后本次执行主动终止，没有进一步重试或修改 Dockerfile 绕过；首次失败与重试日志分别保存为同目录 `build-quality-failed.log`、`build-quality-retry-stopped.log`。
 - 新 runtime 构建未运行，等待上述依赖下载问题解除或 CI 提供独立构建证明。前述旧 quality 内的构建/测试通过不抵消该缺口。
 - 没有读取候选 Secret 或运行真实 preflight/live/release；不把 v0.7.0 的旧证据记为 0.7.1 通过。本轮无新版本号/tag/Release，包版本保持 0.7.0，正式发布准备时统一更新。
 - v0.7.0 的历史 Run、核验产物和 tag 不修改。
