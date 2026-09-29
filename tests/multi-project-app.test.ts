@@ -124,6 +124,14 @@ it('uses only new-schema administration routes, scoped Secrets, and the existing
   try {
     assert.deepEqual(backgroundEvents, ['recover', 'start']);
     assert.equal((await app.inject({ method: 'GET', url: '/api/projects' })).statusCode, 401);
+    assert.equal(
+      (await app.inject({ method: 'GET', url: '/api/provider/providers' })).statusCode,
+      401,
+    );
+    assert.equal(
+      (await app.inject({ method: 'GET', url: '/api/provider/models?provider=openai' })).statusCode,
+      401,
+    );
     assert.equal((await app.inject({ method: 'GET', url: '/api/config' })).statusCode, 404);
     assert.equal((await app.inject({ method: 'POST', url: '/api/runs' })).statusCode, 404);
     const login = await app.inject({
@@ -135,6 +143,20 @@ it('uses only new-schema administration routes, scoped Secrets, and the existing
     const cookie = login.headers['set-cookie']?.toString().split(';')[0];
     assert.ok(cookie);
     const headers = { cookie };
+    const providers = await app.inject({ method: 'GET', url: '/api/provider/providers', headers });
+    assert.equal(providers.statusCode, 200);
+    assert.ok(providers.json().providers.some((item: { id: string }) => item.id === 'openai'));
+    const models = await app.inject({
+      method: 'GET',
+      url: '/api/provider/models?provider=openai',
+      headers,
+    });
+    assert.equal(models.statusCode, 200);
+    assert.equal(models.json().provider, 'openai');
+    assert.ok(models.json().models.length > 0);
+    assert.ok(
+      models.json().models.every((item: { provider: string }) => item.provider === 'openai'),
+    );
     assert.equal(
       (await app.inject({ method: 'GET', url: '/api/account', headers })).json().profile
         .displayName,
