@@ -135,6 +135,8 @@ export interface ConnectivityCheck {
 export interface ProviderInfo {
   id: string;
   name: string;
+  /** Provider default API base URL from the Pi catalog, when known. */
+  baseUrl?: string;
 }
 
 export interface ProviderModelInfo {

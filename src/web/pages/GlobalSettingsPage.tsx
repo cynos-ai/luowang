@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type FormEvent } from 'react';
+import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
 
 import type {
   HarnessConfig,
@@ -97,6 +97,22 @@ export function GlobalSettingsPage({ section }: { section: GlobalSettingSection 
         body: JSON.stringify(sectionPatch(section, configuration)),
       });
       setDraft(response.configuration);
+      const apiKey = section === 'models' ? secretDraft.providerApiKey : undefined;
+      if (apiKey) {
+        try {
+          await requestJson('/api/deployment/secrets/providerApiKey', {
+            method: 'PUT',
+            body: JSON.stringify({ value: apiKey }),
+          });
+          setSecretDraft((current) => ({ ...current, providerApiKey: '' }));
+          resource.reload();
+          setMessage('配置与 Provider API Key 已保存。保存不等于连接检查通过。');
+        } catch (cause) {
+          resource.reload();
+          setError(`配置已保存；${toUserMessage(cause, 'Provider API Key 保存失败')}`);
+        }
+        return;
+      }
       resource.reload();
       setMessage('配置已保存。保存不等于连接检查通过。');
     } catch (cause) {
@@ -194,7 +210,12 @@ export function GlobalSettingsPage({ section }: { section: GlobalSettingSection 
                     section={section}
                     value={configuration}
                     disabled={Boolean(busy) || locked}
+                    providerApiKey={secretDraft.providerApiKey ?? ''}
+                    providerApiKeyMetadata={resource.value.deployment.secrets.providerApiKey}
                     onChange={setDraft}
+                    onProviderApiKey={(value) =>
+                      setSecretDraft((current) => ({ ...current, providerApiKey: value }))
+                    }
                   />
                   <div className="settings-actions">
                     <button
@@ -222,11 +243,17 @@ export function GlobalSettingsPage({ section }: { section: GlobalSettingSection 
 function ModelSettings({
   value,
   disabled,
+  providerApiKey,
+  providerApiKeyMetadata,
   onChange,
+  onProviderApiKey,
 }: {
   value: HarnessConfig;
   disabled: boolean;
+  providerApiKey: string;
+  providerApiKeyMetadata: SecretMetadata | undefined;
   onChange: (value: HarnessConfig) => void;
+  onProviderApiKey: (value: string) => void;
 }) {
   const [providers, setProviders] = useState<ProviderInfo[]>([]);
   const [providerError, setProviderError] = useState('');
@@ -240,13 +267,30 @@ function ModelSettings({
   const models = catalog.provider === provider ? catalog.models : [];
   const loading = catalog.provider !== provider || catalog.loading;
   const set = (patch: Partial<HarnessConfig>) => onChange({ ...value, ...patch });
+  const latestValue = useRef(value);
+  latestValue.current = value;
+  const latestChange = useRef(onChange);
+  latestChange.current = onChange;
+
+  // Switching providers replaces the base URL with the Pi catalog default (or empty).
+  function applyProvider(next: string) {
+    const selected = providers.find((item) => item.id === next.trim());
+    set({ provider: next, providerBaseUrl: selected?.baseUrl ?? '' });
+  }
 
   useEffect(() => {
     const controller = new AbortController();
     void requestJson<{ providers: ProviderInfo[] }>('/api/provider/providers', {
       signal: controller.signal,
     })
-      .then((response) => setProviders(response.providers))
+      .then((response) => {
+        setProviders(response.providers);
+        const current = latestValue.current;
+        const selected = response.providers.find((item) => item.id === current.provider.trim());
+        if (selected?.baseUrl && current.providerBaseUrl === '') {
+          latestChange.current({ ...current, providerBaseUrl: selected.baseUrl });
+        }
+      })
       .catch((cause: unknown) => {
         if (!controller.signal.aborted)
           setProviderError(toUserMessage(cause, 'Provider 目录加载失败'));
@@ -285,47 +329,66 @@ function ModelSettings({
     };
   }, [provider]);
 
+  const catalogStatus = loading
+    ? '正在加载已知模型目录…'
+    : catalog.error
+      ? `目录加载失败：${catalog.error}`
+      : models.length > 0
+        ? `已载入 ${models.length} 个已知模型`
+        : provider
+          ? '暂无已知模型'
+          : '';
+
   return (
     <>
-      <SectionTitle
-        title="模型与角色"
-        text="修改会影响全部项目的新 Run。Final Main 复用 Main 配置，不创建第四组 Agent 配置。"
-      />
+      <SectionTitle title="模型与角色" />
       <div className="form-grid">
-        <Field label="Provider" hint="可输入或从 Pi 已知 Provider 中选择">
-          <input
-            list="global-provider-catalog"
-            disabled={disabled}
-            value={value.provider}
-            onChange={(event) => set({ provider: event.target.value })}
-          />
-        </Field>
-        <datalist id="global-provider-catalog">
-          {providers.map((item) => (
-            <option key={item.id} value={item.id}>
-              {item.name}
-            </option>
-          ))}
-        </datalist>
-        {providerError && <p className="notice notice-warning">{providerError}；仍可手工输入。</p>}
-        <Field label="Provider Base URL">
-          <input
-            disabled={disabled}
-            value={value.providerBaseUrl}
-            onChange={(event) => set({ providerBaseUrl: event.target.value })}
-          />
-        </Field>
-        <p className="catalog-summary" role="status">
-          {!provider
-            ? '请先选择 Provider。'
-            : loading
-              ? '正在加载已知模型目录…'
-              : catalog.error
-                ? `${catalog.error}；可保留手工输入，尚未验证模型。`
-                : models.length
-                  ? `已载入 ${models.length} 个已知模型；目录不代表账号调用权限。`
-                  : `Provider “${provider}”暂无已知模型；可手工输入，保存后仍需连接检查。`}
-        </p>
+        <div className="model-service-fields">
+          <Field label="Provider">
+            <input
+              list="global-provider-catalog"
+              disabled={disabled}
+              value={value.provider}
+              onChange={(event) => applyProvider(event.target.value)}
+            />
+          </Field>
+          <datalist id="global-provider-catalog">
+            {providers.map((item) => (
+              <option key={item.id} value={item.id}>
+                {item.name}
+              </option>
+            ))}
+          </datalist>
+          <Field label="Provider Base URL">
+            <input
+              disabled={disabled}
+              value={value.providerBaseUrl}
+              onChange={(event) => set({ providerBaseUrl: event.target.value })}
+            />
+          </Field>
+          <Field
+            label="Provider API Key"
+            hint={
+              providerApiKeyMetadata?.configured
+                ? `已配置 ${providerApiKeyMetadata.masked ?? ''}`
+                : '未配置'
+            }
+          >
+            <input
+              type="password"
+              autoComplete="new-password"
+              disabled={disabled}
+              value={providerApiKey}
+              onChange={(event) => onProviderApiKey(event.target.value)}
+            />
+          </Field>
+        </div>
+        {providerError && <p className="notice notice-warning">{providerError}</p>}
+        {catalogStatus && (
+          <p className="catalog-summary" role="status">
+            {catalogStatus}
+          </p>
+        )}
         {(['main', 'runner', 'reviewer'] as const).map((role) => {
           const selected = models.find((item) => item.id === value.agents[role].model);
           const reviewerWarning =
@@ -346,7 +409,7 @@ function ModelSettings({
                     ? 'Runner'
                     : 'Reviewer（需要视觉）'}
               </h3>
-              <Field label="模型" hint="可搜索模型 ID 或手工输入" error={reviewerWarning}>
+              <Field label="模型" error={reviewerWarning}>
                 <input
                   type="search"
                   list={listId}
@@ -410,16 +473,31 @@ function GlobalSection({
   section,
   value,
   disabled,
+  providerApiKey,
+  providerApiKeyMetadata,
   onChange,
+  onProviderApiKey,
 }: {
   section: Exclude<GlobalSettingSection, 'credentials'>;
   value: HarnessConfig;
   disabled: boolean;
+  providerApiKey: string;
+  providerApiKeyMetadata: SecretMetadata | undefined;
   onChange: (value: HarnessConfig) => void;
+  onProviderApiKey: (value: string) => void;
 }) {
   const set = (patch: Partial<HarnessConfig>) => onChange({ ...value, ...patch });
   if (section === 'models')
-    return <ModelSettings value={value} disabled={disabled} onChange={onChange} />;
+    return (
+      <ModelSettings
+        value={value}
+        disabled={disabled}
+        providerApiKey={providerApiKey}
+        providerApiKeyMetadata={providerApiKeyMetadata}
+        onChange={onChange}
+        onProviderApiKey={onProviderApiKey}
+      />
+    );
   if (section === 'browser')
     return (
       <>
@@ -605,11 +683,11 @@ function CredentialsSection({
     </section>
   );
 }
-function SectionTitle({ title, text }: { title: string; text: string }) {
+function SectionTitle({ title, text }: { title: string; text?: string }) {
   return (
     <div className="settings-section-heading">
       <h2>{title}</h2>
-      <p>{text}</p>
+      {text && <p>{text}</p>}
     </div>
   );
 }

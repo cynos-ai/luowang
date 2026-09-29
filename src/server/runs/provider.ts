@@ -138,7 +138,11 @@ class PiProviderAdapter implements ProviderAdapter {
     const runtime = await this.getCatalogRuntime();
     return runtime
       .getProviders()
-      .map((provider) => ({ id: provider.id, name: provider.name }))
+      .map((provider) => ({
+        id: provider.id,
+        name: provider.name,
+        ...(provider.baseUrl ? { baseUrl: provider.baseUrl } : {}),
+      }))
       .sort((left, right) => left.name.localeCompare(right.name));
   }
 

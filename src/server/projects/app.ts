@@ -291,6 +291,7 @@ export async function createProjectApp(options: ProjectAppOptions) {
     requireAuth(request, auth);
     return { providers: (await provider.listProviders?.()) ?? [] };
   });
+  // Provider default base URLs are public catalog data, never credentials.
   app.get('/api/provider/models', async (request) => {
     requireAuth(request, auth);
     const query = request.query as Record<string, unknown>;
