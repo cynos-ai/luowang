@@ -42,7 +42,7 @@ export function ProjectRunsPage({ projectId }: { projectId: string }) {
 
   return (
     <section className="page-content runs-page">
-      <PageHeading title="测试记录" scope="当前项目" description="完整 Run 历史，最新优先。" />
+      <PageHeading title="测试记录" scope="当前项目" />
       <div className="page-body">
         <div className="record-filters" aria-label="测试记录筛选">
           <label>

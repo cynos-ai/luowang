@@ -59,7 +59,6 @@ export function ProjectsPage({ onProjectsChanged }: { onProjectsChanged: () => P
       <PageHeading
         title="项目"
         scope="全局"
-        description="每个项目独立保存配置、凭据、队列和测试记录。"
         actions={
           <AppLink className="button inline-button" to={{ name: 'project-new' }}>
             接入项目

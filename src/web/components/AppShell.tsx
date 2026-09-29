@@ -22,9 +22,12 @@ export function AppShell({
         跳到主要内容
       </a>
       <header className="lw-header">
-        <AppLink className="wordmark" to={{ name: 'workspace' }}>
-          <strong>罗网</strong>
-          <span>LuoWang</span>
+        <AppLink className="wordmark" to={{ name: 'workspace' }} aria-label="罗网工作台">
+          <span className="wordmark-cn">
+            <span>罗</span>
+            <span className="wordmark-cn-second">网</span>
+          </span>
+          <span className="wordmark-en">LUOWANG</span>
         </AppLink>
         <nav className="global-nav" aria-label="全局导航">
           <AppLink

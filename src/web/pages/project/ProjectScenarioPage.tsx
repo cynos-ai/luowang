@@ -41,11 +41,7 @@ export function ProjectScenarioPage({
   const data = resource.value;
   return (
     <section className="page-content scenario-detail-page">
-      <PageHeading
-        title={data?.scenario.name ?? scenarioId}
-        scope="当前项目 · 场景"
-        description="Git 中的只读场景定义和执行历史。"
-      />
+      <PageHeading title={data?.scenario.name ?? scenarioId} scope="当前项目 · 场景" />
       <div className="page-body">
         <AsyncRegion
           loading={resource.loading && !data}

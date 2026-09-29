@@ -69,7 +69,6 @@ export function ProjectReadinessPage({ projectId }: { projectId: string }) {
       <PageHeading
         title="运行准备"
         scope="当前项目"
-        description="这里只执行同步、镜像准备和检查；配置在项目设置中修改。"
         actions={
           <button
             className="button"

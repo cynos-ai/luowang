@@ -46,11 +46,7 @@ export function SystemStatusPage() {
 
   return (
     <section className="page-content system-status-page">
-      <PageHeading
-        title="系统状态"
-        scope="全局 · 只读诊断"
-        description="影响多个项目的服务、共享依赖和执行资源事实。"
-      />
+      <PageHeading title="系统状态" scope="全局 · 只读诊断" />
       <div className="page-body system-status-layout">
         {checkError && (
           <p className="notice notice-error" role="alert">

@@ -224,7 +224,7 @@ function RoutePage({
   if (route.name === 'not-found') {
     return (
       <section className="page-content">
-        <PageHeading title="页面不存在" scope="404" description="这个地址不属于罗网控制台。" />
+        <PageHeading title="页面不存在" scope="404" />
       </section>
     );
   }
@@ -273,7 +273,7 @@ function RoutePage({
   const page = pageCopy(route);
   return (
     <section className="page-content">
-      <PageHeading title={page.title} scope={page.scope} description={page.description} />
+      <PageHeading title={page.title} scope={page.scope} />
       <section className="phase-placeholder" aria-label="页面接入状态">
         <strong>页面结构已就位</strong>
         <p>数据与操作将在对应实施阶段接入真实接口。</p>

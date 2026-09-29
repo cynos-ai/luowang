@@ -60,7 +60,7 @@ export function ProjectOverviewPage({ projectId }: { projectId: string }) {
 
   return (
     <section className="page-content project-overview-page">
-      <PageHeading title="项目概览" scope="当前项目" description="当前判断和下一步。" />
+      <PageHeading title="项目概览" scope="当前项目" />
       <div className="page-body">
         <AsyncRegion
           loading={resource.loading && !data}

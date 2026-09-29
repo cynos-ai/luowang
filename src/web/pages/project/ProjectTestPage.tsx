@@ -133,7 +133,7 @@ export function ProjectTestPage({ projectId }: { projectId: string }) {
 
   return (
     <section className="page-content project-test-page">
-      <PageHeading title="测试" scope="当前项目" description="一个页面跟踪当前测试任务。" />
+      <PageHeading title="测试" scope="当前项目" />
       <div className="page-body test-page-layout">
         {message && <p className="notice notice-success">{message}</p>}
         {actionError && (

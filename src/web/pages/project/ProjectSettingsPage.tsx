@@ -128,7 +128,7 @@ export function ProjectSettingsPage({
   const locked = Boolean(data?.pending.length);
   return (
     <section className="page-content project-settings-page">
-      <PageHeading title="项目设置" scope="当前项目" description="这些设置只影响当前项目。" />
+      <PageHeading title="项目设置" scope="当前项目" />
       <div className="page-body settings-layout">
         <nav className="settings-tabs" aria-label="项目设置分组">
           {sections.map(([key, label]) => (

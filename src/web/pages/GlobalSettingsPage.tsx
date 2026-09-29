@@ -140,11 +140,7 @@ export function GlobalSettingsPage({ section }: { section: GlobalSettingSection 
 
   return (
     <section className="page-content global-settings-page">
-      <PageHeading
-        title="全局设置"
-        scope="全局设置 · 影响全部项目"
-        description="部署级模型、浏览器、对象存储和凭据。项目 Secret 不在此处管理。"
-      />
+      <PageHeading title="全局设置" scope="全局设置 · 影响全部项目" />
       <div className="page-body settings-layout">
         <nav className="settings-tabs" aria-label="全局设置分组">
           {sections.map(([key, label]) => (

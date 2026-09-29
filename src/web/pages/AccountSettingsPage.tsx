@@ -89,11 +89,7 @@ export function AccountSettingsPage({ onPasswordChanged }: { onPasswordChanged: 
 
   return (
     <section className="page-content account-settings-page">
-      <PageHeading
-        title="账号设置"
-        scope="管理员"
-        description="更新显示名称或更换当前管理员密码。"
-      />
+      <PageHeading title="账号设置" scope="管理员" />
       <div className="page-body account-settings-layout">
         {message && <p className="notice notice-success">{message}</p>}
         {error && (

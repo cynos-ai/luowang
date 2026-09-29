@@ -38,16 +38,76 @@
 .lw-header::before {
   position: absolute;
   z-index: -1;
-  top: -48px;
+  top: 0;
+  bottom: 0;
   left: 140px;
-  width: min(48vw, 690px);
-  height: 190px;
+  width: min(52vw, 760px);
   background: var(--lw-red);
+  clip-path: polygon(0 0, 95% 0, 100% 72%, 0 100%);
   content: '';
-  transform: rotate(-7deg);
 }
 
-.wordmark,
+.wordmark {
+  position: relative;
+  display: block;
+  width: 166px;
+  height: 76px;
+  color: #fff;
+  isolation: isolate;
+  text-decoration: none;
+}
+
+.wordmark::before,
+.wordmark::after {
+  position: absolute;
+  content: '';
+}
+
+.wordmark::before {
+  z-index: -1;
+  inset: 0;
+  background: var(--lw-ink);
+  clip-path: polygon(8% 0, 100% 5%, 92% 100%, 0 92%, 0 14%);
+}
+
+.wordmark::after {
+  z-index: -2;
+  right: -7px;
+  bottom: -5px;
+  width: 86px;
+  height: 25px;
+  background: var(--lw-red);
+  clip-path: polygon(8% 0, 100% 16%, 90% 100%, 0 78%);
+}
+
+.wordmark-cn {
+  position: absolute;
+  top: 8px;
+  left: 17px;
+  font-family: var(--lw-display);
+  font-size: 35px;
+  font-weight: 900;
+  letter-spacing: -0.1em;
+  line-height: 1;
+  transform: skew(-5deg);
+}
+
+.wordmark-cn-second {
+  position: relative;
+  top: 3px;
+  left: 2px;
+}
+
+.wordmark-en {
+  position: absolute;
+  right: 20px;
+  bottom: 10px;
+  font-family: var(--lw-mono);
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.22em;
+}
+
 .login-wordmark {
   display: flex;
   align-items: baseline;
@@ -57,11 +117,9 @@
   background: var(--lw-ink);
   color: #fff;
   clip-path: polygon(0 8px, 8px 0, 100% 0, calc(100% - 7px) 100%, 0 100%);
-  text-decoration: none;
   transform: rotate(-1.5deg);
 }
 
-.wordmark strong,
 .login-wordmark strong {
   font-family: var(--lw-display);
   font-size: 40px;
@@ -70,7 +128,6 @@
   letter-spacing: -0.08em;
 }
 
-.wordmark span,
 .login-wordmark span {
   font-family: var(--lw-mono);
   font-size: 10px;
@@ -216,76 +273,86 @@
 .page-heading {
   position: relative;
   display: grid;
-  min-height: 180px;
-  grid-template-columns: minmax(0, 1fr) minmax(260px, 380px);
+  min-height: 92px;
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
   gap: var(--lw-gap);
-  padding: 30px var(--lw-panel-pad);
+  padding: 16px var(--lw-page-pad) 13px;
   overflow: hidden;
-  border-bottom: 4px solid var(--lw-ink);
+  border-bottom: 3px solid var(--lw-ink);
 }
 
 .page-heading::before {
   position: absolute;
-  top: 25px;
-  left: -28px;
-  width: min(72%, 760px);
-  height: 118px;
-  background: var(--lw-ink);
-  clip-path: polygon(5% 0, 100% 7%, 93% 100%, 0 88%);
+  top: 16px;
+  left: max(18px, calc(var(--lw-page-pad) - 12px));
+  width: 11px;
+  height: 60px;
+  background: var(--lw-red);
   content: '';
-  transform: rotate(-1deg);
+  transform: rotate(12deg);
 }
 
 .page-heading::after {
   position: absolute;
-  top: 20px;
-  left: min(61%, 650px);
-  width: 180px;
-  height: 84px;
-  background: var(--lw-red);
+  right: var(--lw-page-pad);
+  bottom: 21px;
+  width: clamp(130px, 14vw, 190px);
+  height: 20px;
+  background: var(--lw-ink);
+  clip-path: polygon(0 30%, 100% 0, 91% 72%, 10% 100%);
   content: '';
-  transform: rotate(8deg);
+  transform: rotate(-2deg);
 }
 
-.page-heading > * {
+.page-heading-title,
+.page-heading .page-actions {
+  position: relative;
   z-index: 1;
 }
 
+.page-heading-title {
+  min-width: 0;
+  padding-left: 29px;
+}
+
 .page-heading h1 {
-  max-width: min(64vw, 680px);
-  margin: 0 0 0 14px;
-  color: #fff;
+  max-width: min(70vw, 920px);
+  margin: 0;
+  color: var(--lw-ink);
   font-family: var(--lw-display);
-  font-size: clamp(46px, 6vw, 86px);
+  font-size: clamp(34px, 3.5vw, 48px);
   font-stretch: condensed;
   font-weight: 900;
   letter-spacing: -0.055em;
-  line-height: 0.94;
+  line-height: 1;
   overflow-wrap: anywhere;
-  transform: rotate(-1.2deg);
-  transform-origin: left center;
 }
 
 .page-heading .scope-label {
-  margin-left: 18px;
-  color: #fff;
+  margin-bottom: 3px;
 }
 
-.page-heading-side {
-  display: grid;
-  justify-items: start;
-  gap: 12px;
+.page-heading-mark {
+  position: absolute;
+  z-index: 0;
+  top: 20px;
+  left: clamp(390px, 44%, 680px);
+  width: 96px;
+  height: 38px;
+  background: var(--lw-red);
+  clip-path: polygon(7% 0, 100% 14%, 88% 100%, 0 78%);
+  transform: rotate(7deg);
 }
 
-.page-heading-side p {
-  max-width: 380px;
-  margin: 0;
-  padding: 12px 14px;
-  border: 3px solid var(--lw-ink);
-  background: var(--lw-paper);
-  font-weight: 800;
-  transform: rotate(1.4deg);
+.page-heading-with-actions::after {
+  display: none;
+}
+
+.page-heading-with-actions .page-heading-mark {
+  left: min(48%, 620px);
+  width: 74px;
+  height: 31px;
 }
 
 .page-actions,

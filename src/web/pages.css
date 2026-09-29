@@ -1383,11 +1383,17 @@
   }
 
   .wordmark {
-    padding-inline: 14px;
+    width: 150px;
+    height: 70px;
   }
 
-  .wordmark strong {
+  .wordmark-cn {
     font-size: 32px;
+  }
+
+  .wordmark-en {
+    right: 16px;
+    bottom: 9px;
   }
 
   .nav-link {
@@ -1523,18 +1529,21 @@
   }
 
   .page-heading {
-    min-height: 230px;
-    grid-template-columns: minmax(0, 1fr) 250px;
+    min-height: 92px;
   }
 
-  .page-heading::before {
-    width: 72%;
-    height: 140px;
+  .page-heading::after {
+    width: 18%;
   }
 
   .page-heading h1 {
-    max-width: 430px;
-    font-size: 50px;
+    max-width: 470px;
+    font-size: 38px;
+  }
+
+  .page-heading-mark {
+    left: 48%;
+    width: 70px;
   }
 
   .onboarding-steps {

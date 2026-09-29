@@ -38,7 +38,7 @@ export function ProjectScenariosPage({ projectId }: { projectId: string }) {
   }, [query, resource.value, status, tag]);
   return (
     <section className="page-content scenarios-page">
-      <PageHeading title="场景" scope="当前项目" description="Git 场景资产的只读目录。" />
+      <PageHeading title="场景" scope="当前项目" />
       <div className="page-body">
         <div className="record-filters scenario-filters">
           <label>

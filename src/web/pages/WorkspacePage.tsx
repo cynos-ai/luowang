@@ -24,7 +24,7 @@ export function WorkspacePage() {
   const value = resource.value;
   return (
     <section className="page-content workspace-page">
-      <PageHeading title="工作台" scope="全局" description="先处理异常，再看当前执行和队列。" />
+      <PageHeading title="工作台" scope="全局" />
       <AsyncRegion
         loading={resource.loading && !value}
         error={!value ? resource.error : ''}

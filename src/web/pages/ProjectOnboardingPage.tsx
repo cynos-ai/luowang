@@ -123,11 +123,7 @@ export function ProjectOnboardingPage({
 
   return (
     <section className="page-content onboarding-page">
-      <PageHeading
-        title="接入项目"
-        scope="全局"
-        description="项目先保持暂停；完成检查后仍需明确启用。"
-      />
+      <PageHeading title="接入项目" scope="全局" />
       <div className="page-body onboarding-layout">
         {message && <p className="notice notice-success">{message}</p>}
         {actionError && <p className="notice notice-error">{actionError}</p>}

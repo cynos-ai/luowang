@@ -59,11 +59,7 @@ export function ProjectRunPage({
   const data = resource.value;
   return (
     <section className="page-content run-detail-page">
-      <PageHeading
-        title={`测试 ${shortId(runId)}`}
-        scope="当前项目 · 测试记录"
-        description="正式结论、工件、证据和归档事实。"
-      />
+      <PageHeading title={`测试 ${shortId(runId)}`} scope="当前项目 · 测试记录" />
       <div className="page-body run-detail-layout">
         <nav className="detail-tabs" aria-label="测试记录详情">
           {runDetailTabs.map((key) => (
