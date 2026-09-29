@@ -1,8 +1,8 @@
 # LuoWang
 
-罗网（LuoWang）是一个独立部署的 AI 场景测试 Harness。v0.6.1 支持同一管理员管理多个 GitHub 项目，项目数据、凭据、任务、证据和执行镜像分别归属。两个 Node 目标及一个 Python 目标已完成交替真实 Run 和故障隔离，历史持久测试实例副本已完成升级与回退验收。正式版本见 [GitHub Releases](https://github.com/cynos-ai/luowang/releases)。
+罗网（LuoWang）是一个独立部署的 AI 场景测试 Harness。v0.7.0 在同一管理员多项目能力上重构控制台：工作台优先呈现异常和当前执行，项目配置、运行准备、测试、测试记录与场景各自使用稳定页面，系统状态和全局设置保持部署作用域。生产页面只读取真实 API，不使用原型样例数据。正式版本见 [GitHub Releases](https://github.com/cynos-ai/luowang/releases)。
 
-v0.6.2 改善首次接入：可在控制台提交来源并初始化场景分支；本地检查会先诊断 Node 与 SQLite 原生依赖，运维可只读盘点项目 Docker 资源，冻结模型评测可复核质量和成本。本版不改变数据库结构；从旧单项目版本升级时仍须先完成 v0.6.1 的离线迁移。
+v0.6.2 是当前已发布基线，改善首次接入、运行环境诊断、Docker 资源盘点和冻结模型评测复核。v0.7.0 候选不改变既有多项目数据归属和执行隔离；从旧单项目版本升级时仍须先完成 v0.6.1 的离线迁移。
 
 v0.6.0 加入随版本维护的代码深读方法：Main 追踪业务规则与相关调用，并在计划中引用固定版本的读取回执；Reviewer 可以核对引用来源和阅读范围。回执只说明材料返回过，模型是否理解正确仍需单独评测。[实施与验收记录](docs/changes/luowang-code-understanding/plan.md)保留完整过程；多项目的功能边界与验收结果见[多项目计划](docs/changes/luowang-multi-project/plan.md)。
 
@@ -54,7 +54,7 @@ Compose 将数据保存到 `luowang-data` 卷，并把宿主机端口绑定到 `
 
 ## 验收状态
 
-v0.6.1 已发布，发布后的 local、live、release 验收均通过。完整 Run、失败记录和资源收尾见[多项目实施计划](docs/changes/luowang-multi-project/plan.md)与[Production Closure 计划](docs/changes/luowang-v07-production-closure/plan.md)；这些记录不用于判断新部署是否就绪。日常检查使用下列命令。
+v0.6.2 已发布，发布后的 local、live、release 验收均通过。v0.7.0 候选的本地质量检查和浏览器 E2E 已通过；新的外部 live/release 联合验收在受控输入齐全前保持 blocked，不能用本地结果代替。完整 Run、失败记录和资源收尾见[多项目实施计划](docs/changes/luowang-multi-project/plan.md)与[Production Closure 计划](docs/changes/luowang-v07-production-closure/plan.md)；这些记录不用于判断新部署是否就绪。日常检查使用下列命令。
 验收命令按证明范围严格分层：
 
 ```bash
