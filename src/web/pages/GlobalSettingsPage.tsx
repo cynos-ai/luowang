@@ -1,12 +1,17 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react';
 
-import type { HarnessConfig, SecretMetadata } from '../../shared/types';
+import type {
+  HarnessConfig,
+  ProviderInfo,
+  ProviderModelInfo,
+  SecretMetadata,
+} from '../../shared/types';
 import { requestJson, toUserMessage } from '../api';
 import { AppLink, useNavigationBlocker } from '../app/navigation';
 import type { GlobalSettingSection } from '../app/route';
 import { useResource } from '../app/resource';
 import { AsyncRegion } from '../components/AsyncRegion';
-import { Field } from '../components/FormControls';
+import { Field, ModelCapabilities } from '../components/FormControls';
 import { PageHeading } from '../components/PageHeading';
 import { StatusLabel } from '../components/StatusLabel';
 
@@ -214,51 +219,137 @@ export function GlobalSettingsPage({ section }: { section: GlobalSettingSection 
   );
 }
 
-function GlobalSection({
-  section,
+function ModelSettings({
   value,
   disabled,
   onChange,
 }: {
-  section: Exclude<GlobalSettingSection, 'credentials'>;
   value: HarnessConfig;
   disabled: boolean;
   onChange: (value: HarnessConfig) => void;
 }) {
+  const [providers, setProviders] = useState<ProviderInfo[]>([]);
+  const [providerError, setProviderError] = useState('');
+  const [catalog, setCatalog] = useState<{
+    provider: string;
+    models: ProviderModelInfo[];
+    loading: boolean;
+    error: string;
+  }>({ provider: '', models: [], loading: false, error: '' });
+  const provider = value.provider.trim();
+  const models = catalog.provider === provider ? catalog.models : [];
+  const loading = catalog.provider !== provider || catalog.loading;
   const set = (patch: Partial<HarnessConfig>) => onChange({ ...value, ...patch });
-  if (section === 'models')
-    return (
-      <>
-        <SectionTitle
-          title="模型与角色"
-          text="修改会影响全部项目的新 Run。Final Main 复用 Main 配置，不创建第四组 Agent 配置。"
-        />
-        <div className="form-grid">
-          <Field label="Provider">
-            <input
-              disabled={disabled}
-              value={value.provider}
-              onChange={(event) => set({ provider: event.target.value })}
-            />
-          </Field>
-          <Field label="Provider Base URL">
-            <input
-              disabled={disabled}
-              value={value.providerBaseUrl}
-              onChange={(event) => set({ providerBaseUrl: event.target.value })}
-            />
-          </Field>
-          {(['main', 'runner', 'reviewer'] as const).map((role) => (
+
+  useEffect(() => {
+    const controller = new AbortController();
+    void requestJson<{ providers: ProviderInfo[] }>('/api/provider/providers', {
+      signal: controller.signal,
+    })
+      .then((response) => setProviders(response.providers))
+      .catch((cause: unknown) => {
+        if (!controller.signal.aborted)
+          setProviderError(toUserMessage(cause, 'Provider 目录加载失败'));
+      });
+    return () => controller.abort();
+  }, []);
+
+  useEffect(() => {
+    if (!provider) {
+      setCatalog({ provider, models: [], loading: false, error: '' });
+      return;
+    }
+    const controller = new AbortController();
+    setCatalog({ provider, models: [], loading: true, error: '' });
+    const timer = window.setTimeout(() => {
+      void requestJson<{ models: ProviderModelInfo[] }>(
+        `/api/provider/models?provider=${encodeURIComponent(provider)}`,
+        { signal: controller.signal },
+      )
+        .then((response) =>
+          setCatalog({ provider, models: response.models, loading: false, error: '' }),
+        )
+        .catch((cause: unknown) => {
+          if (!controller.signal.aborted)
+            setCatalog({
+              provider,
+              models: [],
+              loading: false,
+              error: toUserMessage(cause, '模型目录加载失败'),
+            });
+        });
+    }, 250);
+    return () => {
+      window.clearTimeout(timer);
+      controller.abort();
+    };
+  }, [provider]);
+
+  return (
+    <>
+      <SectionTitle
+        title="模型与角色"
+        text="修改会影响全部项目的新 Run。Final Main 复用 Main 配置，不创建第四组 Agent 配置。"
+      />
+      <div className="form-grid">
+        <Field label="Provider" hint="可输入或从 Pi 已知 Provider 中选择">
+          <input
+            list="global-provider-catalog"
+            disabled={disabled}
+            value={value.provider}
+            onChange={(event) => set({ provider: event.target.value })}
+          />
+        </Field>
+        <datalist id="global-provider-catalog">
+          {providers.map((item) => (
+            <option key={item.id} value={item.id}>
+              {item.name}
+            </option>
+          ))}
+        </datalist>
+        {providerError && <p className="notice notice-warning">{providerError}；仍可手工输入。</p>}
+        <Field label="Provider Base URL">
+          <input
+            disabled={disabled}
+            value={value.providerBaseUrl}
+            onChange={(event) => set({ providerBaseUrl: event.target.value })}
+          />
+        </Field>
+        <p className="catalog-summary" role="status">
+          {!provider
+            ? '请先选择 Provider。'
+            : loading
+              ? '正在加载已知模型目录…'
+              : catalog.error
+                ? `${catalog.error}；可保留手工输入，尚未验证模型。`
+                : models.length
+                  ? `已载入 ${models.length} 个已知模型；目录不代表账号调用权限。`
+                  : `Provider “${provider}”暂无已知模型；可手工输入，保存后仍需连接检查。`}
+        </p>
+        {(['main', 'runner', 'reviewer'] as const).map((role) => {
+          const selected = models.find((item) => item.id === value.agents[role].model);
+          const reviewerWarning =
+            role === 'reviewer' && value.agents.reviewer.model.trim() && !loading
+              ? selected
+                ? selected.input.some((item) => item.toLowerCase() === 'image')
+                  ? undefined
+                  : '该模型不支持图像输入，视觉场景将被阻塞。'
+                : '未匹配到当前 Provider 的视觉模型，无法确认截图审核能力。'
+              : undefined;
+          const listId = `global-model-catalog-${role}`;
+          return (
             <div className="agent-config" key={role}>
               <h3>
                 {role === 'main'
                   ? 'Main（含 Final Main）'
                   : role === 'runner'
                     ? 'Runner'
-                    : 'Reviewer'}
+                    : 'Reviewer（需要视觉）'}
               </h3>
-              <Field label="模型">
+              <Field label="模型" hint="可搜索模型 ID 或手工输入" error={reviewerWarning}>
                 <input
+                  type="search"
+                  list={listId}
                   disabled={disabled}
                   value={value.agents[role].model}
                   onChange={(event) =>
@@ -271,6 +362,20 @@ function GlobalSection({
                   }
                 />
               </Field>
+              <datalist id={listId}>
+                {models.map((item) => (
+                  <option key={item.id} value={item.id}>
+                    {item.name} · {item.input.includes('image') ? '视觉' : '文本'}
+                    {item.reasoning ? ' · 推理' : ''}
+                  </option>
+                ))}
+              </datalist>
+              {selected && (
+                <div className="model-meta">
+                  <ModelCapabilities model={selected} />
+                  <small>{selected.name}</small>
+                </div>
+              )}
               <Field label="Thinking">
                 <select
                   disabled={disabled}
@@ -294,10 +399,27 @@ function GlobalSection({
                 </select>
               </Field>
             </div>
-          ))}
-        </div>
-      </>
-    );
+          );
+        })}
+      </div>
+    </>
+  );
+}
+
+function GlobalSection({
+  section,
+  value,
+  disabled,
+  onChange,
+}: {
+  section: Exclude<GlobalSettingSection, 'credentials'>;
+  value: HarnessConfig;
+  disabled: boolean;
+  onChange: (value: HarnessConfig) => void;
+}) {
+  const set = (patch: Partial<HarnessConfig>) => onChange({ ...value, ...patch });
+  if (section === 'models')
+    return <ModelSettings value={value} disabled={disabled} onChange={onChange} />;
   if (section === 'browser')
     return (
       <>

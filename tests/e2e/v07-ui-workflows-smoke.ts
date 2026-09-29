@@ -95,6 +95,8 @@ let holdWorkspace = false;
 let holdConfiguration = false;
 let globalSettingsUnlocked = false;
 let resourceInventoryFailure = false;
+let catalogFailure = false;
+let delayOpenAiCatalog = false;
 let releaseWorkspace: () => void = () => undefined;
 let releaseConfiguration: () => void = () => undefined;
 const workspaceGate = new Promise<void>((resolve) => {
@@ -177,6 +179,65 @@ try {
       return route.fulfill({
         json: fixture.systemStatus.dependencies.find((item) => item.id === id),
       });
+    }
+    if (pathname === '/api/provider/providers' && method === 'GET') {
+      return route.fulfill({
+        json: {
+          providers: [
+            { id: 'openai-compatible', name: 'OpenAI compatible' },
+            { id: 'openai', name: 'OpenAI' },
+          ],
+        },
+      });
+    }
+    if (pathname === '/api/provider/models' && method === 'GET') {
+      const provider = new URL(request.url()).searchParams.get('provider');
+      if (provider === 'openai' && delayOpenAiCatalog)
+        await new Promise((resolve) => setTimeout(resolve, 500));
+      if (catalogFailure) {
+        return route
+          .fulfill({ status: 503, json: { error: { message: '目录暂不可用' } } })
+          .catch(() => undefined);
+      }
+      return route
+        .fulfill({
+          json: {
+            provider,
+            models:
+              provider === 'openai-compatible'
+                ? [
+                    {
+                      id: 'deepseek-v4-flash',
+                      name: 'DeepSeek Flash',
+                      input: ['text'],
+                      reasoning: true,
+                      thinkingLevels: ['off', 'low'],
+                      available: false,
+                    },
+                    {
+                      id: 'deepseek-v4-flash-vision-exp',
+                      name: 'DeepSeek Vision',
+                      input: ['text', 'image'],
+                      reasoning: true,
+                      thinkingLevels: ['off', 'low'],
+                      available: false,
+                    },
+                  ]
+                : provider === 'openai'
+                  ? [
+                      {
+                        id: 'gpt-vision-fixture',
+                        name: 'OpenAI Vision',
+                        input: ['text', 'image'],
+                        reasoning: false,
+                        thinkingLevels: ['off'],
+                        available: false,
+                      },
+                    ]
+                  : [],
+          },
+        })
+        .catch(() => undefined);
     }
     if (pathname === '/api/deployment' && method === 'GET') {
       return route.fulfill({
@@ -733,7 +794,39 @@ try {
   globalSettingsUnlocked = true;
   await page.reload();
   await page.getByText('Final Main 复用 Main 配置，不创建第四组 Agent 配置。').waitFor();
-  await page.getByLabel('Provider', { exact: true }).fill('fixture-provider');
+  await page.getByText('已载入 2 个已知模型；目录不代表账号调用权限。').waitFor();
+  assert.equal(await page.locator('#global-provider-catalog option').count(), 2);
+  assert.equal(await page.locator('#global-model-catalog-reviewer option').count(), 2);
+  const roleModels = page.locator('.agent-config input[type="search"]');
+  await roleModels.nth(2).fill('deepseek-v4-flash');
+  await page.getByText('该模型不支持图像输入，视觉场景将被阻塞。').waitFor();
+  await roleModels.nth(2).fill('deepseek-v4-flash-vision-exp');
+  assert.equal(await page.getByText('该模型不支持图像输入，视觉场景将被阻塞。').count(), 0);
+  delayOpenAiCatalog = true;
+  const providerInput = page.locator('input[list="global-provider-catalog"]');
+  const pendingCatalog = page.waitForRequest((request) =>
+    request.url().includes('/api/provider/models?provider=openai'),
+  );
+  await providerInput.fill('openai');
+  await pendingCatalog;
+  await providerInput.fill('openai-compatible');
+  await page.getByText('已载入 2 个已知模型；目录不代表账号调用权限。').waitFor();
+  await page.waitForTimeout(550);
+  assert.equal(
+    await page.locator('#global-model-catalog-main option[value="gpt-vision-fixture"]').count(),
+    0,
+  );
+  delayOpenAiCatalog = false;
+  catalogFailure = true;
+  await providerInput.fill('openai');
+  await page.getByText(/目录暂不可用；可保留手工输入/).waitFor();
+  await roleModels.nth(0).fill('manual-model-id');
+  assert.equal(await roleModels.nth(0).inputValue(), 'manual-model-id');
+  catalogFailure = false;
+  await providerInput.fill('openai-compatible');
+  await page.getByText('已载入 2 个已知模型；目录不代表账号调用权限。').waitFor();
+  await roleModels.nth(0).fill('deepseek-v4-flash');
+  await providerInput.fill('fixture-provider');
   await page.getByRole('button', { name: '保存本分组' }).click();
   await page.getByText('配置已保存。保存不等于连接检查通过。').waitFor();
   assert.ok(writes.includes('PUT /api/deployment'));
