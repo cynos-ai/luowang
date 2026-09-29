@@ -6,7 +6,7 @@
 
 ## 1. 范围与优先级
 
-本版只修改发布验收检查器、它的自动测试和维护者文档；不修改生产 Run/归档/队列/API 的行为。沿用 [Production Closure Spec](../luowang-v07-production-closure/spec.md) 的 local/live/release 和人工发布边界；清理结论继续按 [单向交接 Spec](../luowang-single-handoff/spec.md) 执行。
+本版只修改发布验收检查器、它的自动测试和维护者文档；不修改生产 Run/归档/队列/API 的行为。沿用 [Production Closure Spec](../luowang-v07-production-closure/spec.md) 的 local/live/release 分层与负责人决定版本、授权发布的边界；明确授权后允许 AI 协助执行发布，清理结论继续按 [单向交接 Spec](../luowang-single-handoff/spec.md) 执行。
 
 本 Spec 补充检查器预检、报告保存和只读复核规则，不取消任何既有发布 AC。跨环境证据复用与按改动缩减未来发布范围仍未实现，不作为本版豁免。
 
@@ -65,6 +65,10 @@
 - 减少断言、证据必需改可选、工件适用规则改变或扩大证据沿用范围：负责人确认后才能改。普通字段读取错误可按正常 fix PR 修复。
 
 检查器 PR 应说明原要求、支持修复的原始事实、修改后仍会被拒绝的反例。原因无法确定时明确未知；不能把“驱动错误”转换成产品 passed。
+
+### 授权后的发布执行
+
+负责人明确授权具体版本和发布 PR 后，AI 可先核对必需工程与 live 证明、PR 检查状态、main HEAD 和目标 tag 不存在，再经 `develop → main` PR 合并；只在获得新的 main 合并提交后创建指向它的指定 SemVer tag 和 GitHub Release。禁止直接提交受保护分支、force-push、改写旧 tag 或未经授权自行选择版本。发布后用新的输出目录复核 tag/main 和旧 tag，核验失败原样保留并告知负责人，不能因为已经发布就补写 passed。
 
 ## 5. README
 

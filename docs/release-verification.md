@@ -62,7 +62,7 @@ npm run test:acceptance:release
 
 ## 5. 发布与发布后核对
 
-工程检查通过后仍需负责人确认实际候选和完整发布证明。实现通过 fix/feat PR 合入 develop，正式发布通过 develop → main PR；由负责人授权发布及 tag，不由 Agent 自行创建 tag。
+工程检查通过后仍需负责人确认实际候选和完整发布证明。实现通过 fix/feat PR 合入 develop，正式发布通过 develop → main PR。负责人明确指定版本并授权本次发布后，AI 可协助合并发布 PR、为合并后的 main 发布提交创建新的 SemVer tag 和 GitHub Release；未经授权不得执行，也不得覆盖、移动已有 tag。执行前核对 PR 检查、目标提交及 tag 不存在；发布后另存一轮 tag/main 与旧 tag 核验，失败不能改写历史。
 
 发布后通过 `LUOWANG_LIVE_RELEASE_TAG` 指定新 SemVer，复核 tag 与 main 发布提交一致并检查历史 tag。既有发布 AC 在 tag 未核验前仍未完成，不能用发布前的 release 汇总状态冒充发布后证明。不得重写历史 tag 或历史报告。
 
