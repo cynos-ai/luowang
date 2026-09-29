@@ -1684,6 +1684,12 @@
   color: var(--lw-muted);
 }
 
+.dependency-row .dependency-note {
+  margin-top: 6px;
+  color: var(--lw-red);
+  font-weight: 700;
+}
+
 .inline-actions,
 .settings-actions {
   display: flex;

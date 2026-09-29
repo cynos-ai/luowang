@@ -662,6 +662,13 @@ export interface SystemDependencyStatus {
   settingsSection: 'models' | 'browser' | 'object-storage';
 }
 
+export interface SystemCheckResponse {
+  /** Persisted snapshot after the check; unavailable capabilities keep their previous row. */
+  check: SystemDependencyStatus;
+  /** Live outcome of this check, including reasons that are not persisted. */
+  result: ConnectivityResult;
+}
+
 export interface SystemStatusResponse {
   fetchedAt: string;
   service: {

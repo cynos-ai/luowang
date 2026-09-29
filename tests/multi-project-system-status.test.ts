@@ -233,7 +233,9 @@ it('reads persisted dependency state, redacts diagnostics, and only checks fixed
     assert.equal(status.dependencies[1].status, 'not_checked');
     const checked = await service.runSystemCheck('provider');
     assert.equal(requested, 'provider-model');
-    assert.equal(checked.status, 'ok');
+    assert.equal(checked.check.status, 'ok');
+    assert.equal(checked.result.status, 'ok');
+    assert.equal(checked.result.message, '连接通过');
   } finally {
     database.close();
   }

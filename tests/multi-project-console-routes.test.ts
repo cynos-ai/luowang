@@ -70,14 +70,22 @@ it('protects every console route and accepts only fixed system checks', async ()
     runSystemCheck: async (id) => {
       calls.push(`check:${id}`);
       return {
-        id,
-        label: id,
-        status: 'ok',
-        message: '通过',
-        checkedAt: '2026-09-27T00:00:00.000Z',
-        lastSucceededAt: '2026-09-27T00:00:00.000Z',
-        settingsSection:
-          id === 'provider' ? 'models' : id === 'browser' ? 'browser' : 'object-storage',
+        check: {
+          id,
+          label: id,
+          status: 'ok',
+          message: '通过',
+          checkedAt: '2026-09-27T00:00:00.000Z',
+          lastSucceededAt: '2026-09-27T00:00:00.000Z',
+          settingsSection:
+            id === 'provider' ? 'models' : id === 'browser' ? 'browser' : 'object-storage',
+        },
+        result: {
+          status: 'ok',
+          message: '通过',
+          checkedAt: '2026-09-27T00:00:00.000Z',
+          latencyMs: 12,
+        },
       };
     },
   };
@@ -102,11 +110,14 @@ it('protects every console route and accepts only fixed system checks', async ()
       (await app.inject({ method: 'GET', url: '/api/system/resources', headers })).statusCode,
       200,
     );
-    assert.equal(
-      (await app.inject({ method: 'POST', url: '/api/system/checks/provider', headers }))
-        .statusCode,
-      200,
-    );
+    const checked = await app.inject({
+      method: 'POST',
+      url: '/api/system/checks/provider',
+      headers,
+    });
+    assert.equal(checked.statusCode, 200);
+    assert.equal(checked.json().check.id, 'provider');
+    assert.equal(checked.json().result.message, '通过');
     const invalid = await app.inject({
       method: 'POST',
       url: '/api/system/checks/https:%2F%2Fexample.test',
