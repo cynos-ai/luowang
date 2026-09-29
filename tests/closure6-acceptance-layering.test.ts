@@ -214,10 +214,19 @@ describe('Closure 6 acceptance status layering', () => {
         ],
       },
       {
+        runId: 'incomplete-blocked-run',
+        status: 'completed',
+        result: 'blocked',
+        request: '环境已停止',
+        scenarioResults: [{ id: 'AUTH-001', result: 'blocked' }],
+        archive: { archiveStatus: 'completed', progressed: false },
+      },
+      {
         runId: 'blocked-run',
         status: 'completed',
         result: 'blocked',
         scenarioResults: [{ id: 'AUTH-001', result: 'blocked' }],
+        blockingReasons: ['Playwright MCP unavailable'],
         archive: { archiveStatus: 'completed', progressed: false },
       },
       {

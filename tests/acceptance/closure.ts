@@ -272,7 +272,8 @@ export function selectLiveFacts(queue: LiveQueueFact[], runs: LiveRunFact[]): Li
       run.runId !== scenarioReviewRun.runId &&
       run.archive?.archiveStatus === 'completed' &&
       run.archive.progressed === false &&
-      (run.scenarioResults?.length ?? 0) > 0,
+      (run.scenarioResults?.length ?? 0) > 0 &&
+      (run.blockingReasons?.length ?? 0) > 0,
   );
   const blockedRun =
     blockedCandidates.find((run) => /环境.*(?:不可达|停止)/.test(run.request ?? '')) ??
