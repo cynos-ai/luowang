@@ -90,13 +90,14 @@ export async function createProjectApp(options: ProjectAppOptions) {
   const deployment = createDeploymentConfigurationStore(database, options.config);
   const deploymentSecrets = guarded.deployment();
   const deploymentRuntimeSecrets = createDeploymentRuntimeSecretStore(guarded);
+  const provider = createProviderAdapter(deployment, deploymentRuntimeSecrets);
   const connectivity =
     options.connectivity ??
     createConnectivityRegistry(
       database,
       deployment,
       undefined,
-      createProviderAdapter(deployment, deploymentRuntimeSecrets),
+      provider,
       createPlaywrightMcpAdapter(deployment),
       createOssAdapter(deployment, deploymentRuntimeSecrets),
     );
@@ -285,6 +286,18 @@ export async function createProjectApp(options: ProjectAppOptions) {
   app.get('/api/deployment', async (request) => {
     requireAuth(request, auth);
     return { configuration: deployment.getHarness(), secrets: guarded.deployment().metadata() };
+  });
+  app.get('/api/provider/providers', async (request) => {
+    requireAuth(request, auth);
+    return { providers: (await provider.listProviders?.()) ?? [] };
+  });
+  app.get('/api/provider/models', async (request) => {
+    requireAuth(request, auth);
+    const query = request.query as Record<string, unknown>;
+    const selected =
+      (typeof query.provider === 'string' ? query.provider.trim() : '') ||
+      deployment.getHarness().provider;
+    return { provider: selected, models: await provider.listModels(selected) };
   });
   app.put('/api/deployment', async (request) => {
     requireAuth(request, auth);
