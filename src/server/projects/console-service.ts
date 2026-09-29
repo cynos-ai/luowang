@@ -6,6 +6,7 @@ import type {
   ConsoleReadinessSnapshot,
   ConsoleRunReference,
   OperationsSchedulerStatus,
+  SystemCheckResponse,
   SystemDependencyStatus,
   SystemResourcesResponse,
   SystemStatusResponse,
@@ -39,7 +40,7 @@ export interface ProjectConsoleService {
   workspace(): Promise<WorkspaceResponse>;
   systemStatus(): SystemStatusResponse;
   resources(): Promise<SystemResourcesResponse>;
-  runSystemCheck(checkId: keyof typeof SYSTEM_CHECKS): Promise<SystemDependencyStatus>;
+  runSystemCheck(checkId: keyof typeof SYSTEM_CHECKS): Promise<SystemCheckResponse>;
 }
 
 export function createProjectConsoleService(input: {
@@ -218,8 +219,8 @@ export function createProjectConsoleService(input: {
 
     async runSystemCheck(checkId) {
       const [registryId] = SYSTEM_CHECKS[checkId];
-      await input.connectivity.run(registryId);
-      return readSystemDependency(input.database, checkId);
+      const outcome = await input.connectivity.run(registryId);
+      return { check: readSystemDependency(input.database, checkId), result: outcome.result };
     },
   };
 }

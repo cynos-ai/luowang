@@ -97,6 +97,7 @@ let globalSettingsUnlocked = false;
 let resourceInventoryFailure = false;
 let catalogFailure = false;
 let delayOpenAiCatalog = false;
+let systemCheckFailure = false;
 let releaseWorkspace: () => void = () => undefined;
 let releaseConfiguration: () => void = () => undefined;
 const workspaceGate = new Promise<void>((resolve) => {
@@ -176,8 +177,36 @@ try {
     }
     if (/^\/api\/system\/checks\/(provider|browser|oss)$/.test(pathname) && method === 'POST') {
       const id = pathname.split('/').at(-1);
+      const check = fixture.systemStatus.dependencies.find((item) => item.id === id)!;
+      if (systemCheckFailure) {
+        return route.fulfill({
+          status: 500,
+          json: { error: { message: '检查执行失败，请查看服务日志并重试' } },
+        });
+      }
+      if (id === 'oss') {
+        return route.fulfill({
+          json: {
+            check,
+            result: {
+              status: 'not_available',
+              message: 'OSS 能力尚未提供',
+              checkedAt: null,
+              latencyMs: null,
+            },
+          },
+        });
+      }
       return route.fulfill({
-        json: fixture.systemStatus.dependencies.find((item) => item.id === id),
+        json: {
+          check,
+          result: {
+            status: 'ok',
+            message: check.message,
+            checkedAt: check.checkedAt,
+            latencyMs: 12,
+          },
+        },
       });
     }
     if (pathname === '/api/provider/providers' && method === 'GET') {
@@ -791,6 +820,11 @@ try {
   await page.getByText('正在引用').waitFor();
   await page.getByRole('button', { name: '立即检查' }).last().click();
   assert.ok(writes.includes('POST /api/system/checks/oss'));
+  await page.getByText('OSS 能力尚未提供').waitFor();
+  systemCheckFailure = true;
+  await page.getByRole('button', { name: '立即检查' }).nth(1).click();
+  await page.getByText('检查执行失败，请查看服务日志并重试').waitFor();
+  systemCheckFailure = false;
 
   await page.goto(`${origin}/settings/models`);
   await page.getByText(/全局执行配置已锁定，相关测试记录/).waitFor();

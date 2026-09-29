@@ -31,9 +31,7 @@ export async function registerProjectConsoleRoutes(
       if (!SYSTEM_CHECK_IDS.has(request.params.checkId)) {
         throw new AppError('SYSTEM_CHECK_INVALID', '系统检查类型无效', 400);
       }
-      return {
-        check: await options.console.runSystemCheck(request.params.checkId as SystemCheckId),
-      };
+      return options.console.runSystemCheck(request.params.checkId as SystemCheckId);
     });
   });
 }

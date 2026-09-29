@@ -1,6 +1,7 @@
 import { useCallback, useState } from 'react';
 
 import type {
+  SystemCheckResponse,
   SystemDependencyStatus,
   SystemResourcesResponse,
   SystemStatusResponse,
@@ -29,16 +30,31 @@ export function SystemStatusPage() {
     toUserMessage(cause, '执行资源盘点失败'),
   );
   const [checking, setChecking] = useState('');
-  const [checkError, setCheckError] = useState('');
+  const [freshChecks, setFreshChecks] = useState<Record<string, SystemDependencyStatus>>({});
+  const [checkNotes, setCheckNotes] = useState<Record<string, string>>({});
+  const [checkErrors, setCheckErrors] = useState<Record<string, string>>({});
 
   async function runCheck(id: SystemDependencyStatus['id']) {
     setChecking(id);
-    setCheckError('');
+    setCheckErrors((current) => ({ ...current, [id]: '' }));
+    setCheckNotes((current) => ({ ...current, [id]: '' }));
     try {
-      await requestJson(`/api/system/checks/${id}`, { method: 'POST' });
-      status.reload();
+      const response = await requestJson<SystemCheckResponse>(`/api/system/checks/${id}`, {
+        method: 'POST',
+      });
+      setFreshChecks((current) => ({ ...current, [id]: response.check }));
+      setCheckNotes((current) => ({
+        ...current,
+        [id]:
+          response.result.status !== 'ok' && response.result.message !== response.check.message
+            ? response.result.message
+            : '',
+      }));
     } catch (cause) {
-      setCheckError(toUserMessage(cause, '共享依赖检查失败'));
+      setCheckErrors((current) => ({
+        ...current,
+        [id]: toUserMessage(cause, '共享依赖检查失败'),
+      }));
     } finally {
       setChecking('');
     }
@@ -48,11 +64,6 @@ export function SystemStatusPage() {
     <section className="page-content system-status-page">
       <PageHeading title="系统状态" scope="全局 · 只读诊断" />
       <div className="page-body system-status-layout">
-        {checkError && (
-          <p className="notice notice-error" role="alert">
-            {checkError}
-          </p>
-        )}
         <AsyncRegion
           loading={status.loading && !status.value}
           error={!status.value ? status.error : ''}
@@ -88,37 +99,53 @@ export function SystemStatusPage() {
                   <p>状态来自最近快照；只有点击检查才会执行外部连接。</p>
                 </div>
                 <div className="dependency-list">
-                  {status.value.dependencies.map((dependency) => (
-                    <article key={dependency.id} className="dependency-row">
-                      <div>
-                        <h3>{dependency.label}</h3>
-                        <p>{dependency.message}</p>
-                        <small>
-                          检查：{formatDate(dependency.checkedAt)} · 最近成功：
-                          {formatDate(dependency.lastSucceededAt)}
-                        </small>
-                      </div>
-                      <StatusLabel tone={dependencyTone(dependency.status)}>
-                        {dependencyLabel(dependency.status)}
-                      </StatusLabel>
-                      <div className="inline-actions">
-                        <AppLink
-                          className="text-link"
-                          to={{ name: 'global-settings', section: dependency.settingsSection }}
-                        >
-                          设置
-                        </AppLink>
-                        <button
-                          className="button button-small"
-                          type="button"
-                          disabled={Boolean(checking)}
-                          onClick={() => void runCheck(dependency.id)}
-                        >
-                          {checking === dependency.id ? '检查中…' : '立即检查'}
-                        </button>
-                      </div>
-                    </article>
-                  ))}
+                  {status.value.dependencies.map((row) => {
+                    const dependency = freshChecks[row.id] ?? row;
+                    const note = checkNotes[row.id];
+                    const failure = checkErrors[row.id];
+                    return (
+                      <article key={row.id} className="dependency-row">
+                        <div>
+                          <h3>{dependency.label}</h3>
+                          <p>{dependency.message}</p>
+                          <small>
+                            检查：{formatDate(dependency.checkedAt)} · 最近成功：
+                            {formatDate(dependency.lastSucceededAt)}
+                          </small>
+                          {failure ? (
+                            <p className="dependency-note" role="alert">
+                              {failure}
+                            </p>
+                          ) : (
+                            note && (
+                              <p className="dependency-note" role="status">
+                                {note}
+                              </p>
+                            )
+                          )}
+                        </div>
+                        <StatusLabel tone={dependencyTone(dependency.status)}>
+                          {dependencyLabel(dependency.status)}
+                        </StatusLabel>
+                        <div className="inline-actions">
+                          <AppLink
+                            className="text-link"
+                            to={{ name: 'global-settings', section: dependency.settingsSection }}
+                          >
+                            设置
+                          </AppLink>
+                          <button
+                            className="button button-small"
+                            type="button"
+                            disabled={Boolean(checking)}
+                            onClick={() => void runCheck(row.id)}
+                          >
+                            {checking === row.id ? '检查中…' : '立即检查'}
+                          </button>
+                        </div>
+                      </article>
+                    );
+                  })}
                 </div>
               </section>
               <section className="content-block">
