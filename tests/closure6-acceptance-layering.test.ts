@@ -1,5 +1,6 @@
 import { strict as assert } from 'node:assert';
-import { readFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { describe, it } from 'vitest';
@@ -16,6 +17,8 @@ import {
   parseHarnessUrl,
   PUBLIC_QUALITY_SCRIPTS,
   redactAcceptanceText,
+  readPublishedLiveReports,
+  reserveAcceptanceDirectory,
   selectLiveFacts,
   summarizeAcceptanceFailure,
   type ClosureProofStatuses,
@@ -188,6 +191,12 @@ describe('Closure 6 acceptance status layering', () => {
         runId: 'passed-run',
         status: 'completed',
         result: 'passed',
+        archive: {
+          reportStatus: 'published',
+          archiveStatus: 'completed',
+          scenarioStatus: 'not_applicable',
+          progressed: true,
+        },
         scenarioProgress: { completed: 1, total: 1 },
         evidence: [{ contentType: 'image/png' }],
         activities: [
@@ -199,6 +208,12 @@ describe('Closure 6 acceptance status layering', () => {
         runId: 'failed-run',
         status: 'completed',
         result: 'failed',
+        archive: {
+          reportStatus: 'published',
+          archiveStatus: 'completed',
+          scenarioStatus: 'not_applicable',
+          progressed: true,
+        },
         confirmedBugs: [{ key: 'BUG-1' }, { key: 'BUG-2' }],
         issues: [
           {
@@ -219,7 +234,12 @@ describe('Closure 6 acceptance status layering', () => {
         result: 'blocked',
         request: '环境已停止',
         scenarioResults: [{ id: 'AUTH-001', result: 'blocked' }],
-        archive: { archiveStatus: 'completed', progressed: false },
+        archive: {
+          reportStatus: 'published',
+          archiveStatus: 'completed',
+          scenarioStatus: 'not_applicable',
+          progressed: false,
+        },
       },
       {
         runId: 'blocked-run',
@@ -227,7 +247,12 @@ describe('Closure 6 acceptance status layering', () => {
         result: 'blocked',
         scenarioResults: [{ id: 'AUTH-001', result: 'blocked' }],
         blockingReasons: ['Playwright MCP unavailable'],
-        archive: { archiveStatus: 'completed', progressed: false },
+        archive: {
+          reportStatus: 'published',
+          archiveStatus: 'completed',
+          scenarioStatus: 'not_applicable',
+          progressed: false,
+        },
       },
       {
         runId: 'review-run',
@@ -251,6 +276,93 @@ describe('Closure 6 acceptance status layering', () => {
     assert.equal(facts.scenarioReviewRunId, 'review-run');
     assert.equal(facts.currentHeadRetestRunId, 'passed-run');
     assert.equal(facts.progressRunId, 'passed-run');
+    for (const mutate of [
+      (run: (typeof runs)[number]) => {
+        run.archive = undefined;
+      },
+      (run: (typeof runs)[number]) => {
+        run.archive!.progressed = true;
+      },
+      (run: (typeof runs)[number]) => {
+        run.blockingReasons = [];
+      },
+      (run: (typeof runs)[number]) => {
+        run.archive!.reportStatus = 'pending';
+      },
+    ]) {
+      const invalid = structuredClone(runs);
+      mutate(invalid.find((run) => run.runId === 'blocked-run')!);
+      assert.throws(() => selectLiveFacts(queue, invalid), /blocked Run/);
+    }
+    for (const id of ['passed-run', 'failed-run']) {
+      const invalid = structuredClone(runs);
+      invalid.find((run) => run.runId === id)!.archive!.reportStatus = 'pending';
+      assert.throws(() => selectLiveFacts(queue, invalid), /Run/);
+    }
+  });
+
+  it('reads only normal published reports, deduplicates, and never swallows a 404', async () => {
+    const selection = {
+      initializationRunId: 'special',
+      scenarioReviewRunId: 'special',
+      passedRunId: 'passed',
+      failedRunId: 'failed',
+      blockedRunId: 'blocked',
+      currentHeadRetestRunId: 'passed',
+      progressRunId: 'passed',
+    };
+    const details = ['passed', 'failed', 'blocked'].map((runId) => ({
+      runId,
+      status: 'completed',
+      archive: {
+        reportStatus: 'published',
+        archiveStatus: 'completed',
+        progressed: false,
+        scenarioStatus: 'not_applicable',
+      },
+    }));
+    const readIds: string[] = [];
+    const read = async (runId: string) => {
+      readIds.push(runId);
+      return { report: { runId } };
+    };
+    await readPublishedLiveReports(selection, details, read);
+    assert.deepEqual(readIds, ['passed', 'failed', 'blocked']);
+    await assert.rejects(
+      () =>
+        readPublishedLiveReports(selection, details, async () => {
+          throw new Error('HTTP 404');
+        }),
+      /404/,
+    );
+    await assert.rejects(
+      () =>
+        readPublishedLiveReports(selection, details, async () => ({
+          report: { runId: 'foreign' },
+        })),
+      /请求 Run/,
+    );
+    details[0]!.archive.reportStatus = 'not_applicable';
+    readIds.length = 0;
+    await assert.rejects(() => readPublishedLiveReports(selection, details, read), /普通 Run/);
+    assert.deepEqual(readIds, []);
+  });
+
+  it('reserves a new report directory and refuses to overwrite historical results', async () => {
+    const parent = await mkdtemp(join(tmpdir(), 'acceptance-history-'));
+    try {
+      const directory = join(parent, 'new', 'attempt');
+      await reserveAcceptanceDirectory(directory);
+      await writeFile(join(directory, 'report.json'), 'original failed result');
+      await assert.rejects(() => reserveAcceptanceDirectory(directory), /历史结果不能覆盖/);
+      assert.equal(
+        await readFile(join(directory, 'report.json'), 'utf8'),
+        'original failed result',
+      );
+      await reserveAcceptanceDirectory(join(parent, 'second-attempt'));
+    } finally {
+      await rm(parent, { recursive: true, force: true });
+    }
   });
 
   it('rejects credential-exfiltrating live URLs and non-SemVer release tags', () => {

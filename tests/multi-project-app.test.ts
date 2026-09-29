@@ -21,6 +21,11 @@ import { createProjectTestRequestQueue } from '../src/server/automation/queue.js
 import { createProjectRunStore } from '../src/server/runs/store.js';
 import { encodeStableEvidenceId } from '../src/server/storage/oss.js';
 import type { RunSummary } from '../src/shared/types.js';
+import {
+  parseLiveQueueResponse,
+  parseLiveRunResponse,
+  parseLiveRunsResponse,
+} from './acceptance/live-contract.js';
 
 it('uses only new-schema administration routes, scoped Secrets, and the existing administrator session', async () => {
   const config = loadConfig({
@@ -636,6 +641,52 @@ it('uses only new-schema administration routes, scoped Secrets, and the existing
     assert.equal(storedRunDetail.statusCode, 200);
     assert.equal(storedRunDetail.json().run.phase, 'completed');
     assert.equal(storedRunDetail.json().run.archive.reportStatus, 'pending');
+    // Consumer contract uses real HTTP serialization, not a hand-written flat StoredRun.
+    assert.equal(parseLiveRunResponse(storedRunDetail.json()).archive?.reportStatus, 'pending');
+    const listResponse = await app.inject({
+      method: 'GET',
+      url: `/api/projects/${projectId}/runs`,
+      headers,
+    });
+    assert.ok(parseLiveRunsResponse(listResponse.json()).some((run) => run.runId === 'RUN-A'));
+    const queueResponse = await app.inject({
+      method: 'GET',
+      url: `/api/projects/${projectId}/queue`,
+      headers,
+    });
+    assert.ok(parseLiveQueueResponse(queueResponse.json()).length > 0);
+    const store = createProjectRunStore(database.sqlite, projectId);
+    store.importCompleted({
+      ...store.get('RUN-A')!,
+      runId: 'SPECIAL-REVIEW',
+      result: 'blocked',
+      specialRun: true,
+      initialization: true,
+      completedDirectory: '/tmp/SPECIAL-REVIEW',
+      artifacts: { 'scenario-changes.patch': 'synthetic patch', 'report.md': 'synthetic report' },
+      scenarioResults: [],
+      evidence: [],
+    });
+    store.markScenario('SPECIAL-REVIEW', {
+      status: 'pull_request',
+      scenarioPrUrl: 'https://github.com/example/a/pull/1',
+    });
+    store.completeArchive('SPECIAL-REVIEW', { reportReady: true, scenarioReady: true });
+    const specialResponse = await app.inject({
+      method: 'GET',
+      url: `/api/projects/${projectId}/runs/SPECIAL-REVIEW`,
+      headers,
+    });
+    assert.equal(specialResponse.statusCode, 200);
+    const special = parseLiveRunResponse(specialResponse.json());
+    assert.equal(special.archive?.reportStatus, 'not_applicable');
+    assert.equal(special.archive?.scenarioStatus, 'pull_request');
+    assert.equal(special.archive?.archiveStatus, 'completed');
+    assert.equal(special.archive?.progressed, false);
+    assert.deepEqual(Object.keys(special.artifacts!).sort(), [
+      'report.md',
+      'scenario-changes.patch',
+    ]);
     assert.deepEqual(storedRunDetail.json().run.scenarioResults, [
       { id: 'SHARED', result: 'passed' },
     ]);

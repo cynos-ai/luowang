@@ -27,6 +27,8 @@
     "test:acceptance": "npm run test:acceptance:local",
     "pretest:acceptance:local": "node scripts/check-local-runtime.mjs",
     "test:acceptance:local": "tsx tests/acceptance/closure.ts local",
+    "pretest:acceptance:preflight": "node scripts/check-local-runtime.mjs",
+    "test:acceptance:preflight": "tsx tests/acceptance/closure.ts preflight",
     "pretest:acceptance:live": "node scripts/check-local-runtime.mjs",
     "test:acceptance:live": "tsx tests/acceptance/closure.ts live",
     "pretest:acceptance:multi-project-live": "node scripts/check-local-runtime.mjs",

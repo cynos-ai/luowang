@@ -1,8 +1,16 @@
 import { execFile } from 'node:child_process';
 import { access, mkdir, readFile, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
+
+import {
+  parseLiveQueueResponse,
+  parseLiveRunResponse,
+  parseLiveRunsResponse,
+  type LiveQueueFact,
+  type LiveRunFact,
+} from './live-contract.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -151,50 +159,6 @@ interface AcceptanceReport {
   proofs: ClosureProofStatuses;
 }
 
-interface LiveQueueFact {
-  queueId?: number;
-  requestKind?: string;
-  sourceRef?: string | null;
-  preparedMergeMode?: string | null;
-  preparedMergeCommit?: string | null;
-  resolvedTargetCommit?: string | null;
-  status?: string;
-  runId?: string | null;
-  archiveStatus?: string | null;
-  initialization?: boolean;
-}
-
-interface LiveRunFact {
-  runId?: string;
-  status?: string;
-  result?: string | null;
-  request?: string;
-  targetCommit?: string | null;
-  initialization?: boolean;
-  evidence?: Array<{
-    id?: string;
-    filename?: string;
-    url?: string;
-    contentType?: string;
-    sizeBytes?: number;
-    sha256?: string;
-  }>;
-  scenarioProgress?: { completed?: number; total?: number };
-  activities?: Array<{ at?: string; message?: string; kind?: string }>;
-  blockingReasons?: string[];
-  scenarioPrUrl?: string | null;
-  archive?: {
-    reportStatus?: string;
-    archiveStatus?: string;
-    progressed?: boolean;
-    scenarioStatus?: string;
-  } | null;
-  scenarioResults?: Array<{ id?: string; result?: string }>;
-  confirmedBugs?: Array<{ key?: string; issueAction?: string; issueUrl?: string }>;
-  issues?: Array<{ status?: string; issueNumber?: number; issueUrl?: string }>;
-  artifacts?: Record<string, string>;
-}
-
 export interface LiveFactSelection {
   initializationRunId: string;
   passedRunId: string;
@@ -236,6 +200,7 @@ export function selectLiveFacts(queue: LiveQueueFact[], runs: LiveRunFact[]): Li
     (run) =>
       run.status === 'completed' &&
       run.result === 'passed' &&
+      hasPublishedReport(run) &&
       (run.scenarioProgress?.total ?? 0) > 0 &&
       run.scenarioProgress?.completed === run.scenarioProgress?.total &&
       run.evidence?.some((item) => item.contentType?.startsWith('image/')),
@@ -246,6 +211,7 @@ export function selectLiveFacts(queue: LiveQueueFact[], runs: LiveRunFact[]): Li
     (run) =>
       run.status === 'completed' &&
       run.result === 'failed' &&
+      hasPublishedReport(run) &&
       (run.confirmedBugs?.length ?? 0) >= 2 &&
       (run.issues?.filter((issue) => issue.status === 'succeeded' && issue.issueUrl).length ?? 0) >=
         2,
@@ -270,7 +236,7 @@ export function selectLiveFacts(queue: LiveQueueFact[], runs: LiveRunFact[]): Li
       run.status === 'completed' &&
       run.result === 'blocked' &&
       run.runId !== scenarioReviewRun.runId &&
-      run.archive?.archiveStatus === 'completed' &&
+      hasPublishedReport(run) &&
       run.archive.progressed === false &&
       (run.scenarioResults?.length ?? 0) > 0 &&
       (run.blockingReasons?.length ?? 0) > 0,
@@ -288,7 +254,8 @@ export function selectLiveFacts(queue: LiveQueueFact[], runs: LiveRunFact[]): Li
         item.status === 'completed' &&
         item.archiveStatus === 'completed' &&
         typeof item.runId === 'string' &&
-        byId.get(item.runId)?.result === 'passed',
+        byId.get(item.runId)?.result === 'passed' &&
+        hasPublishedReport(byId.get(item.runId)),
     );
   assertLive(currentHeadRetestQueue?.runId, '缺少当前 HEAD 人工重测 passed Run');
 
@@ -318,6 +285,43 @@ export function selectLiveFacts(queue: LiveQueueFact[], runs: LiveRunFact[]): Li
     currentHeadRetestRunId: currentHeadRetestQueue.runId,
     progressRunId: progressRun.runId,
   };
+}
+
+function hasPublishedReport(
+  run: LiveRunFact | undefined,
+): run is LiveRunFact & { archive: NonNullable<LiveRunFact['archive']> } {
+  return run?.archive?.reportStatus === 'published' && run.archive.archiveStatus === 'completed';
+}
+
+export async function readPublishedLiveReports(
+  selection: LiveFactSelection,
+  details: LiveRunFact[],
+  readReport: (runId: string) => Promise<unknown>,
+): Promise<Record<string, unknown>[]> {
+  const byId = new Map(details.map((run) => [run.runId, run]));
+  // A special initialization/scenario PR Run has no published report by design.
+  const ids = [
+    ...new Set([
+      selection.passedRunId,
+      selection.failedRunId,
+      selection.blockedRunId,
+      selection.currentHeadRetestRunId,
+    ]),
+  ];
+  for (const id of ids) {
+    assertLive(
+      id !== selection.scenarioReviewRunId && hasPublishedReport(byId.get(id)),
+      '普通 Run 缺少已发布且完成归档的报告事实',
+    );
+  }
+  const reports: Record<string, unknown>[] = [];
+  for (const id of ids) {
+    const response = asRecord(await readReport(id));
+    const report = asRecord(response.report);
+    assertLive(report.runId === id, 'Indexer 报告与请求 Run 不一致');
+    reports.push(report);
+  }
+  return reports;
 }
 
 export function missingLiveInputs(environment: NodeJS.ProcessEnv): string[] {
@@ -1234,6 +1238,39 @@ async function runLocal(artifactDirectory: string): Promise<AcceptanceReport> {
   });
 }
 
+export async function runPreflight(environment: NodeJS.ProcessEnv, request: typeof fetch = fetch) {
+  const startedAt = new Date().toISOString();
+  const missing = missingLiveInputs(environment);
+  let status: 'passed' | 'failed' | 'blocked' = 'blocked';
+  let message = 'live 输入不完整';
+  let readinessCheckedAt: string | null = null;
+  if (missing.length === 0) {
+    try {
+      const preparation = await readLivePreparation(environment, request, 'cached');
+      readinessCheckedAt = preparation.readinessCheckedAt;
+      status = 'passed';
+      message =
+        '项目归属、已有就绪记录和列表格式检查通过；未实时探测依赖，不证明 live/release 或任何 AC 通过。';
+    } catch (error) {
+      status = 'failed';
+      message = safeError(error);
+      for (const [key, value] of Object.entries(environment)) {
+        if (/PASSWORD|TOKEN|SECRET|KEY/.test(key) && value)
+          message = message.replaceAll(value, '[REDACTED]');
+      }
+    }
+  }
+  return {
+    schema: 'luowang.acceptance-preflight.v1' as const,
+    startedAt,
+    finishedAt: new Date().toISOString(),
+    status,
+    message,
+    missing,
+    readinessCheckedAt,
+  };
+}
+
 async function runLive(): Promise<AcceptanceReport> {
   const startedAt = new Date().toISOString();
   const missing = missingLiveInputs(process.env);
@@ -1297,7 +1334,11 @@ async function runLive(): Promise<AcceptanceReport> {
   }
 }
 
-async function validateCompletedLiveAcceptance(environment: NodeJS.ProcessEnv): Promise<string[]> {
+export async function readLivePreparation(
+  environment: NodeJS.ProcessEnv,
+  request: typeof fetch = fetch,
+  readinessSource: 'probe' | 'cached' = 'probe',
+) {
   const harnessUrl = parseHarnessUrl(
     environment.LUOWANG_LIVE_HARNESS_URL ?? 'http://127.0.0.1:3000',
     requiredLiveValue(environment, 'LUOWANG_LIVE_TARGET_ALLOWLIST'),
@@ -1305,25 +1346,29 @@ async function validateCompletedLiveAcceptance(environment: NodeJS.ProcessEnv): 
   const adminPassword = requiredLiveValue(environment, 'LUOWANG_ADMIN_PASSWORD');
   const projectId = requiredLiveValue(environment, 'LUOWANG_LIVE_PROJECT_ID');
   const projectPath = (suffix: string) => liveProjectPath(projectId, suffix);
+  projectPath('readiness'); // Validate the ID before authentication or any project request.
   const repository = parseGitHubRepository(
     requiredLiveValue(environment, 'LUOWANG_LIVE_REPOSITORY'),
   );
   let cookie = '';
-  const harness = async (path: string, init: RequestInit = {}): Promise<unknown> => {
-    const response = await fetch(`${harnessUrl}${path}`, {
-      ...init,
+  const harness = async (path: string): Promise<unknown> => {
+    const response = await request(`${harnessUrl}${path}`, {
+      method: 'GET',
       redirect: 'error',
       signal: AbortSignal.timeout(120_000),
       headers: {
         'content-type': 'application/json',
         ...(cookie ? { cookie } : {}),
-        ...(init.headers ?? {}),
       },
     });
     if (!response.ok) throw new Error(`候选实例 ${path} 返回 HTTP ${response.status}`);
-    return response.json();
+    try {
+      return await response.json();
+    } catch {
+      throw new Error('候选实例返回了无效 JSON');
+    }
   };
-  const loginResponse = await fetch(`${harnessUrl}/api/auth/login`, {
+  const loginResponse = await request(`${harnessUrl}/api/auth/login`, {
     method: 'POST',
     redirect: 'error',
     signal: AbortSignal.timeout(30_000),
@@ -1342,27 +1387,61 @@ async function validateCompletedLiveAcceptance(environment: NodeJS.ProcessEnv): 
       String(project.repositoryName).toLowerCase() === repository.name.toLowerCase(),
     'live 项目与目标 GitHub 仓库不一致',
   );
-  const readiness = asRecord(await harness(projectPath('readiness')));
+  // GET /readiness performs model and OSS probes. Only /status is read-only.
+  const readinessResponse = await harness(
+    projectPath(readinessSource === 'cached' ? 'readiness/status' : 'readiness'),
+  );
+  const readiness = asRecord(
+    readinessSource === 'cached' ? asRecord(readinessResponse).readiness : readinessResponse,
+  );
   const checks = asArray(readiness.checks).map(asRecord);
   assertLive(
     readiness.projectId === projectId &&
       readiness.ready === true &&
+      typeof readiness.checkedAt === 'string' &&
+      Number.isFinite(Date.parse(readiness.checkedAt)) &&
       checks.length === 5 &&
       checks.every((check) => check.status === 'ok'),
     'live 项目就绪检查未全部通过',
   );
   const connectivity = [readiness];
 
-  const queueResponse = asRecord(await harness(projectPath('queue')));
-  const runsResponse = asRecord(await harness(projectPath('runs')));
-  const queue = asArray(queueResponse.queue) as LiveQueueFact[];
-  const runs = asArray(runsResponse.runs) as LiveRunFact[];
+  const queue = parseLiveQueueResponse(await harness(projectPath('queue')));
+  const runs = parseLiveRunsResponse(await harness(projectPath('runs')));
+  return {
+    harnessUrl,
+    cookie,
+    projectPath,
+    repository,
+    projectResponse,
+    connectivity,
+    readinessCheckedAt: readiness.checkedAt,
+    queue,
+    runs,
+    harness,
+  };
+}
+
+async function validateCompletedLiveAcceptance(environment: NodeJS.ProcessEnv): Promise<string[]> {
+  const {
+    harnessUrl,
+    cookie,
+    projectPath,
+    repository,
+    projectResponse,
+    connectivity,
+    queue,
+    runs,
+    harness,
+  } = await readLivePreparation(environment);
   const selection = selectLiveFacts(queue, runs);
   const selectedIds = [...new Set(Object.values(selection))];
   const details: LiveRunFact[] = [];
   for (const runId of selectedIds) {
     const response = asRecord(await harness(projectPath(`runs/${encodeURIComponent(runId)}`)));
-    details.push(asRecord(response.run) as LiveRunFact);
+    const detail = parseLiveRunResponse(response);
+    assertLive(detail.runId === runId, 'Run 明细与请求 ID 不一致');
+    details.push(detail);
   }
   const detailById = new Map(details.map((run) => [run.runId, run]));
   const passed = detailById.get(selection.passedRunId);
@@ -1416,21 +1495,9 @@ async function validateCompletedLiveAcceptance(environment: NodeJS.ProcessEnv): 
     '私有 screenshot Gateway 内容类型或大小不匹配',
   );
 
-  const indexedReports: Record<string, unknown>[] = [];
-  // The review-required initialization Run intentionally has reportStatus=not_applicable;
-  // only normal archived reports are valid Indexer inputs.
-  const publishedRunIds = new Set([
-    selection.passedRunId,
-    selection.failedRunId,
-    selection.blockedRunId,
-    selection.currentHeadRetestRunId,
-  ]);
-  for (const runId of publishedRunIds) {
-    const response = asRecord(await harness(projectPath(`reports/${encodeURIComponent(runId)}`)));
-    const report = asRecord(response.report);
-    assertLive(report.runId === runId, `Indexer 未回读 Run ${runId}`);
-    indexedReports.push(report);
-  }
+  const indexedReports = await readPublishedLiveReports(selection, details, (runId) =>
+    harness(projectPath(`reports/${encodeURIComponent(runId)}`)),
+  );
   const scenarioResponse = asRecord(await harness(projectPath('scenarios/AUTH-REGISTRATION-002')));
   assertLive(
     asRecord(scenarioResponse.scenario).id === 'AUTH-REGISTRATION-002',
@@ -1672,8 +1739,19 @@ export function localOnlyEnvironment(phase9Directory: string): NodeJS.ProcessEnv
   );
 }
 
+export async function reserveAcceptanceDirectory(directory: string): Promise<void> {
+  await mkdir(dirname(directory), { recursive: true });
+  try {
+    await mkdir(directory);
+  } catch (error) {
+    if (error && typeof error === 'object' && 'code' in error && error.code === 'EEXIST') {
+      throw new Error('验收输出目录已存在；请指定新目录，历史结果不能覆盖');
+    }
+    throw error;
+  }
+}
+
 async function writeReport(directory: string, report: AcceptanceReport): Promise<void> {
-  await mkdir(directory, { recursive: true });
   await writeFile(join(directory, 'report.json'), `${JSON.stringify(report, null, 2)}\n`, 'utf8');
   await writeFile(join(directory, 'report.md'), renderMarkdown(report), 'utf8');
 }
@@ -1748,8 +1826,8 @@ export function redactAcceptanceText(value: string): string {
 }
 
 async function main(): Promise<void> {
-  const mode = (process.argv[2] ?? 'local') as AcceptanceMode;
-  if (!['local', 'live', 'release'].includes(mode)) {
+  const mode = (process.argv[2] ?? 'local') as AcceptanceMode | 'preflight';
+  if (!['local', 'live', 'release', 'preflight'].includes(mode)) {
     throw new Error(`未知验收模式：${mode}`);
   }
   const directory =
@@ -1760,6 +1838,16 @@ async function main(): Promise<void> {
       'acceptance',
       `${new Date().toISOString().replace(/[:.]/g, '-')}-${mode}`,
     );
+  await reserveAcceptanceDirectory(directory);
+  if (mode === 'preflight') {
+    const report = await runPreflight(process.env);
+    await writeFile(join(directory, 'report.json'), `${JSON.stringify(report, null, 2)}\n`, 'utf8');
+    process.stdout.write(
+      `Acceptance preflight: ${report.status}; 不代表 live/release 通过; report=${join(directory, 'report.json')}\n`,
+    );
+    if (report.status !== 'passed') process.exitCode = 1;
+    return;
+  }
   const report =
     mode === 'local'
       ? await runLocal(directory)
