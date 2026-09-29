@@ -1,8 +1,8 @@
 # LuoWang
 
-罗网（LuoWang）是一个独立部署的 AI 场景测试 Harness。v0.6.1 支持同一管理员管理多个 GitHub 项目，项目数据、凭据、任务、证据和执行镜像分别归属。两个 Node 目标及一个 Python 目标已完成交替真实 Run 和故障隔离，历史持久测试实例副本已完成升级与回退验收。正式版本见 [GitHub Releases](https://github.com/cynos-ai/luowang/releases)。
+罗网（LuoWang）是一个独立部署的 AI 场景测试 Harness。v0.7.0 在同一管理员多项目能力上重构控制台：工作台优先呈现异常和当前执行，项目配置、运行准备、测试、测试记录与场景各自使用稳定页面，系统状态和全局设置保持部署作用域。生产页面只读取真实 API，不使用原型样例数据。正式版本见 [GitHub Releases](https://github.com/cynos-ai/luowang/releases)。
 
-v0.6.2 改善首次接入：可在控制台提交来源并初始化场景分支；本地检查会先诊断 Node 与 SQLite 原生依赖，运维可只读盘点项目 Docker 资源，冻结模型评测可复核质量和成本。本版不改变数据库结构；从旧单项目版本升级时仍须先完成 v0.6.1 的离线迁移。
+v0.6.2 是当前已发布基线，改善首次接入、运行环境诊断、Docker 资源盘点和冻结模型评测复核。v0.7.0 候选不改变既有多项目数据归属和执行隔离；从旧单项目版本升级时仍须先完成 v0.6.1 的离线迁移。
 
 v0.6.0 加入随版本维护的代码深读方法：Main 追踪业务规则与相关调用，并在计划中引用固定版本的读取回执；Reviewer 可以核对引用来源和阅读范围。回执只说明材料返回过，模型是否理解正确仍需单独评测。[实施与验收记录](docs/changes/luowang-code-understanding/plan.md)保留完整过程；多项目的功能边界与验收结果见[多项目计划](docs/changes/luowang-multi-project/plan.md)。
 
@@ -45,16 +45,16 @@ Compose 将数据保存到 `luowang-data` 卷，并把宿主机端口绑定到 `
 ## 第一次接入项目
 
 1. 按上面的 Compose 命令初始化空数据卷，启动后打开控制台，用初始管理员密码登录。已有 v0.6.0 数据的实例先按[离线升级说明](docs/changes/luowang-multi-project/plan.md)处理，不能用空实例命令覆盖历史数据。
-2. 在“部署设置”填写 Provider API Key 和 Main、Runner、Reviewer 模型，确认 Reviewer 支持图像输入；配置浏览器与对象存储并检查连接。
+2. 在“全局设置”填写 Provider API Key 和 Main、Runner、Reviewer 模型，确认 Reviewer 支持图像输入；分别保存浏览器与对象存储配置，再到“系统状态”显式检查连接。
 3. 在“项目”连接可信 GitHub 仓库。私有仓库须提供能读取仓库身份的 Token；新项目会保持暂停。在项目设置填写非生产 URL，按需指定仓库内的执行 Dockerfile。测试账号与密码、清理 URL 与清理 Token 分别成对配置。
 4. 点击“准备或重建镜像”，再查看五项就绪检查。按每项的失败原因修正配置，全部通过后点击“检查并启用”。保存字段或构建镜像不会自动启用项目。
-5. 如果场景分支尚不存在，在“测试与历史”填入可信的来源分支、tag 或提交，勾选“首次初始化”及确认框，提交来源并测试。已有场景分支时，可从来源纳入新变化，或直接提交普通 Run。请求进入队列，页面可查看 Run 和归档状态；测试只面向非生产环境。
+5. 如果场景分支尚不存在，在“测试”页填入可信的来源分支、tag 或提交并明确确认，提交来源并测试。已有场景分支时，可从来源纳入新变化，或直接提交普通 Run。请求进入队列后在“测试”页跟踪执行，在“测试记录”查看结论、报告、证据与归档状态；测试只面向非生产环境。
 
-排查顺序：先看项目页五项就绪原因；镜像失败检查项目 Dockerfile、Docker Engine 和构建日志；队列失败查看该请求的错误及固定目标提交。缺少场景分支时，普通 Run 无法替代首次初始化。部署配置与项目配置分开保存，项目 Token 不会回显。
+排查顺序：先看“运行准备”的五项就绪原因；共享依赖故障查看“系统状态”，镜像失败检查项目 Dockerfile、Docker Engine 和构建日志，队列失败查看对应测试记录的错误及固定目标提交。缺少场景分支时，普通 Run 无法替代首次初始化。全局设置与项目设置分开保存，项目 Token 不会回显。
 
 ## 验收状态
 
-v0.6.1 已发布，发布后的 local、live、release 验收均通过。完整 Run、失败记录和资源收尾见[多项目实施计划](docs/changes/luowang-multi-project/plan.md)与[Production Closure 计划](docs/changes/luowang-v07-production-closure/plan.md)；这些记录不用于判断新部署是否就绪。日常检查使用下列命令。
+v0.6.2 已发布，发布后的 local、live、release 验收均通过。v0.7.0 候选的本地质量检查和浏览器 E2E 已通过；新的外部 live/release 联合验收在受控输入齐全前保持 blocked，不能用本地结果代替。完整 Run、失败记录和资源收尾见[多项目实施计划](docs/changes/luowang-multi-project/plan.md)与[Production Closure 计划](docs/changes/luowang-v07-production-closure/plan.md)；这些记录不用于判断新部署是否就绪。日常检查使用下列命令。
 验收命令按证明范围严格分层：
 
 ```bash
@@ -79,9 +79,9 @@ npm run test:acceptance:release
 
 可选的 GitHub smoke 仍只用于单独诊断仓库读取路径，不属于 live 或 release 证明。它不会默认执行；如需运行，必须显式提供 `LUOWANG_ACCEPTANCE_LIVE=1`、`LUOWANG_SMOKE_REPOSITORY=https://github.com/cynos-ai/cynos-website` 和临时 `LUOWANG_SMOKE_GITHUB_TOKEN`。
 
-当前多项目控制台将账号、部署设置和项目设置分开。登录后先创建项目；服务端验证 GitHub 仓库稳定身份并以 paused 状态保存。为项目设置非生产环境、Git Token、测试账号、清理配置及执行镜像构建说明，查看就绪结果并准备镜像，最后由管理员主动恢复项目。保存配置不等于依赖检查通过，也不会自动启用测试。项目镜像按固定提交构建或复用，Run 记录不可变镜像 ID；目标提交变化后需要重新准备适用镜像。内置基础镜像只承诺 Node 环境，其他语言和依赖由该项目固定提交中的 Dockerfile 提供。就绪页区分构建中、就绪、过期和失败，并显示固定提交、镜像 ID 及失败原因；Docker Engine 不可用属于部署故障，单项目构建失败只阻塞该项目。镜像用于隔离不同项目的工具链，不会自动部署被测应用，也不是恶意代码安全沙箱。
+当前多项目控制台将账号、全局设置和项目设置分开。登录后先创建项目；服务端验证 GitHub 仓库稳定身份并以 paused 状态保存。为项目设置非生产环境、Git Token、测试账号、清理配置及执行镜像构建说明，查看就绪结果并准备镜像，最后由管理员主动恢复项目。保存配置不等于依赖检查通过，也不会自动启用测试。项目镜像按固定提交构建或复用，Run 记录不可变镜像 ID；目标提交变化后需要重新准备适用镜像。内置基础镜像只承诺 Node 环境，其他语言和依赖由该项目固定提交中的 Dockerfile 提供。就绪页区分构建中、就绪、过期和失败，并显示固定提交、镜像 ID 及失败原因；Docker Engine 不可用属于部署故障，单项目构建失败只阻塞该项目。镜像用于隔离不同项目的工具链，不会自动部署被测应用，也不是恶意代码安全沙箱。
 
-Agent 仍只有 Main、Runner、Reviewer 三组，正常 Run 的阶段策略为策划 low、Runner off、Reviewer low、最终汇总 off。项目配置与凭据在任务归属内使用；测试账号和清理 Token 不交给受控命令容器。模型、浏览器和 OSS 属于部署设置。
+Agent 仍只有 Main、Runner、Reviewer 三组，正常 Run 的阶段策略为策划 low、Runner off、Reviewer low、最终汇总 off。项目配置与凭据在任务归属内使用；测试账号和清理 Token 不交给受控命令容器。模型、浏览器和 OSS 属于全局设置。
 
 多项目 HTTP 入口均要求管理员会话。账号使用 `/api/account`，部署配置及 Provider/OSS Secret 使用 `/api/deployment` 和 `/api/deployment/secrets/:key`；项目列表与创建使用 `/api/projects`，详情、就绪、暂停、恢复、配置、项目 Secret 和镜像准备位于 `/api/projects/:projectId/...`。场景、报告、索引、队列、Run 和证据读取也必须带明确 `projectId`；旧版无项目 ID 的业务路由不再注册。项目 Secret 只接受 Git Token、测试账号和清理 Token；API 只返回配置状态和掩码，不返回明文。页面切换不会改变已有请求的归属或固定目标。一个部署同一时间最多执行一个 Run，但不同项目各有队列、进度与归档状态。
 

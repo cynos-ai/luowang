@@ -54,9 +54,13 @@ describe('project administration routes', () => {
         secrets,
         readiness: readyService(database, projects, configuration, secrets),
         images: {
-          prepare: async () => {
-            throw new Error('未配置镜像准备测试');
-          },
+          prepare: async (projectId) => ({
+            projectId,
+            targetCommit: 'a'.repeat(40),
+            dockerfilePath: 'Dockerfile.test',
+            imageId: `sha256:${'b'.repeat(64)}`,
+            reused: false,
+          }),
         },
         verifyRepository: async (url, token) => {
           verifiedTokens.push(token);
@@ -100,6 +104,7 @@ describe('project administration routes', () => {
         headers: cookie,
       });
       assert.equal(missingEnvironment.statusCode, 409);
+      assert.equal(readinessResultCount(database, a.projectId), 5);
       assert.equal(projects.get(a.projectId)?.status, 'paused');
       assert.equal(secrets.project(a.projectId).get('gitToken'), 'private-token-a');
       assert.deepEqual(verifiedTokens, ['private-token-a']);
@@ -148,6 +153,27 @@ describe('project administration routes', () => {
       });
       assert.equal(aDetail.json().secrets.gitToken.configured, true);
       assert.ok(!aDetail.body.includes('private-token-a'));
+      const renamed = await app.inject({
+        method: 'PUT',
+        url: `/api/projects/${a.projectId}/profile`,
+        headers: cookie,
+        payload: { displayName: '项目 A' },
+      });
+      assert.equal(renamed.statusCode, 200);
+      assert.equal(renamed.json().project.displayName, '项目 A');
+      assert.equal(renamed.json().project.githubRepositoryId, a.githubRepositoryId);
+      assert.equal(projects.get(a.projectId)?.displayName, '项目 A');
+      assert.equal(
+        (
+          await app.inject({
+            method: 'PUT',
+            url: `/api/projects/${a.projectId}/profile`,
+            headers: cookie,
+            payload: { displayName: '', repositoryOwner: 'attacker' },
+          })
+        ).statusCode,
+        400,
+      );
       assert.equal(
         (
           await app.inject({
@@ -161,13 +187,41 @@ describe('project administration routes', () => {
       );
       assert.equal(configuration.get(a.projectId).baseUrl, 'https://a.example');
       assert.equal(configuration.get(b.projectId).baseUrl, '');
+      assert.equal(readinessResultCount(database, a.projectId), 0);
+      const cachedAfterConfiguration = await app.inject({
+        method: 'GET',
+        url: `/api/projects/${a.projectId}/readiness/status`,
+        headers: cookie,
+      });
+      assert.equal(cachedAfterConfiguration.json().readiness, null);
       const resumed = await app.inject({
         method: 'POST',
         url: `/api/projects/${a.projectId}/resume`,
         headers: cookie,
       });
       assert.equal(resumed.statusCode, 200);
+      assert.equal(readinessResultCount(database, a.projectId), 5);
       assert.equal(projects.get(a.projectId)?.status, 'active');
+      const preparedImage = await app.inject({
+        method: 'POST',
+        url: `/api/projects/${a.projectId}/image/prepare`,
+        headers: cookie,
+        payload: {},
+      });
+      assert.equal(preparedImage.statusCode, 200);
+      assert.equal(readinessResultCount(database, a.projectId), 4);
+      assert.equal(
+        (
+          await app.inject({
+            method: 'POST',
+            url: `/api/projects/${a.projectId}/readiness/check`,
+            headers: cookie,
+            payload: {},
+          })
+        ).json().readiness.ready,
+        true,
+      );
+      assert.equal(readinessResultCount(database, a.projectId), 5);
       createProjectTestRequestQueue(database, a.projectId).enqueue({
         trigger: 'manual',
         request: 'test A',
@@ -205,6 +259,17 @@ describe('project administration routes', () => {
         payload: { value: 'new-password-a' },
       });
       assert.equal(blockedSecret.statusCode, 409);
+      assert.equal(
+        (
+          await app.inject({
+            method: 'GET',
+            url: `/api/projects/${b.projectId}/readiness`,
+            headers: cookie,
+          })
+        ).statusCode,
+        200,
+      );
+      assert.equal(readinessResultCount(database, b.projectId), 5);
       const allowedSecret = await app.inject({
         method: 'PUT',
         url: `/api/projects/${b.projectId}/secrets/testPassword`,
@@ -213,6 +278,7 @@ describe('project administration routes', () => {
       });
       assert.equal(allowedSecret.statusCode, 200);
       assert.ok(!allowedSecret.body.includes('password-b'));
+      assert.equal(readinessResultCount(database, b.projectId), 0);
       assert.equal(secrets.project(b.projectId).get('testPassword'), 'password-b');
       assert.equal(
         (
@@ -306,6 +372,16 @@ function setupDatabase(): Database.Database {
   migrateProjectQueueContext(database);
   migrateProjectImageState(database);
   return database;
+}
+
+function readinessResultCount(database: Database.Database, projectId: string): number {
+  return (
+    database
+      .prepare(
+        'SELECT count(*) AS count FROM project_connectivity_check_results WHERE project_id = ?',
+      )
+      .get(projectId) as { count: number }
+  ).count;
 }
 
 function readyService(

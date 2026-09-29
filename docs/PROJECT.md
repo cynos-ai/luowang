@@ -64,6 +64,8 @@
 
 ## 当前基线
 
-已发布版本为 v0.6.1，包含离线升级、项目 App、调度、控制台和执行镜像。两个 Node 目标与一个 Python 目标已完成交替真实 Run 和故障隔离验证；历史持久测试实例的隔离副本已完成迁移、恢复、历史内容核对及备份回退演练。指定测试服务器完成的是隔离 Compose 部署形态检查，完整模型/浏览器负载在本机隔离候选执行。负责人已审阅批准。发布和最终验收记录见[多项目 Plan](changes/luowang-multi-project/plan.md)，行为边界以同目录 Spec 为准；v0.6.1 tag 固定在 main 发布提交 `33d068ff72c104129e8a945a8e17bb30fa5208e9`。下面的 MVP 描述仅保留历史基线，当前多项目规则由上述 Spec 覆盖。
+已发布版本为 v0.6.2，tag 固定在 main 发布提交 `2837dd91471278404b45038bd032aae38edcb524`。本版改善项目首次接入和就绪失败提示，增加本机运行环境预检、只读 Docker 资源盘点，以及冻结代码深读评测的只读汇总；未改变多项目和执行镜像的职责边界。发布前及发布后，隔离候选的完整验收均得到 `local=passed`、`live=passed`、`release=passed`，发布后 tag/main AC 也通过。
+
+v0.6.1 建立了离线升级、项目 App、调度、控制台和执行镜像。两个 Node 目标与一个 Python 目标完成交替真实 Run 和故障隔离验证；历史持久测试实例的隔离副本完成迁移、恢复、历史内容核对及备份回退演练。发布和最终验收记录见[多项目 Plan](changes/luowang-multi-project/plan.md)，行为边界以同目录 Spec 为准；v0.6.1 tag 固定在 main 发布提交 `33d068ff72c104129e8a945a8e17bb30fa5208e9`。下面的 MVP 描述仅保留历史基线，当前多项目规则由上述 Spec 覆盖。
 
 当前 MVP 的已确认产品、架构、安全和验收边界记录在 `docs/changes/luowang-harness-mvp/spec.md`，分阶段实现顺序和每阶段证明记录在同目录 `plan.md`。当前已完成 Phase 0–8，并在 Phase 9 增加了 `npm run test:acceptance` 聚合验收入口：包括 GitHub Repository Service、场景分支控制、Markdown 索引、Agent Run、headless 浏览器与 OSS 证据、幂等归档、SQLite FIFO 自动化队列与恢复、场景生命周期，以及展示 Git、场景、Run、当前执行、队列、后台任务和依赖健康事实的运维控制台。Phase 9 使用隔离的本地样例仓库和 Cynos 官网登录/注册样例应用验证本地 AC；真实 `cynos-ai/cynos-website` smoke 仍须显式提供非生产权限和凭据。目标测试项目固定为 `cynos-ai/cynos-website`，其凭证只保存在 LuoWang 本地被忽略的 `.env` 或网站 Secret Store，不进入项目理解文档和 Git。

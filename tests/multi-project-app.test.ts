@@ -1,5 +1,6 @@
 import { strict as assert } from 'node:assert';
 
+import type Database from 'better-sqlite3';
 import pino from 'pino';
 import { it } from 'vitest';
 
@@ -191,6 +192,48 @@ it('uses only new-schema administration routes, scoped Secrets, and the existing
     });
     assert.equal(createdB.statusCode, 201);
     const projectB = createdB.json().project.projectId;
+    for (const id of [projectId, projectB]) {
+      database.sqlite
+        .prepare(
+          `INSERT INTO project_connectivity_check_results
+             (project_id, check_id, status, message, checked_at, latency_ms)
+           VALUES (?, 'deployment', 'ok', '通过', '2026-09-27T00:00:00.000Z', NULL)`,
+        )
+        .run(id);
+    }
+    assert.equal(
+      (
+        await app.inject({
+          method: 'PUT',
+          url: '/api/deployment',
+          headers,
+          payload: { providerBaseUrl: 'https://provider.example.test' },
+        })
+      ).statusCode,
+      200,
+    );
+    assert.equal(projectReadinessRows(database.sqlite, 'deployment'), 0);
+    for (const id of [projectId, projectB]) {
+      database.sqlite
+        .prepare(
+          `INSERT INTO project_connectivity_check_results
+             (project_id, check_id, status, message, checked_at, latency_ms)
+           VALUES (?, 'deployment', 'ok', '通过', '2026-09-27T00:00:00.000Z', NULL)`,
+        )
+        .run(id);
+    }
+    assert.equal(
+      (
+        await app.inject({
+          method: 'PUT',
+          url: '/api/deployment/secrets/providerApiKey',
+          headers,
+          payload: { value: 'replacement-provider-secret' },
+        })
+      ).statusCode,
+      200,
+    );
+    assert.equal(projectReadinessRows(database.sqlite, 'deployment'), 0);
     const activeId = '01ARZ3NDEKTSV4RRFFQ69G5FAV';
     activeRun = {
       projectId,
@@ -485,7 +528,7 @@ it('uses only new-schema administration routes, scoped Secrets, and the existing
       finishedAt: '2026-01-01T00:01:00.000Z',
       completedDirectory: '/tmp/RUN-A',
       artifacts: {},
-      scenarioResults: [],
+      scenarioResults: [{ id: 'SHARED', result: 'passed' }],
       confirmedBugs: [],
       evidence: [
         {
@@ -585,10 +628,26 @@ it('uses only new-schema administration routes, scoped Secrets, and the existing
       ).statusCode,
       404,
     );
+    const storedRunDetail = await app.inject({
+      method: 'GET',
+      url: `/api/projects/${projectId}/runs/RUN-A`,
+      headers,
+    });
+    assert.equal(storedRunDetail.statusCode, 200);
+    assert.equal(storedRunDetail.json().run.phase, 'completed');
+    assert.equal(storedRunDetail.json().run.archive.reportStatus, 'pending');
+    assert.deepEqual(storedRunDetail.json().run.scenarioResults, [
+      { id: 'SHARED', result: 'passed' },
+    ]);
     assert.equal(
-      (await app.inject({ method: 'GET', url: `/api/projects/${projectId}/runs/RUN-A`, headers }))
-        .statusCode,
-      200,
+      (
+        await app.inject({
+          method: 'GET',
+          url: `/api/projects/${projectId}/scenarios/SHARED`,
+          headers,
+        })
+      ).json().scenario.history[0].runId,
+      'RUN-A',
     );
     assert.equal(
       (await app.inject({ method: 'GET', url: `/api/projects/${projectB}/runs/RUN-A`, headers }))
@@ -648,3 +707,13 @@ it('uses only new-schema administration routes, scoped Secrets, and the existing
     assert.deepEqual(backgroundEvents, ['recover', 'start', 'stop']);
   }
 });
+
+function projectReadinessRows(database: Database.Database, checkId: string): number {
+  return (
+    database
+      .prepare(
+        'SELECT count(*) AS count FROM project_connectivity_check_results WHERE check_id = ?',
+      )
+      .get(checkId) as { count: number }
+  ).count;
+}

@@ -1,0 +1,494 @@
+/* 03 · 怪盗动态构成 */
+html[data-design='luowang-v07'] {
+  --canvas: #070707;
+  --surface: #fffdf4;
+  --surface-elevated: #fffdf4;
+  --input: #fffef9;
+  --text: #070707;
+  --muted: #6f6f69;
+  --line: #b7b5ab;
+  --line-strong: #070707;
+  --accent: #e51c23;
+  --accent-soft: #f6c9c5;
+  --accent-ink: #fff;
+  --danger: #e51c23;
+  --danger-ink: #fff;
+  --warning: #a8660f;
+  --ok: #286956;
+  --focus: #e51c23;
+  --backdrop: rgb(0 0 0 / 84%);
+  --display-font: 'Nimbus Sans Narrow', 'Noto Sans CJK SC', sans-serif;
+  --body-font: 'Noto Sans CJK SC', sans-serif;
+  --mono-font: 'JetBrainsMono Nerd Font', monospace;
+  --page-pad: 42px;
+  --panel-pad: 26px;
+  --gap: 20px;
+  --content-max: 1580px;
+  --button-radius: 0;
+  --field-radius: 0;
+  --dialog-radius: 0;
+  --dialog-shadow: 18px 18px 0 var(--accent), -9px -9px 0 #070707;
+}
+
+html[data-design='luowang-v07'] body {
+  background-color: #070707;
+  background-image: repeating-linear-gradient(
+    -16deg,
+    transparent 0 42px,
+    rgb(255 255 255 / 4%) 43px 45px
+  );
+}
+
+html[data-design='luowang-v07'] .product-header {
+  position: relative;
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  min-height: 94px;
+  gap: 34px;
+  padding: 14px 34px;
+  overflow: hidden;
+  border-bottom: 5px solid #070707;
+  background: #fffdf4;
+}
+
+html[data-design='luowang-v07'] .product-header::before {
+  position: absolute;
+  top: -48px;
+  left: 140px;
+  width: min(48vw, 690px);
+  height: 190px;
+  background: var(--accent);
+  content: '';
+  transform: rotate(-7deg);
+}
+
+html[data-design='luowang-v07'] .product-header > * {
+  z-index: 1;
+}
+
+html[data-design='luowang-v07'] .wordmark {
+  padding: 11px 20px;
+  border: 4px solid #070707;
+  background: #070707;
+  color: #fff;
+  clip-path: polygon(0 8px, 8px 0, 100% 0, calc(100% - 7px) 100%, 0 100%);
+  transform: rotate(-1.5deg);
+}
+
+html[data-design='luowang-v07'] .wordmark strong {
+  font-size: 40px;
+}
+
+html[data-design='luowang-v07'] .global-nav {
+  justify-content: center;
+  gap: 2px;
+}
+
+html[data-design='luowang-v07'] .nav-button {
+  min-width: 70px;
+  padding: 11px 15px;
+  font-weight: 900;
+}
+
+html[data-design='luowang-v07'] .nav-button:nth-child(even) {
+  transform: translateY(4px) rotate(1deg);
+}
+
+html[data-design='luowang-v07'] .nav-button[aria-current='page'] {
+  background: #070707;
+  color: #fff;
+  clip-path: polygon(8px 0, 100% 4px, calc(100% - 8px) 100%, 0 calc(100% - 4px));
+  transform: translateY(-2px) rotate(-2deg);
+}
+
+html[data-design='luowang-v07'] .header-meta {
+  font-weight: 900;
+}
+
+html[data-design='luowang-v07'] .product-body,
+html[data-design='luowang-v07'] .page-main {
+  background: #fffdf4;
+}
+
+html[data-design='luowang-v07'] .project-context {
+  position: relative;
+  margin: 10px 24px 0;
+  padding: 20px 26px;
+  overflow: hidden;
+  border: 4px solid #070707;
+  background: #070707;
+  color: #fff;
+  transform: rotate(-0.45deg);
+}
+
+html[data-design='luowang-v07'] .project-context::before {
+  position: absolute;
+  top: -60px;
+  right: 12%;
+  width: 28%;
+  height: 180px;
+  background: var(--accent);
+  content: '';
+  transform: rotate(13deg);
+}
+
+html[data-design='luowang-v07'] .project-context > * {
+  z-index: 1;
+}
+
+html[data-design='luowang-v07'] .project-context p,
+html[data-design='luowang-v07'] .project-context .scope-label,
+html[data-design='luowang-v07'] .project-nav button {
+  color: #fff;
+}
+
+html[data-design='luowang-v07'] .project-nav button[aria-current='page'] {
+  background: #fff;
+  color: #070707;
+  clip-path: polygon(5px 0, 100% 2px, calc(100% - 5px) 100%, 0 calc(100% - 2px));
+  transform: rotate(-1deg);
+}
+
+html[data-design='luowang-v07'] .page-heading {
+  position: relative;
+  min-height: 180px;
+  align-items: center;
+  overflow: hidden;
+  padding: 30px 26px;
+  border-bottom: 4px solid #070707;
+}
+
+html[data-design='luowang-v07'] .page-heading::before {
+  position: absolute;
+  top: 25px;
+  left: -28px;
+  width: min(72%, 760px);
+  height: 118px;
+  background: #070707;
+  clip-path: polygon(5% 0, 100% 7%, 93% 100%, 0 88%);
+  content: '';
+  transform: rotate(-1deg);
+}
+
+html[data-design='luowang-v07'] .page-heading::after {
+  position: absolute;
+  top: 20px;
+  left: min(61%, 650px);
+  width: 180px;
+  height: 84px;
+  background: var(--accent);
+  content: '';
+  transform: rotate(8deg);
+}
+
+html[data-design='luowang-v07'] .page-heading > * {
+  z-index: 1;
+}
+
+html[data-design='luowang-v07'] .page-heading .scope-label {
+  display: block;
+  margin: 0 0 9px 18px;
+  color: #fff;
+  line-height: 1;
+  transform: rotate(-1deg);
+}
+
+html[data-design='luowang-v07'] .page-heading h1 {
+  max-width: min(64vw, 670px);
+  margin-left: 14px;
+  color: #fff;
+  font-size: clamp(46px, 6vw, 86px);
+  line-height: 0.94;
+  overflow-wrap: anywhere;
+  text-transform: uppercase;
+  transform: rotate(-1.2deg);
+  transform-origin: left center;
+}
+
+html[data-design='luowang-v07'] .page-heading p {
+  max-width: 380px;
+  padding: 12px 14px;
+  border: 3px solid #070707;
+  background: #fffdf4;
+  color: #070707;
+  font-weight: 800;
+  transform: rotate(1.4deg);
+}
+
+html[data-design='luowang-v07'] .workspace-grid {
+  grid-template-areas:
+    'attention attention attention current current current current current current queue queue queue'
+    'attention attention attention current current current current current current queue queue queue'
+    'projects projects projects projects projects projects projects recent recent recent recent recent';
+  padding: 30px 6px 24px;
+}
+
+html[data-design='luowang-v07'] .panel {
+  overflow: hidden;
+  border: 4px solid #070707;
+  background: #fffdf4;
+  clip-path: polygon(
+    0 10px,
+    10px 0,
+    calc(100% - 14px) 0,
+    100% 14px,
+    100% 100%,
+    12px 100%,
+    0 calc(100% - 12px)
+  );
+  box-shadow: 7px 8px 0 #070707;
+}
+
+html[data-design='luowang-v07'] .panel-attention {
+  background: var(--accent);
+  color: #fff;
+  transform: rotate(-1deg) translateY(5px);
+}
+
+html[data-design='luowang-v07'] .panel-attention .row-detail,
+html[data-design='luowang-v07'] .panel-attention .row-meta,
+html[data-design='luowang-v07'] .panel-attention small {
+  color: #fff;
+}
+
+html[data-design='luowang-v07'] .panel-current {
+  z-index: 2;
+  padding: 32px;
+  transform: rotate(0.55deg) translateY(-4px);
+}
+
+html[data-design='luowang-v07'] .panel-current .panel-heading {
+  margin: -32px -32px 28px;
+  padding: 28px 34px 22px;
+  background: #070707;
+  color: #fff;
+  clip-path: polygon(0 0, 100% 6px, calc(100% - 20px) 100%, 0 calc(100% - 5px));
+  transform: rotate(-1.1deg);
+  transform-origin: left top;
+}
+
+html[data-design='luowang-v07'] .panel-current .eyeline {
+  color: #cac6bd;
+}
+
+html[data-design='luowang-v07'] .panel-current h2 {
+  max-width: 92%;
+  font-size: clamp(36px, 4.2vw, 62px);
+  line-height: 0.96;
+  overflow-wrap: anywhere;
+  text-transform: uppercase;
+}
+
+html[data-design='luowang-v07'] .panel-queue {
+  background: #070707;
+  color: #fff;
+  transform: rotate(1deg) translateY(9px);
+}
+
+html[data-design='luowang-v07'] .panel-queue .row-detail,
+html[data-design='luowang-v07'] .panel-queue small {
+  color: #bbb8b0;
+}
+
+html[data-design='luowang-v07'] .panel-projects {
+  transform: rotate(-0.35deg);
+}
+
+html[data-design='luowang-v07'] .panel-recent {
+  transform: rotate(0.7deg) translateY(5px);
+}
+
+html[data-design='luowang-v07'] .stage-track {
+  gap: 5px;
+  padding-block: 8px;
+}
+
+html[data-design='luowang-v07'] .stage-step {
+  min-height: 78px;
+  border: 2px solid #070707;
+  border-top-width: 5px;
+  background: #fffdf4;
+}
+
+html[data-design='luowang-v07'] .stage-step:nth-child(odd) {
+  transform: translateY(-3px) rotate(-0.6deg);
+}
+
+html[data-design='luowang-v07'] .stage-step:nth-child(even) {
+  transform: translateY(3px) rotate(0.7deg);
+}
+
+html[data-design='luowang-v07'] .stage-step.active {
+  background: var(--accent);
+  color: #fff;
+  transform: translateY(-7px) rotate(-2deg);
+}
+
+html[data-design='luowang-v07'] .status {
+  padding: 4px 9px;
+  background: #070707;
+  color: #fff;
+  clip-path: polygon(5px 0, 100% 2px, calc(100% - 5px) 100%, 0 calc(100% - 2px));
+  transform: rotate(-1.5deg);
+}
+
+html[data-design='luowang-v07'] .status::before {
+  display: none;
+}
+
+html[data-design='luowang-v07'] .button-primary {
+  border: 3px solid #070707;
+  box-shadow: 5px 5px 0 #070707;
+  clip-path: polygon(6px 0, 100% 3px, calc(100% - 7px) 100%, 0 calc(100% - 3px));
+  transform: rotate(-1.2deg);
+}
+
+html[data-design='luowang-v07'] .button-secondary {
+  border: 2px solid #070707;
+  background: #fffdf4;
+  transform: rotate(0.7deg);
+}
+
+html[data-design='luowang-v07'] .data-table th {
+  background: #070707;
+  color: #fff;
+}
+
+html[data-design='luowang-v07'] .data-table th:nth-child(odd) {
+  transform: translateY(-2px);
+}
+
+html[data-design='luowang-v07'] .run-header {
+  margin: 8px 12px 24px;
+  padding: 30px;
+  border: 5px solid #070707;
+  border-left: 20px solid var(--accent);
+  background: #fffdf4;
+  box-shadow: 9px 9px 0 #070707;
+  transform: rotate(-0.7deg);
+}
+
+html[data-design='luowang-v07'] .run-result {
+  color: var(--accent);
+  font-size: clamp(54px, 7vw, 92px);
+  transform: rotate(-1.5deg);
+  transform-origin: left center;
+}
+
+html[data-design='luowang-v07'] .detail-tabs button:nth-child(odd) {
+  transform: translateY(3px) rotate(-0.7deg);
+}
+
+html[data-design='luowang-v07'] .detail-tabs button.active {
+  background: #070707;
+  color: #fff;
+  transform: translateY(-2px) rotate(-1.8deg);
+}
+
+html[data-design='luowang-v07'] .settings-nav {
+  padding: 12px;
+  border: 4px solid #070707;
+  background: #fffdf4;
+  transform: rotate(-0.7deg);
+}
+
+html[data-design='luowang-v07'] .settings-nav button:nth-child(even) {
+  transform: translateX(8px) rotate(0.8deg);
+}
+
+html[data-design='luowang-v07'] .settings-nav button.active {
+  border-color: var(--accent);
+  background: #070707;
+  color: #fff;
+  transform: translateX(12px) rotate(-1.3deg);
+}
+
+html[data-design='luowang-v07'] .settings-form {
+  border: 4px solid #070707;
+  border-top: 16px solid var(--accent);
+  box-shadow: 8px 8px 0 #070707;
+  transform: rotate(0.25deg);
+}
+
+html[data-design='luowang-v07'] .form-section h2 {
+  display: inline-block;
+  padding: 5px 12px;
+  background: #070707;
+  color: #fff;
+  transform: rotate(-1deg);
+}
+
+html[data-design='luowang-v07'] .field input,
+html[data-design='luowang-v07'] .field select,
+html[data-design='luowang-v07'] .field textarea {
+  border: 2px solid #070707;
+}
+
+html[data-design='luowang-v07'] .confirm-dialog {
+  overflow: visible;
+  border: 5px solid #070707;
+  border-left: 20px solid var(--accent);
+  transform: rotate(-1deg);
+}
+
+html[data-design='luowang-v07'] .confirm-dialog h2 {
+  display: inline-block;
+  max-width: 100%;
+  padding: 7px 15px;
+  background: #070707;
+  color: #fff;
+  font-size: clamp(42px, 6vw, 60px);
+  overflow-wrap: anywhere;
+  transform: rotate(-1.5deg);
+}
+
+@media (max-width: 1023px) {
+  html[data-design='luowang-v07'] .product-header {
+    grid-template-columns: auto 1fr;
+  }
+
+  html[data-design='luowang-v07'] .header-meta {
+    display: none;
+  }
+
+  html[data-design='luowang-v07'] .page-heading h1 {
+    max-width: 58vw;
+  }
+}
+
+@media (max-width: 820px) {
+  html[data-design='luowang-v07'] .product-header {
+    gap: 12px;
+    padding-inline: 18px;
+  }
+
+  html[data-design='luowang-v07'] .product-header::before {
+    left: 126px;
+    width: 49vw;
+  }
+
+  html[data-design='luowang-v07'] .project-context {
+    margin-inline: 12px;
+  }
+
+  html[data-design='luowang-v07'] .page-heading h1 {
+    max-width: 65vw;
+    font-size: 48px;
+  }
+
+  html[data-design='luowang-v07'] .page-heading p {
+    display: none;
+  }
+
+  html[data-design='luowang-v07'] .panel-attention,
+  html[data-design='luowang-v07'] .panel-current,
+  html[data-design='luowang-v07'] .panel-queue,
+  html[data-design='luowang-v07'] .panel-projects,
+  html[data-design='luowang-v07'] .panel-recent,
+  html[data-design='luowang-v07'] .settings-nav,
+  html[data-design='luowang-v07'] .settings-form,
+  html[data-design='luowang-v07'] .run-header {
+    transform: none;
+  }
+}

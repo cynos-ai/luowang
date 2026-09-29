@@ -183,10 +183,12 @@ interface LiveRunFact {
   activities?: Array<{ at?: string; message?: string; kind?: string }>;
   blockingReasons?: string[];
   scenarioPrUrl?: string | null;
-  reportStatus?: string;
-  archiveStatus?: string;
-  progressed?: boolean;
-  scenarioStatus?: string;
+  archive?: {
+    reportStatus?: string;
+    archiveStatus?: string;
+    progressed?: boolean;
+    scenarioStatus?: string;
+  } | null;
   scenarioResults?: Array<{ id?: string; result?: string }>;
   confirmedBugs?: Array<{ key?: string; issueAction?: string; issueUrl?: string }>;
   issues?: Array<{ status?: string; issueNumber?: number; issueUrl?: string }>;
@@ -256,9 +258,9 @@ export function selectLiveFacts(queue: LiveQueueFact[], runs: LiveRunFact[]): Li
       run.status === 'completed' &&
       run.result === 'blocked' &&
       sameValues(Object.keys(run.artifacts ?? {}).sort(), specialArtifacts) &&
-      run.reportStatus === 'not_applicable' &&
-      run.archiveStatus === 'completed' &&
-      run.scenarioStatus === 'pull_request' &&
+      run.archive?.reportStatus === 'not_applicable' &&
+      run.archive.archiveStatus === 'completed' &&
+      run.archive.scenarioStatus === 'pull_request' &&
       Boolean(run.scenarioPrUrl),
   );
   assertLive(scenarioReviewRun?.runId, '缺少三 Session 特殊场景 PR Run');
@@ -268,9 +270,10 @@ export function selectLiveFacts(queue: LiveQueueFact[], runs: LiveRunFact[]): Li
       run.status === 'completed' &&
       run.result === 'blocked' &&
       run.runId !== scenarioReviewRun.runId &&
-      run.archiveStatus === 'completed' &&
-      run.progressed === false &&
-      (run.scenarioResults?.length ?? 0) > 0,
+      run.archive?.archiveStatus === 'completed' &&
+      run.archive.progressed === false &&
+      (run.scenarioResults?.length ?? 0) > 0 &&
+      (run.blockingReasons?.length ?? 0) > 0,
   );
   const blockedRun =
     blockedCandidates.find((run) => /环境.*(?:不可达|停止)/.test(run.request ?? '')) ??
@@ -1385,7 +1388,7 @@ async function validateCompletedLiveAcceptance(environment: NodeJS.ProcessEnv): 
     'failed Run 未形成两个相互独立的 confirmed Bugs/Issues',
   );
   assertLive(
-    blocked.progressed === false && (blocked.blockingReasons?.length ?? 0) > 0,
+    blocked.archive?.progressed === false && (blocked.blockingReasons?.length ?? 0) > 0,
     'blocked Run 没有保持不推进事实',
   );
   assertLive(
@@ -1414,13 +1417,15 @@ async function validateCompletedLiveAcceptance(environment: NodeJS.ProcessEnv): 
   );
 
   const indexedReports: Record<string, unknown>[] = [];
-  for (const runId of [
-    selection.initializationRunId,
+  // The review-required initialization Run intentionally has reportStatus=not_applicable;
+  // only normal archived reports are valid Indexer inputs.
+  const publishedRunIds = new Set([
     selection.passedRunId,
     selection.failedRunId,
     selection.blockedRunId,
     selection.currentHeadRetestRunId,
-  ]) {
+  ]);
+  for (const runId of publishedRunIds) {
     const response = asRecord(await harness(projectPath(`reports/${encodeURIComponent(runId)}`)));
     const report = asRecord(response.report);
     assertLive(report.runId === runId, `Indexer 未回读 Run ${runId}`);

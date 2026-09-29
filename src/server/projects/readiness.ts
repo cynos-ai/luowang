@@ -35,6 +35,7 @@ export interface ProjectReadinessDependencies {
 
 export interface ProjectReadinessService {
   check(projectId: string): Promise<ProjectReadiness>;
+  latest(projectId: string): ProjectReadiness | null;
   pause(projectId: string): ProjectRecord;
   resume(projectId: string): Promise<{ project: ProjectRecord; readiness: ProjectReadiness }>;
 }
@@ -121,16 +122,22 @@ export function createProjectReadinessService(input: {
         ? await safeExternalCheck('image', () => input.dependencies.checkImage(project, config))
         : { id: 'image', status: 'needs_recheck', message: '仓库身份核验后再检查项目镜像' },
     );
-    return {
+    const readiness = {
       projectId,
       checkedAt: now(),
       ready: checks.every((item) => item.status === 'ok'),
       checks,
     };
+    persistProjectReadiness(input.database, readiness);
+    return readiness;
   }
 
   return {
     check,
+    latest(projectId) {
+      requireProject(projectId);
+      return readProjectReadiness(input.database, projectId);
+    },
     pause(projectId) {
       return input.database.transaction(() => {
         requireProject(projectId);
@@ -146,18 +153,17 @@ export function createProjectReadinessService(input: {
       if (!readiness.ready) return { project: requireProject(projectId), readiness };
       return input.database.transaction(() => {
         if (readinessInputFingerprint(input.database, projectId) !== before) {
-          return {
-            project: requireProject(projectId),
-            readiness: {
-              ...readiness,
-              ready: false,
-              checks: readiness.checks.map((item) => ({
-                ...item,
-                status: 'needs_recheck' as const,
-                message: '检查期间配置或凭据已变化，请重检',
-              })),
-            },
+          const changed = {
+            ...readiness,
+            ready: false,
+            checks: readiness.checks.map((item) => ({
+              ...item,
+              status: 'needs_recheck' as const,
+              message: '检查期间配置或凭据已变化，请重检',
+            })),
           };
+          persistProjectReadiness(input.database, changed);
+          return { project: requireProject(projectId), readiness: changed };
         }
         input.database
           .prepare("UPDATE projects SET status = 'active', updated_at = ? WHERE project_id = ?")
@@ -185,6 +191,101 @@ async function safeExternalCheck(
   } catch {
     return { id, status: 'failed', message: '依赖检查失败，请稍后重试' };
   }
+}
+
+const READINESS_CHECK_IDS: ReadinessCheck['id'][] = [
+  'repository',
+  'credentials',
+  'deployment',
+  'environment',
+  'image',
+];
+
+export function invalidateProjectReadiness(
+  database: Database.Database,
+  projectId: string,
+  checkIds: readonly ReadinessCheck['id'][] = READINESS_CHECK_IDS,
+): void {
+  if (checkIds.length === 0) return;
+  const unique = [...new Set(checkIds)];
+  database
+    .prepare(
+      `DELETE FROM project_connectivity_check_results
+       WHERE project_id = ? AND check_id IN (${unique.map(() => '?').join(', ')})`,
+    )
+    .run(projectId, ...unique);
+}
+
+export function invalidateAllProjectReadiness(
+  database: Database.Database,
+  checkIds: readonly ReadinessCheck['id'][] = READINESS_CHECK_IDS,
+): void {
+  if (checkIds.length === 0) return;
+  const unique = [...new Set(checkIds)];
+  database
+    .prepare(
+      `DELETE FROM project_connectivity_check_results
+       WHERE check_id IN (${unique.map(() => '?').join(', ')})`,
+    )
+    .run(...unique);
+}
+
+function persistProjectReadiness(database: Database.Database, readiness: ProjectReadiness): void {
+  database.transaction(() => {
+    invalidateProjectReadiness(database, readiness.projectId);
+    const insert = database.prepare(
+      `INSERT INTO project_connectivity_check_results
+         (project_id, check_id, status, message, checked_at, latency_ms)
+       VALUES (?, ?, ?, ?, ?, NULL)`,
+    );
+    for (const check of readiness.checks) {
+      insert.run(readiness.projectId, check.id, check.status, check.message, readiness.checkedAt);
+    }
+  })();
+}
+
+function readProjectReadiness(
+  database: Database.Database,
+  projectId: string,
+): ProjectReadiness | null {
+  const rows = database
+    .prepare(
+      `SELECT check_id, status, message, checked_at
+       FROM project_connectivity_check_results
+       WHERE project_id = ? ORDER BY check_id`,
+    )
+    .all(projectId) as Array<{
+    check_id: string;
+    status: string;
+    message: string;
+    checked_at: string;
+  }>;
+  if (rows.length === 0) return null;
+  const checks: ReadinessCheck[] = [];
+  for (const row of rows) {
+    if (
+      !READINESS_CHECK_IDS.includes(row.check_id as ReadinessCheck['id']) ||
+      !['ok', 'not_configured', 'failed', 'needs_recheck'].includes(row.status)
+    )
+      continue;
+    checks.push({
+      id: row.check_id as ReadinessCheck['id'],
+      status: row.status as ReadinessStatus,
+      message: row.message,
+    });
+  }
+  if (checks.length === 0) return null;
+  return {
+    projectId,
+    checkedAt: rows
+      .map((row) => row.checked_at)
+      .sort()
+      .at(-1)!,
+    ready:
+      checks.length === READINESS_CHECK_IDS.length &&
+      checks.every((check) => check.status === 'ok'),
+    checks,
+  };
 }
 
 function readinessInputFingerprint(database: Database.Database, projectId: string): string {

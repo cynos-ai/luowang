@@ -16,7 +16,7 @@ import type { ScopedSecretStore } from '../security/scoped-secret-store.js';
 import type { ProjectConfigurationStore } from './configuration.js';
 import { createGuardedScopedSecretStore } from './guarded-secrets.js';
 import { ProjectImageAdminError, type ProjectImageAdminService } from './image-admin.js';
-import type { ProjectReadinessService } from './readiness.js';
+import { invalidateProjectReadiness, type ProjectReadinessService } from './readiness.js';
 import { ProjectStoreError, type ProjectStore } from './store.js';
 
 type ProjectSecretKey = 'gitToken' | 'testUsername' | 'testPassword' | 'testDataCleanupToken';
@@ -111,12 +111,44 @@ export async function registerProjectAdminRoutes(
       };
     });
 
+    routes.put<{ Params: { projectId: string } }>(
+      '/api/projects/:projectId/profile',
+      async (request) => {
+        requireProject(options.projects, request.params.projectId);
+        const body = readRecord(request.body);
+        if (Object.keys(body).length !== 1 || typeof body.displayName !== 'string') {
+          throw new AppError('PROJECT_INPUT_INVALID', '项目名称无效', 400);
+        }
+        return {
+          project: options.projects.rename(request.params.projectId, body.displayName),
+        };
+      },
+    );
+
     routes.get<{ Params: { projectId: string } }>(
       '/api/projects/:projectId/readiness',
       async (request) =>
         options.readiness.check(
           requireProject(options.projects, request.params.projectId).projectId,
         ),
+    );
+
+    routes.get<{ Params: { projectId: string } }>(
+      '/api/projects/:projectId/readiness/status',
+      async (request) => ({
+        readiness: options.readiness.latest(
+          requireProject(options.projects, request.params.projectId).projectId,
+        ),
+      }),
+    );
+
+    routes.post<{ Params: { projectId: string } }>(
+      '/api/projects/:projectId/readiness/check',
+      async (request) => ({
+        readiness: await options.readiness.check(
+          requireProject(options.projects, request.params.projectId).projectId,
+        ),
+      }),
     );
 
     routes.post<{ Params: { projectId: string } }>(
@@ -145,7 +177,9 @@ export async function registerProjectAdminRoutes(
           throw new AppError('IMAGE_INPUT_INVALID', '镜像准备不接受自选提交或路径', 400);
         }
         const project = requireProject(options.projects, request.params.projectId);
-        return { image: await options.images.prepare(project.projectId) };
+        const image = await options.images.prepare(project.projectId);
+        invalidateProjectReadiness(options.database, project.projectId, ['image']);
+        return { image };
       },
     );
 
@@ -154,6 +188,7 @@ export async function registerProjectAdminRoutes(
       async (request) => {
         const project = requireProject(options.projects, request.params.projectId);
         const configuration = options.configuration.update(project.projectId, request.body);
+        invalidateProjectReadiness(options.database, project.projectId);
         return { project: options.projects.get(project.projectId), configuration };
       },
     );
@@ -169,6 +204,7 @@ export async function registerProjectAdminRoutes(
         }
         const store = secrets.project(project.projectId);
         store.set(key, body.value);
+        invalidateProjectReadiness(options.database, project.projectId);
         return { key, metadata: store.metadata()[key] };
       },
     );
@@ -180,6 +216,7 @@ export async function registerProjectAdminRoutes(
         const key = readProjectSecretKey(request.params.key);
         const store = secrets.project(project.projectId);
         store.delete(key);
+        invalidateProjectReadiness(options.database, project.projectId);
         return { key, metadata: store.metadata()[key] };
       },
     );

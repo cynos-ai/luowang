@@ -8,6 +8,7 @@ import type {
   AgentConfig,
   RepositoryIssue,
   RepositoryConfig,
+  RunActivity,
   RunDetail,
   RunPhase,
   RunResult,
@@ -1412,7 +1413,13 @@ class DefaultRunOrchestrator implements RunOrchestrator {
       detail = '清理详情的脱敏条件不可用，未展示原始信息；请检查 Harness。';
     }
     const message = `测试数据清理${ok ? '完成' : '未完成，需要处理'}；不改变本次功能验证结果。`;
-    this.setPhase(state, state.phase, message, ok ? 'info' : 'warning');
+    this.setPhase(
+      state,
+      state.phase,
+      message,
+      ok ? 'info' : 'warning',
+      ok ? 'test_data_cleanup_completed' : 'test_data_cleanup_failed',
+    );
     const section = `\n\n## Harness 清理收尾\n\n${message}\n\n${detail}\n`;
     try {
       if (await workspace.exists('report.md')) {
@@ -1433,6 +1440,7 @@ class DefaultRunOrchestrator implements RunOrchestrator {
         state.phase,
         '清理收尾记录保存失败，请检查 Harness；不改变功能验证结论',
         'warning',
+        'test_data_cleanup_record_failed',
       );
     }
     return `${message}\n\n${detail}`;
@@ -2152,11 +2160,15 @@ class DefaultRunOrchestrator implements RunOrchestrator {
     phase: RunPhase,
     message: string,
     kind: 'phase' | 'info' | 'warning' = 'phase',
+    code?: RunActivity['code'],
   ): void {
     state.phase = phase;
     const at = this.now().toISOString();
     state.updatedAt = at;
-    state.activities = [...(state.activities ?? []), { at, message, kind }].slice(-20);
+    state.activities = [
+      ...(state.activities ?? []),
+      { at, message, kind, ...(code ? { code } : {}) },
+    ].slice(-20);
   }
 
   private async readStateDetail(state: RunState): Promise<RunDetail> {
