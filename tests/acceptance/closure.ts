@@ -1417,13 +1417,15 @@ async function validateCompletedLiveAcceptance(environment: NodeJS.ProcessEnv): 
   );
 
   const indexedReports: Record<string, unknown>[] = [];
-  for (const runId of [
-    selection.initializationRunId,
+  // The review-required initialization Run intentionally has reportStatus=not_applicable;
+  // only normal archived reports are valid Indexer inputs.
+  const publishedRunIds = new Set([
     selection.passedRunId,
     selection.failedRunId,
     selection.blockedRunId,
     selection.currentHeadRetestRunId,
-  ]) {
+  ]);
+  for (const runId of publishedRunIds) {
     const response = asRecord(await harness(projectPath(`reports/${encodeURIComponent(runId)}`)));
     const report = asRecord(response.report);
     assertLive(report.runId === runId, `Indexer 未回读 Run ${runId}`);
