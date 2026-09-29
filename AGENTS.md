@@ -24,7 +24,7 @@
 - 功能从最新 `develop` 创建 `feat/<short-kebab-name>`，完成后向 `develop` 提交 PR。
 - 普通缺陷从最新 `develop` 创建 `fix/<short-kebab-name>`，完成后向 `develop` 提交 PR；正式版本紧急缺陷从 `main` 创建同样的 `fix/*`，合入 `main` 后必须同步到 `develop`。
 - 不预设 `release/*`、`hotfix/*` 等额外分支。独立文档、CI 或依赖维护确有需要时可使用 `chore/*`。
-- 发布通过 `develop → main` PR 完成，并在 `main` 使用 SemVer tag。仓库级“合并后自动删除 head 分支”保持关闭，避免发布 PR 删除长期 `develop`；合并者只手工删除 `feat/*`、`fix/*`、`chore/*`。
+- 发布通过 `develop → main` PR 完成，并在 `main` 使用 SemVer tag。项目负责人决定版本并逐次明确授权发布；授权后 AI 可以在验收满足对应 Spec、PR 检查通过且核对目标提交后协助合并发布 PR、创建**新的**指定 tag 和发布 GitHub Release，并执行发布后核验。不得无授权发布、覆盖/移动历史 tag，或把发布前验收冒充发布后核验。仓库级“合并后自动删除 head 分支”保持关闭，避免发布 PR 删除长期 `develop`；合并者只手工删除 `feat/*`、`fix/*`、`chore/*`。
 - `scenario-testing` 只存在于罗网所管理的外部目标仓库中，用于保存该目标项目的测试事实；它不是 `cynos-ai/luowang` 的开发或发布分支。MVP 验收使用独立样例仓库和独立非生产样例应用。
 
 ## 本计划固定测试目标

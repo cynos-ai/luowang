@@ -1,6 +1,6 @@
 # v0.7.1 发布复核小修复 Plan
 
-- 状态：发布前验证完成；develop 已合入，main/tag 待项目负责人执行
+- 状态：发布前验证完成；已获项目负责人明确授权合并发布 PR 并创建 `v0.7.1`，main/tag 待执行
 - [Intent](./intent.md) · [Spec](./spec.md)
 - 分支：`fix/v071-release-verification`，从最新 `origin/develop`（`4668ff112ac3cf01ad89ea47e3ee014d2f09662c`）创建
 - 目标：一次小修复，不改生产 API/数据库/Run 行为，不升级依赖
@@ -38,13 +38,13 @@
 - [x] [PR #105 最终 CI](https://github.com/cynos-ai/luowang/actions/runs/36536695285) 在 0.7.1 版本号更新后通过 quality/runtime 镜像构建、local 工程矩阵及零模型浏览器预检；早先本地失败/未运行记录保留于下方。
 - [x] `git diff --check`、新增行高置信凭据模式扫描和 Markdown 本地链接检查通过。
 - [x] 更新本 Plan 为实际检查结果；未执行、失败、受阻单独记录。
-- [x] [PR #105](https://github.com/cynos-ai/luowang/pull/105) 通过后合入 develop（merge commit `17224c8`）；实现提交 `962f4c1`、版本准备提交 `8856ae7`。未直接提交 develop/main，未自动打 tag。
+- [x] [PR #105](https://github.com/cynos-ai/luowang/pull/105) 通过后合入 develop（merge commit `17224c8`）；实现提交 `962f4c1`、版本准备提交 `8856ae7`。未直接提交 develop/main；本条仅记录修复 PR 阶段，发布操作另见本 Plan 收尾记录。
 
 证明：AC-V071-06。测试使用本地合成数据，不在罗网自身创建 scenario-testing 或测试资产。
 
 ## 0.7.1 正式发布前
 
-以上工程完成不代表 release 完成。负责人确认候选版本/镜像、检查器版本、资源和差异适用性后，按既有 local/live/release 入口验证；旧证据只能说明被核验候选，不凭本 Plan 的勾选赋予新候选通过状态。发布仍走 develop → main PR、人工授权 tag 和发布后 tag 核验。
+以上工程完成不代表 release 完成。负责人确认候选版本/镜像、检查器版本、资源和差异适用性后，按既有 local/live/release 入口验证；旧证据只能说明被核验候选，不凭本 Plan 的勾选赋予新候选通过状态。发布仍走 develop → main PR、新 SemVer tag 和发布后 tag 核验。负责人已在本次对话明确授权 AI 合并本次发布 PR、创建 `v0.7.1` 并发布；执行前仍须核对 PR 检查、main 状态与 tag 不存在。
 
 ## 执行记录
 
