@@ -20,6 +20,155 @@ import { createScopedSecretStore } from '../src/server/security/scoped-secret-st
 import type { RunDetail, RunSummary } from '../src/shared/types.js';
 
 describe('project automation dispatcher', () => {
+  it('overlaps A1/B1, keeps A2 queued, and fills a released slot without losing wakeups', async () => {
+    const fixture = setup();
+    const releaseA = Promise.withResolvers<void>();
+    const releaseB = Promise.withResolvers<void>();
+    const both = Promise.withResolvers<void>();
+    const bArchived = Promise.withResolvers<void>();
+    const started: string[] = [];
+    const dispatcher = fixture.dispatcher(
+      (projectId) =>
+        fakeServices(projectId, {
+          async start(runId) {
+            started.push(projectId);
+            if (started.length === 2) both.resolve();
+            return { runId };
+          },
+          async wait() {
+            await (projectId === fixture.a.projectId ? releaseA.promise : releaseB.promise);
+            return { status: 'completed' };
+          },
+          async archive() {
+            if (projectId === fixture.b.projectId) bArchived.resolve();
+            return archiveResult();
+          },
+        }),
+      2,
+    );
+    const a1 = dispatcher.enqueue(fixture.a.projectId, { trigger: 'manual', request: 'A1' });
+    const a2 = dispatcher.enqueue(fixture.a.projectId, { trigger: 'manual', request: 'A2' });
+    const b1 = dispatcher.enqueue(fixture.b.projectId, { trigger: 'manual', request: 'B1' });
+    const draining = dispatcher.drain();
+    try {
+      await both.promise;
+      assert.equal(fixture.queue(fixture.a.projectId).get(a1.queueId)?.status, 'running');
+      assert.equal(fixture.queue(fixture.b.projectId).get(b1.queueId)?.status, 'running');
+      assert.equal(fixture.queue(fixture.a.projectId).get(a2.queueId)?.status, 'queued');
+      assert.equal(dispatcher.drain(), draining);
+      await assert.rejects(dispatcher.recover(), /活动任务/);
+      releaseB.resolve();
+      await bArchived.promise;
+      assert.equal(fixture.queue(fixture.a.projectId).get(a1.queueId)?.status, 'running');
+      const b2 = dispatcher.enqueue(fixture.b.projectId, { trigger: 'manual', request: 'B2' });
+      dispatcher.drain();
+      releaseA.resolve();
+      await draining;
+      assert.equal(fixture.queue(fixture.b.projectId).get(b2.queueId)?.status, 'completed');
+      assert.equal(fixture.queue(fixture.a.projectId).get(a2.queueId)?.status, 'completed');
+      assert.equal(started.length, 4);
+    } finally {
+      releaseA.resolve();
+      releaseB.resolve();
+      await dispatcher.stop();
+      fixture.database.close();
+    }
+  });
+
+  it('counts slow preparation without preventing another project and drains all tasks on shutdown', async () => {
+    const fixture = setup();
+    const preparing = Promise.withResolvers<void>();
+    const releasePreparation = Promise.withResolvers<void>();
+    const bStarted = Promise.withResolvers<void>();
+    const releaseB = Promise.withResolvers<void>();
+    const dispatcher = fixture.dispatcher((projectId) => {
+      const services = fakeServices(projectId, {
+        async wait() {
+          if (projectId === fixture.b.projectId) {
+            bStarted.resolve();
+            await releaseB.promise;
+          }
+          return { status: 'completed' };
+        },
+      });
+      if (projectId === fixture.a.projectId) {
+        const get = services.repository.getRepository.bind(services.repository);
+        services.repository.getRepository = async () => {
+          preparing.resolve();
+          await releasePreparation.promise;
+          return get();
+        };
+      }
+      return services;
+    }, 2);
+    const a = dispatcher.enqueue(fixture.a.projectId, { trigger: 'manual', request: 'A' });
+    const a2 = dispatcher.enqueue(fixture.a.projectId, { trigger: 'manual', request: 'A2' });
+    dispatcher.enqueue(fixture.b.projectId, { trigger: 'manual', request: 'B' });
+    const draining = dispatcher.drain();
+    try {
+      await Promise.all([preparing.promise, bStarted.promise]);
+      assert.equal(fixture.queue(fixture.a.projectId).get(a.queueId)?.runId, null);
+      assert.equal(fixture.queue(fixture.a.projectId).get(a.queueId)?.status, 'running');
+      assert.equal(fixture.queue(fixture.a.projectId).claimNext(), null);
+      let stopped = false;
+      const stop = dispatcher.stop().then(() => {
+        stopped = true;
+      });
+      await Promise.resolve();
+      assert.equal(stopped, false);
+      releasePreparation.resolve();
+      releaseB.resolve();
+      await Promise.all([draining, stop]);
+      assert.equal(stopped, true);
+      assert.equal(fixture.queue(fixture.a.projectId).get(a2.queueId)?.status, 'queued');
+    } finally {
+      releasePreparation.resolve();
+      releaseB.resolve();
+      await dispatcher.stop();
+      fixture.database.close();
+    }
+  });
+
+  it('recovers two interrupted Runs once, without restarting their models or changing fixed targets', async () => {
+    const fixture = setup();
+    let starts = 0,
+      recovered = 0;
+    const rows = [fixture.a, fixture.b].map((project, index) => {
+      const queue = fixture.queue(project.projectId);
+      const row = queue.enqueue({ trigger: 'manual', request: 'recover' });
+      queue.claimNext();
+      queue.markResolved(row.queueId, (index === 0 ? 'a' : 'b').repeat(40));
+      queue.markStarted(row.queueId, `01K0000000000000000000000${index + 1}`);
+      return { queue, row };
+    });
+    const dispatcher = fixture.dispatcher(
+      (projectId) =>
+        fakeServices(projectId, {
+          async start(runId) {
+            starts++;
+            return { runId };
+          },
+          async recover() {
+            recovered++;
+          },
+        }),
+      2,
+    );
+    try {
+      await dispatcher.recover();
+      await dispatcher.recover();
+      await dispatcher.drain();
+      assert.equal(starts, 0);
+      assert.equal(recovered, 2);
+      for (const { queue, row } of rows) {
+        assert.equal(queue.get(row.queueId)?.status, 'interrupted');
+        assert.ok(queue.get(row.queueId)?.resolvedTargetCommit);
+      }
+    } finally {
+      await dispatcher.stop();
+      fixture.database.close();
+    }
+  });
   it('exposes only the active project Run while execution is in progress', async () => {
     const fixture = setup();
     try {
@@ -63,14 +212,14 @@ describe('project automation dispatcher', () => {
       dispatcher.enqueue(fixture.a.projectId, { trigger: 'manual', request: 'A' });
       const draining = dispatcher.drain();
       await waiting.promise;
-      const current = await dispatcher.currentRun();
+      const [current] = await dispatcher.currentRuns();
       assert.equal(current?.projectId, fixture.a.projectId);
       assert.equal(current?.run.runId, activeId);
       assert.equal((await dispatcher.getActiveRun(fixture.a.projectId, activeId))?.runId, activeId);
       assert.equal(await dispatcher.getActiveRun(fixture.b.projectId, activeId), null);
       release.resolve();
       await draining;
-      assert.equal(await dispatcher.currentRun(), null);
+      assert.deepEqual(await dispatcher.currentRuns(), []);
     } finally {
       fixture.database.close();
     }
@@ -239,7 +388,7 @@ describe('project automation dispatcher', () => {
           },
         }),
       );
-      const recovering = dispatcher.recover();
+      const recovering = dispatcher.recover().then(() => dispatcher.drain());
       await bStarted.promise;
       assert.equal(
         fixture.queue(fixture.a.projectId).get(aQueued.queueId)?.status,
@@ -327,6 +476,7 @@ describe('project automation dispatcher', () => {
         }),
       );
       await dispatcher.recover();
+      await dispatcher.drain();
       assert.equal(fixture.queue(fixture.a.projectId).get(a.queueId)?.status, 'interrupted');
       assert.match(
         fixture.queue(fixture.a.projectId).get(a.queueId)?.errorMessage ?? '',
@@ -376,8 +526,12 @@ function setup() {
     a,
     b,
     queue: (projectId: string) => createProjectTestRequestQueue(database, projectId),
-    dispatcher: (factory: (projectId: string) => ProjectDispatchServices) =>
+    dispatcher: (
+      factory: (projectId: string) => ProjectDispatchServices,
+      maxConcurrentProjects = 1,
+    ) =>
       createProjectAutomationDispatcher({
+        maxConcurrentProjects,
         database,
         deployment,
         projects,

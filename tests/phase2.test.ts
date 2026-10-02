@@ -25,6 +25,30 @@ afterEach(async () => {
 });
 
 describe('Phase 2 repository control', () => {
+  it('serializes clone and report publication across services sharing one clone', async () => {
+    const fixture = await createGitFixture();
+    const a = new GitRepository({ directory: fixture.cloneDir, remoteUrl: fixture.remoteDir });
+    const b = new GitRepository({ directory: fixture.cloneDir, remoteUrl: fixture.remoteDir });
+    await Promise.all([a.ensureClone(), b.ensureClone(), a.fetch(), b.fetch()]);
+    const initial = await a.prepareMergeRequest('scenario-testing', 'main', 91, true);
+    await a.publishPreparedMerge('scenario-testing', 91, initial.preparedCommit, initial.mode);
+    const ids = ['01K00000000000000000000091', '01K00000000000000000000092'];
+    await Promise.all(
+      [a, b].map((repository, index) =>
+        repository.publishRunReports('scenario-testing', ids[index], {
+          'review.md': `# Review ${index}`,
+          'report.md': validReport(ids[index]),
+        }),
+      ),
+    );
+    const head = await a.remoteBranchHead('scenario-testing');
+    for (const [index, id] of ids.entries()) {
+      assert.equal(
+        await b.readFile(head!, `docs/scenario-testing/reports/${id}/review.md`),
+        `# Review ${index}`,
+      );
+    }
+  });
   it('creates a scenario branch, merges with --no-ff, avoids duplicate merges, and detects broken history', async () => {
     const fixture = await createGitFixture();
     const repository = new GitRepository({

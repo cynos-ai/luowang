@@ -77,36 +77,43 @@ function AttentionList({ workspace }: { workspace: WorkspaceResponse }) {
 }
 
 function ActiveRun({ workspace }: { workspace: WorkspaceResponse }) {
-  const active = workspace.activeRun;
   return (
     <section className="content-block active-run-block" aria-labelledby="active-run-title">
       <div className="content-block-heading">
         <h2 id="active-run-title">当前执行</h2>
-        {active && <StatusLabel tone="running">运行中</StatusLabel>}
+        <StatusLabel tone={workspace.capacity.occupied ? 'running' : 'neutral'}>
+          {workspace.capacity.occupied}/{workspace.capacity.limit} 个项目正在处理
+        </StatusLabel>
       </div>
-      {!active ? (
+      {workspace.activeRuns.length === 0 ? (
         <p className="empty-line">当前没有正在执行的测试。</p>
       ) : (
-        <div className="run-focus">
-          <div>
-            <AppLink
-              className="object-link"
-              to={{
-                name: 'project-run',
-                projectId: active.project.projectId,
-                runId: active.runId,
-                tab: 'summary',
-              }}
-            >
-              {active.project.displayName} · {active.runId}
-            </AppLink>
-            <p>{active.stage}</p>
+        workspace.activeRuns.map((active) => (
+          <div className="run-focus" key={active.queueId}>
+            <div>
+              <AppLink
+                className="object-link"
+                to={
+                  active.runId
+                    ? {
+                        name: 'project-run',
+                        projectId: active.project.projectId,
+                        runId: active.runId,
+                        tab: 'summary',
+                      }
+                    : { name: 'project-test', projectId: active.project.projectId }
+                }
+              >
+                {active.project.displayName} · {active.runId ?? '准备目标'}
+              </AppLink>
+              <p>{active.stage}</p>
+            </div>
+            <strong>
+              {active.progress ? `${active.progress.completed}/${active.progress.total}` : '—'}
+            </strong>
+            <small>{formatDate(active.updatedAt)}</small>
           </div>
-          <strong>
-            {active.progress.completed}/{active.progress.total}
-          </strong>
-          <small>{formatDate(active.updatedAt)}</small>
-        </div>
+        ))
       )}
     </section>
   );
@@ -117,7 +124,7 @@ function QueueList({ workspace }: { workspace: WorkspaceResponse }) {
     <section className="content-block" aria-labelledby="queue-title">
       <div className="content-block-heading">
         <h2 id="queue-title">队列</h2>
-        <span>全局 FIFO</span>
+        <span>项目内顺序执行</span>
       </div>
       {workspace.queue.length === 0 ? (
         <p className="empty-line">队列为空。</p>
@@ -125,14 +132,17 @@ function QueueList({ workspace }: { workspace: WorkspaceResponse }) {
         <ol className="queue-list">
           {workspace.queue.map((item) => (
             <li key={item.requestId}>
-              <strong>{item.position}</strong>
+              <strong>项目内 {item.projectPosition}</strong>
               <AppLink
                 className="text-link"
                 to={{ name: 'project-test', projectId: item.project.projectId }}
               >
                 {item.project.displayName}
               </AppLink>
-              <span>{item.request}</span>
+              <span>
+                {item.request}
+                <small>{item.waitingReason}</small>
+              </span>
               <small>{formatDate(item.createdAt)}</small>
             </li>
           ))}

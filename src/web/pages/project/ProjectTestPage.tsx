@@ -122,7 +122,7 @@ export function ProjectTestPage({ projectId }: { projectId: string }) {
       }
       setPendingRequest(null);
       setShowIdle(false);
-      setMessage('测试请求已进入全局顺序队列。');
+      setMessage('测试请求已进入项目队列。');
       resource.reload();
     } catch (cause) {
       setActionError(toUserMessage(cause, '测试请求提交失败'));
@@ -195,7 +195,7 @@ function TestState({
   const completed = data.runs.find((run) => run.status !== 'running' && run.status !== 'queued');
   if (data.current) {
     const workspaceCurrent =
-      data.workspace.activeRun?.project.projectId === projectId ? data.workspace.activeRun : null;
+      data.workspace.activeRuns.find((item) => item.project.projectId === projectId) ?? null;
     return <RunningState projectId={projectId} run={data.current} workspace={workspaceCurrent} />;
   }
   if (pending) {
@@ -205,8 +205,8 @@ function TestState({
     return (
       <QueuedState
         item={pending}
-        position={workspaceQueue?.position ?? null}
-        activeProject={data.workspace.activeRun?.project.displayName ?? null}
+        position={workspaceQueue?.projectPosition ?? null}
+        waitingReason={workspaceQueue?.waitingReason ?? '等待调度'}
       />
     );
   }
@@ -254,7 +254,7 @@ function IdleState({
           <span>空闲</span>
           <div>
             <h2 id="test-request-title">发起测试</h2>
-            <p>请求确认后进入全局顺序队列，不会立即并行执行。</p>
+            <p>同一项目顺序执行，不同项目可在名额允许时同时测试。</p>
           </div>
         </div>
         <div className="request-mode" role="group" aria-label="测试请求类型">
@@ -327,29 +327,26 @@ function IdleState({
 function QueuedState({
   item,
   position,
-  activeProject,
+  waitingReason,
 }: {
   item: OperationsQueueItem;
   position: number | null;
-  activeProject: string | null;
+  waitingReason: string;
 }) {
-  const waiting =
-    item.status === 'waiting_archive'
-      ? '等待当前测试完成归档与索引'
-      : activeProject
-        ? `全局执行槽正由 ${activeProject} 使用`
-        : '等待调度器按 FIFO 顺序认领';
+  const waiting = item.status === 'waiting_archive' ? '等待当前测试完成归档与索引' : waitingReason;
   return (
     <section className="test-focus-state queued-state" aria-labelledby="queued-title">
-      <div className="state-kicker">等待队列</div>
+      <div className="state-kicker">{item.status === 'running' ? '准备目标' : '等待队列'}</div>
       <div
         className="queue-position"
-        aria-label={position ? `队列第 ${position} 位` : '队列位置读取中'}
+        aria-label={position ? `项目内第 ${position} 位` : '项目内位置读取中'}
       >
         {position ?? '—'}
       </div>
       <div>
-        <h2 id="queued-title">测试请求正在等待</h2>
+        <h2 id="queued-title">
+          {item.status === 'running' ? '正在准备测试目标' : '测试请求正在等待'}
+        </h2>
         <p>{item.request}</p>
         <dl className="fact-list">
           <Fact label="请求类型" value={requestKindLabel(item.requestKind)} />
@@ -369,7 +366,7 @@ function RunningState({
 }: {
   projectId: string;
   run: RunSummary;
-  workspace: WorkspaceResponse['activeRun'];
+  workspace: WorkspaceResponse['activeRuns'][number] | null;
 }) {
   const stages = stageState(run);
   const activities = (run.activities ?? []).slice(-6).reverse();

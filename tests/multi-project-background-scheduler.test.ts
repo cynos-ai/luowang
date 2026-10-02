@@ -41,6 +41,7 @@ it('polls active projects independently and drains through one global dispatcher
     const events: string[] = [];
     let aFailed = true;
     let aIndexFailed = true;
+    const activeRun = Promise.withResolvers<void>();
     const dispatcher = {
       enqueue: (
         projectId: string,
@@ -48,14 +49,20 @@ it('polls active projects independently and drains through one global dispatcher
       ) => createProjectTestRequestQueue(database, projectId).enqueue(input),
       drain: async () => {
         events.push('drain');
+        await activeRun.promise;
       },
       recover: async () => {
         events.push('recover');
       },
       retryArchives: async () => {
         events.push('retry-archives');
+        await activeRun.promise;
       },
-      currentRun: async () => null,
+      maxConcurrentProjects: 2,
+      stop: async () => {
+        activeRun.resolve();
+      },
+      currentRuns: async () => [],
       getActiveRun: async () => null,
     };
     const scheduler = createProjectBackgroundScheduler({

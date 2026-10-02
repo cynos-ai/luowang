@@ -31,6 +31,9 @@ describe('multi-project configuration write guards', () => {
       createProjectConfigurationStore(database).update(a.projectId, {
         baseUrl: 'https://a.example',
       });
+      createProjectConfigurationStore(database).update(b.projectId, {
+        baseUrl: 'https://b.example',
+      });
       const secrets = createGuardedScopedSecretStore(
         database,
         createScopedSecretStore(database, 'test-master'),
@@ -57,6 +60,22 @@ describe('multi-project configuration write guards', () => {
       deployment.updateHarness({ provider: 'before-run' });
       secrets.deployment().set('providerApiKey', 'first-key');
       assert.equal(queueA.claimNext()?.queueId, pendingA.queueId);
+      const queueB = createProjectTestRequestQueue(database, b.projectId);
+      const pendingB = queueB.enqueue({ trigger: 'manual', request: 'test B concurrently' });
+      assert.equal(queueB.claimNext()?.queueId, pendingB.queueId);
+      for (const projectId of [a.projectId, b.projectId]) {
+        assert.throws(
+          () =>
+            createProjectConfigurationStore(database).update(projectId, {
+              baseUrl: 'https://changed.example',
+            }),
+          /待处理请求/,
+        );
+        assert.throws(
+          () => secrets.project(projectId).set('testPassword', 'changed'),
+          /待处理请求/,
+        );
+      }
       assert.throws(() => deployment.updateHarness({ provider: 'during-run' }), /运行中请求/);
       assert.throws(() => deployment.updateHarness({ mcp: { browser: 'webkit' } }), /运行中请求/);
       assert.equal(deployment.getHarness().provider, 'before-run');
@@ -69,6 +88,16 @@ describe('multi-project configuration write guards', () => {
       assert.throws(() => deployment.updateHarness({ local: { repoDir: '/other' } }), /存储根目录/);
       queueA.fail(pendingA.queueId, 'synthetic');
       secrets.project(a.projectId).set('testPassword', 'new-a');
+      assert.throws(() => secrets.deployment().set('providerApiKey', 'second-key'), /运行中请求/);
+      assert.throws(
+        () => deployment.updateHarness({ provider: 'while-b-still-running' }),
+        /运行中请求/,
+      );
+      assert.throws(
+        () => secrets.project(b.projectId).set('testPassword', 'changed'),
+        /待处理请求/,
+      );
+      queueB.fail(pendingB.queueId, 'synthetic');
       secrets.deployment().set('providerApiKey', 'second-key');
       assert.equal(secrets.project(a.projectId).get('testPassword'), 'new-a');
       database

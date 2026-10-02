@@ -24,7 +24,8 @@ it('protects every console route and accepts only fixed system checks', async ()
       calls.push('workspace');
       return {
         fetchedAt: '2026-09-27T00:00:00.000Z',
-        activeRun: null,
+        activeRuns: [],
+        capacity: { occupied: 0, limit: 2 },
         queue: [],
         projects: [],
         recentRuns: [],

@@ -5,6 +5,7 @@ import { describe, it } from 'vitest';
 
 import { createProjectTestRequestQueue } from '../src/server/automation/queue.js';
 import { GitHubApiError } from '../src/server/repository/github.js';
+import { GitCommandError } from '../src/server/repository/errors.js';
 import { runMigrations } from '../src/server/db/migrate.js';
 import { projectIdentityMigration } from '../src/server/db/migrations/0009-project-identity.js';
 import { migrateLegacyRunOwnership } from '../src/server/db/migrations/0011-project-run-ownership.js';
@@ -68,6 +69,7 @@ describe('project readiness and lifecycle', () => {
       let deploymentStatus: ReadinessCheck['status'] = 'ok';
       let mutateDuringImageCheck = false;
       let imageChecks = 0;
+      let gitTimeout = false;
       const ok = (id: ReadinessCheck['id']): ReadinessCheck => ({
         id,
         status: 'ok',
@@ -86,6 +88,14 @@ describe('project readiness and lifecycle', () => {
         checkEnvironment: async () => ok('environment'),
         checkImage: async () => {
           imageChecks += 1;
+          if (gitTimeout)
+            throw new GitCommandError(
+              ['ls-remote'],
+              'private-token-canary',
+              null,
+              'private-message-canary',
+              true,
+            );
           if (mutateDuringImageCheck) {
             config.update(project.projectId, { pollIntervalSeconds: 600 });
           }
@@ -108,6 +118,16 @@ describe('project readiness and lifecycle', () => {
       );
       assert.equal(imageChecks, 0);
       secrets.project(project.projectId).set('gitToken', 'token-a');
+      gitTimeout = true;
+      const timedOut = await readiness.check(project.projectId);
+      assert.equal(timedOut.ready, false);
+      assert.match(
+        timedOut.checks.find((item) => item.id === 'image')?.message ?? '',
+        /Git 远程检查超时/,
+      );
+      assert.doesNotMatch(JSON.stringify(timedOut), /private-token-canary|private-message-canary/);
+      assert.equal(readiness.latest(project.projectId)?.ready, false);
+      gitTimeout = false;
       config.update(project.projectId, { baseUrl: 'https://a.example' });
       repositoryFailure = true;
       const inaccessible = await readiness.check(project.projectId);

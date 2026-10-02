@@ -171,8 +171,8 @@ export async function registerProjectRunRoutes(
         const projectId = request.params.projectId;
         const stored = runStoreFor(projectId).list();
         const interrupted = recoveryFor(projectId).list();
-        const current = await options.dispatcher.currentRun();
-        const active = current?.projectId === projectId ? current.run : null;
+        const current = await options.dispatcher.currentRuns(projectId);
+        const active = current.find((item) => item.projectId === projectId)?.run ?? null;
         const known = new Set([
           ...(active ? [active.runId] : []),
           ...stored.map((run) => run.runId),
@@ -205,8 +205,10 @@ export async function registerProjectRunRoutes(
       '/api/projects/:projectId/runs/current',
       async (request) => {
         requireProject(request.params.projectId);
-        const current = await options.dispatcher.currentRun();
-        return { run: current?.projectId === request.params.projectId ? current.run : null };
+        const current = await options.dispatcher.currentRuns(request.params.projectId);
+        return {
+          run: current.find((item) => item.projectId === request.params.projectId)?.run ?? null,
+        };
       },
     );
     routes.get<{ Params: { projectId: string; runId: string } }>(

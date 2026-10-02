@@ -136,7 +136,7 @@ export function createV07ConsoleFixture(
     {
       project: projectA,
       activity: 'running',
-      queuePosition: null,
+      projectQueuePosition: null,
       recentRun: runReference(run),
       readiness: readinessA,
       attentionCount: 0,
@@ -148,7 +148,7 @@ export function createV07ConsoleFixture(
     {
       project: projectB,
       activity: 'paused',
-      queuePosition: null,
+      projectQueuePosition: null,
       recentRun: null,
       readiness: readinessB,
       attentionCount: 1,
@@ -160,18 +160,23 @@ export function createV07ConsoleFixture(
   ];
   const workspace: WorkspaceResponse = {
     fetchedAt: now,
-    activeRun: {
-      ...runReference(run),
-      project: projectA,
-      role: 'runner',
-      stage: 'Runner 执行',
-      currentScenario: 'AUTH-LOGIN-001',
-      progress: { completed: 3, total: 8 },
-      updatedAt: now,
-    },
+    capacity: { occupied: 1, limit: 2 },
+    activeRuns: [
+      {
+        queueId: 1,
+        ...runReference(run),
+        project: projectA,
+        role: 'runner',
+        stage: 'Runner 执行',
+        currentScenario: 'AUTH-LOGIN-001',
+        progress: { completed: 3, total: 8 },
+        updatedAt: now,
+      },
+    ],
     queue: [
       {
-        position: 1,
+        projectPosition: 1,
+        waitingReason: '项目已暂停',
         queueId: 2,
         requestId: 'request-synthetic-2',
         project: projectB,
@@ -234,7 +239,8 @@ export function createV07ConsoleFixture(
 function emptyFixture(now: string): V07ConsoleFixture {
   const workspace: WorkspaceResponse = {
     fetchedAt: now,
-    activeRun: null,
+    activeRuns: [],
+    capacity: { occupied: 0, limit: 2 },
     queue: [],
     projects: [],
     recentRuns: [],
@@ -402,6 +408,7 @@ function fixtureSystemStatus(now: string): SystemStatusResponse {
     service: { name: 'luowang', version: '0.7.0-test', build: 'synthetic' },
     database: 'ok',
     secretStore: 'available',
+    executionCapacity: { occupied: 1, limit: 2 },
     scheduler: {
       running: true,
       lastPollAt: now,

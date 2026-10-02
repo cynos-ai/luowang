@@ -24,7 +24,7 @@
 
 ## 主要系统边界
 
-罗网的长期进程统一承载网站、HTTP API、认证、配置、触发器、顺序队列、Agent 调度、归档和仓库索引。它连接以下外部系统：
+罗网的长期进程统一承载网站、HTTP API、认证、配置、触发器、项目队列、Agent 调度、归档和仓库索引。它连接以下外部系统：
 
 - GitHub 仓库、Pull Request 和 Issue；
 - 模型 Provider 与 Pi Agent Runtime；
@@ -38,6 +38,7 @@
 
 - 罗网与写需求、写代码和修复 Bug 的 Agent 解耦；它只报告问题，不修改产品代码或调度修复。
 - 已发布 MVP 固定为单租户、单仓库、单测试分支、单测试环境、单实例顺序执行；v0.6.1改为单管理员多项目，仍全局一次只执行一个 Run。
+- 项目并行开发版支持跨项目有界并行、项目内串行；准备中尚无 Run 的请求也占容量。waiting_archive 释放全局容量但继续阻塞本项目后续请求。启动上限默认 2，可显式设为 1；它不保证共享测试应用或外部依赖的隔离。发布与验收状态见 `changes/luowang-project-concurrency/plan.md`。
 - 测试选择由 AI 综合需求、累计 diff、历史 Run/Issue 和场景语义完成，不维护手工 suite。
 - Runner 的结论必须经过独立 Reviewer 审核；角色通过落盘工件交接，不共享完整对话。
 - 运行期间不持续把每次工具调用结构化写入数据库；完成后再批量、幂等归档。
@@ -64,7 +65,7 @@
 
 ## 当前基线
 
-已发布版本为 v0.6.2，tag 固定在 main 发布提交 `2837dd91471278404b45038bd032aae38edcb524`。本版改善项目首次接入和就绪失败提示，增加本机运行环境预检、只读 Docker 资源盘点，以及冻结代码深读评测的只读汇总；未改变多项目和执行镜像的职责边界。发布前及发布后，隔离候选的完整验收均得到 `local=passed`、`live=passed`、`release=passed`，发布后 tag/main AC 也通过。
+已发布版本为 v0.7.1，tag 固定在 main 发布提交 `857697b00c61af6bdab30738581630fb5cc6ab6b`。发布后复核得到 `local=passed/live=passed/release=passed`，其中 live 复核读取既有候选及 Run 事实，并非为新部署实例重跑模型；5 个场景设计模型效果 AC 仍为 not_run。准确适用范围见 `changes/luowang-v071-release-verification/plan.md`。项目并行属于下一阶段开发，不属于此发布基线。
 
 v0.6.1 建立了离线升级、项目 App、调度、控制台和执行镜像。两个 Node 目标与一个 Python 目标完成交替真实 Run 和故障隔离验证；历史持久测试实例的隔离副本完成迁移、恢复、历史内容核对及备份回退演练。发布和最终验收记录见[多项目 Plan](changes/luowang-multi-project/plan.md)，行为边界以同目录 Spec 为准；v0.6.1 tag 固定在 main 发布提交 `33d068ff72c104129e8a945a8e17bb30fa5208e9`。下面的 MVP 描述仅保留历史基线，当前多项目规则由上述 Spec 覆盖。
 

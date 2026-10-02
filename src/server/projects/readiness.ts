@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 
 import type Database from 'better-sqlite3';
+import { GitCommandError } from '../repository/errors.js';
 
 import type { VerifiedGitHubRepositoryIdentity } from '../repository/github.js';
 import { describeGitHubRepositoryFailure } from '../repository/github.js';
@@ -188,7 +189,10 @@ async function safeExternalCheck(
       return { id, status: 'failed', message: '依赖检查结果无效' };
     }
     return check;
-  } catch {
+  } catch (error) {
+    if (error instanceof GitCommandError && error.timedOut) {
+      return { id, status: 'failed', message: 'Git 远程检查超时，请检查仓库网络后重新检查' };
+    }
     return { id, status: 'failed', message: '依赖检查失败，请稍后重试' };
   }
 }

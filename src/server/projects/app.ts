@@ -132,6 +132,7 @@ export async function createProjectApp(options: ProjectAppOptions) {
   const dispatcher =
     options.dispatcher ??
     createProjectAutomationDispatcher({
+      maxConcurrentProjects: options.config.maxConcurrentProjects,
       database,
       deployment,
       projects,

@@ -14,6 +14,7 @@ import type {
   WorkspaceProjectSummary,
   WorkspaceRecentRun,
   WorkspaceResponse,
+  WorkspaceActiveRun,
 } from '../../shared/types.js';
 import type { ProjectAutomationDispatcher } from '../automation/project-dispatcher.js';
 import { createTestRequestQueue, type TestRequestRecord } from '../automation/queue.js';
@@ -76,14 +77,40 @@ export function createProjectConsoleService(input: {
           message: '队列暂时不可读',
         });
       }
-      let current: Awaited<ReturnType<ProjectAutomationDispatcher['currentRun']>> = null;
-      try {
-        current = await input.dispatcher.currentRun();
-      } catch {
-        partialErrors.push({
-          projectId: null,
-          code: 'ACTIVE_RUN_READ_FAILED',
-          message: '当前执行暂时不可读',
+      const running = queue.filter((item) => item.status === 'running');
+      const capacity = { occupied: running.length, limit: input.dispatcher.maxConcurrentProjects };
+      const activeRuns: WorkspaceActiveRun[] = [];
+      for (const item of running) {
+        const project = item.projectId ? projectById.get(item.projectId) : null;
+        if (!project) continue;
+        let run = null;
+        if (item.runId) {
+          try {
+            run = await input.dispatcher.getActiveRun(project.projectId, item.runId);
+            if (!run) throw new Error('active Run unavailable');
+          } catch {
+            partialErrors.push({
+              projectId: project.projectId,
+              code: 'ACTIVE_RUN_READ_FAILED',
+              message: '当前执行暂时不可读',
+            });
+          }
+        }
+        activeRuns.push({
+          queueId: item.queueId,
+          runId: item.runId,
+          project: projectReference(project),
+          status: run?.status ?? 'running',
+          phase: run?.phase ?? 'preparing',
+          result: run?.result ?? null,
+          targetCommit: run?.targetCommit ?? item.resolvedTargetCommit,
+          startedAt: run?.startedAt ?? item.claimedAt ?? item.createdAt,
+          finishedAt: run?.finishedAt ?? null,
+          role: run ? roleFor(run.phase) : null,
+          stage: run?.phase ?? (item.runId ? '执行状态暂时不可读' : '准备目标'),
+          currentScenario: run?.currentScenario ?? null,
+          progress: run?.scenarioProgress ?? null,
+          updatedAt: run?.updatedAt ?? item.updatedAt,
         });
       }
       const recentRuns: WorkspaceRecentRun[] = [];
@@ -98,20 +125,17 @@ export function createProjectConsoleService(input: {
           const index = readIndex(input.database, project.projectId);
           const readiness = readReadiness(input.database, project.projectId);
           const queued = queue.filter((item) => item.projectId === project.projectId);
-          const queuePosition = queue.findIndex(
-            (item) => item.projectId === project.projectId && item.status === 'queued',
-          );
+          const queuePosition = queued.findIndex((item) => item.status === 'queued');
           const summary: WorkspaceProjectSummary = {
             project: projectReference(project),
-            activity:
-              current?.projectId === project.projectId
-                ? 'running'
-                : queued.length > 0
-                  ? 'queued'
-                  : project.status === 'paused'
-                    ? 'paused'
-                    : 'idle',
-            queuePosition: queuePosition < 0 ? null : queuePosition + 1,
+            activity: activeRuns.some((item) => item.project.projectId === project.projectId)
+              ? 'running'
+              : queued.length > 0
+                ? 'queued'
+                : project.status === 'paused'
+                  ? 'paused'
+                  : 'idle',
+            projectQueuePosition: queuePosition < 0 ? null : queuePosition + 1,
             recentRun: recent ? runReference(recent) : null,
             readiness,
             attentionCount: 0,
@@ -134,7 +158,7 @@ export function createProjectConsoleService(input: {
           summaries.push({
             project: projectReference(project),
             activity: project.status === 'paused' ? 'paused' : 'idle',
-            queuePosition: null,
+            projectQueuePosition: null,
             recentRun: null,
             readiness: notCheckedReadiness(),
             attentionCount: 1,
@@ -146,35 +170,41 @@ export function createProjectConsoleService(input: {
         }
       }
       addBackgroundAttention(input.database, attention, projectById);
-      const activeProject = current ? projectById.get(current.projectId) : undefined;
       return {
         fetchedAt,
-        activeRun:
-          current && activeProject
-            ? {
-                runId: current.run.runId,
-                status: current.run.status,
-                phase: current.run.phase,
-                result: current.run.result,
-                targetCommit: current.run.targetCommit,
-                startedAt: current.run.startedAt,
-                finishedAt: current.run.finishedAt,
-                project: projectReference(activeProject),
-                role: roleFor(current.run.phase),
-                stage: current.run.phase,
-                currentScenario: current.run.currentScenario ?? null,
-                progress: current.run.scenarioProgress ?? { completed: 0, total: 0 },
-                updatedAt: current.run.updatedAt ?? current.run.startedAt,
-              }
-            : null,
-        queue: queue.flatMap((item, index) => {
+        activeRuns,
+        capacity,
+        queue: queue.flatMap((item) => {
           if (!item.projectId) return [];
           const project = projectById.get(item.projectId);
           if (!project || !['queued', 'running', 'waiting_archive'].includes(item.status))
             return [];
           return [
             {
-              position: index + 1,
+              projectPosition: queue.filter(
+                (other) => other.projectId === item.projectId && other.queueId <= item.queueId,
+              ).length,
+              waitingReason:
+                item.status === 'running'
+                  ? '正在执行'
+                  : item.status === 'waiting_archive'
+                    ? '等待归档'
+                    : project.status === 'paused'
+                      ? '项目已暂停'
+                      : queue.some(
+                            (other) =>
+                              other.projectId === item.projectId &&
+                              other.status === 'waiting_archive',
+                          )
+                        ? '本项目等待归档'
+                        : queue.some(
+                              (other) =>
+                                other.projectId === item.projectId && other.status === 'running',
+                            )
+                          ? '本项目正在执行'
+                          : capacity.occupied >= capacity.limit
+                            ? '全局执行名额已满'
+                            : '等待调度',
               queueId: item.queueId,
               requestId: item.requestId,
               project: projectReference(project),
@@ -205,6 +235,14 @@ export function createProjectConsoleService(input: {
           ? 'available'
           : 'unavailable',
         scheduler: input.schedulerStatus(),
+        executionCapacity: {
+          occupied: (
+            input.database
+              .prepare("SELECT count(*) AS count FROM test_request_queue WHERE status = 'running'")
+              .get() as { count: number }
+          ).count,
+          limit: input.dispatcher.maxConcurrentProjects,
+        },
         dependencies: (Object.keys(SYSTEM_CHECKS) as Array<keyof typeof SYSTEM_CHECKS>).map((id) =>
           readSystemDependency(input.database, id),
         ),
