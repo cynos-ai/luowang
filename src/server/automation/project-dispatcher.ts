@@ -229,7 +229,8 @@ export function createProjectAutomationDispatcher(options: {
       if (run.runId !== runId) throw new Error('Run ID 与队列预留 ID 不一致');
       activeRuns.set(item.projectId, { runId, runs: services.runs });
       queue.markStarted(item.queueId, runId);
-      if (queue.get(item.queueId)?.stopRequestedAt) services.runs.requestStop(runId);
+      const stopRequestedAt = queue.get(item.queueId)?.stopRequestedAt;
+      if (stopRequestedAt) services.runs.requestStop(runId, stopRequestedAt);
       const detail = await services.runs.wait(runId);
       activeRuns.delete(item.projectId);
       if (detail?.status === 'completed') {

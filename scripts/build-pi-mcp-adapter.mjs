@@ -20,6 +20,10 @@ await build({
     {
       name: 'confirm-owned-mcp-child-exit',
       setup(builder) {
+        let applied = false;
+        builder.onEnd(() => {
+          if (!applied) throw new Error('MCP child exit confirmation was not bundled');
+        });
         builder.onLoad(
           { filter: /@modelcontextprotocol[\\/]client[\\/]dist[\\/]stdio\.mjs$/ },
           async ({ path }) => {
@@ -30,6 +34,7 @@ await build({
               throw new Error(
                 'Pinned MCP stdio shutdown changed; review exit confirmation before building',
               );
+            applied = true;
             return {
               contents: source.replace(end, `${end}\n\t\t\tawait closePromise;`),
               loader: 'js',
