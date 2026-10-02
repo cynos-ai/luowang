@@ -32,6 +32,49 @@ afterAll(async () => {
 });
 
 describe('project command container', () => {
+  it.each(['copy', 'create-reply-lost'])(
+    'reconciles stopped %s without starting a container',
+    async (stage) => {
+      const abort = new AbortController();
+      const calls: string[][] = [];
+      const labels = {
+        'luowang.project-id': PROJECT,
+        'luowang.instance-id': INSTANCE,
+        'luowang.run-id': RUN,
+        'luowang.target-commit': COMMIT,
+      };
+      const docker: DockerRuntime = {
+        async run(args) {
+          calls.push(args);
+          if (args[0] === 'image' || args[0] === 'inspect') return ok(JSON.stringify(labels));
+          if (args[0] === 'create') {
+            if (stage === 'create-reply-lost') {
+              abort.abort();
+              throw new Error('create reply lost');
+            }
+            return ok(CONTAINER);
+          }
+          if (args[0] === 'cp') abort.abort();
+          if (args[0] === 'ps') return ok(CONTAINER);
+          return ok('');
+        },
+      };
+      await assert.rejects(
+        startProjectCommandSession({ ...binding(), signal: abort.signal }, docker),
+      );
+      assert.equal(
+        calls.some((args) => args[0] === 'start'),
+        false,
+      );
+      assert.equal(calls.filter((args) => args[0] === 'rm').length, 1);
+      assert.deepEqual(
+        calls.find((args) => args[0] === 'rm'),
+        ['rm', '--force', CONTAINER],
+      );
+      if (stage === 'create-reply-lost') assert.ok(calls.some((args) => args[0] === 'inspect'));
+    },
+  );
+
   it('checks image ownership, shares the command allowlist, and binds every command to one Run', async () => {
     const calls: string[][] = [];
     const docker: DockerRuntime = {

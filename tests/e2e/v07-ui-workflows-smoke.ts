@@ -110,6 +110,8 @@ const configurationGate = new Promise<void>((resolve) => {
 });
 const writes: string[] = [];
 const apiRequests: string[] = [];
+let stopFailure = false;
+let stopGate: Promise<void> | null = null;
 
 const server = createServer(async (request, response) => {
   const pathname = new URL(request.url ?? '/', 'http://localhost').pathname;
@@ -551,6 +553,22 @@ try {
       }
       if (suffix === '/runs/current') return route.fulfill({ json: { run: null } });
       if (suffix === '/runs') return route.fulfill({ json: { runs: projectData.runs } });
+      if (/^\/queue\/\d+\/stop$/.test(suffix) && method === 'POST') {
+        assert.deepEqual(request.postDataJSON(), { confirmed: true });
+        if (stopGate) await stopGate;
+        if (stopFailure)
+          return route.fulfill({ status: 409, json: { error: { message: '合成停止冲突' } } });
+        return route.fulfill({
+          json: {
+            queue: {
+              ...projectData.queue[0],
+              status: 'interrupted',
+              stopRequestedAt: fixture.now,
+              stopReason: 'user_requested',
+            },
+          },
+        });
+      }
       if (suffix === '/queue') return route.fulfill({ json: { queue: projectData.queue } });
     }
     const base = `/api/projects/${newProject.projectId}`;
@@ -793,6 +811,57 @@ try {
   await page.getByRole('heading', { name: '测试请求正在等待' }).waitFor();
   await page.getByText('项目已暂停', { exact: true }).waitFor();
   await page.getByLabel('项目内第 1 位').waitFor();
+
+  const stopUrl = `POST /api/projects/${projects[1].projectId}/queue/2/stop`;
+  for (const width of [768, 1024, 1440]) {
+    await page.setViewportSize({ width, height: 900 });
+    await page.getByRole('button', { name: '取消排队', exact: true }).click();
+    await page
+      .getByRole('dialog')
+      .getByText(/后续队列仍可能继续/)
+      .waitFor();
+    assert.equal(
+      await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth),
+      false,
+    );
+    await page.keyboard.press('Escape');
+    await page.getByRole('dialog').waitFor({ state: 'detached' });
+  }
+  assert.equal(
+    writes.filter((item) => item === stopUrl).length,
+    0,
+    'confirmation can be canceled with keyboard',
+  );
+  stopFailure = true;
+  await page.getByRole('button', { name: '取消排队', exact: true }).click();
+  await page.getByRole('dialog').getByRole('button', { name: '确认停止', exact: true }).click();
+  await page.getByRole('alert').getByText('合成停止冲突').waitFor();
+  stopFailure = false;
+  let releaseStop!: () => void;
+  stopGate = new Promise<void>((resolve) => {
+    releaseStop = resolve;
+  });
+  const writesBeforeStop = writes.filter((item) => item === stopUrl).length;
+  await page.getByRole('dialog').getByRole('button', { name: '确认停止', exact: true }).dblclick();
+  await page.getByRole('dialog').getByRole('button', { name: '正在提交…' }).waitFor();
+  assert.equal(
+    writes.filter((item) => item === stopUrl).length,
+    writesBeforeStop + 1,
+    'double click submits once',
+  );
+  await page.goBack();
+  releaseStop();
+  stopGate = null;
+  await page.waitForTimeout(100);
+  assert.equal(
+    await page.getByText('停止请求已记录；实际退出与清理状态会继续更新。').count(),
+    0,
+    'late stop response cannot change another page',
+  );
+  await page.goto(`${origin}/projects/${projects[1].projectId}/test`);
+  await page.getByRole('button', { name: '取消排队', exact: true }).click();
+  await page.getByRole('dialog').getByRole('button', { name: '确认停止', exact: true }).click();
+  await page.getByText('停止请求已记录；实际退出与清理状态会继续更新。').waitFor();
 
   await page.goto(`${origin}/projects/${projects[0].projectId}/test`);
   await page.getByRole('heading', { name: '验证登录状态恢复与注册错误处理' }).waitFor();

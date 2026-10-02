@@ -17,6 +17,7 @@ import { createProjectTaskRuntime } from '../projects/task-runtime.js';
 import type { ProjectStore } from '../projects/store.js';
 import { awaitsCutoverActivation } from '../projects/cutover-activation.js';
 import { createProjectQueueCoordinator } from './project-queue-coordinator.js';
+import { createProjectRunRecoveryStore } from './recovery.js';
 import {
   createProjectTestRequestQueue,
   createTestRequestQueue,
@@ -32,6 +33,7 @@ export interface ProjectDispatchServices {
 }
 
 export interface ProjectAutomationDispatcher {
+  stopRequest(projectId: string, queueId: number): Promise<TestRequestRecord>;
   readonly maxConcurrentProjects: number;
   enqueue(projectId: string, input: TestRequestInput): TestRequestRecord;
   drain(): Promise<void>;
@@ -100,6 +102,7 @@ export function createProjectAutomationDispatcher(options: {
   let recoveryPromise: Promise<void> | null = null;
   let retryPromise: Promise<void> | null = null;
   const activeRuns = new Map<string, { runId: string; runs: RunOrchestrator }>();
+  const preparingRuns = new Map<number, { runId: string; runs: RunOrchestrator }>();
   const deferredArchives = new Set<number>();
 
   async function retryArchivesInner(at: Date): Promise<void> {
@@ -206,8 +209,16 @@ export function createProjectAutomationDispatcher(options: {
     let services: ProjectDispatchServices | undefined;
     try {
       services = servicesFor(item);
-      const targetCommit = await resolveTarget(item, queue, services.repository);
+      const targetCommit = await resolveTarget(item, queue, services.repository, () => {
+        if (queue.get(item.queueId)?.stopRequestedAt) throw new Error('管理员请求停止准备');
+      });
+      if (queue.get(item.queueId)?.stopRequestedAt) {
+        queue.fail(item.queueId, '管理员已停止准备；目标写入事实已保留', 'interrupted');
+        await cleanupRef(item, services.repository);
+        return null;
+      }
       const runId = queueRunId(item);
+      preparingRuns.set(item.queueId, { runId, runs: services.runs });
       const run = await services.runs.start({
         request: item.request,
         trigger: item.trigger,
@@ -218,6 +229,8 @@ export function createProjectAutomationDispatcher(options: {
       if (run.runId !== runId) throw new Error('Run ID 与队列预留 ID 不一致');
       activeRuns.set(item.projectId, { runId, runs: services.runs });
       queue.markStarted(item.queueId, runId);
+      const stopRequestedAt = queue.get(item.queueId)?.stopRequestedAt;
+      if (stopRequestedAt) services.runs.requestStop(runId, stopRequestedAt);
       const detail = await services.runs.wait(runId);
       activeRuns.delete(item.projectId);
       if (detail?.status === 'completed') {
@@ -234,12 +247,22 @@ export function createProjectAutomationDispatcher(options: {
     } catch (error) {
       activeRuns.delete(item.projectId);
       try {
-        queue.fail(item.queueId, safeMessage(error));
-        if (services) await cleanupRef(item, services.repository);
+        queue.fail(
+          item.queueId,
+          queue.get(item.queueId)?.stopRequestedAt
+            ? '管理员已停止请求；准备操作未完整完成，请核对已有目标事实'
+            : safeMessage(error),
+          queue.get(item.queueId)?.stopRequestedAt ? 'interrupted' : 'failed',
+        );
+        // On an uncertain preparation/write, preserve the internal ref for inspection.
+        if (services && !queue.get(item.queueId)?.stopRequestedAt)
+          await cleanupRef(item, services.repository);
       } catch (secondary) {
         logError(secondary, 'project queue failure reconciliation failed');
       }
       return null;
+    } finally {
+      preparingRuns.delete(item.queueId);
     }
   }
 
@@ -326,16 +349,50 @@ export function createProjectAutomationDispatcher(options: {
           queue.markWaitingArchive(item.queueId, runId);
           archives.push(archive(item, queue, services, runId));
         } else {
+          if (item.stopRequestedAt) {
+            const recovery = createProjectRunRecoveryStore(options.database, item.projectId);
+            const saved = recovery.get(runId);
+            recovery.record(
+              {
+                ...detail,
+                ...saved,
+                runId,
+                status: 'interrupted',
+                phase: 'interrupted',
+                result: null,
+                trigger: item.trigger,
+                request: item.request,
+                baseCommit: saved?.baseCommit ?? detail?.baseCommit ?? null,
+                targetCommit:
+                  item.resolvedTargetCommit ?? saved?.targetCommit ?? detail?.targetCommit ?? null,
+                includedCommits: saved?.includedCommits ?? detail?.includedCommits ?? [],
+                startedAt: item.claimedAt ?? item.createdAt,
+                finishedAt: saved?.finishedAt ?? new Date().toISOString(),
+                artifactNames: saved?.artifactNames ?? detail?.artifactNames ?? [],
+                stopRequestedAt: item.stopRequestedAt,
+                stopReason: 'user_requested',
+                errorMessage:
+                  saved?.errorMessage ??
+                  '管理员请求停止后进程重启；执行资源已协调，断电期间业务清理状态未知',
+              },
+              {
+                runningDirectory: saved?.runningDirectory,
+                interruptedAt: saved?.finishedAt ?? undefined,
+              },
+            );
+          }
           queue.fail(
             item.queueId,
-            detail?.errorMessage ?? '进程重启时 Run 尚未完成',
+            item.stopRequestedAt
+              ? '管理员请求停止后进程重启；业务清理状态未知'
+              : (detail?.errorMessage ?? '进程重启时 Run 尚未完成'),
             'interrupted',
           );
-          await cleanupRef(item, services.repository);
+          if (!item.stopRequestedAt) await cleanupRef(item, services.repository);
         }
       } catch (error) {
         queue.fail(item.queueId, safeMessage(error), 'interrupted');
-        await cleanupRef(item, services.repository);
+        if (!item.stopRequestedAt) await cleanupRef(item, services.repository);
       }
     }
     for (const operation of archives) track(operation);
@@ -356,6 +413,19 @@ export function createProjectAutomationDispatcher(options: {
     return result;
   };
   return {
+    async stopRequest(projectId, queueId) {
+      const queue = queueFor(projectId);
+      const before = queue.get(queueId);
+      if (!before) throw new Error('项目队列请求不存在');
+      const active = preparingRuns.get(queueId);
+      // A completed Run may still have a running queue row until the await continuation.
+      if (active && !active.runs.canStop(active.runId)) return before;
+      const result = queue.requestStop(queueId);
+      if (result.stopRequestedAt && active)
+        active.runs.requestStop(active.runId, result.stopRequestedAt);
+      pump();
+      return result;
+    },
     maxConcurrentProjects,
     enqueue(projectId, input) {
       return queueFor(projectId).enqueue(input);
@@ -410,7 +480,9 @@ async function resolveTarget(
   item: TestRequestRecord,
   queue: TestRequestQueue,
   repository: RepositoryService,
+  checkStopped: () => void = () => undefined,
 ): Promise<string> {
+  checkStopped();
   if (item.resolvedTargetCommit) {
     if (!(await repository.isPublishedTarget(item.resolvedTargetCommit))) {
       throw new Error('已固定的 target 不在所属项目场景测试分支历史中');
@@ -432,6 +504,7 @@ async function resolveTarget(
       prepared = result.preparedCommit;
       queue.markPrepared(item.queueId, prepared, result.mode);
     }
+    checkStopped();
     const refreshed = queue.get(item.queueId);
     const published = await repository.publishPreparedMerge(
       item.queueId,
@@ -442,6 +515,7 @@ async function resolveTarget(
   }
   const git = await repository.getRepository();
   await git.fetch();
+  checkStopped();
   const head = await git.remoteBranchHead(repository.getScenarioBranch());
   if (!head) throw new Error('所属项目场景测试分支尚未创建');
   return queue.markResolved(item.queueId, head).resolvedTargetCommit!;

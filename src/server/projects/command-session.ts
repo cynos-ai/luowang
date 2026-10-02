@@ -35,6 +35,9 @@ export function createProjectRunCommandSessionFactory(
       action: () => Promise<T>,
     ) => {
       try {
+        // A container already created must be returned to its owner for confirmed
+        // teardown, even if stop arrives during creation. Do not orphan it here.
+        if (stage !== 'binding') input.signal?.throwIfAborted();
         return await action();
       } catch (error) {
         options.logger?.error(
@@ -81,6 +84,8 @@ export function createProjectRunCommandSessionFactory(
     try {
       session = await runStage('container', () =>
         dependencies.startSession({
+          signal: input.signal,
+          onExitUnconfirmed: input.onExitUnconfirmed,
           projectId: options.projectId,
           instanceId: options.instanceId,
           runId: input.runId,
@@ -99,7 +104,17 @@ export function createProjectRunCommandSessionFactory(
         });
       });
     } catch (error) {
-      await session?.close().catch(() => undefined);
+      if (session) {
+        for (;;) {
+          try {
+            await session.close();
+            break;
+          } catch {
+            input.onExitUnconfirmed?.();
+            await new Promise((resolve) => setTimeout(resolve, 30_000));
+          }
+        }
+      }
       await source.cleanup();
       throw error;
     }

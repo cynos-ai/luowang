@@ -132,6 +132,8 @@ export interface RunOrchestratorOptions {
 }
 
 export type RunCommandSessionFactory = (input: {
+  signal?: AbortSignal;
+  onExitUnconfirmed?: () => void;
   repository: GitRepository;
   runId: string;
   targetCommit: string;
@@ -139,6 +141,8 @@ export type RunCommandSessionFactory = (input: {
 }) => Promise<ControlledCommandSession>;
 
 export interface RunOrchestrator {
+  canStop(runId: string): boolean;
+  requestStop(runId: string, requestedAt?: string): boolean;
   start(input: RunInput): Promise<RunSummary>;
   run(input: RunInput): Promise<RunDetail>;
   wait(runId: string): Promise<RunDetail | null>;
@@ -197,6 +201,67 @@ class DefaultRunOrchestrator implements RunOrchestrator {
   private readonly now: () => Date;
   private readonly id: () => string;
 
+  canStop(runId: string): boolean {
+    const state = this.runs.get(runId);
+    return (
+      !state ||
+      (!state.completionCommitted && !['completed', 'failed', 'interrupted'].includes(state.status))
+    );
+  }
+
+  requestStop(runId: string, requestedAt = this.now().toISOString()): boolean {
+    const state = this.runs.get(runId);
+    if (!state || !this.canStop(runId)) return false;
+    if (!state.stopRequestedAt) {
+      state.stopRequestedAt = requestedAt;
+      state.stopReason = 'user_requested';
+      this.setPhase(
+        state,
+        state.phase,
+        '管理员请求停止；等待执行资源退出及 Harness 收尾',
+        'warning',
+      );
+      state.stopController?.abort();
+    }
+    return true;
+  }
+
+  private assertNotStopped(): void {
+    if (this.activeRun?.stopController?.signal.aborted) throw new Error('管理员已请求停止本次测试');
+  }
+
+  private async closeStoppedResource(close: () => Promise<void>): Promise<void> {
+    // Retain the Run/queue slot until the owner confirms exit. Never treat a timeout
+    // or a rejected Docker/extension shutdown as confirmation that work has stopped.
+    for (;;) {
+      const state = this.activeRun;
+      const timer = setTimeout(() => {
+        if (state)
+          this.setPhase(
+            state,
+            state.phase,
+            '停止收尾尚未确认资源退出，继续保留执行名额',
+            'warning',
+          );
+      }, 30_000);
+      try {
+        await close();
+        return;
+      } catch {
+        if (state)
+          this.setPhase(
+            state,
+            state.phase,
+            '资源退出核对失败；保留名额并重试所属资源收尾',
+            'warning',
+          );
+      } finally {
+        clearTimeout(timer);
+      }
+      await new Promise((resolve) => setTimeout(resolve, 30_000));
+    }
+  }
+
   constructor(
     private readonly options: RunOrchestratorOptions,
     private readonly sessions: AgentSessionFactory,
@@ -243,6 +308,7 @@ class DefaultRunOrchestrator implements RunOrchestrator {
         activities: [{ at: startedAt, message: 'Run 已创建，等待准备', kind: 'phase' }],
         blockingReasons: [],
         updatedAt: startedAt,
+        stopController: new AbortController(),
       };
       this.runs.set(runId, state);
       this.activeRun = state;
@@ -318,29 +384,35 @@ class DefaultRunOrchestrator implements RunOrchestrator {
       const workspace = this.workspaceStore.open(runId, 'running');
       const artifacts = await workspace.list();
       const timestamp = this.now().toISOString();
+      const saved = this.options.recoveryStore?.get(runId);
+      const checkpoint = this.options.recoveryStore?.readCheckpoint?.(runId);
       const state: RunState = {
+        ...checkpoint,
         runId,
         status: 'interrupted',
         phase: 'interrupted',
         result: null,
-        trigger: 'manual',
-        request: '',
-        baseCommit: null,
-        targetCommit: null,
-        includedCommits: [],
-        startedAt: timestamp,
+        trigger: checkpoint?.trigger ?? 'manual',
+        request: checkpoint?.request ?? '',
+        baseCommit: checkpoint?.baseCommit ?? null,
+        targetCommit: checkpoint?.targetCommit ?? null,
+        includedCommits: checkpoint?.includedCommits ?? [],
+        startedAt: checkpoint?.startedAt ?? timestamp,
         finishedAt: timestamp,
         errorMessage: '进程重启时 Run 尚在 running 目录，未恢复 Agent 会话',
         artifactNames: Object.keys(artifacts),
         completedDirectory: null,
         runningDirectory: workspace.runningDirectory,
-        evidence: [],
+        evidence: checkpoint?.evidence ?? [],
+        ...(saved ?? {}),
       };
       this.runs.set(runId, state);
-      this.options.recoveryStore?.record(toSummary(state), {
-        interruptedAt: timestamp,
-        runningDirectory: workspace.runningDirectory,
-      });
+      if (!saved) {
+        this.options.recoveryStore?.record(toSummary(state), {
+          interruptedAt: timestamp,
+          runningDirectory: workspace.runningDirectory,
+        });
+      }
     }
   }
 
@@ -355,6 +427,7 @@ class DefaultRunOrchestrator implements RunOrchestrator {
       state.status = 'running';
       this.setPhase(state, 'preparing', '正在固定 base、target 和提交范围');
       const prepared = await this.prepareRun(state, input);
+      this.assertNotStopped();
       const history = await this.readHistoryIssues(state.runId);
       const context: RunContext = {
         runId: state.runId,
@@ -480,6 +553,8 @@ class DefaultRunOrchestrator implements RunOrchestrator {
       this.setPhase(state, 'finalizing', '正在校验最终报告并准备归档');
       await finishCleanup();
       const report = await this.validateFinalReport(state, workspace, context);
+      this.assertNotStopped();
+      state.completionCommitted = true;
       await workspace.finalize();
       state.result = report.result;
       state.status = 'completed';
@@ -507,6 +582,17 @@ class DefaultRunOrchestrator implements RunOrchestrator {
     } finally {
       await finishCleanup();
       await this.options.repository.cleanWorkspace().catch(() => undefined);
+      if (state.stopRequestedAt && !state.completionCommitted) {
+        state.status = 'interrupted';
+        state.result = null;
+        state.errorMessage = '管理员已停止测试；已执行操作保留，清理状态以实际回执为准';
+        this.setPhase(state, 'interrupted', state.errorMessage, 'warning');
+        state.finishedAt = this.now().toISOString();
+        state.artifactNames = Object.keys(await workspace.list());
+        this.options.recoveryStore?.record(toSummary(state), {
+          runningDirectory: workspace.runningDirectory,
+        });
+      }
       if (this.activeRun === state) this.activeRun = undefined;
     }
   }
@@ -916,6 +1002,8 @@ class DefaultRunOrchestrator implements RunOrchestrator {
     );
     state.blockingReasons = [...context.blockingReasons];
     state.updatedAt = this.now().toISOString();
+    this.assertNotStopped();
+    state.completionCommitted = true;
     await workspace.finalize({ specialScenarioReview: true });
     state.result = report.result;
     state.status = 'completed';
@@ -1083,6 +1171,7 @@ class DefaultRunOrchestrator implements RunOrchestrator {
       ),
       ...(evidenceStore && this.options.configuration.getRepository().baseUrl
         ? createControlledHttpTools({
+            signal: state.stopController?.signal,
             baseUrl: this.options.configuration.getRepository().baseUrl,
             cleanupUrl: this.options.testDataCleanupUrl,
             runId: context.runId,
@@ -1136,6 +1225,14 @@ class DefaultRunOrchestrator implements RunOrchestrator {
     if (browserExtension) evidenceStore?.allowBrowserRecords?.();
     const commandSession = this.options.commandSessionFactory
       ? await this.options.commandSessionFactory({
+          signal: state.stopController?.signal,
+          onExitUnconfirmed: () =>
+            this.setPhase(
+              state,
+              state.phase,
+              '准备中的执行资源尚未确认退出；继续保留名额并核对',
+              'warning',
+            ),
           repository,
           runId: context.runId,
           targetCommit: context.targetCommit,
@@ -1146,7 +1243,16 @@ class DefaultRunOrchestrator implements RunOrchestrator {
         })
       : undefined;
     commandRunner = commandSession ?? this.commandRunner;
+    let forceClose: ReturnType<typeof setTimeout> | undefined;
+    const forceStop = () => {
+      if (commandSession)
+        forceClose = setTimeout(() => {
+          void commandSession.close().catch(() => undefined);
+        }, 30_000);
+    };
+    state.stopController?.signal.addEventListener('abort', forceStop, { once: true });
     try {
+      this.assertNotStopped();
       await this.invoke(
         workspace,
         'runner-execution',
@@ -1184,10 +1290,14 @@ class DefaultRunOrchestrator implements RunOrchestrator {
       }
       await assertArtifact(workspace, 'execution.md');
     } finally {
+      state.stopController?.signal.removeEventListener('abort', forceStop);
+      if (forceClose) clearTimeout(forceClose);
       if (commandSession) {
         try {
-          await commandSession.close();
+          if (state.stopRequestedAt) await this.closeStoppedResource(() => commandSession.close());
+          else await commandSession.close();
         } catch {
+          if (state.stopRequestedAt) await this.closeStoppedResource(() => commandSession.close());
           this.addBlockingReason(context, '项目执行容器清理失败');
         }
       }
@@ -1331,6 +1441,7 @@ class DefaultRunOrchestrator implements RunOrchestrator {
           const references = result.references;
           context.evidence = references;
           state.evidence = references;
+          this.checkpoint(state);
           uploaded = references.length > 0;
           notes.push(
             ...result.receipts.map(
@@ -1692,6 +1803,7 @@ class DefaultRunOrchestrator implements RunOrchestrator {
     let stage = 'role-instructions';
     let disposeFailure: unknown;
     try {
+      this.assertNotStopped();
       const instructions = await this.roleInstructions.load(sessionKind, initialization);
       const systemPrompt = buildSystemPrompt(sessionKind, instructions.content, outputContract);
       stage = 'session-input';
@@ -1706,10 +1818,12 @@ class DefaultRunOrchestrator implements RunOrchestrator {
         instructions.versions,
         extensionFactories,
       );
+      input.signal = this.activeRun?.stopController?.signal;
       stage = 'session-create';
       session = await this.sessions.create(input);
       stage = 'session-prompt';
       await session.prompt(input.userMessage);
+      this.assertNotStopped();
       if (validateOutput) {
         stage = 'output-validation';
         // Keep correction in the same isolated Session; never launch extra roles or loop unboundedly.
@@ -1723,6 +1837,7 @@ class DefaultRunOrchestrator implements RunOrchestrator {
             await session.prompt(
               `规划工件联合校验失败：${safeMessage(error)}\n请在当前 Session 修正完整 plan.md/场景 patch 后结束。execution_scenarios 只能引用应用后实际存在的 approved 场景；draft/deprecated 不可执行。不要通过删去必需覆盖来掩盖问题，也不要重复发送未修正工件。`,
             );
+            this.assertNotStopped();
             stage = 'output-validation';
           }
         }
@@ -1756,8 +1871,17 @@ class DefaultRunOrchestrator implements RunOrchestrator {
           );
         }
         try {
-          await session.dispose();
+          if (this.activeRun?.stopRequestedAt)
+            await this.closeStoppedResource(async () => {
+              await session!.dispose();
+            });
+          else await session.dispose();
         } catch (error) {
+          if (this.activeRun?.stopRequestedAt) {
+            await this.closeStoppedResource(async () => {
+              await session!.dispose();
+            });
+          }
           this.options.logger?.error(
             {
               sessionKind,
@@ -2132,6 +2256,7 @@ class DefaultRunOrchestrator implements RunOrchestrator {
 
   private markExecutionFailure(state: RunState, error: unknown): void {
     if (state.status === 'completed' || state.status === 'interrupted') return;
+    if (state.stopRequestedAt && !state.completionCommitted) return;
     const failedAtPhase = state.phase;
     state.status = 'failed';
     this.setPhase(state, 'failed', 'Run 执行失败，未形成可信最终结论', 'warning');
@@ -2169,6 +2294,15 @@ class DefaultRunOrchestrator implements RunOrchestrator {
       ...(state.activities ?? []),
       { at, message, kind, ...(code ? { code } : {}) },
     ].slice(-20);
+    this.checkpoint(state);
+  }
+
+  private checkpoint(state: RunState): void {
+    try {
+      this.options.recoveryStore?.checkpoint?.(toSummary(state));
+    } catch {
+      this.options.logger?.warn({ runId: state.runId }, 'Run recovery checkpoint unavailable');
+    }
   }
 
   private async readStateDetail(state: RunState): Promise<RunDetail> {
@@ -2518,6 +2652,8 @@ function toSummary(state: RunSnapshot): RunSummary {
     summary.activities = state.activities.map((activity) => ({ ...activity }));
   if (state.blockingReasons !== undefined) summary.blockingReasons = [...state.blockingReasons];
   if (state.updatedAt !== undefined) summary.updatedAt = state.updatedAt;
+  if (state.stopRequestedAt !== undefined) summary.stopRequestedAt = state.stopRequestedAt;
+  if (state.stopReason !== undefined) summary.stopReason = state.stopReason;
   return summary;
 }
 

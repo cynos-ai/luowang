@@ -17,9 +17,134 @@ import { migrateProjectQueueContext } from '../src/server/db/migrations/0014-pro
 import { createProjectConfigurationStore } from '../src/server/projects/configuration.js';
 import { createProjectStore } from '../src/server/projects/store.js';
 import { createScopedSecretStore } from '../src/server/security/scoped-secret-store.js';
+import { migrateRunStop } from '../src/server/db/migrations/0018-run-stop.js';
+import { createProjectRunRecoveryStore } from '../src/server/automation/recovery.js';
 import type { RunDetail, RunSummary } from '../src/shared/types.js';
 
 describe('project automation dispatcher', () => {
+  it('cancels queued requests idempotently and refuses a different project', async () => {
+    const fixture = setup();
+    const dispatcher = fixture.dispatcher((id) => fakeServices(id, {}));
+    try {
+      const item = dispatcher.enqueue(fixture.a.projectId, {
+        trigger: 'manual',
+        request: 'cancel queued',
+      });
+      await assert.rejects(dispatcher.stopRequest(fixture.b.projectId, item.queueId), /不存在/);
+      const first = await dispatcher.stopRequest(fixture.a.projectId, item.queueId);
+      assert.equal(first.status, 'interrupted');
+      assert.equal(first.runId, null);
+      assert.equal(first.stopReason, 'user_requested');
+      assert.deepEqual(await dispatcher.stopRequest(fixture.a.projectId, item.queueId), first);
+      await dispatcher.drain();
+      assert.equal(fixture.queue(fixture.a.projectId).get(item.queueId)?.claimedAt, null);
+    } finally {
+      await dispatcher.stop();
+      fixture.database.close();
+    }
+  });
+
+  it('holds a stopped preparation until it exits, lets B finish, and never starts A', async () => {
+    const fixture = setup();
+    const entered = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    const bFinished = Promise.withResolvers<void>();
+    let aStarts = 0;
+    const dispatcher = fixture.dispatcher((id) => {
+      const services = fakeServices(id, {
+        async start(runId) {
+          if (id === fixture.a.projectId) aStarts++;
+          return { runId };
+        },
+        async archive() {
+          bFinished.resolve();
+          return archiveResult();
+        },
+      });
+      if (id === fixture.a.projectId)
+        services.repository.getRepository = async () => {
+          entered.resolve();
+          await release.promise;
+          return {
+            fetch: async () => undefined,
+            remoteBranchHead: async () => 'a'.repeat(40),
+          } as never;
+        };
+      return services;
+    }, 2);
+    const a = dispatcher.enqueue(fixture.a.projectId, { trigger: 'manual', request: 'A' });
+    dispatcher.enqueue(fixture.b.projectId, { trigger: 'manual', request: 'B' });
+    const drain = dispatcher.drain();
+    try {
+      await entered.promise;
+      assert.equal(
+        (await dispatcher.stopRequest(fixture.a.projectId, a.queueId)).status,
+        'running',
+      );
+      await bFinished.promise;
+      assert.equal(fixture.queue(fixture.a.projectId).get(a.queueId)?.status, 'running');
+      release.resolve();
+      await drain;
+      assert.equal(aStarts, 0);
+      assert.equal(fixture.queue(fixture.a.projectId).get(a.queueId)?.status, 'interrupted');
+      assert.equal(fixture.queue(fixture.a.projectId).get(a.queueId)?.resolvedTargetCommit, null);
+    } finally {
+      release.resolve();
+      await dispatcher.stop();
+      fixture.database.close();
+    }
+  });
+
+  it('does not resurrect a stopped preparation during recovery', async () => {
+    const fixture = setup();
+    try {
+      const queue = fixture.queue(fixture.a.projectId);
+      const item = queue.enqueue({ trigger: 'manual', request: 'stopped before crash' });
+      queue.claimNext();
+      queue.requestStop(item.queueId);
+      let starts = 0;
+      const restarted = fixture.dispatcher((id) =>
+        fakeServices(id, {
+          async start(runId) {
+            starts++;
+            return { runId };
+          },
+        }),
+      );
+      await restarted.recover();
+      await restarted.drain();
+      assert.equal(starts, 0);
+      assert.equal(queue.get(item.queueId)?.status, 'interrupted');
+      assert.equal(queue.get(item.queueId)?.stopReason, 'user_requested');
+    } finally {
+      fixture.database.close();
+    }
+  });
+  it('restores durable user-stop attribution after a crash before the final Run snapshot', async () => {
+    const fixture = setup();
+    try {
+      const queue = fixture.queue(fixture.a.projectId);
+      const item = queue.enqueue({ trigger: 'manual', request: 'original request' });
+      queue.claimNext();
+      queue.markResolved(item.queueId, 'a'.repeat(40));
+      queue.markStarted(item.queueId, '01JQ7K6D5J4P3N2M1H0G9F8E7D');
+      const stopped = queue.requestStop(item.queueId);
+      const restarted = fixture.dispatcher((id) => fakeServices(id, {}));
+      await restarted.recover();
+      const recovered = createProjectRunRecoveryStore(fixture.database, fixture.a.projectId).get(
+        '01JQ7K6D5J4P3N2M1H0G9F8E7D',
+      );
+      assert.equal(recovered?.stopReason, 'user_requested');
+      assert.equal(recovered?.stopRequestedAt, stopped.stopRequestedAt);
+      assert.equal(recovered?.targetCommit, 'a'.repeat(40));
+      assert.equal(recovered?.request, 'original request');
+      assert.equal(recovered?.result, null);
+      assert.match(recovered!.errorMessage!, /未知/);
+    } finally {
+      fixture.database.close();
+    }
+  });
+
   it('overlaps A1/B1, keeps A2 queued, and fills a released slot without losing wakeups', async () => {
     const fixture = setup();
     const releaseA = Promise.withResolvers<void>();
@@ -497,6 +622,7 @@ function setup() {
   migrateLegacyRunOwnership(database, null);
   migrateLegacyConfigurationOwnership(database, null);
   migrateProjectQueueContext(database);
+  migrateRunStop(database);
   const projects = createProjectStore(database, {
     id: (() => {
       const ids = ['11111111-1111-4111-8111-111111111111', '22222222-2222-4222-8222-222222222222'];

@@ -298,6 +298,8 @@ export type RunPhase =
   | 'interrupted';
 
 export interface RunSummary {
+  stopRequestedAt?: string | null;
+  stopReason?: 'user_requested' | null;
   runId: string;
   status: RunLifecycleStatus;
   phase: RunPhase;
@@ -451,6 +453,8 @@ export interface OperationsCurrentResponse {
 }
 
 export interface OperationsQueueItem {
+  stopRequestedAt?: string | null;
+  stopReason?: 'user_requested' | null;
   queueId: number;
   requestId: string;
   trigger: RunTrigger;

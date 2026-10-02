@@ -7,6 +7,7 @@ import Database from 'better-sqlite3';
 
 import { loadConfig } from '../config.js';
 import { migrateProjectReportIndexIdentity } from '../db/migrations/0017-project-report-index-identity.js';
+import { migrateRunStop, RUN_STOP_VERSION } from '../db/migrations/0018-run-stop.js';
 import { GitHubClient } from '../repository/github.js';
 import { createSecretStore } from '../security/secret-store.js';
 import { createLegacyBackup, verifyLegacyBackup } from './legacy-backup.js';
@@ -22,15 +23,22 @@ export async function runUpgradeCli(
 ): Promise<Record<string, unknown>> {
   const [command, backupDir, reviewedHistoryFingerprint] = args;
   if (
-    !['inspect', 'backup', 'upgrade-empty', 'upgrade-project', 'upgrade-index', 'verify'].includes(
-      command ?? '',
-    ) ||
-    (['backup', 'upgrade-empty', 'upgrade-index'].includes(command ?? '') && args.length !== 2) ||
+    ![
+      'inspect',
+      'backup',
+      'upgrade-empty',
+      'upgrade-project',
+      'upgrade-index',
+      'upgrade-reliability',
+      'verify',
+    ].includes(command ?? '') ||
+    (['backup', 'upgrade-empty', 'upgrade-index', 'upgrade-reliability'].includes(command ?? '') &&
+      args.length !== 2) ||
     (command === 'upgrade-project' && (args.length < 2 || args.length > 3)) ||
     (['inspect', 'verify'].includes(command ?? '') && args.length !== 1)
   ) {
     throw new Error(
-      '用法: db:multi-project inspect | backup <new-dir> | upgrade-empty <backup-dir> | upgrade-project <backup-dir> [reviewed-history-fingerprint] | upgrade-index <new-backup-dir> | verify',
+      '用法: db:multi-project inspect | backup <new-dir> | upgrade-empty <backup-dir> | upgrade-project <backup-dir> [reviewed-history-fingerprint] | upgrade-index <new-backup-dir> | upgrade-reliability <new-backup-dir> | verify',
     );
   }
   const config = loadConfig(environment);
@@ -41,7 +49,9 @@ export async function runUpgradeCli(
   database.pragma('foreign_keys = ON');
   database.pragma('busy_timeout = 5000');
   try {
-    if (command === 'upgrade-index') {
+    if (command === 'upgrade-index' || command === 'upgrade-reliability') {
+      const reliability = command === 'upgrade-reliability';
+      if (reliability) assertProjectSchema(database);
       const marker = database
         .prepare(
           "SELECT key FROM system_metadata WHERE key IN ('v061_legacy_cutover_project_id', 'v061_empty_cutover')",
@@ -50,10 +60,8 @@ export async function runUpgradeCli(
       if (marker.length !== 1) throw new Error('多项目离线切换标记缺失或不唯一');
       if (
         database
-          .prepare(
-            "SELECT 1 FROM schema_migrations WHERE version = '0017_project_report_index_identity'",
-          )
-          .get()
+          .prepare('SELECT 1 FROM schema_migrations WHERE version = ?')
+          .get(reliability ? RUN_STOP_VERSION : '0017_project_report_index_identity')
       ) {
         assertProjectSchema(database);
         return { status: 'already_complete' };
@@ -61,7 +69,10 @@ export async function runUpgradeCli(
       const backupPath = resolve(backupDir!);
       await mkdir(dirname(backupPath), { recursive: true });
       await mkdir(backupPath);
-      const databaseBackupPath = join(backupPath, 'luowang-before-index-0017.db');
+      const databaseBackupPath = join(
+        backupPath,
+        reliability ? 'luowang-before-reliability-0018.db' : 'luowang-before-index-0017.db',
+      );
       await database.backup(databaseBackupPath);
       const backup = new Database(databaseBackupPath, { readonly: true, fileMustExist: true });
       try {
@@ -75,7 +86,8 @@ export async function runUpgradeCli(
       const before = (
         database.prepare('SELECT COUNT(*) AS count FROM indexed_reports').get() as { count: number }
       ).count;
-      migrateProjectReportIndexIdentity(database);
+      if (reliability) migrateRunStop(database);
+      else migrateProjectReportIndexIdentity(database);
       const after = (
         database.prepare('SELECT COUNT(*) AS count FROM indexed_reports').get() as { count: number }
       ).count;

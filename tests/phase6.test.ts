@@ -614,6 +614,21 @@ describe('Phase 6 persistent automation', () => {
     assert.equal(recovered?.phase, 'interrupted');
     assert.deepEqual(recovered?.artifactNames, ['plan.md']);
     assert.equal(recoveryStore.get(orphanedRunId)?.runningDirectory, workspace.runningDirectory);
+    const original = recoveryStore.get(orphanedRunId);
+    const second = createRunOrchestrator({
+      configuration,
+      repository: {} as RepositoryService,
+      reportDir: context.config.reportDir,
+      provider: {} as ProviderAdapter,
+      recoveryStore,
+      now: () => new Date('2030-01-01T00:00:00Z'),
+    });
+    await second.recover();
+    assert.deepEqual(
+      recoveryStore.get(orphanedRunId),
+      original,
+      'later restarts must not change historical interruption time or facts',
+    );
   });
 });
 

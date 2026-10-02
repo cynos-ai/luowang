@@ -23,6 +23,8 @@ export interface TestRequestInput {
 }
 
 export interface TestRequestRecord {
+  stopRequestedAt?: string | null;
+  stopReason?: 'user_requested' | null;
   queueId: number;
   projectId: string | null;
   configRevision: number | null;
@@ -61,6 +63,7 @@ export interface QueueCompletion {
 }
 
 export interface TestRequestQueue {
+  requestStop(queueId: number): TestRequestRecord;
   enqueue(input: TestRequestInput): TestRequestRecord;
   claimNext(): TestRequestRecord | null;
   markPrepared(queueId: number, commit: string, mode: PreparedMergeMode): TestRequestRecord;
@@ -366,6 +369,9 @@ class SqliteTestRequestQueue implements TestRequestQueue {
 
   requeue(queueId: number): TestRequestRecord {
     this.assertOwned(queueId);
+    if (this.require(queueId).stopRequestedAt) {
+      return this.fail(queueId, '管理员已停止请求；未恢复执行', 'interrupted');
+    }
     const timestamp = this.now();
     const result = this.database
       .prepare(
@@ -494,6 +500,24 @@ class SqliteTestRequestQueue implements TestRequestQueue {
     return this.require(queueId);
   }
 
+  requestStop(queueId: number): TestRequestRecord {
+    return this.database.transaction(() => {
+      const current = this.require(queueId);
+      if (current.stopRequestedAt || !['queued', 'running'].includes(current.status))
+        return current;
+      const at = this.now();
+      this.database
+        .prepare(
+          `UPDATE test_request_queue
+        SET stop_requested_at = ?, stop_reason = 'user_requested', updated_at = ?
+        WHERE queue_id = ? AND status IN ('queued', 'running') AND stop_requested_at IS NULL`,
+        )
+        .run(at, at, queueId);
+      if (current.status === 'queued') return this.fail(queueId, '管理员已取消排队', 'interrupted');
+      return this.require(queueId);
+    })();
+  }
+
   get(queueId: number): TestRequestRecord | null {
     const row = this.database
       .prepare(
@@ -587,6 +611,8 @@ class SqliteTestRequestQueue implements TestRequestQueue {
 }
 
 interface QueueRow {
+  stop_requested_at?: string | null;
+  stop_reason?: 'user_requested' | null;
   queue_id: number;
   project_id?: string | null;
   config_revision?: number | null;
@@ -743,6 +769,8 @@ function uniqueTriggers(values: RunTrigger[]): RunTrigger[] {
 
 function toRecord(row: QueueRow): TestRequestRecord {
   return {
+    stopRequestedAt: row.stop_requested_at ?? null,
+    stopReason: row.stop_reason ?? null,
     queueId: row.queue_id,
     projectId: row.project_id ?? null,
     configRevision: row.config_revision ?? null,

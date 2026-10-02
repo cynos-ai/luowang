@@ -42,6 +42,99 @@ afterEach(async () => {
 });
 
 describe('Phase 3 agent run', () => {
+  it('retains occupancy when stop races a failing normal container close, then confirms teardown before interrupting', async () => {
+    const fixture = await createGitFixture();
+    const closing = Promise.withResolvers<void>();
+    const failClose = Promise.withResolvers<void>();
+    const retrying = Promise.withResolvers<void>();
+    const confirmExit = Promise.withResolvers<void>();
+    let closes = 0;
+    const context = await createRunContext(
+      fixture,
+      ['passed'],
+      undefined,
+      undefined,
+      '',
+      '\n',
+      false,
+      false,
+      {
+        commandSessionFactory: async () => ({
+          run: async () => ({ stdout: 'ok', stderr: '', exitCode: 0, environmentKeys: [] }),
+          async close() {
+            closes++;
+            if (closes === 1) {
+              closing.resolve();
+              await failClose.promise;
+              throw new Error('exit unknown');
+            }
+            retrying.resolve();
+            await confirmExit.promise;
+          },
+        }),
+      },
+    );
+    const run = await context.orchestrator.start({
+      request: 'stop during resource close',
+      trigger: 'manual',
+    });
+    await closing.promise;
+    context.orchestrator.requestStop(run.runId);
+    failClose.resolve();
+    await retrying.promise;
+    assert.equal((await context.orchestrator.current())?.runId, run.runId);
+    assert.equal((await context.orchestrator.current())?.status, 'running');
+    assert.deepEqual(context.sessions.created, ['main-a', 'runner']);
+    confirmExit.resolve();
+    const result = await context.orchestrator.wait(run.runId);
+    assert.equal(result?.status, 'interrupted');
+    assert.equal(result?.result, null);
+    assert.equal(closes, 2);
+  });
+
+  it.each(['main-a', 'runner', 'reviewer', 'main-b'] as const)(
+    'stops %s without starting later roles or fabricating a result',
+    async (role) => {
+      const fixture = await createGitFixture();
+      const entered = Promise.withResolvers<void>();
+      const context = await createRunContext(
+        fixture,
+        ['passed'],
+        undefined,
+        undefined,
+        '',
+        '\n',
+        false,
+        false,
+        {
+          async sessionGate(input) {
+            if (input.role !== role) return;
+            entered.resolve();
+            await new Promise<void>((_resolve, reject) => {
+              input.signal!.addEventListener('abort', () => reject(new Error('stopped')), {
+                once: true,
+              });
+            });
+          },
+        },
+      );
+      const run = await context.orchestrator.start({
+        request: 'stop the selected role',
+        trigger: 'manual',
+      });
+      await entered.promise;
+      assert.equal(context.orchestrator.requestStop(run.runId), true);
+      const result = await context.orchestrator.wait(run.runId);
+      assert.equal(result?.status, 'interrupted');
+      assert.equal(result?.result, null);
+      assert.equal(result?.stopReason, 'user_requested');
+      assert.equal(context.sessions.created.at(-1), role);
+      assert.equal(context.sessions.created.length, context.sessions.disposed.length);
+      assert.equal(result?.artifacts['report.md'], undefined);
+      assert.equal(await pathExists(join(context.reportDir, 'completed', run.runId)), false);
+      assert.equal(context.orchestrator.requestStop(run.runId), false);
+    },
+  );
   it('uses and closes a Run command Session without executing the local command fallback', async () => {
     const fixture = await createGitFixture();
     let started = 0;
@@ -1224,6 +1317,7 @@ async function createRunContext(
     secretStore?: SecretStore;
     roleInstructions?: RoleInstructionLoader;
     commandSessionFactory?: RunCommandSessionFactory;
+    sessionGate?: (input: AgentSessionInput) => Promise<void>;
   } = {},
 ): Promise<TestContext> {
   const dataDir = await mkdtemp(join(tmpdir(), 'luowang-phase3-data-'));
@@ -1279,7 +1373,20 @@ async function createRunContext(
     roleInstructions: options.roleInstructions,
     commandSessionFactory: options.commandSessionFactory,
     reportDir,
-    sessions,
+    sessions: options.sessionGate
+      ? {
+          async create(input) {
+            const session = await sessions.create(input);
+            return {
+              ...session,
+              async prompt(message) {
+                await options.sessionGate!(input);
+                return session.prompt(message);
+              },
+            };
+          },
+        }
+      : sessions,
     provider: {} as ProviderAdapter,
     oss: localEvidenceTransport().oss,
     logger: pino({ level: 'silent' }),

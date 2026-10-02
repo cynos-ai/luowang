@@ -44,6 +44,7 @@ export function createDockerRuntime(): DockerRuntime {
       try {
         const result = await execFileAsync('docker', args, {
           timeout: options.timeoutMs,
+          killSignal: 'SIGKILL',
           maxBuffer: MAX_OUTPUT_BYTES,
           windowsHide: true,
           signal: options.signal,
@@ -83,6 +84,8 @@ export function createDockerRuntime(): DockerRuntime {
 /** Start one Run container from a pinned image and its isolated Run source. */
 export async function startProjectCommandSession(
   input: {
+    signal?: AbortSignal;
+    onExitUnconfirmed?: () => void;
     projectId: string;
     instanceId: string;
     runId: string;
@@ -147,6 +150,7 @@ export async function startProjectCommandSession(
     throw new ControlledCommandError('COMMAND_FAILED', '项目镜像与 Run 归属或目标提交不符');
   }
   const name = `luowang-run-${input.runId.toLowerCase()}`;
+  input.signal?.throwIfAborted();
   const created = await requireDockerSuccess(
     docker,
     [
@@ -171,20 +175,72 @@ export async function startProjectCommandSession(
       'infinity',
     ],
     30_000,
-  );
+  ).catch(async (error: unknown) => {
+    if (input.signal?.aborted) {
+      // A canceled create may have reached Docker even if its reply was lost.
+      // Reconcile the reserved name and all ownership labels before releasing.
+      for (;;) {
+        try {
+          const found = await requireDockerSuccess(
+            docker,
+            ['ps', '--all', '--no-trunc', '--quiet', '--filter', `name=^/${name}$`],
+            30_000,
+          );
+          const id = found.stdout.trim();
+          if (!id) break;
+          if (!CONTAINER_ID.test(id)) throw new Error('无法确认准备容器身份');
+          const inspected = await requireDockerSuccess(
+            docker,
+            ['inspect', '--format', '{{json .Config.Labels}}', id],
+            30_000,
+          );
+          const labels = JSON.parse(inspected.stdout) as Record<string, string>;
+          if (
+            labels['luowang.instance-id'] !== input.instanceId ||
+            labels['luowang.project-id'] !== input.projectId ||
+            labels['luowang.run-id'] !== input.runId ||
+            labels['luowang.target-commit'] !== input.targetCommit
+          )
+            throw new Error('准备容器归属尚未确认');
+          await requireDockerSuccess(docker, ['rm', '--force', id], 30_000);
+          break;
+        } catch {
+          input.onExitUnconfirmed?.();
+          await new Promise((resolve) => setTimeout(resolve, 30_000));
+        }
+      }
+    }
+    throw error;
+  });
   const containerId = created.stdout.trim();
   if (!CONTAINER_ID.test(containerId)) {
     throw new ControlledCommandError('COMMAND_FAILED', 'Docker 未返回有效容器 ID');
   }
   try {
+    input.signal?.throwIfAborted();
     await requireDockerSuccess(
       docker,
       ['cp', `${sourceDirectory}/.`, `${containerId}:/luowang-source`],
       120_000,
     );
+    input.signal?.throwIfAborted();
     await requireDockerSuccess(docker, ['start', containerId], 30_000);
+    input.signal?.throwIfAborted();
   } catch (error) {
-    await docker.run(['rm', '--force', containerId], { timeoutMs: 30_000 }).catch(() => undefined);
+    const owned = new BoundProjectCommandSession(docker, containerId, {
+      runId: input.runId,
+      targetCommit: input.targetCommit,
+      repositoryDirectory: resolve(input.repositoryDirectory),
+    });
+    for (;;) {
+      try {
+        await owned.close();
+        break;
+      } catch {
+        input.onExitUnconfirmed?.();
+        await new Promise((resolve) => setTimeout(resolve, 30_000));
+      }
+    }
     throw error;
   }
   return new BoundProjectCommandSession(docker, containerId, {
@@ -196,6 +252,7 @@ export async function startProjectCommandSession(
 
 class BoundProjectCommandSession implements ProjectCommandSession {
   private closed = false;
+  private closing: Promise<void> | undefined;
 
   constructor(
     private readonly docker: DockerRuntime,
@@ -211,7 +268,8 @@ class BoundProjectCommandSession implements ProjectCommandSession {
     command: string,
     options: { cwd: string; runId: string; targetCommit: string; signal?: AbortSignal },
   ): Promise<CommandRunResult> {
-    if (this.closed) throw new ControlledCommandError('COMMAND_FAILED', '项目执行容器已关闭');
+    if (this.closed || this.closing)
+      throw new ControlledCommandError('COMMAND_FAILED', '项目执行容器已关闭或正在关闭');
     if (
       options.runId !== this.binding.runId ||
       options.targetCommit !== this.binding.targetCommit ||
@@ -252,8 +310,27 @@ class BoundProjectCommandSession implements ProjectCommandSession {
 
   async close(): Promise<void> {
     if (this.closed) return;
-    await requireDockerSuccess(this.docker, ['rm', '--force', this.containerId], 30_000);
-    this.closed = true;
+    if (this.closing) return this.closing;
+    this.closing = (async () => {
+      try {
+        await requireDockerSuccess(this.docker, ['rm', '--force', this.containerId], 30_000);
+      } catch (error) {
+        // Removal can succeed even when its response is lost. Only a successful
+        // daemon query proving absence makes a repeated close successful.
+        const remaining = await requireDockerSuccess(
+          this.docker,
+          ['ps', '--all', '--no-trunc', '--quiet', '--filter', `id=${this.containerId}`],
+          30_000,
+        );
+        if (remaining.stdout.trim()) throw error;
+      }
+      this.closed = true;
+    })();
+    try {
+      await this.closing;
+    } finally {
+      this.closing = undefined;
+    }
   }
 }
 
