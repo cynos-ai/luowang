@@ -1,7 +1,7 @@
 # 项目独立并行测试 Plan
 
 - 日期：2026-10-02
-- 状态：2026-10-02 已授权完整实施，开发与验收进行中
+- 状态：实现、完整 local 与本轮并行 live 已完成；PR #120 交付，未发布
 - [Intent](intent.md) · [Spec](spec.md)
 - 负责人已授权开发、隔离实例与两个指定非生产目标的真实模型验收；模型调用不另设次数上限，费用由负责人外部限制。未授权发布。
 
@@ -132,7 +132,51 @@
 - 定向验证已通过：A1/B1 重叠及 A2 等待、B 先结束与二次唤醒、慢准备占槽、容量 1/2/三项目轮转、暂停/待归档、双 Run 重启、准备中无 Run 展示和部分项目读取失败、原生 MCP 双浏览器与同名截图隔离、关闭 A 后 B 继续运行。
 - #94：真实挂起 HTTP Git remote 经 `GitRepository` 超时、生产 readiness API 与持久状态保持失败且脱敏；浏览器回归检查失败信息展示。没有实现代理设置或自动重试。
 - #118/#119：四种目录状态在 768/1440px 验证独立布局行；取消 Playwright 默认隐藏滚动条，断言滚动条实际占宽后验证 768/1024/1440px 页面无整体溢出，保留局部滚动与键盘访问。
-- Phase 4 进行中：最新全量单元/集成测试为 483 passed、2 skipped，构建、类型与 E2E 通过；首次 local 的格式/临时 dist 权限失败，以及 root 测试权限失真和遗留 `/tmp` socket 权限失败均原样保留。修复测试环境后在新容器验收，不删失败证明。最终完整 local 与 runtime 预检待回填。
-- Phase 5 进行中：两套新应用与独立数据卷已建立，候选实例与外部依赖即将验证。尚未把真实模型/live 写为通过。
-- Phase 6 待完成：固定候选后回填逐项 AC、live 与 PR/CI 证明。未授权发布，不创建 tag/Release。
+- Phase 4 已完成：固定候选完整 local=passed；483 passed、2 skipped，格式、lint、类型、构建、整套 E2E 与逐 AC 工程证明通过。runtime 原生双浏览器、截图及 A 关闭后 B 继续操作通过。首次 local 的格式/临时 dist 权限失败，以及 root 测试权限失真和遗留 `/tmp` socket 权限失败均原样保留。没有使用宿主 Chromium。
+- Phase 5 已完成：同一候选完成 7 条真实 Run / 28 个角色 Session。项目并发与证据完整性验收通过；目标场景结论是 3 passed、4 blocked，含预定的局部故障，不称“所有场景通过”。详见下文。
+- Phase 6：规格入口、PROJECT、部署操作说明和逐项证明已回填；[PR #120](https://github.com/cynos-ai/luowang/pull/120) 面向 develop。实现候选 [CI quality](https://github.com/cynos-ai/luowang/actions/runs/37018470240) 已通过；最后文档与测试补充不修改运行时代码。没有创建 release PR、tag 或 Release，也未部署现有长期实例。
 - 本地原始证明位于 `.cynos/project-concurrency/` 及各次 `.cynos/acceptance/2026-10-02*/`；该目录被忽略，敏感原件不提交。初次只读盘点及缺少宿主 Prettier 的事实保留在 Git 历史；后续检查统一使用 quality 容器依赖。
+
+### 5.1 不可变候选和环境
+
+- 实现 commit：`989c8de6587495a4e88d4b28f7fa0fdaad027a74`；runtime manifest digest：`sha256:03d6cdae96f4bf2f53c7bccc8e759853571bcc737d7cbb24c07939c48b2c9677`。quality/runtime 均由本仓库 Dockerfile 对应 target 构建，最终使用已支持的 Debian mirror build args 指向华为 HTTP 镜像；默认阿里源慢下载和 HTTPS 源缺少初始 CA 的失败记录保留，没有修改产品网络/重试策略。
+- 全量 local：`.cynos/project-concurrency/local-frozen/report.json`（UTC 14:15:21–14:18:58），`local=passed`。其中旧模型质量对照仍 not_run，未授权的发布层仍 blocked，不混同本轮 AC-PC live。
+- A=`cynos-ai/luowang-v070-release-fixture`，project `46cbc568-cbb9-4dc8-b541-ea89a94c90f8`；B=`cynos-ai/luowang-mp-python-fixture`，project `620b83b0-7ecb-4aa8-b80b-c1df7dcdb5a1`。两套新应用、数据卷、合成账号及 cleanup Token 独立。角色模型沿用已授权 DeepSeek 文本/视觉组合；使用 `deepseek` Provider 注册项。没有新建目标仓库或使用历史 closure7 靶场写入。
+- `live-manifest.json` 固定实现、镜像、角色资源哈希、项目和应用版本；`live-audit.json` 逐 Run 保存 target、实际执行镜像 ID、场景结果、报告 commit、Session 模型和执行区间。后续 target 的变化来自该项目已归档报告推进分支，每个 Run 内的 target/image 均固定。
+
+### 5.2 真实 Run 与边界
+
+| 队列 / 用途 | Run | 目标场景结论 | 不可变正式报告 |
+| --- | --- | --- | --- |
+| A1 / 首轮并行 | `01M3YG2E11VYV5REGDP80R20NG` | blocked：注册场景缺少运行时密码存储证据 | [报告](https://github.com/cynos-ai/luowang-v070-release-fixture/blob/c985f1c7e6d9f3979756e374f2c1be443774f3f5/docs/scenario-testing/reports/01M3YG2E11VYV5REGDP80R20NG/report.md) |
+| B1 / 首轮并行 | `01M3YG2E1PC31W3GG4NEX2Z6GA` | passed：4 场景 | [报告](https://github.com/cynos-ai/luowang-mp-python-fixture/blob/20e0681ba85f02beb5396dab5f7458c76905aa40/docs/scenario-testing/reports/01M3YG2E1PC31W3GG4NEX2Z6GA/report.md) |
+| A2 / 项目内等待 | `01M3YG2E4SMCNHYMZHVJH76T94` | blocked：同一存储证据缺口 | [报告](https://github.com/cynos-ai/luowang-v070-release-fixture/blob/49c6e889fbb7770abea55cc3b9cb065e8ecee960/docs/scenario-testing/reports/01M3YG2E4SMCNHYMZHVJH76T94/report.md) |
+| A3 / 单场景补验 | `01M3YGS2D616QE8M82N1C5SCD4` | blocked：删除账号后的旧 Cookie 服务端失效未被实际重放验证 | [报告](https://github.com/cynos-ai/luowang-v070-release-fixture/blob/18e3a94ccb5352eb1c2405da2a186f90f062756a/docs/scenario-testing/reports/01M3YGS2D616QE8M82N1C5SCD4/report.md) |
+| B2 / 同期单场景 | `01M3YGS2GG8RGM2VZ53ZZ7TRRB` | passed | [报告](https://github.com/cynos-ai/luowang-mp-python-fixture/blob/df309eb9fab78047494c0f50d5fb9c76f8ec716d/docs/scenario-testing/reports/01M3YGS2GG8RGM2VZ53ZZ7TRRB/report.md) |
+| A4 / 应用停机故障 | `01M3YH55TN80SR7NYAB9BDNY34` | blocked：受控应用不可用 | [报告](https://github.com/cynos-ai/luowang-v070-release-fixture/blob/909d467f1ad5cecf7b42e97788e461fa99f086d6/docs/scenario-testing/reports/01M3YH55TN80SR7NYAB9BDNY34/report.md) |
+| B3 / 故障隔离对照 | `01M3YH55YED95SZFQ7K5ZM3B50` | passed | [报告](https://github.com/cynos-ai/luowang-mp-python-fixture/blob/924f1d1f7bdd9ff72b152e779684427fc0138e9f/docs/scenario-testing/reports/01M3YH55YED95SZFQ7K5ZM3B50/report.md) |
+
+首轮 A1 真实工具区间 UTC 14:26:10.276–14:27:50.369，B1 为 14:26:22.575–14:27:07.228，重叠 **44.653 秒**；依据已绑定 Run/target 且与证据哈希一致的 operation 记录，不是 startedAt 推断。A2 在 A1 queue completed 的 14:30:30.473 才认领。A3/B2 的 Run 生命周期重叠，但工具区间不重叠，不拿它们冒充第二份工具并行证明。
+
+7 条 Run 均走完四个角色 Session，全部最终 archive=completed。32 张真实 PNG 从私有 OSS 经认证路由读取并校验哈希；278 条实际工具操作的本地文件与归档证据哈希一致；跨项目 Run、报告、证据读取均返回 404。正式报告的远端 Git 内容与索引一致。恢复应用后对每个 Run 独立查询，清理余量全部为 0，共 13 条 absent=true 回执；故障 Run 未产生登记数据，不伪造清理回执。两条早期 Node Run 的 Git 归档曾 partial，既有重试后均完成；没有声称已解决其底层网络原因。
+
+A1 使用并删除了独立预置合成账号；后续请求明确要求 Run 专用账号，收尾重新建立预置账号。A1/A2 的存储观察资源缺口、A3 的模型执行取证缺口均保留，不修改场景期望或报告把 blocked 改成 passed，不扩展本阶段为 #95 模型质量工程。一次本地审核脚本错误要求所有正常场景 passed，已纠正为核验本 Spec 的并发与证据规则，原失败日志仍保留。
+
+84 次约 10–13 秒间隔采样中，有 30 次双项目占槽，最多观察到 2 个 Run 容器同时存活。相关容器合计采样内存峰值 **1361.56 MiB**，候选服务峰值 **1242.11 MiB**，合计 CPU 峰值 **137.75%**（Docker CPU 百分比，可超过单核 100%）。这是本机该矩阵的采样值，不是持续测量极值或并发 8 容量承诺。7 条 Run 的 SDK 汇总约 1881.81 万 token（含大量 cache read），目录估价约 USD 0.2709，不是 Provider 账单；连接预检不计入该 Run 汇总。
+
+### 5.3 AC 关闭记录
+
+| AC | 状态及证明 |
+| --- | --- |
+| 01–02 | passed：coordinator/queue/dispatcher 屏障测试覆盖容量 1/2、第三项目、暂停、重复唤醒及准备占槽；live A1/B1/A2 证明并行与顺序 |
+| 03–04 | passed：慢准备、失败、waiting_archive 和反向完成测试；后台 tick 不等待 Run/归档重试；live B 先结束未抹掉 A，A2 后续正确开跑 |
+| 05 | passed：scoped Secrets、命令容器与证据测试、原生双 MCP 同名截图隔离；live 32 张截图、项目对象路径、跨域 404 和 7 条独立清理查询 |
+| 06 | passed：`multi-project-configuration-guards.test.ts` 追加双 running 和 A 退出后 B 仍保护全局/自身的验证；live target/image 绑定不变。live no-op 写入可成功，不能当作保护失败；后续 live guard 脚本错过执行窗口，未记为通过 |
+| 07 | passed：双中断 Run 与既有 prepared/resolved/归档恢复测试；实际双项目 Docker 孤儿回收及幂等重复回收，未影响 live 实例；live 全部完成后重启，7 条 Run/queue/target/report 绑定逐项一致。没有声称强杀了真实付费执行中的两个 Run |
+| 08 | passed：准备无 Run、多个活动任务、部分项目读失败的服务测试与双任务浏览器展示；live workspace=2/2，排空/重启后=0/2 |
+| 09–10 | passed：真实滚动条及目录四状态/键盘 E2E；stalled Git remote → readiness API → 持久状态及页面超时提示 |
+| 11 | passed：配置边界、旧 schema 兼容测试；只读挂载历史卷并复制后校验，1 项目/9 Runs/29 报告全表指纹相同，隔离副本回退一致，原卷字节未变；无需 schema 迁移 |
+| 12 | passed：固定候选 Docker quality/runtime、完整 local 与 runtime 双浏览器截图预检；失败日志和 2 项跳过保留 |
+| 13 | passed（并发行为与证据完整性）：本候选 7 条真实 Run，首轮工具区间重叠、同项目顺序、A 停机/B passed、归档/截图/清理和容量采样齐全；目标场景的 4 blocked 不改判 |
+
+原始证明：`live-audit.json`、`metrics-summary.json`、`runtime-browser-preflight-2.log`、`docker-recovery-pair.log`、`history-proof-3.log`、`restart-before.json` / `restart-after.json`、`guards-final-2.log`。候选和两个应用保留在本机隔离网络/数据卷，应用恢复且最新就绪检查均通过；自动触发关闭、队列为空。检查器及证明脚本位于被忽略的本地证明目录，不含提交到 Git 的 Secret。
