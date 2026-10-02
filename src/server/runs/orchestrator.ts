@@ -407,10 +407,12 @@ class DefaultRunOrchestrator implements RunOrchestrator {
         ...(saved ?? {}),
       };
       this.runs.set(runId, state);
-      this.options.recoveryStore?.record(toSummary(state), {
-        interruptedAt: timestamp,
-        runningDirectory: workspace.runningDirectory,
-      });
+      if (!saved) {
+        this.options.recoveryStore?.record(toSummary(state), {
+          interruptedAt: timestamp,
+          runningDirectory: workspace.runningDirectory,
+        });
+      }
     }
   }
 

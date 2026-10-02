@@ -370,9 +370,14 @@ export function createProjectAutomationDispatcher(options: {
                 artifactNames: saved?.artifactNames ?? detail?.artifactNames ?? [],
                 stopRequestedAt: item.stopRequestedAt,
                 stopReason: 'user_requested',
-                errorMessage: '管理员请求停止后进程重启；执行资源已协调，断电期间业务清理状态未知',
+                errorMessage:
+                  saved?.errorMessage ??
+                  '管理员请求停止后进程重启；执行资源已协调，断电期间业务清理状态未知',
               },
-              { runningDirectory: saved?.runningDirectory },
+              {
+                runningDirectory: saved?.runningDirectory,
+                interruptedAt: saved?.finishedAt ?? undefined,
+              },
             );
           }
           queue.fail(

@@ -166,3 +166,6 @@
 - 原生 Docker 证明入口为 `tests/acceptance/run-stop-docker.ts`：通过 `LUOWANG_STOP_PROOF_BASE_IMAGE` 传入本地不可变 Node 镜像 ID，以独立合成项目建立两容器；A 的实际命令开始后中止并删除所属容器，B 实际命令独立完成，并发 close 幂等。2026-10-03 过程日志 `.cynos/run-stop-docker.log` 为 passed；最终候选仍须重跑适用项。
 - UI 工作流检查通过停止确认、Escape、768/1024/1440px、双击只发送一次、冲突反馈以及离开页面后的迟到响应。模型专项、最终候选 live、历史卷迁移尚未执行；AC-RR-13–16 仍待验收，人工评分保持 not_run。
 
+- Phase 1 当前提交 `f6d546584807c538810e8f763859425d7e52bcab`，PR #121；工程镜像 `sha256:9e1ebbcc715e8d906b0e8452c847cbc7a5d6e2b2d753cca47c7f18ad842f7e3e` 的 format/lint/typecheck、497 passed / 2 skipped、local 聚合与 E2E 全部通过，退出码 0。该镜像在最后四个 SDK 创建边界停止检查加入前构建；新增边界已定向重验 6 passed，最终 PR head 以 CI 为准。local 报告保存在 `.cynos/run-reliability/phase1-local/2026-10-02T18-12-56-379Z-local/report.json`；未提供现场输入而显示 live/release blocked，不能当作现场验收结果。
+- #94/#118/#119 已按 #120 的对应实现和定向证明关闭；#93/#104 继续暂缓，#95 保持开放。
+- 在修改角色资源前冻结两组模型输入：基线 `7988793`、专项 12 子例、历史 8 类规划与 4 类 Reviewer、各版本各 3 次。输入文件 `.cynos/run-reliability/frozen-inputs.json` 的 SHA-256 为 `e6d473cf06f7ca4b4437476a2cc2e7c0e1b9e26afd26d5e165c8aebecaa954cc`；冻结时无候选模型输出。新增或包装输入的差异须另记，不追溯覆盖该冻结。
