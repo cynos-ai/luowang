@@ -134,7 +134,7 @@
 - #118/#119：四种目录状态在 768/1440px 验证独立布局行；取消 Playwright 默认隐藏滚动条，断言滚动条实际占宽后验证 768/1024/1440px 页面无整体溢出，保留局部滚动与键盘访问。
 - Phase 4 已完成：固定候选完整 local=passed；483 passed、2 skipped，格式、lint、类型、构建、整套 E2E 与逐 AC 工程证明通过。runtime 原生双浏览器、截图及 A 关闭后 B 继续操作通过。首次 local 的格式/临时 dist 权限失败，以及 root 测试权限失真和遗留 `/tmp` socket 权限失败均原样保留。没有使用宿主 Chromium。
 - Phase 5 已完成：同一候选完成 7 条真实 Run / 28 个角色 Session。项目并发与证据完整性验收通过；目标场景结论是 3 passed、4 blocked，含预定的局部故障，不称“所有场景通过”。详见下文。
-- Phase 6：规格入口、PROJECT、部署操作说明和逐项证明已回填；[PR #120](https://github.com/cynos-ai/luowang/pull/120) 面向 develop。实现候选 [CI quality](https://github.com/cynos-ai/luowang/actions/runs/37018470240) 已通过；最后文档与测试补充不修改运行时代码。没有创建 release PR、tag 或 Release，也未部署现有长期实例。
+- Phase 6：规格入口、PROJECT、部署操作说明和逐项证明已回填；[PR #120](https://github.com/cynos-ai/luowang/pull/120) 面向 develop。实现候选 [CI quality](https://github.com/cynos-ai/luowang/actions/runs/37018470240) 已通过。最终实际界面复核另修复最近完成列表长 Run 编号挤占状态/时间的问题，仅调整 CSS 列宽；构建及完整 workflows E2E 通过，并将最终样式注入实际候选页面验证 768px 三列无重叠（`ui-final-wrap-2.log`、`ui-runtime-wrap.log`）。真实模型验收仍绑定下述不可变镜像，未把样式补充冒充重新执行模型验收。没有创建 release PR、tag 或 Release，也未部署现有长期实例。
 - 本地原始证明位于 `.cynos/project-concurrency/` 及各次 `.cynos/acceptance/2026-10-02*/`；该目录被忽略，敏感原件不提交。初次只读盘点及缺少宿主 Prettier 的事实保留在 Git 历史；后续检查统一使用 quality 容器依赖。
 
 ### 5.1 不可变候选和环境
