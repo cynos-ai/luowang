@@ -4,6 +4,17 @@ import { describe, it } from 'vitest';
 import { ConfigError, loadConfig } from '../src/server/config.js';
 
 describe('loadConfig', () => {
+  it('bounds project concurrency and distinguishes missing from invalid startup values', () => {
+    assert.equal(loadConfig({}).maxConcurrentProjects, 2);
+    for (const value of ['1', '2', '8'])
+      assert.equal(
+        loadConfig({ LUOWANG_MAX_CONCURRENT_PROJECTS: value }).maxConcurrentProjects,
+        Number(value),
+      );
+    for (const value of ['', '0', '9', '-1', '1.5', '02', 'Infinity', ' 2', '2x']) {
+      assert.throws(() => loadConfig({ LUOWANG_MAX_CONCURRENT_PROJECTS: value }), ConfigError);
+    }
+  });
   it('uses secure local defaults and a configurable data directory', () => {
     const config = loadConfig({ LUOWANG_DATA_DIR: 'tmp/luowang-test', NODE_ENV: 'test' });
 

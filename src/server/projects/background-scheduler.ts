@@ -167,8 +167,22 @@ export function createProjectBackgroundScheduler(input: {
           if (project.status === 'active') await processProject(project.projectId, at);
         }),
       );
-      await input.dispatcher.retryArchives(at);
-      await input.dispatcher.drain();
+      void input.dispatcher
+        .retryArchives(at)
+        .catch((error: unknown) =>
+          input.logger?.error(
+            { errorName: error instanceof Error ? error.name : 'UnknownError' },
+            'project background archive retry failed',
+          ),
+        );
+      void input.dispatcher
+        .drain()
+        .catch((error: unknown) =>
+          input.logger?.error(
+            { errorName: error instanceof Error ? error.name : 'UnknownError' },
+            'project background dispatch failed',
+          ),
+        );
     })().finally(() => {
       activeTick = null;
     });
@@ -193,6 +207,7 @@ export function createProjectBackgroundScheduler(input: {
       if (timer) clearInterval(timer);
       timer = undefined;
       await activeTick;
+      await input.dispatcher.stop();
     },
     status() {
       const values = input.database

@@ -32,11 +32,13 @@ export interface ProjectDispatchServices {
 }
 
 export interface ProjectAutomationDispatcher {
+  readonly maxConcurrentProjects: number;
   enqueue(projectId: string, input: TestRequestInput): TestRequestRecord;
   drain(): Promise<void>;
   recover(): Promise<void>;
   retryArchives(at?: Date): Promise<void>;
-  currentRun(): Promise<{ projectId: string; run: RunSummary } | null>;
+  currentRuns(projectId?: string): Promise<Array<{ projectId: string; run: RunSummary }>>;
+  stop(): Promise<void>;
   getActiveRun(projectId: string, runId: string): Promise<RunDetail | null>;
 }
 
@@ -49,9 +51,11 @@ export function createProjectAutomationDispatcher(options: {
   reportRoot: string;
   storageRoot: string;
   logger?: Logger;
+  maxConcurrentProjects?: number;
   createServices?: (task: ProjectTaskRuntime) => ProjectDispatchServices;
 }): ProjectAutomationDispatcher {
-  const coordinator = createProjectQueueCoordinator(options.database);
+  const maxConcurrentProjects = options.maxConcurrentProjects ?? 2;
+  const coordinator = createProjectQueueCoordinator(options.database, maxConcurrentProjects);
   const createServices =
     options.createServices ??
     ((task: ProjectTaskRuntime) =>
@@ -84,10 +88,18 @@ export function createProjectAutomationDispatcher(options: {
       { errorName: error instanceof Error ? error.name : 'UnknownError' },
       message,
     );
-  let drainPromise: Promise<void> | null = null;
+  let idle: {
+    promise: Promise<void>;
+    resolve: () => void;
+    reject: (error: unknown) => void;
+  } | null = null;
+  const work = new Set<Promise<void>>();
+  let pumping = false;
+  let stopping = false;
+  let recovering = false;
   let recoveryPromise: Promise<void> | null = null;
   let retryPromise: Promise<void> | null = null;
-  let activeRun: { projectId: string; runId: string; runs: RunOrchestrator } | null = null;
+  const activeRuns = new Map<string, { runId: string; runs: RunOrchestrator }>();
   const deferredArchives = new Set<number>();
 
   async function retryArchivesInner(at: Date): Promise<void> {
@@ -204,10 +216,10 @@ export function createProjectAutomationDispatcher(options: {
         ...(item.initialization ? { initialization: true } : {}),
       });
       if (run.runId !== runId) throw new Error('Run ID 与队列预留 ID 不一致');
-      activeRun = { projectId: item.projectId, runId, runs: services.runs };
+      activeRuns.set(item.projectId, { runId, runs: services.runs });
       queue.markStarted(item.queueId, runId);
       const detail = await services.runs.wait(runId);
-      activeRun = null;
+      activeRuns.delete(item.projectId);
       if (detail?.status === 'completed') {
         queue.markWaitingArchive(item.queueId, runId);
         return { archive: archive(item, queue, services, runId) };
@@ -220,7 +232,7 @@ export function createProjectAutomationDispatcher(options: {
       await cleanupRef(item, services.repository);
       return null;
     } catch (error) {
-      if (activeRun?.projectId === item.projectId) activeRun = null;
+      activeRuns.delete(item.projectId);
       try {
         queue.fail(item.queueId, safeMessage(error));
         if (services) await cleanupRef(item, services.repository);
@@ -231,20 +243,45 @@ export function createProjectAutomationDispatcher(options: {
     }
   }
 
-  async function drainInner(): Promise<void> {
-    const archives = new Set<Promise<void>>();
-    for (;;) {
-      const item = coordinator.claimNext();
-      if (item) {
-        const pendingArchive = await processClaimed(item);
-        if (pendingArchive) {
-          const tracked = pendingArchive.archive.finally(() => archives.delete(tracked));
-          archives.add(tracked);
+  function track(operation: Promise<void>): void {
+    const tracked = operation
+      .catch((error: unknown) => {
+        logError(error, 'project task reconciliation failed');
+      })
+      .finally(() => {
+        work.delete(tracked);
+        pump();
+      });
+    work.add(tracked);
+  }
+
+  function pump(): void {
+    if (pumping || recovering) return;
+    pumping = true;
+    try {
+      if (!stopping) {
+        for (let item = coordinator.claimNext(); item; item = coordinator.claimNext()) {
+          track(
+            processClaimed(item).then(async (pending) => {
+              // waiting_archive no longer consumes a slot, even if publishing is slow.
+              pump();
+              await pending?.archive;
+            }),
+          );
         }
-        continue;
       }
-      if (archives.size === 0) return;
-      await Promise.race(archives);
+      if (work.size === 0) {
+        const completed = idle;
+        idle = null;
+        completed?.resolve();
+      }
+    } catch (error) {
+      const failed = idle;
+      idle = null;
+      failed?.reject(error);
+      logError(error, 'project queue dispatch failed');
+    } finally {
+      pumping = false;
     }
   }
 
@@ -301,46 +338,69 @@ export function createProjectAutomationDispatcher(options: {
         await cleanupRef(item, services.repository);
       }
     }
-    const firstDrain = drain();
-    await Promise.all([firstDrain, ...archives]);
-    await drain();
+    for (const operation of archives) track(operation);
   }
 
   const drain = (): Promise<void> => {
-    if (drainPromise) return drainPromise;
-    drainPromise = drainInner().finally(() => {
-      drainPromise = null;
-    });
-    return drainPromise;
+    if (!idle) {
+      let resolve!: () => void;
+      let reject!: (error: unknown) => void;
+      const promise = new Promise<void>((yes, no) => {
+        resolve = yes;
+        reject = no;
+      });
+      idle = { promise, resolve, reject };
+    }
+    const result = idle.promise;
+    pump();
+    return result;
   };
   return {
+    maxConcurrentProjects,
     enqueue(projectId, input) {
       return queueFor(projectId).enqueue(input);
     },
     drain,
     recover() {
       if (recoveryPromise) return recoveryPromise;
-      recoveryPromise = recoverInner().finally(() => {
-        recoveryPromise = null;
+      if (work.size > 0) return Promise.reject(new Error('活动任务存在，不能执行启动恢复'));
+      recovering = true;
+      recoveryPromise = recoverInner().then(() => {
+        recovering = false;
+        if (idle) pump();
       });
       return recoveryPromise;
+    },
+    async stop() {
+      stopping = true;
+      await recoveryPromise;
+      await drain();
+      await retryPromise;
     },
     retryArchives(at = new Date()) {
       if (retryPromise) return retryPromise;
       retryPromise = retryArchivesInner(at).finally(() => {
         retryPromise = null;
+        pump();
       });
       return retryPromise;
     },
-    async currentRun() {
-      const current = activeRun;
-      if (!current) return null;
-      const run = await current.runs.current();
-      return run ? { projectId: current.projectId, run } : null;
+    async currentRuns(selectedProjectId) {
+      const current = await Promise.all(
+        [...activeRuns]
+          .filter(([projectId]) => !selectedProjectId || projectId === selectedProjectId)
+          .map(async ([projectId, entry]) => {
+            const run = await entry.runs.current();
+            return run ? { projectId, run } : null;
+          }),
+      );
+      return current.filter(
+        (item): item is { projectId: string; run: RunSummary } => item !== null,
+      );
     },
     async getActiveRun(projectId, runId) {
-      const current = activeRun;
-      if (!current || current.projectId !== projectId || current.runId !== runId) return null;
+      const current = activeRuns.get(projectId);
+      if (!current || current.runId !== runId) return null;
       return current.runs.get(runId);
     },
   };

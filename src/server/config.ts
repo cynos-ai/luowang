@@ -31,6 +31,7 @@ export interface AppConfig {
   webRoot: string;
   logLevel: LevelWithSilent;
   version: string;
+  maxConcurrentProjects: number;
   initialAdminPassword?: string;
   masterKey?: string;
   allowedOrigin?: string;
@@ -42,6 +43,14 @@ export class ConfigError extends Error {
     super(message);
     this.name = 'ConfigError';
   }
+}
+
+export function readMaxConcurrentProjects(value: string | undefined): number {
+  if (value === undefined) return 2;
+  if (!/^[1-8]$/.test(value)) {
+    throw new ConfigError('LUOWANG_MAX_CONCURRENT_PROJECTS must be an integer between 1 and 8');
+  }
+  return Number(value);
 }
 
 function readEnvironment(value: string | undefined): AppConfig['environment'] {
@@ -123,6 +132,7 @@ export function loadConfig(environment: NodeJS.ProcessEnv = process.env): AppCon
     webRoot,
     logLevel: readLogLevel(environment.LUOWANG_LOG_LEVEL ?? environment.LOG_LEVEL),
     version: environment.LUOWANG_VERSION ?? DEFAULT_VERSION,
+    maxConcurrentProjects: readMaxConcurrentProjects(environment.LUOWANG_MAX_CONCURRENT_PROJECTS),
     testDataCleanupUrl: environment.LUOWANG_TEST_DATA_CLEANUP_URL?.trim() || undefined,
     initialAdminPassword: readSecret(
       environment,

@@ -18,10 +18,74 @@ import { migrateProjectReportIndexIdentity } from '../src/server/db/migrations/0
 import { createProjectConsoleService } from '../src/server/projects/console-service.js';
 import { createProjectRunStore } from '../src/server/runs/store.js';
 import { createProjectStore } from '../src/server/projects/store.js';
+import { createProjectConfigurationStore } from '../src/server/projects/configuration.js';
+import { createProjectTestRequestQueue } from '../src/server/automation/queue.js';
 
 const now = '2026-09-27T06:20:00.000Z';
 const projectAId = '11111111-1111-4111-8111-111111111111';
 const projectBId = '22222222-2222-4222-8222-222222222222';
+
+it('keeps both preparing and unreadable active projects visible with independent waiting reasons', async () => {
+  const database = setup();
+  try {
+    const projects = createProjectStore(database);
+    const config = createProjectConfigurationStore(database);
+    const [a, b] = ['a', 'b'].map((name, i) => {
+      const project = projects.createVerified({
+        displayName: name,
+        repository: { githubRepositoryId: `${i + 500}`, owner: 'example', name },
+      });
+      config.update(project.projectId, {});
+      return project;
+    });
+    database.prepare("UPDATE projects SET status = 'active'").run();
+    for (const project of [a, b]) {
+      const queue = createProjectTestRequestQueue(database, project.projectId);
+      const first = queue.enqueue({ request: 'first', trigger: 'manual' });
+      queue.enqueue({ request: 'second', trigger: 'manual' });
+      queue.claimNext();
+      if (project === b) queue.markStarted(first.queueId, '01K00000000000000000000002');
+    }
+    const dispatch = dispatcher();
+    dispatch.getActiveRun = async () => {
+      throw new Error('private-canary');
+    };
+    const service = createProjectConsoleService({
+      database,
+      projects,
+      dispatcher: dispatch,
+      connectivity: { list: () => [], runAll: async () => [] } as unknown as ConnectivityRegistry,
+      schedulerStatus,
+      inspectResources: async () => {
+        throw new Error('unused');
+      },
+      version: 'test',
+      databaseHealthy: () => true,
+      secretStoreAvailable: () => true,
+    });
+    const result = await service.workspace();
+    assert.equal(result.activeRuns.length, 2);
+    assert.deepEqual(result.capacity, { occupied: 2, limit: 2 });
+    assert.equal(
+      result.activeRuns.find((item) => item.project.projectId === a.projectId)?.runId,
+      null,
+    );
+    assert.equal(
+      result.activeRuns.find((item) => item.project.projectId === a.projectId)?.progress,
+      null,
+    );
+    assert.equal(result.partialErrors[0].projectId, b.projectId);
+    assert.equal(result.queue.filter((item) => item.waitingReason === '本项目正在执行').length, 2);
+    assert.deepEqual(
+      result.queue.filter((item) => item.status === 'queued').map((item) => item.projectPosition),
+      [2, 2],
+    );
+    assert.doesNotMatch(JSON.stringify(result), /private-canary/);
+    assert.deepEqual(service.systemStatus().executionCapacity, result.capacity);
+  } finally {
+    database.close();
+  }
+});
 
 it('aggregates persisted project facts without running external checks', async () => {
   const database = setup();
@@ -249,7 +313,9 @@ function dispatcher(): ProjectAutomationDispatcher {
     drain: async () => {},
     recover: async () => {},
     retryArchives: async () => {},
-    currentRun: async () => null,
+    maxConcurrentProjects: 2,
+    stop: async () => undefined,
+    currentRuns: async () => [],
     getActiveRun: async () => null,
   };
 }

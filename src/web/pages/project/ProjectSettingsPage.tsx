@@ -451,7 +451,7 @@ function SettingsSection({
         description={
           data.detail.project.status === 'paused'
             ? '项目已暂停，自动请求不会被认领。'
-            : '自动请求仍进入全局顺序队列。'
+            : '自动请求进入本项目队列，项目间按名额并行。'
         }
       >
         <form

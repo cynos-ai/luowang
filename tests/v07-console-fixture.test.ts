@@ -7,7 +7,7 @@ import { createV07ConsoleFixture, V07_FIXTURE_MARKER } from './e2e/fixtures/v07-
 it('builds a marked, internally scoped v0.7 console fixture', () => {
   const fixture = createV07ConsoleFixture();
   assert.equal(fixture.marker, V07_FIXTURE_MARKER);
-  assert.equal(fixture.workspace.activeRun?.project.projectId, fixture.projects[0].projectId);
+  assert.equal(fixture.workspace.activeRuns[0]?.project.projectId, fixture.projects[0].projectId);
   assert.equal(fixture.workspace.queue[0].project.projectId, fixture.projects[1].projectId);
   assert.equal(fixture.workspace.projects.length, fixture.projects.length);
   assert.ok(fixture.workspace.projects.every((item) => item.readiness.status !== undefined));
@@ -24,7 +24,7 @@ it('builds a marked, internally scoped v0.7 console fixture', () => {
 
 it('builds empty and locally degraded states without inventing readiness', () => {
   const empty = createV07ConsoleFixture({ state: 'empty' });
-  assert.equal(empty.workspace.activeRun, null);
+  assert.deepEqual(empty.workspace.activeRuns, []);
   assert.deepEqual(empty.workspace.projects, []);
   assert.deepEqual(empty.workspace.attention, []);
 

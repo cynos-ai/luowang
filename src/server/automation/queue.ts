@@ -101,6 +101,15 @@ const URL_LIKE_SOURCE =
   /(?:^|@)(?:www\.)?(?:github\.com|gitlab\.com|bitbucket\.org)(?:\/|$)|^[^/@\s]+@[^/\s]+\.[A-Za-z]{2,}(?:\/|$)/i;
 const AUTOMATIC_TRIGGERS: readonly RunTrigger[] = ['git', 'schedule'];
 
+// All queue handles on this single-instance database share the same startup limit.
+const projectLimits = new WeakMap<Database.Database, number>();
+export function configureProjectQueueConcurrency(database: Database.Database, limit: number): void {
+  if (!Number.isInteger(limit) || limit < 1 || limit > 8) throw new Error('项目并发上限无效');
+  const previous = projectLimits.get(database);
+  if (previous !== undefined && previous !== limit) throw new Error('项目并发上限只能在启动时配置');
+  projectLimits.set(database, limit);
+}
+
 export function createTestRequestQueue(
   database: Database.Database,
   options: { now?: () => string; requestId?: () => string } = {},
@@ -233,6 +242,11 @@ class SqliteTestRequestQueue implements TestRequestQueue {
 
   claimNext(): TestRequestRecord | null {
     const timestamp = this.now();
+    const hasProjectScope = (
+      this.database.prepare('PRAGMA table_info(test_request_queue)').all() as Array<{
+        name: string;
+      }>
+    ).some((column) => column.name === 'project_id');
     const queueId = this.database.transaction(() => {
       if (this.projectId !== null) {
         const project = this.database
@@ -240,12 +254,12 @@ class SqliteTestRequestQueue implements TestRequestQueue {
           .get(this.projectId) as { status: string } | undefined;
         if (project?.status !== 'active') return null;
         const active = this.database
-          .prepare("SELECT 1 FROM test_request_queue WHERE status = 'running' LIMIT 1")
-          .get();
-        if (active) return null;
+          .prepare("SELECT count(*) AS count FROM test_request_queue WHERE status = 'running'")
+          .get() as { count: number };
+        if (active.count >= (projectLimits.get(this.database) ?? 2)) return null;
         const waiting = this.database
           .prepare(
-            "SELECT 1 FROM test_request_queue WHERE project_id = ? AND status = 'waiting_archive' LIMIT 1",
+            "SELECT 1 FROM test_request_queue WHERE project_id = ? AND status IN ('running', 'waiting_archive') LIMIT 1",
           )
           .get(this.projectId);
         if (waiting) return null;
@@ -253,7 +267,7 @@ class SqliteTestRequestQueue implements TestRequestQueue {
       const row = this.database
         .prepare(
           `SELECT queue_id FROM test_request_queue
-           WHERE status = 'queued'${this.projectId === null ? '' : ' AND project_id = ?'}
+           WHERE status = 'queued'${this.projectId === null ? (hasProjectScope ? ' AND project_id IS NULL' : '') : ' AND project_id = ?'}
            ORDER BY queue_id ASC
            LIMIT 1`,
         )

@@ -3,6 +3,7 @@ import { dirname, join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { promisify } from 'node:util';
 import { execFile } from 'node:child_process';
+import { AsyncLocalStorage } from 'node:async_hooks';
 
 import { GitCommandError, RepositoryError } from './errors.js';
 import {
@@ -15,6 +16,31 @@ import {
 } from './scenario-patch.js';
 
 const execFileAsync = promisify(execFile);
+const repositoryLocks = new Map<string, Promise<void>>();
+const repositoryScope = new AsyncLocalStorage<{ directory: string; active: boolean }>();
+
+/** Serialize shared-clone transactions across services, without locking other projects. */
+async function withRepositoryLock<T>(directory: string, operation: () => Promise<T>): Promise<T> {
+  const key = process.platform === 'win32' ? resolve(directory).toLowerCase() : resolve(directory);
+  const current = repositoryScope.getStore();
+  if (current?.directory === key && current.active) return operation();
+  const previous = repositoryLocks.get(key) ?? Promise.resolve();
+  let release!: () => void;
+  const held = new Promise<void>((resolveHeld) => {
+    release = resolveHeld;
+  });
+  const tail = previous.then(() => held);
+  repositoryLocks.set(key, tail);
+  await previous;
+  const scope = { directory: key, active: true };
+  try {
+    return await repositoryScope.run(scope, operation);
+  } finally {
+    scope.active = false;
+    release();
+    if (repositoryLocks.get(key) === tail) repositoryLocks.delete(key);
+  }
+}
 const SHA_PATTERN = /^[0-9a-f]{40}$/i;
 const REF_PATTERN = /^[^\s~^:?*\\[\]]{1,255}$/;
 const REPORT_FILE_NAMES = ['review.md', 'report.md'] as const;
@@ -119,28 +145,32 @@ export class GitRepository {
   }
 
   async ensureClone(): Promise<void> {
-    if (await this.isGitWorktree()) {
-      return;
-    }
+    return withRepositoryLock(this.directory, async () => {
+      if (await this.isGitWorktree()) {
+        return;
+      }
 
-    await mkdir(this.directory, { recursive: true });
-    const entries = await readdir(this.directory);
-    if (entries.length > 0) {
-      throw new RepositoryError(
-        'REPOSITORY_INVALID',
-        'Repository 目录不是空目录且不是 Git 工作树',
-        409,
+      await mkdir(this.directory, { recursive: true });
+      const entries = await readdir(this.directory);
+      if (entries.length > 0) {
+        throw new RepositoryError(
+          'REPOSITORY_INVALID',
+          'Repository 目录不是空目录且不是 Git 工作树',
+          409,
+        );
+      }
+      await this.run(
+        ['clone', '--no-tags', '--', this.remoteUrl, this.directory],
+        dirname(this.directory),
       );
-    }
-    await this.run(
-      ['clone', '--no-tags', '--', this.remoteUrl, this.directory],
-      dirname(this.directory),
-    );
+    });
   }
 
   async fetch(): Promise<void> {
-    await this.ensureClone();
-    await this.run(['fetch', '--prune', 'origin', '--tags']);
+    return withRepositoryLock(this.directory, async () => {
+      await this.ensureClone();
+      await this.run(['fetch', '--prune', 'origin', '--tags']);
+    });
   }
 
   async remoteBranchHead(branch: string): Promise<string | null> {
@@ -228,31 +258,35 @@ export class GitRepository {
   }
 
   async checkoutTarget(target: string): Promise<string> {
-    const sha = await this.resolveCommit(target);
-    await this.cleanWorkspace();
-    await this.run(['checkout', '--detach', '--force', sha]);
-    await this.run(['reset', '--hard', sha]);
-    await this.run(['clean', '-ffd']);
-    return sha;
+    return withRepositoryLock(this.directory, async () => {
+      const sha = await this.resolveCommit(target);
+      await this.cleanWorkspace();
+      await this.run(['checkout', '--detach', '--force', sha]);
+      await this.run(['reset', '--hard', sha]);
+      await this.run(['clean', '-ffd']);
+      return sha;
+    });
   }
 
   async cleanWorkspace(): Promise<void> {
-    if (!(await this.isGitWorktree())) return;
-    try {
-      await this.run(['merge', '--abort']);
-    } catch {
-      // No merge is in progress, or the repository is already clean.
-    }
-    try {
-      await this.run(['reset', '--hard']);
-    } catch {
-      // A repository without a checked out commit can still be cleaned below.
-    }
-    try {
-      await this.run(['clean', '-ffd']);
-    } catch {
-      // The caller will receive the original Git failure; cleanup is best effort.
-    }
+    return withRepositoryLock(this.directory, async () => {
+      if (!(await this.isGitWorktree())) return;
+      try {
+        await this.run(['merge', '--abort']);
+      } catch {
+        // No merge is in progress, or the repository is already clean.
+      }
+      try {
+        await this.run(['reset', '--hard']);
+      } catch {
+        // A repository without a checked out commit can still be cleaned below.
+      }
+      try {
+        await this.run(['clean', '-ffd']);
+      } catch {
+        // The caller will receive the original Git failure; cleanup is best effort.
+      }
+    });
   }
 
   async prepareMergeRequest(
@@ -261,86 +295,88 @@ export class GitRepository {
     queueId: number,
     initialization: boolean,
   ): Promise<PreparedMergeResult> {
-    assertBranchName(branch);
-    assertQueueId(queueId);
-    await this.fetch();
-    const internalRef = mergeRequestRef(queueId);
-    if (await this.readInternalRef(queueId)) {
-      throw new RepositoryError(
-        'MERGE_REQUEST_STATE_INVALID',
-        'merge 请求 internal ref 已存在',
-        409,
-      );
-    }
-    const originalHead = await this.remoteBranchHead(branch);
-    const sourceCommit = await this.resolvePublishedSourceCommit(sourceRef);
-    if (!originalHead) {
-      if (!initialization) {
+    return withRepositoryLock(this.directory, async () => {
+      assertBranchName(branch);
+      assertQueueId(queueId);
+      await this.fetch();
+      const internalRef = mergeRequestRef(queueId);
+      if (await this.readInternalRef(queueId)) {
         throw new RepositoryError(
-          'SCENARIO_BRANCH_NOT_FOUND',
-          '场景测试分支尚未创建；首次创建必须提交 initialization merge-source 请求',
+          'MERGE_REQUEST_STATE_INVALID',
+          'merge 请求 internal ref 已存在',
           409,
         );
       }
-      await this.createInternalRef(internalRef, sourceCommit, 'initial-create');
-      return {
-        mode: 'initial-create',
-        sourceCommit,
-        originalHead: null,
-        preparedCommit: sourceCommit,
-        alreadyIncluded: false,
-      };
-    }
-
-    if (await this.isAncestor(sourceCommit, originalHead)) {
-      await this.createInternalRef(internalRef, originalHead, 'existing-branch');
-      return {
-        mode: 'existing-branch',
-        sourceCommit,
-        originalHead,
-        preparedCommit: originalHead,
-        alreadyIncluded: true,
-      };
-    }
-
-    try {
-      await this.checkoutTarget(originalHead);
-      try {
-        await this.run([
-          '-c',
-          'user.name=LuoWang Repository Service',
-          '-c',
-          'user.email=luowang-repository-service@localhost',
-          'merge',
-          '--no-ff',
-          '--no-edit',
-          '-m',
-          `luowang merge request #${queueId}`,
-          sourceCommit,
-        ]);
-      } catch (error) {
-        await this.cleanWorkspace();
-        if (error instanceof GitCommandError) {
+      const originalHead = await this.remoteBranchHead(branch);
+      const sourceCommit = await this.resolvePublishedSourceCommit(sourceRef);
+      if (!originalHead) {
+        if (!initialization) {
           throw new RepositoryError(
-            'MERGE_CONFLICT',
-            '来源 ref 与场景测试分支存在冲突，未自动解决',
+            'SCENARIO_BRANCH_NOT_FOUND',
+            '场景测试分支尚未创建；首次创建必须提交 initialization merge-source 请求',
             409,
           );
         }
-        throw error;
+        await this.createInternalRef(internalRef, sourceCommit, 'initial-create');
+        return {
+          mode: 'initial-create',
+          sourceCommit,
+          originalHead: null,
+          preparedCommit: sourceCommit,
+          alreadyIncluded: false,
+        };
       }
-      const preparedCommit = normalizeSha((await this.run(['rev-parse', 'HEAD'])).stdout);
-      await this.createInternalRef(internalRef, preparedCommit, 'existing-branch');
-      return {
-        mode: 'existing-branch',
-        sourceCommit,
-        originalHead,
-        preparedCommit,
-        alreadyIncluded: false,
-      };
-    } finally {
-      await this.cleanWorkspace();
-    }
+
+      if (await this.isAncestor(sourceCommit, originalHead)) {
+        await this.createInternalRef(internalRef, originalHead, 'existing-branch');
+        return {
+          mode: 'existing-branch',
+          sourceCommit,
+          originalHead,
+          preparedCommit: originalHead,
+          alreadyIncluded: true,
+        };
+      }
+
+      try {
+        await this.checkoutTarget(originalHead);
+        try {
+          await this.run([
+            '-c',
+            'user.name=LuoWang Repository Service',
+            '-c',
+            'user.email=luowang-repository-service@localhost',
+            'merge',
+            '--no-ff',
+            '--no-edit',
+            '-m',
+            `luowang merge request #${queueId}`,
+            sourceCommit,
+          ]);
+        } catch (error) {
+          await this.cleanWorkspace();
+          if (error instanceof GitCommandError) {
+            throw new RepositoryError(
+              'MERGE_CONFLICT',
+              '来源 ref 与场景测试分支存在冲突，未自动解决',
+              409,
+            );
+          }
+          throw error;
+        }
+        const preparedCommit = normalizeSha((await this.run(['rev-parse', 'HEAD'])).stdout);
+        await this.createInternalRef(internalRef, preparedCommit, 'existing-branch');
+        return {
+          mode: 'existing-branch',
+          sourceCommit,
+          originalHead,
+          preparedCommit,
+          alreadyIncluded: false,
+        };
+      } finally {
+        await this.cleanWorkspace();
+      }
+    });
   }
 
   async publishPreparedMerge(
@@ -349,75 +385,77 @@ export class GitRepository {
     preparedCommit: string,
     mode: PreparedMergeMode | null,
   ): Promise<string> {
-    assertBranchName(branch);
-    assertQueueId(queueId);
-    const prepared = normalizeSha(preparedCommit);
-    await this.fetch();
-    const remoteHead = await this.remoteBranchHead(branch);
-    if (remoteHead && (await this.isAncestor(prepared, remoteHead))) return prepared;
-
-    const internal = await this.readInternalRef(queueId);
-    if (internal !== prepared) {
-      throw new RepositoryError(
-        'MERGE_REQUEST_STATE_INVALID',
-        'prepared merge commit 与 internal ref 不一致',
-        409,
-      );
-    }
-    if (mode !== 'initial-create' && mode !== 'existing-branch') {
-      throw new RepositoryError(
-        'MERGE_REQUEST_STATE_INVALID',
-        'prepared merge commit 缺少持久化准备模式',
-        409,
-      );
-    }
-    if (mode === 'initial-create' && remoteHead) {
-      throw new RepositoryError(
-        'SCENARIO_BRANCH_REMOTE_CHANGED',
-        '首次创建场景测试分支时发生远端竞争，未发布 prepared commit',
-        409,
-      );
-    }
-    if (mode === 'existing-branch' && !remoteHead) {
-      throw new RepositoryError(
-        'SCENARIO_BRANCH_REMOTE_CHANGED',
-        '准备 merge 后远端场景测试分支已被删除，未重新创建',
-        409,
-      );
-    }
-
-    try {
-      // An empty expected object is a create-only compare-and-swap: despite Git's
-      // option name, it cannot update or overwrite an existing remote ref.
-      const pushArguments =
-        mode === 'initial-create'
-          ? [
-              'push',
-              `--force-with-lease=refs/heads/${branch}:`,
-              'origin',
-              `${prepared}:refs/heads/${branch}`,
-            ]
-          : ['push', 'origin', `${prepared}:refs/heads/${branch}`];
-      await this.run(pushArguments);
-    } catch (error) {
-      if (!(error instanceof GitCommandError)) throw error;
+    return withRepositoryLock(this.directory, async () => {
+      assertBranchName(branch);
+      assertQueueId(queueId);
+      const prepared = normalizeSha(preparedCommit);
       await this.fetch();
-      const recoveredHead = await this.remoteBranchHead(branch);
-      if (recoveredHead && (await this.isAncestor(prepared, recoveredHead))) return prepared;
-      throw new RepositoryError(
-        'PUSH_REJECTED',
-        mode === 'initial-create'
-          ? '首次创建场景测试分支时发生远端竞争，未发布 prepared commit'
-          : '场景测试分支推送被拒绝，未执行 force push',
-        409,
-      );
-    }
-    await this.fetch();
-    const publishedHead = await this.remoteBranchHead(branch);
-    if (!publishedHead || !(await this.isAncestor(prepared, publishedHead))) {
-      throw new RepositoryError('PUSH_REJECTED', 'prepared commit 发布后无法在远端分支验证', 502);
-    }
-    return prepared;
+      const remoteHead = await this.remoteBranchHead(branch);
+      if (remoteHead && (await this.isAncestor(prepared, remoteHead))) return prepared;
+
+      const internal = await this.readInternalRef(queueId);
+      if (internal !== prepared) {
+        throw new RepositoryError(
+          'MERGE_REQUEST_STATE_INVALID',
+          'prepared merge commit 与 internal ref 不一致',
+          409,
+        );
+      }
+      if (mode !== 'initial-create' && mode !== 'existing-branch') {
+        throw new RepositoryError(
+          'MERGE_REQUEST_STATE_INVALID',
+          'prepared merge commit 缺少持久化准备模式',
+          409,
+        );
+      }
+      if (mode === 'initial-create' && remoteHead) {
+        throw new RepositoryError(
+          'SCENARIO_BRANCH_REMOTE_CHANGED',
+          '首次创建场景测试分支时发生远端竞争，未发布 prepared commit',
+          409,
+        );
+      }
+      if (mode === 'existing-branch' && !remoteHead) {
+        throw new RepositoryError(
+          'SCENARIO_BRANCH_REMOTE_CHANGED',
+          '准备 merge 后远端场景测试分支已被删除，未重新创建',
+          409,
+        );
+      }
+
+      try {
+        // An empty expected object is a create-only compare-and-swap: despite Git's
+        // option name, it cannot update or overwrite an existing remote ref.
+        const pushArguments =
+          mode === 'initial-create'
+            ? [
+                'push',
+                `--force-with-lease=refs/heads/${branch}:`,
+                'origin',
+                `${prepared}:refs/heads/${branch}`,
+              ]
+            : ['push', 'origin', `${prepared}:refs/heads/${branch}`];
+        await this.run(pushArguments);
+      } catch (error) {
+        if (!(error instanceof GitCommandError)) throw error;
+        await this.fetch();
+        const recoveredHead = await this.remoteBranchHead(branch);
+        if (recoveredHead && (await this.isAncestor(prepared, recoveredHead))) return prepared;
+        throw new RepositoryError(
+          'PUSH_REJECTED',
+          mode === 'initial-create'
+            ? '首次创建场景测试分支时发生远端竞争，未发布 prepared commit'
+            : '场景测试分支推送被拒绝，未执行 force push',
+          409,
+        );
+      }
+      await this.fetch();
+      const publishedHead = await this.remoteBranchHead(branch);
+      if (!publishedHead || !(await this.isAncestor(prepared, publishedHead))) {
+        throw new RepositoryError('PUSH_REJECTED', 'prepared commit 发布后无法在远端分支验证', 502);
+      }
+      return prepared;
+    });
   }
 
   async isPublishedOnBranch(branch: string, commit: string): Promise<boolean> {
@@ -458,10 +496,12 @@ export class GitRepository {
   }
 
   async deleteInternalRef(queueId: number): Promise<void> {
-    assertQueueId(queueId);
-    await this.ensureClone();
-    if (!(await this.readInternalRef(queueId))) return;
-    await this.run(['update-ref', '-d', mergeRequestRef(queueId)]);
+    return withRepositoryLock(this.directory, async () => {
+      assertQueueId(queueId);
+      await this.ensureClone();
+      if (!(await this.readInternalRef(queueId))) return;
+      await this.run(['update-ref', '-d', mergeRequestRef(queueId)]);
+    });
   }
 
   async publishRunReports(
@@ -469,185 +509,203 @@ export class GitRepository {
     runId: string,
     files: Record<ReportFileName, string>,
   ): Promise<ReportPublishResult> {
-    assertBranchName(branch);
-    assertRunId(runId);
-    for (const name of REPORT_FILE_NAMES) assertReportContent(name, files[name]);
+    return withRepositoryLock(this.directory, async () => {
+      assertBranchName(branch);
+      assertRunId(runId);
+      for (const name of REPORT_FILE_NAMES) assertReportContent(name, files[name]);
 
-    await this.fetch();
-    const originalHead = await this.remoteBranchHead(branch);
-    if (!originalHead) {
-      throw new RepositoryError('SCENARIO_BRANCH_NOT_FOUND', '场景测试分支尚未创建', 409);
-    }
+      await this.fetch();
+      const originalHead = await this.remoteBranchHead(branch);
+      if (!originalHead) {
+        throw new RepositoryError('SCENARIO_BRANCH_NOT_FOUND', '场景测试分支尚未创建', 409);
+      }
 
-    try {
-      await this.checkoutTarget(originalHead);
-      const paths = REPORT_FILE_NAMES.map(
-        (name) => `docs/scenario-testing/reports/${runId}/${name}`,
-      );
-      await ensureSafeDirectory(this.directory, `docs/scenario-testing/reports/${runId}`);
-      const missing: ReportFileName[] = [];
-      for (const name of REPORT_FILE_NAMES) {
-        const path = `docs/scenario-testing/reports/${runId}/${name}`;
-        const localPath = join(this.directory, path);
-        let existing: string | undefined;
-        try {
-          const info = await lstat(localPath);
-          if (info.isSymbolicLink() || !info.isFile()) {
+      try {
+        await this.checkoutTarget(originalHead);
+        const paths = REPORT_FILE_NAMES.map(
+          (name) => `docs/scenario-testing/reports/${runId}/${name}`,
+        );
+        await ensureSafeDirectory(this.directory, `docs/scenario-testing/reports/${runId}`);
+        const missing: ReportFileName[] = [];
+        for (const name of REPORT_FILE_NAMES) {
+          const path = `docs/scenario-testing/reports/${runId}/${name}`;
+          const localPath = join(this.directory, path);
+          let existing: string | undefined;
+          try {
+            const info = await lstat(localPath);
+            if (info.isSymbolicLink() || !info.isFile()) {
+              throw new RepositoryError(
+                'REPORT_CONFLICT',
+                `报告路径不是普通文件，拒绝覆盖：${path}`,
+                409,
+              );
+            }
+            existing = (await this.run(['show', `${originalHead}:${path}`])).stdout;
+          } catch (error) {
+            if (error instanceof RepositoryError) throw error;
+            if (
+              !(error instanceof GitCommandError) &&
+              (error as NodeJS.ErrnoException).code !== 'ENOENT'
+            ) {
+              throw error;
+            }
+          }
+          if (existing !== undefined && existing !== files[name]) {
             throw new RepositoryError(
               'REPORT_CONFLICT',
-              `报告路径不是普通文件，拒绝覆盖：${path}`,
+              `报告文件已存在且内容不同，拒绝覆盖：${path}`,
               409,
             );
           }
-          existing = (await this.run(['show', `${originalHead}:${path}`])).stdout;
-        } catch (error) {
-          if (error instanceof RepositoryError) throw error;
-          if (
-            !(error instanceof GitCommandError) &&
-            (error as NodeJS.ErrnoException).code !== 'ENOENT'
-          ) {
-            throw error;
-          }
+          if (existing === undefined) missing.push(name);
         }
-        if (existing !== undefined && existing !== files[name]) {
+
+        if (missing.length === 0) {
+          return {
+            status: 'already_published',
+            commitSha: originalHead,
+            scenarioBranchHead: originalHead,
+          };
+        }
+
+        for (const name of missing) {
+          const path = `docs/scenario-testing/reports/${runId}/${name}`;
+          await mkdir(dirname(join(this.directory, path)), { recursive: true });
+          await writeFile(join(this.directory, path), files[name], {
+            encoding: 'utf8',
+            mode: 0o600,
+          });
+        }
+        await this.run(['add', '--', ...paths]);
+        const staged = (await this.run(['diff', '--cached', '--name-only', '-z', '--'])).stdout
+          .split('\0')
+          .filter(Boolean);
+        const expected = new Set(
+          missing.map((name) => `docs/scenario-testing/reports/${runId}/${name}`),
+        );
+        if (staged.length !== expected.size || staged.some((path) => !expected.has(path))) {
           throw new RepositoryError(
             'REPORT_CONFLICT',
-            `报告文件已存在且内容不同，拒绝覆盖：${path}`,
+            '报告发布超出当前 Run 的文件 allowlist',
             409,
           );
         }
-        if (existing === undefined) missing.push(name);
-      }
+        await this.run([
+          '-c',
+          'user.name=LuoWang Report Archiver',
+          '-c',
+          'user.email=luowang-report-archiver@localhost',
+          'commit',
+          '-m',
+          `test: archive run ${runId}`,
+        ]);
 
-      if (missing.length === 0) {
-        return {
-          status: 'already_published',
-          commitSha: originalHead,
-          scenarioBranchHead: originalHead,
-        };
-      }
-
-      for (const name of missing) {
-        const path = `docs/scenario-testing/reports/${runId}/${name}`;
-        await mkdir(dirname(join(this.directory, path)), { recursive: true });
-        await writeFile(join(this.directory, path), files[name], {
-          encoding: 'utf8',
-          mode: 0o600,
-        });
-      }
-      await this.run(['add', '--', ...paths]);
-      const staged = (await this.run(['diff', '--cached', '--name-only', '-z', '--'])).stdout
-        .split('\0')
-        .filter(Boolean);
-      const expected = new Set(
-        missing.map((name) => `docs/scenario-testing/reports/${runId}/${name}`),
-      );
-      if (staged.length !== expected.size || staged.some((path) => !expected.has(path))) {
-        throw new RepositoryError('REPORT_CONFLICT', '报告发布超出当前 Run 的文件 allowlist', 409);
-      }
-      await this.run([
-        '-c',
-        'user.name=LuoWang Report Archiver',
-        '-c',
-        'user.email=luowang-report-archiver@localhost',
-        'commit',
-        '-m',
-        `test: archive run ${runId}`,
-      ]);
-
-      // Re-read the remote head after the local commit. A normal push is
-      // deliberately used below; a concurrent update must never be replaced.
-      await this.fetch();
-      const latestRemoteHead = await this.remoteBranchHead(branch);
-      if (latestRemoteHead !== originalHead) {
-        throw new RepositoryError(
-          'REPORT_PUBLISH_CONFLICT',
-          '报告发布期间远端场景测试分支发生变化，请重试',
-          409,
-        );
-      }
-      try {
-        await this.run(['push', 'origin', `HEAD:refs/heads/${branch}`]);
-      } catch (error) {
-        if (error instanceof GitCommandError) {
-          if (/\[rejected\][^\r\n]*\((?:non-fast-forward|fetch first)\)/i.test(error.stderr)) {
-            throw new RepositoryError(
-              'REPORT_PUBLISH_CONFLICT',
-              '报告发布被远端并发更新拒绝，未执行 force push',
-              409,
-            );
-          }
-          const denied =
-            /(?:returned error:\s*(?:401|403)\b|authentication failed|permission .* denied|write access .* not granted)/i.test(
-              error.stderr,
-            );
+        // Re-read the remote head after the local commit. A normal push is
+        // deliberately used below; a concurrent update must never be replaced.
+        await this.fetch();
+        const latestRemoteHead = await this.remoteBranchHead(branch);
+        if (latestRemoteHead !== originalHead) {
           throw new RepositoryError(
-            'PUSH_REJECTED',
-            denied
-              ? '报告推送认证或权限被拒绝，请检查 GitHub Token 的仓库写入权限'
-              : '报告推送失败，请检查 Git 连接或远端限制；尚未确认是并发冲突',
-            denied ? 403 : 502,
+            'REPORT_PUBLISH_CONFLICT',
+            '报告发布期间远端场景测试分支发生变化，请重试',
+            409,
           );
         }
-        throw error;
+        try {
+          await this.run(['push', 'origin', `HEAD:refs/heads/${branch}`]);
+        } catch (error) {
+          if (error instanceof GitCommandError) {
+            if (/\[rejected\][^\r\n]*\((?:non-fast-forward|fetch first)\)/i.test(error.stderr)) {
+              throw new RepositoryError(
+                'REPORT_PUBLISH_CONFLICT',
+                '报告发布被远端并发更新拒绝，未执行 force push',
+                409,
+              );
+            }
+            const denied =
+              /(?:returned error:\s*(?:401|403)\b|authentication failed|permission .* denied|write access .* not granted)/i.test(
+                error.stderr,
+              );
+            throw new RepositoryError(
+              'PUSH_REJECTED',
+              denied
+                ? '报告推送认证或权限被拒绝，请检查 GitHub Token 的仓库写入权限'
+                : '报告推送失败，请检查 Git 连接或远端限制；尚未确认是并发冲突',
+              denied ? 403 : 502,
+            );
+          }
+          throw error;
+        }
+        const scenarioBranchHead = await this.remoteBranchHead(branch);
+        if (!scenarioBranchHead) {
+          throw new RepositoryError(
+            'PUSH_REJECTED',
+            '报告提交后无法读取远端场景测试分支 HEAD',
+            502,
+          );
+        }
+        const commitSha = (await this.run(['rev-parse', 'HEAD'])).stdout.trim().toLowerCase();
+        return { status: 'published', commitSha, scenarioBranchHead };
+      } finally {
+        await this.cleanWorkspace();
       }
-      const scenarioBranchHead = await this.remoteBranchHead(branch);
-      if (!scenarioBranchHead) {
-        throw new RepositoryError('PUSH_REJECTED', '报告提交后无法读取远端场景测试分支 HEAD', 502);
-      }
-      const commitSha = (await this.run(['rev-parse', 'HEAD'])).stdout.trim().toLowerCase();
-      return { status: 'published', commitSha, scenarioBranchHead };
-    } finally {
-      await this.cleanWorkspace();
-    }
+    });
   }
 
   async validateScenarioPatch(baseCommit: string, patch: string): Promise<ScenarioPatchValidation> {
-    const baseSha = await this.resolveCommit(baseCommit);
-    try {
-      await this.checkoutTarget(baseSha);
-      return await this.materializeScenarioPatch(baseSha, patch);
-    } finally {
-      await this.cleanWorkspace();
-    }
+    return withRepositoryLock(this.directory, async () => {
+      const baseSha = await this.resolveCommit(baseCommit);
+      try {
+        await this.checkoutTarget(baseSha);
+        return await this.materializeScenarioPatch(baseSha, patch);
+      } finally {
+        await this.cleanWorkspace();
+      }
+    });
   }
 
   /** Apply a validated scenario patch to the exclusive Run worktree. */
   async applyScenarioPatch(baseCommit: string, patch: string): Promise<ScenarioPatchValidation> {
-    const baseSha = await this.resolveCommit(baseCommit);
-    await this.checkoutTarget(baseSha);
-    try {
-      return await this.materializeScenarioPatch(baseSha, patch);
-    } catch (error) {
-      await this.cleanWorkspace();
-      throw error;
-    }
+    return withRepositoryLock(this.directory, async () => {
+      const baseSha = await this.resolveCommit(baseCommit);
+      await this.checkoutTarget(baseSha);
+      try {
+        return await this.materializeScenarioPatch(baseSha, patch);
+      } catch (error) {
+        await this.cleanWorkspace();
+        throw error;
+      }
+    });
   }
 
   async listWorkingScenarioFiles(): Promise<string[]> {
-    const files = await this.readWorkingScenarioFiles();
-    return [...files.keys()].sort();
+    return withRepositoryLock(this.directory, async () => {
+      const files = await this.readWorkingScenarioFiles();
+      return [...files.keys()].sort();
+    });
   }
 
   async readWorkingScenarioFile(path: string): Promise<string> {
-    assertRelativePath(path);
-    if (!path.startsWith(SCENARIO_DIRECTORY) || !path.endsWith('.md')) {
-      throw new RepositoryError('TARGET_INVALID', '只能读取场景目录中的 Markdown 文件', 400);
-    }
-    const localPath = join(this.directory, path);
-    try {
-      const info = await lstat(localPath);
-      if (!info.isFile() || info.isSymbolicLink()) {
-        throw new RepositoryError('SCENARIO_PATCH_INVALID', `场景文件不是普通文件：${path}`, 422);
+    return withRepositoryLock(this.directory, async () => {
+      assertRelativePath(path);
+      if (!path.startsWith(SCENARIO_DIRECTORY) || !path.endsWith('.md')) {
+        throw new RepositoryError('TARGET_INVALID', '只能读取场景目录中的 Markdown 文件', 400);
       }
-      return await readFile(localPath, 'utf8');
-    } catch (error) {
-      if (error instanceof RepositoryError) throw error;
-      if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
-        throw new RepositoryError('TARGET_INVALID', `场景文件不存在：${path}`, 404);
+      const localPath = join(this.directory, path);
+      try {
+        const info = await lstat(localPath);
+        if (!info.isFile() || info.isSymbolicLink()) {
+          throw new RepositoryError('SCENARIO_PATCH_INVALID', `场景文件不是普通文件：${path}`, 422);
+        }
+        return await readFile(localPath, 'utf8');
+      } catch (error) {
+        if (error instanceof RepositoryError) throw error;
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+          throw new RepositoryError('TARGET_INVALID', `场景文件不存在：${path}`, 404);
+        }
+        throw error;
       }
-      throw error;
-    }
+    });
   }
 
   async publishScenarioPatch(
@@ -656,98 +714,100 @@ export class GitRepository {
     patch: string,
     mode: ScenarioPublicationMode,
   ): Promise<ScenarioPatchPublishResult> {
-    assertBranchName(branch);
-    assertRunId(runId);
-    const metadata = validateScenarioPatchText(patch);
-    const branchName = mode === 'pull-request' ? `luowang/scenario/${runId}` : null;
-    if (branchName) assertBranchName(branchName);
-
-    await this.fetch();
-    const originalHead = await this.remoteBranchHead(branch);
-    if (!originalHead) {
-      throw new RepositoryError('SCENARIO_BRANCH_NOT_FOUND', '场景测试分支尚未创建', 409);
-    }
-
-    if (branchName) {
-      const existingBranch = await this.remoteBranchHead(branchName);
-      if (existingBranch) {
-        return {
-          status: 'already_published',
-          commitSha: existingBranch,
-          scenarioBranchHead: originalHead,
-          branchName,
-        };
-      }
-    }
-
-    try {
-      await this.checkoutTarget(originalHead);
-      if (mode === 'direct' && (await this.canApplyPatch(patch, true))) {
-        return {
-          status: 'already_published',
-          commitSha: originalHead,
-          scenarioBranchHead: originalHead,
-          branchName: null,
-        };
-      }
-      const applied = await this.materializeScenarioPatch(originalHead, patch);
-      // Keep the pure metadata and the resulting worktree in lockstep. This
-      // also makes it impossible for a future caller to stage an unrelated
-      // file accidentally.
-      if (applied.changedPaths.join('\u0000') !== metadata.changedPaths.join('\u0000')) {
-        throw new ScenarioPatchError('patch 解析结果不一致，拒绝发布');
-      }
-      await this.stageScenarioPatch(applied.changes);
-      await this.run([
-        '-c',
-        'user.name=LuoWang Scenario Archiver',
-        '-c',
-        'user.email=luowang-scenario-archiver@localhost',
-        'commit',
-        '-m',
-        `test: update scenarios for run ${runId}`,
-      ]);
-      const commitSha = (await this.run(['rev-parse', 'HEAD'])).stdout.trim().toLowerCase();
+    return withRepositoryLock(this.directory, async () => {
+      assertBranchName(branch);
+      assertRunId(runId);
+      const metadata = validateScenarioPatchText(patch);
+      const branchName = mode === 'pull-request' ? `luowang/scenario/${runId}` : null;
+      if (branchName) assertBranchName(branchName);
 
       await this.fetch();
-      if (mode === 'direct') {
-        const latestRemoteHead = await this.remoteBranchHead(branch);
-        if (latestRemoteHead !== originalHead) {
-          throw new RepositoryError(
-            'SCENARIO_PUBLISH_CONFLICT',
-            '场景变更发布期间远端分支发生变化，请重试',
-            409,
-          );
+      const originalHead = await this.remoteBranchHead(branch);
+      if (!originalHead) {
+        throw new RepositoryError('SCENARIO_BRANCH_NOT_FOUND', '场景测试分支尚未创建', 409);
+      }
+
+      if (branchName) {
+        const existingBranch = await this.remoteBranchHead(branchName);
+        if (existingBranch) {
+          return {
+            status: 'already_published',
+            commitSha: existingBranch,
+            scenarioBranchHead: originalHead,
+            branchName,
+          };
         }
-        await this.pushScenarioCommit(branch);
-        const scenarioBranchHead = await this.remoteBranchHead(branch);
-        if (!scenarioBranchHead) {
-          throw new RepositoryError('PUSH_REJECTED', '场景变更提交后无法读取远端 HEAD', 502);
-        }
-        return { status: 'published', commitSha, scenarioBranchHead, branchName: null };
       }
 
       try {
-        await this.run(['push', 'origin', `HEAD:refs/heads/${branchName}`]);
-      } catch (error) {
-        if (error instanceof GitCommandError) {
-          throw new RepositoryError(
-            'SCENARIO_PUBLISH_CONFLICT',
-            '场景 PR 分支已被远端并发创建，未执行 force push',
-            409,
-          );
+        await this.checkoutTarget(originalHead);
+        if (mode === 'direct' && (await this.canApplyPatch(patch, true))) {
+          return {
+            status: 'already_published',
+            commitSha: originalHead,
+            scenarioBranchHead: originalHead,
+            branchName: null,
+          };
         }
-        throw error;
+        const applied = await this.materializeScenarioPatch(originalHead, patch);
+        // Keep the pure metadata and the resulting worktree in lockstep. This
+        // also makes it impossible for a future caller to stage an unrelated
+        // file accidentally.
+        if (applied.changedPaths.join('\u0000') !== metadata.changedPaths.join('\u0000')) {
+          throw new ScenarioPatchError('patch 解析结果不一致，拒绝发布');
+        }
+        await this.stageScenarioPatch(applied.changes);
+        await this.run([
+          '-c',
+          'user.name=LuoWang Scenario Archiver',
+          '-c',
+          'user.email=luowang-scenario-archiver@localhost',
+          'commit',
+          '-m',
+          `test: update scenarios for run ${runId}`,
+        ]);
+        const commitSha = (await this.run(['rev-parse', 'HEAD'])).stdout.trim().toLowerCase();
+
+        await this.fetch();
+        if (mode === 'direct') {
+          const latestRemoteHead = await this.remoteBranchHead(branch);
+          if (latestRemoteHead !== originalHead) {
+            throw new RepositoryError(
+              'SCENARIO_PUBLISH_CONFLICT',
+              '场景变更发布期间远端分支发生变化，请重试',
+              409,
+            );
+          }
+          await this.pushScenarioCommit(branch);
+          const scenarioBranchHead = await this.remoteBranchHead(branch);
+          if (!scenarioBranchHead) {
+            throw new RepositoryError('PUSH_REJECTED', '场景变更提交后无法读取远端 HEAD', 502);
+          }
+          return { status: 'published', commitSha, scenarioBranchHead, branchName: null };
+        }
+
+        try {
+          await this.run(['push', 'origin', `HEAD:refs/heads/${branchName}`]);
+        } catch (error) {
+          if (error instanceof GitCommandError) {
+            throw new RepositoryError(
+              'SCENARIO_PUBLISH_CONFLICT',
+              '场景 PR 分支已被远端并发创建，未执行 force push',
+              409,
+            );
+          }
+          throw error;
+        }
+        return {
+          status: 'published',
+          commitSha,
+          scenarioBranchHead: originalHead,
+          branchName,
+        };
+      } finally {
+        await this.cleanWorkspace();
       }
-      return {
-        status: 'published',
-        commitSha,
-        scenarioBranchHead: originalHead,
-        branchName,
-      };
-    } finally {
-      await this.cleanWorkspace();
-    }
+    });
   }
 
   async listTree(commit: string): Promise<GitTreeEntry[]> {
@@ -1313,7 +1373,7 @@ export class GitRepository {
         }),
       );
       if (details.killed || details.code === 'ETIMEDOUT') {
-        throw new GitCommandError(safeArgs, '', null, timeoutMessage(args));
+        throw new GitCommandError(safeArgs, '', null, timeoutMessage(args), true);
       }
       throw new GitCommandError(safeArgs, stderr, exitCode);
     } finally {

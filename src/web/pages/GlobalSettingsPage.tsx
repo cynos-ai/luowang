@@ -28,8 +28,7 @@ type DeploymentResponse = {
   secrets: Record<DeploymentSecret, SecretMetadata>;
 };
 type WorkspaceLock = {
-  activeRun: { runId: string } | null;
-  queue: Array<{ runId: string | null; status: string }>;
+  activeRuns: Array<{ runId: string | null; queueId: number }>;
 };
 
 export function GlobalSettingsPage({ section }: { section: GlobalSettingSection }) {
@@ -76,13 +75,9 @@ export function GlobalSettingsPage({ section }: { section: GlobalSettingSection 
     return () => window.removeEventListener('beforeunload', listener);
   }, [dirty]);
 
-  const lockRuns = [
-    ...(resource.value?.workspace.activeRun ? [resource.value.workspace.activeRun.runId] : []),
-    ...(resource.value?.workspace.queue
-      .filter((item) => ['running', 'waiting_archive'].includes(item.status))
-      .map((item) => item.runId)
-      .filter((value): value is string => Boolean(value)) ?? []),
-  ];
+  const lockRuns =
+    resource.value?.workspace.activeRuns.map((item) => item.runId ?? `准备请求 ${item.queueId}`) ??
+    [];
   const locked = lockRuns.length > 0 && section !== 'credentials';
 
   async function saveConfiguration(event: FormEvent) {

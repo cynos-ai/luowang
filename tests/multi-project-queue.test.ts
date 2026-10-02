@@ -3,7 +3,10 @@ import { strict as assert } from 'node:assert';
 import Database from 'better-sqlite3';
 import { describe, it } from 'vitest';
 
-import { createProjectTestRequestQueue } from '../src/server/automation/queue.js';
+import {
+  configureProjectQueueConcurrency,
+  createProjectTestRequestQueue,
+} from '../src/server/automation/queue.js';
 import { runMigrations } from '../src/server/db/migrate.js';
 import { projectIdentityMigration } from '../src/server/db/migrations/0009-project-identity.js';
 import { migrateLegacyRunOwnership } from '../src/server/db/migrations/0011-project-run-ownership.js';
@@ -15,6 +18,7 @@ import { createProjectStore } from '../src/server/projects/store.js';
 describe('project-bound request queues', () => {
   it('merges only within one project and atomically respects pause and the global Run slot', () => {
     const database = new Database(':memory:');
+    configureProjectQueueConcurrency(database, 1);
     database.pragma('foreign_keys = ON');
     try {
       runMigrations(database);

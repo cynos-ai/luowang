@@ -17,6 +17,8 @@
 
 ## 仓库与分支
 
+- 项目并行开发位于 `docs/changes/luowang-project-concurrency/`：跨项目有界并行、同项目串行，准备阶段计入容量；实现与验收进度见 Plan，发布前不视为已上线。其 Spec 覆盖旧多项目全局单槽约束。
+
 - v0.6.0 代码深读的实现与验收遵循 `docs/changes/luowang-code-understanding/`。它扩展 Main 的内置角色资源、固定版本读取回执与计划引用；不启用 Pi Skills，不新增角色 Session。当前多项目开发以 `docs/changes/luowang-multi-project/` 的 Spec 覆盖单仓库基线，不能将合成测试视为真实联合验收。
 
 - 正式仓库是公开的 `cynos-ai/luowang`；许可证为 GNU Affero General Public License v3.0（`AGPL-3.0`）。它允许商业使用，但分发衍生作品或通过网络提供修改版时必须按 AGPL 提供对应源码。

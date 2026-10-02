@@ -470,6 +470,8 @@
 }
 
 .catalog-summary {
+  grid-column: 1 / -1;
+  padding: 10px 12px;
   margin: 0;
   border: 2px solid var(--lw-line);
   background: var(--lw-paper);

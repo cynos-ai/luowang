@@ -1,23 +1,24 @@
 import type Database from 'better-sqlite3';
 
-import { createProjectTestRequestQueue, type TestRequestRecord } from './queue.js';
+import {
+  configureProjectQueueConcurrency,
+  createProjectTestRequestQueue,
+  type TestRequestRecord,
+} from './queue.js';
 
 const CURSOR_KEY = 'last_scheduled_project_id';
 
-/** One global execution slot with a persisted round-robin cursor across active projects. */
-export function createProjectQueueCoordinator(database: Database.Database): {
+/** Bounded execution slots with a persisted round-robin cursor across active projects. */
+export function createProjectQueueCoordinator(
+  database: Database.Database,
+  maxConcurrentProjects = 2,
+): {
   claimNext(): TestRequestRecord | null;
 } {
+  configureProjectQueueConcurrency(database, maxConcurrentProjects);
   return {
     claimNext() {
       return database.transaction(() => {
-        if (
-          database
-            .prepare("SELECT 1 FROM test_request_queue WHERE status = 'running' LIMIT 1")
-            .get()
-        ) {
-          return null;
-        }
         const allProjects = database
           .prepare('SELECT project_id FROM projects ORDER BY created_at, project_id')
           .all() as Array<{ project_id: string }>;
@@ -33,7 +34,7 @@ export function createProjectQueueCoordinator(database: Database.Database): {
                    )
                    AND NOT EXISTS (
                      SELECT 1 FROM test_request_queue q
-                     WHERE q.project_id = p.project_id AND q.status = 'waiting_archive'
+                     WHERE q.project_id = p.project_id AND q.status IN ('running', 'waiting_archive')
                    )`,
               )
               .all() as Array<{ project_id: string }>

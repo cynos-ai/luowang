@@ -569,7 +569,9 @@ export interface ConsoleRunReference {
   finishedAt: string | null;
 }
 
-export interface WorkspaceActiveRun extends ConsoleRunReference {
+export interface WorkspaceActiveRun extends Omit<ConsoleRunReference, 'runId'> {
+  queueId: number;
+  runId: string | null;
   project: ConsoleProjectReference;
   role: 'main-a' | 'runner' | 'reviewer' | 'main-b' | null;
   stage: string;
@@ -577,12 +579,13 @@ export interface WorkspaceActiveRun extends ConsoleRunReference {
   progress: {
     completed: number;
     total: number;
-  };
+  } | null;
   updatedAt: string;
 }
 
 export interface WorkspaceQueueItem {
-  position: number;
+  projectPosition: number;
+  waitingReason: string;
   queueId: number;
   requestId: string;
   project: ConsoleProjectReference;
@@ -595,7 +598,7 @@ export interface WorkspaceQueueItem {
 export interface WorkspaceProjectSummary {
   project: ConsoleProjectReference;
   activity: 'running' | 'queued' | 'idle' | 'paused';
-  queuePosition: number | null;
+  projectQueuePosition: number | null;
   recentRun: ConsoleRunReference | null;
   readiness: ConsoleReadinessSnapshot;
   attentionCount: number;
@@ -640,7 +643,8 @@ export interface WorkspaceRecentRun extends ConsoleRunReference {
 
 export interface WorkspaceResponse {
   fetchedAt: string;
-  activeRun: WorkspaceActiveRun | null;
+  activeRuns: WorkspaceActiveRun[];
+  capacity: { occupied: number; limit: number };
   queue: WorkspaceQueueItem[];
   projects: WorkspaceProjectSummary[];
   recentRuns: WorkspaceRecentRun[];
@@ -679,6 +683,7 @@ export interface SystemStatusResponse {
   database: DatabaseStatus;
   secretStore: 'available' | 'unavailable';
   scheduler: OperationsSchedulerStatus;
+  executionCapacity: { occupied: number; limit: number };
   dependencies: SystemDependencyStatus[];
   recovery: {
     guideId: 'multi-project-recovery';

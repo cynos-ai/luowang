@@ -38,12 +38,20 @@ export class GitCommandError extends RepositoryError {
   readonly command: string[];
   readonly stderr: string;
   readonly exitCode: number | null;
+  readonly timedOut: boolean;
 
-  constructor(command: string[], stderr: string, exitCode: number | null, message?: string) {
+  constructor(
+    command: string[],
+    stderr: string,
+    exitCode: number | null,
+    message?: string,
+    timedOut = false,
+  ) {
     super('GIT_COMMAND_FAILED', message ?? 'Git 操作失败', 502);
     this.name = 'GitCommandError';
     this.command = command;
     this.stderr = stderr;
     this.exitCode = exitCode;
+    this.timedOut = timedOut;
   }
 }

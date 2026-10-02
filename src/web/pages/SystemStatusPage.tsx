@@ -153,6 +153,10 @@ export function SystemStatusPage() {
                   <h2>恢复信息</h2>
                 </div>
                 <p>
+                  并行项目：{status.value.executionCapacity.occupied}/
+                  {status.value.executionCapacity.limit}（启动配置）
+                </p>
+                <p>
                   {status.value.recovery.available
                     ? '恢复说明可用：multi-project-recovery。'
                     : '当前没有恢复说明。'}

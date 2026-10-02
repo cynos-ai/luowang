@@ -87,6 +87,8 @@ let ready = false;
 let resumeCalls = 0;
 let emptyWorkspace = false;
 let readinessFailure = false;
+let readinessGitTimeout = false;
+let parallelPreparing = false;
 let testPollingFailure = false;
 let completedRun = false;
 let zeroProgressRun = false;
@@ -136,7 +138,7 @@ await new Promise<void>((done) => server.listen(0, '127.0.0.1', done));
 const address = server.address();
 assert.ok(address && typeof address !== 'string');
 const origin = `http://127.0.0.1:${address.port}`;
-const browser = await chromium.launch({ headless: true });
+const browser = await chromium.launch({ headless: true, ignoreDefaultArgs: ['--hide-scrollbars'] });
 try {
   const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
   const pageErrors: string[] = [];
@@ -156,10 +158,22 @@ try {
       if (emptyWorkspace) return route.fulfill({ json: emptyFixture.workspace });
       const workspace = structuredClone(fixture.workspace);
       workspace.projects[0].project.status = projects[0].status;
-      if (globalSettingsUnlocked) workspace.activeRun = null;
-      if (zeroProgressRun && workspace.activeRun) {
-        workspace.activeRun.progress = { completed: 0, total: 0 };
-        workspace.activeRun.currentScenario = null;
+      if (parallelPreparing) {
+        workspace.activeRuns.push({
+          ...workspace.activeRuns[0],
+          project: projects[1],
+          queueId: 2,
+          runId: null,
+          phase: 'preparing',
+          stage: '准备目标，尚未创建 Run',
+          progress: null,
+        });
+        workspace.capacity.occupied = 2;
+      }
+      if (globalSettingsUnlocked) workspace.activeRuns = [];
+      if (zeroProgressRun && workspace.activeRuns[0]) {
+        workspace.activeRuns[0].progress = { completed: 0, total: 0 };
+        workspace.activeRuns[0].currentScenario = null;
       }
       return route.fulfill({ json: workspace });
     }
@@ -344,6 +358,24 @@ try {
         });
       }
       if (suffix === '/readiness/status') {
+        if (readinessGitTimeout)
+          return route.fulfill({
+            json: {
+              readiness: {
+                ...projectData.readiness,
+                status: 'not_ready',
+                checks: projectData.readiness.checks.map((check) =>
+                  check.id === 'image'
+                    ? {
+                        ...check,
+                        status: 'failed',
+                        message: 'Git 远程检查超时，请检查仓库网络后重新检查',
+                      }
+                    : check,
+                ),
+              },
+            },
+          });
         if (readinessFailure) {
           return route.fulfill({
             status: 504,
@@ -603,6 +635,16 @@ try {
   });
 
   await page.goto(`${origin}/workspace`);
+  parallelPreparing = true;
+  await page.reload();
+  await page.getByText('2/2 个项目正在处理').waitFor();
+  assert.equal(await page.locator('.active-run-block .run-focus').count(), 2);
+  assert.equal(
+    await page.locator('.active-run-block a').nth(1).getAttribute('href'),
+    `/projects/${projects[1].projectId}/test`,
+  );
+  parallelPreparing = false;
+  await page.reload();
   await page.getByRole('heading', { name: '需要处理' }).waitFor();
   await page.getByText('Runner 执行').waitFor();
   await page.getByText('3/8').waitFor();
@@ -694,6 +736,14 @@ try {
   await page.getByText('Git 远程检查超时').waitFor();
   await page.getByRole('heading', { name: '仓库与同步' }).waitFor();
   readinessFailure = false;
+  readinessGitTimeout = true;
+  await page.reload();
+  await page
+    .getByRole('region', { name: '执行镜像', exact: true })
+    .locator('p')
+    .filter({ hasText: 'Git 远程检查超时，请检查仓库网络后重新检查' })
+    .waitFor();
+  readinessGitTimeout = false;
 
   await page.goto(`${origin}/projects/${projects[0].projectId}/settings/testing`);
   await page.getByText('设置暂时锁定').waitFor();
@@ -736,13 +786,13 @@ try {
   const requestDialog = page.getByRole('dialog');
   await requestDialog.getByText('refs/heads/feat/synthetic').waitFor();
   await requestDialog.getByRole('button', { name: '确认进入队列' }).click();
-  await page.getByText('测试请求已进入全局顺序队列。').waitFor();
+  await page.getByText('测试请求已进入项目队列。').waitFor();
   assert.ok(writes.includes(`POST /api/projects/${newProject.projectId}/merge`));
 
   await page.goto(`${origin}/projects/${projects[1].projectId}/test`);
   await page.getByRole('heading', { name: '测试请求正在等待' }).waitFor();
-  await page.getByText(/全局执行槽正由\s*官网非生产测试\s*使用/).waitFor();
-  await page.getByLabel('队列第 1 位').waitFor();
+  await page.getByText('项目已暂停', { exact: true }).waitFor();
+  await page.getByLabel('项目内第 1 位').waitFor();
 
   await page.goto(`${origin}/projects/${projects[0].projectId}/test`);
   await page.getByRole('heading', { name: '验证登录状态恢复与注册错误处理' }).waitFor();
@@ -843,6 +893,42 @@ try {
   const providerInput = page.locator('input[list="global-provider-catalog"]');
   const baseUrlInput = page.getByLabel('Provider Base URL');
   assert.equal(await baseUrlInput.inputValue(), 'https://provider.example.test/v1');
+  const assertCatalogLayout = async () => {
+    const status = await page.locator('.catalog-summary').boundingBox();
+    assert.ok(status);
+    for (const role of await page.locator('.agent-config').all()) {
+      const box = await role.boundingBox();
+      assert.ok(box && box.y >= status.y + status.height - 1, 'catalog occupies its own row');
+    }
+    assert.equal(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth <= document.documentElement.clientWidth,
+      ),
+      true,
+    );
+  };
+  for (const width of [768, 1440]) {
+    await page.setViewportSize({ width, height: 900 });
+    await assertCatalogLayout();
+    delayOpenAiCatalog = true;
+    await providerInput.fill('openai');
+    await page.getByText('正在加载已知模型目录…').waitFor();
+    await assertCatalogLayout();
+    await page.getByText('已载入 1 个已知模型').waitFor();
+    await assertCatalogLayout();
+    await providerInput.fill('unknown-fixture');
+    await page.getByText('暂无已知模型', { exact: true }).waitFor();
+    await assertCatalogLayout();
+    catalogFailure = true;
+    await providerInput.fill('openai-compatible');
+    await page.getByText(/目录加载失败：目录暂不可用/).waitFor();
+    await assertCatalogLayout();
+    catalogFailure = false;
+    await providerInput.fill('openai');
+    await page.getByText('已载入 1 个已知模型').waitFor();
+    await providerInput.fill('openai-compatible');
+    await page.getByText('已载入 2 个已知模型').waitFor();
+  }
   delayOpenAiCatalog = true;
   const pendingCatalog = page.waitForRequest((request) =>
     request.url().includes('/api/provider/models?provider=openai'),
@@ -914,11 +1000,16 @@ try {
     '/settings/credentials',
     '/account',
   ];
-  for (const width of [1024, 768]) {
+  for (const width of [1440, 1024, 768]) {
     await page.setViewportSize({ width, height: 900 });
     for (const path of responsivePaths) {
       await page.goto(`${origin}${path}`);
       await page.locator('h1').waitFor();
+      await page.addStyleTag({ content: 'html { overflow-y: scroll; scrollbar-gutter: stable; }' });
+      assert.ok(
+        await page.evaluate(() => document.documentElement.clientWidth < window.innerWidth),
+        'vertical scrollbar must consume layout width',
+      );
       const dimensions = await page.evaluate(() => ({
         scrollWidth: document.documentElement.scrollWidth,
         clientWidth: document.documentElement.clientWidth,

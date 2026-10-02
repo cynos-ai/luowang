@@ -53,6 +53,8 @@ curl --fail http://127.0.0.1:3000/health
 
 管理员密码仅用于空库初始化，不覆盖已有密码哈希。主密钥用于派生 Secret Store 密钥，两者的明文不会写入 SQLite。也可通过 `LUOWANG_ADMIN_PASSWORD_FILE` 和 `LUOWANG_MASTER_KEY_FILE` 使用 Docker Secret 文件；直接环境变量优先。妥善保留主密钥，恢复备份时需要同一密钥材料。
 
+本开发版本默认允许两个不同项目同时准备和测试，同项目请求仍顺序执行。启动变量 `LUOWANG_MAX_CONCURRENT_PROJECTS` 接受 1–8 的整数，缺省为 2，空值或非法值会阻止启动；系统状态和工作台显示实际容量。已有部署升级前应停止接收新请求、等待活动任务结束并备份数据。保守升级可先显式设为 1，验证机器、浏览器及 Provider 容量后改为 2 并重启；这只调整调度容量，不是数据库回滚。项目使用共享测试账号或应用数据库时，操作者仍需保证测试数据互不影响。实现与验收状态见[项目并行 Plan](docs/changes/luowang-project-concurrency/plan.md)。
+
 ### 原生开发
 
 需要 Node.js 24 和 npm。`better-sqlite3` 没有匹配预编译包时，还需要 `python3`、`make` 和 `g++`。以下启动命令要求数据库已按上面的流程初始化或完成离线升级：

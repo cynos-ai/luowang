@@ -1,4 +1,10 @@
 import { strict as assert } from 'node:assert';
+import { createServer } from 'node:http';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { execFileSync } from 'node:child_process';
+import { GitRepository } from '../src/server/repository/git-repository.js';
 
 import type Database from 'better-sqlite3';
 import pino from 'pino';
@@ -56,6 +62,7 @@ it('uses only new-schema administration routes, scoped Secrets, and the existing
     )
     .run();
   let drains = 0;
+  let stalledRepository: GitRepository | null = null;
   const evidenceReads: Array<{ projectId: string; key: string }> = [];
   let activeRun: { projectId: string; run: RunSummary } | null = null;
   const backgroundEvents: string[] = [];
@@ -76,7 +83,9 @@ it('uses only new-schema administration routes, scoped Secrets, and the existing
       },
       recover: async () => {},
       retryArchives: async () => {},
-      currentRun: async () => activeRun,
+      maxConcurrentProjects: 2,
+      stop: async () => undefined,
+      currentRuns: async () => (activeRun ? [activeRun] : []),
       getActiveRun: async (projectId, runId) =>
         activeRun?.projectId === projectId && activeRun.run.runId === runId
           ? { ...activeRun.run, artifacts: { 'plan.md': 'active plan' } }
@@ -113,7 +122,10 @@ it('uses only new-schema administration routes, scoped Secrets, and the existing
       }),
       checkDeployment: async () => ({ id: 'deployment', status: 'failed', message: 'not ready' }),
       checkEnvironment: async () => ({ id: 'environment', status: 'ok', message: 'ok' }),
-      checkImage: async () => ({ id: 'image', status: 'not_configured', message: 'not ready' }),
+      checkImage: async () => {
+        if (stalledRepository) await stalledRepository.remoteBranchHead('scenario-testing');
+        return { id: 'image', status: 'not_configured', message: 'not ready' };
+      },
     },
     images: {
       prepare: async () => {
@@ -216,6 +228,57 @@ it('uses only new-schema administration routes, scoped Secrets, and the existing
     });
     assert.equal(created.statusCode, 201);
     const projectId = created.json().project.projectId;
+    const stalled = createServer(() => {});
+    const gitDirectory = await mkdtemp(join(tmpdir(), 'luowang-api-timeout-'));
+    await new Promise<void>((done) => stalled.listen(0, '127.0.0.1', done));
+    const remote = stalled.address();
+    assert.ok(remote && typeof remote !== 'string');
+    try {
+      execFileSync('git', ['init', gitDirectory], { stdio: 'ignore' });
+      execFileSync(
+        'git',
+        [
+          '-C',
+          gitDirectory,
+          'remote',
+          'add',
+          'origin',
+          `http://127.0.0.1:${remote.port}/private.git`,
+        ],
+        { stdio: 'ignore' },
+      );
+      stalledRepository = new GitRepository({
+        directory: gitDirectory,
+        remoteUrl: `http://127.0.0.1:${remote.port}/private.git`,
+        tokenProvider: () => 'private-timeout-token',
+        timeouts: { remoteReadMs: 100 },
+      });
+      const timeout = await app.inject({
+        method: 'POST',
+        url: `/api/projects/${projectId}/readiness/check`,
+        headers,
+        payload: {},
+      });
+      assert.equal(timeout.statusCode, 200);
+      assert.equal(timeout.json().readiness.ready, false);
+      assert.match(timeout.body, /Git 远程检查超时/);
+      assert.doesNotMatch(timeout.body, /private-timeout-token|private.git/);
+      const persisted = await app.inject({
+        method: 'GET',
+        url: `/api/projects/${projectId}/readiness/status`,
+        headers,
+      });
+      assert.match(persisted.body, /Git 远程检查超时/);
+      assert.equal(createProjectTestRequestQueue(database.sqlite, projectId).list().length, 0);
+    } finally {
+      stalledRepository = null;
+      stalled.closeAllConnections();
+      await new Promise<void>((done) => stalled.close(() => done()));
+      await rm(gitDirectory, { recursive: true, force: true });
+      database.sqlite
+        .prepare('DELETE FROM project_connectivity_check_results WHERE project_id = ?')
+        .run(projectId);
+    }
     const createdB = await app.inject({
       method: 'POST',
       url: '/api/projects',
