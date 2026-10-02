@@ -9,17 +9,20 @@ import type { TestRequestRecord } from '../automation/queue.js';
 import { createProjectRunRecoveryStore } from '../automation/recovery.js';
 import { AppError } from '../errors.js';
 import { createProjectRunStore, type StoredRun } from '../runs/store.js';
+import { createProjectRunWorkspaceStore } from '../runs/workspace.js';
 import { SESSION_COOKIE_NAME, type AuthService } from '../security/auth.js';
 import { encodeStableEvidenceId } from '../storage/oss.js';
 import type { ProjectStore } from './store.js';
 import type { OperationsRunDetail, RunDetail, RunSummary } from '../../shared/types.js';
 
 function failedQueueRun(item: TestRequestRecord | undefined): RunDetail | null {
-  if (item?.status !== 'failed' || !item.runId) return null;
+  if (!item || !['failed', 'interrupted'].includes(item.status) || !item.runId) return null;
   return {
     runId: item.runId,
-    status: 'failed',
-    phase: 'failed',
+    status: item.status === 'interrupted' ? 'interrupted' : 'failed',
+    phase: item.status === 'interrupted' ? 'interrupted' : 'failed',
+    stopRequestedAt: item.stopRequestedAt,
+    stopReason: item.stopReason,
     result: null,
     trigger: item.trigger,
     request: item.request,
@@ -44,6 +47,7 @@ export async function registerProjectRunRoutes(
     projects: ProjectStore;
     dispatcher: ProjectAutomationDispatcher;
     logger?: Logger;
+    reportRoot?: string;
     readEvidence: (projectId: string, key: string) => Promise<OssObject>;
   },
 ): Promise<void> {
@@ -76,7 +80,23 @@ export async function registerProjectRunRoutes(
       ]);
       if (runtime || stored) return presentRun(runtime, stored);
       const recovered = recoveryFor(projectId).get(runId);
-      if (recovered) return presentRun(recovered, null);
+      if (recovered) {
+        let artifacts: Record<string, string> = {};
+        if (options.reportRoot) {
+          try {
+            artifacts = await createProjectRunWorkspaceStore(
+              options.database,
+              options.reportRoot,
+              projectId,
+            )
+              .open(runId, 'running')
+              .list();
+          } catch {
+            /* Keep the recorded interruption if local artifacts are unavailable. */
+          }
+        }
+        return presentRun({ ...recovered, artifacts }, null);
+      }
       const failed = failedQueueRun(
         queueFor(projectId)
           .list()
@@ -156,6 +176,22 @@ export async function registerProjectRunRoutes(
       '/api/projects/:projectId/queue',
       async (request) => ({ queue: queueFor(request.params.projectId).list() }),
     );
+    routes.post<{ Params: { projectId: string; queueId: string } }>(
+      '/api/projects/:projectId/queue/:queueId/stop',
+      async (request, reply) => {
+        const queueId = parseQueueId(request.params.queueId);
+        const queue = queueFor(request.params.projectId);
+        if (!queue.get(queueId)) throw new AppError('QUEUE_NOT_FOUND', '队列请求不存在', 404);
+        const body = readInput(request);
+        if (body.confirmed !== true || Object.keys(body).some((key) => key !== 'confirmed')) {
+          throw new AppError('STOP_REQUEST_INVALID', '停止请求必须确认且不能包含额外字段', 400);
+        }
+        const result = await options.dispatcher.stopRequest(request.params.projectId, queueId);
+        return reply
+          .status(result.status === 'running' && result.stopRequestedAt ? 202 : 200)
+          .send({ queue: result });
+      },
+    );
     routes.get<{ Params: { projectId: string; queueId: string } }>(
       '/api/projects/:projectId/queue/:queueId',
       async (request) => {
@@ -216,7 +252,13 @@ export async function registerProjectRunRoutes(
       async (request) => {
         const run = await readRun(request.params.projectId, request.params.runId);
         if (!run) throw new AppError('RUN_NOT_FOUND', 'Run 不存在', 404);
-        return { run };
+        return {
+          run,
+          queue:
+            queueFor(request.params.projectId)
+              .list()
+              .find((item) => item.runId === run.runId) ?? null,
+        };
       },
     );
     routes.get<{ Params: { projectId: string; runId: string; objectId: string } }>(

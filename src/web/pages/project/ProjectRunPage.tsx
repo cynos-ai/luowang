@@ -1,6 +1,11 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 
-import type { EvidenceReference, IndexedReport, OperationsRunDetail } from '../../../shared/types';
+import type {
+  EvidenceReference,
+  IndexedReport,
+  OperationsRunDetail,
+  OperationsQueueItem,
+} from '../../../shared/types';
 import { screenshotInspectionLabel } from '../../../shared/types';
 import { requestJson, toUserMessage } from '../../api';
 import { AppLink } from '../../app/navigation';
@@ -11,6 +16,7 @@ import { AsyncRegion } from '../../components/AsyncRegion';
 import { MarkdownView } from '../../components/MarkdownView';
 import { PageHeading } from '../../components/PageHeading';
 import { StatusLabel } from '../../components/StatusLabel';
+import { StopRequestButton } from '../../components/StopRequestButton';
 
 const tabLabels: Record<RunDetailTab, string> = {
   summary: '摘要',
@@ -21,7 +27,11 @@ const tabLabels: Record<RunDetailTab, string> = {
   technical: '技术信息',
 };
 
-type RunPageData = { run: OperationsRunDetail; report: IndexedReport | null };
+type RunPageData = {
+  run: OperationsRunDetail;
+  report: IndexedReport | null;
+  queue: OperationsQueueItem | null;
+};
 
 export function ProjectRunPage({
   projectId,
@@ -34,10 +44,10 @@ export function ProjectRunPage({
 }) {
   const load = useCallback(
     async (signal: AbortSignal): Promise<RunPageData> => {
-      const run = await requestJson<{ run: OperationsRunDetail }>(
-        `/api/projects/${projectId}/runs/${encodeURIComponent(runId)}`,
-        { signal },
-      );
+      const run = await requestJson<{
+        run: OperationsRunDetail;
+        queue?: OperationsQueueItem | null;
+      }>(`/api/projects/${projectId}/runs/${encodeURIComponent(runId)}`, { signal });
       let report: IndexedReport | null = null;
       try {
         report = (
@@ -49,7 +59,7 @@ export function ProjectRunPage({
       } catch (cause) {
         if (signal.aborted) throw cause;
       }
-      return { run: run.run, report };
+      return { run: run.run, report, queue: run.queue ?? null };
     },
     [projectId, runId],
   );
@@ -57,9 +67,26 @@ export function ProjectRunPage({
     toUserMessage(cause, '测试记录读取失败'),
   );
   const data = resource.value;
+  const active = data?.queue?.status === 'running' || data?.queue?.status === 'queued';
+  useEffect(() => {
+    if (!active) return;
+    const timer = setInterval(resource.reload, 3000);
+    return () => clearInterval(timer);
+  }, [active, resource.reload]);
   return (
     <section className="page-content run-detail-page">
       <PageHeading title={`测试 ${shortId(runId)}`} scope="当前项目 · 测试记录" />
+      {data?.queue && active && (
+        <StopRequestButton
+          projectId={projectId}
+          queueId={data.queue.queueId}
+          runId={runId}
+          queued={data.queue.status === 'queued'}
+          requested={data.queue.stopRequestedAt}
+          onChanged={resource.reload}
+        />
+      )}
+      {data && resource.error && <p role="alert">刷新失败，以下为上次读取记录：{resource.error}</p>}
       <div className="page-body run-detail-layout">
         <nav className="detail-tabs" aria-label="测试记录详情">
           {runDetailTabs.map((key) => (
@@ -445,6 +472,8 @@ function Fact({ label, value, mono = false }: { label: string; value: string; mo
   );
 }
 function resultLabel(run: OperationsRunDetail) {
+  if (run.stopRequestedAt && run.status === 'running') return '正在停止与收尾';
+  if (run.stopReason === 'user_requested' && run.status === 'interrupted') return '管理员已停止';
   if (run.status === 'running') return '执行中';
   if (run.status === 'interrupted') return '已中断';
   return run.result ? { passed: '通过', failed: '失败', blocked: '阻塞' }[run.result] : '无结论';

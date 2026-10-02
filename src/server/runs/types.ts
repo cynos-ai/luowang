@@ -62,6 +62,7 @@ export interface RunContext {
 }
 
 export interface AgentSessionInput {
+  signal?: AbortSignal;
   role: AgentRole;
   sessionKind: AgentSessionKind;
   config: AgentConfig;
@@ -110,6 +111,8 @@ export interface RunDetailSnapshot extends RunSnapshot {
 
 export interface RunState extends RunSnapshot {
   completion?: Promise<void>;
+  stopController?: AbortController;
+  completionCommitted?: boolean;
 }
 
 export type RunProgressListener = (run: RunSnapshot) => void;

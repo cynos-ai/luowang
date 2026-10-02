@@ -10,6 +10,8 @@ export interface InterruptedRunRecord extends RunSummary {
 }
 
 export interface RunRecoveryStore {
+  checkpoint?(run: RunSummary): void;
+  readCheckpoint?(runId: string): RunSummary | null;
   record(
     run: RunSummary,
     options?: { interruptedAt?: string; runningDirectory?: string | null },
@@ -42,6 +44,36 @@ export function createProjectRunRecoveryStore(
 }
 
 class SqliteRunRecoveryStore implements RunRecoveryStore {
+  private supportsCheckpoint(): boolean {
+    return Boolean(
+      this.projectId &&
+      this.database
+        .prepare(
+          "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'active_run_snapshots'",
+        )
+        .get(),
+    );
+  }
+
+  checkpoint(run: RunSummary): void {
+    if (!this.supportsCheckpoint()) return;
+    this.database
+      .prepare(
+        `INSERT INTO active_run_snapshots (run_id, project_id, snapshot_json)
+      VALUES (?, ?, ?) ON CONFLICT(run_id) DO UPDATE SET snapshot_json = excluded.snapshot_json
+      WHERE active_run_snapshots.project_id = excluded.project_id`,
+      )
+      .run(run.runId, this.projectId!, JSON.stringify(run));
+  }
+
+  readCheckpoint(runId: string): RunSummary | null {
+    if (!this.supportsCheckpoint()) return null;
+    const row = this.database
+      .prepare('SELECT snapshot_json FROM active_run_snapshots WHERE run_id = ? AND project_id = ?')
+      .get(runId, this.projectId!) as { snapshot_json: string } | undefined;
+    return row ? parseJson<RunSummary | null>(row.snapshot_json, null) : null;
+  }
+
   constructor(
     private readonly database: Database.Database,
     private readonly now: () => string,
@@ -53,6 +85,13 @@ class SqliteRunRecoveryStore implements RunRecoveryStore {
     options: { interruptedAt?: string; runningDirectory?: string | null } = {},
   ): void {
     if (run.status !== 'interrupted') return;
+    this.database.transaction(() => this.writeRecord(run, options))();
+  }
+
+  private writeRecord(
+    run: RunSummary,
+    options: { interruptedAt?: string; runningDirectory?: string | null },
+  ): void {
     const timestamp = options.interruptedAt ?? this.now();
     const runningDirectory = options.runningDirectory ?? null;
     if (this.projectId) {
@@ -99,6 +138,18 @@ class SqliteRunRecoveryStore implements RunRecoveryStore {
         ...(this.projectId ? [this.projectId] : []),
       );
     if (this.projectId && result.changes === 0) throw new Error('Run 归属其他项目');
+    if (
+      (
+        this.database.prepare('PRAGMA table_info(interrupted_run_records)').all() as Array<{
+          name: string;
+        }>
+      ).some((column) => column.name === 'snapshot_json')
+    ) {
+      this.database
+        .prepare('UPDATE interrupted_run_records SET snapshot_json = ? WHERE run_id = ?')
+        .run(JSON.stringify(run), run.runId);
+    }
+    this.removeCheckpoint(run.runId);
   }
 
   get(runId: string): InterruptedRunRecord | null {
@@ -125,6 +176,7 @@ class SqliteRunRecoveryStore implements RunRecoveryStore {
   }
 
   remove(runId: string): void {
+    this.removeCheckpoint(runId);
     this.database
       .prepare(
         this.projectId
@@ -133,9 +185,17 @@ class SqliteRunRecoveryStore implements RunRecoveryStore {
       )
       .run(...(this.projectId ? [runId, this.projectId] : [runId]));
   }
+
+  private removeCheckpoint(runId: string): void {
+    if (this.supportsCheckpoint())
+      this.database
+        .prepare('DELETE FROM active_run_snapshots WHERE run_id = ? AND project_id = ?')
+        .run(runId, this.projectId!);
+  }
 }
 
 interface RecoveryRow {
+  snapshot_json?: string | null;
   run_id: string;
   trigger: string;
   request: string;
@@ -151,6 +211,7 @@ interface RecoveryRow {
 
 function toInterruptedRun(row: RecoveryRow): InterruptedRunRecord {
   return {
+    ...(row.snapshot_json ? parseJson<Partial<RunSummary>>(row.snapshot_json, {}) : {}),
     runId: row.run_id,
     status: 'interrupted',
     phase: 'interrupted',

@@ -16,6 +16,7 @@ import { ConfirmDialog } from '../../components/ConfirmDialog';
 import { Field } from '../../components/FormControls';
 import { PageHeading } from '../../components/PageHeading';
 import { StatusLabel } from '../../components/StatusLabel';
+import { StopRequestButton } from '../../components/StopRequestButton';
 import type { ProjectDetailResponse } from '../../project-types';
 
 type TestPageData = {
@@ -151,6 +152,24 @@ export function ProjectTestPage({ projectId }: { projectId: string }) {
           error={!data ? resource.error : ''}
           onRetry={resource.reload}
         >
+          {data &&
+            data.queue
+              .filter((item) => item.status === 'queued' || item.status === 'running')
+              .map((item) => (
+                <div key={item.queueId} className="content-block">
+                  <p>
+                    请求 #{item.queueId} · {item.runId ?? '尚未创建 Run'}
+                  </p>
+                  <StopRequestButton
+                    projectId={projectId}
+                    queueId={item.queueId}
+                    runId={item.runId}
+                    queued={item.status === 'queued'}
+                    requested={item.stopRequestedAt}
+                    onChanged={resource.reload}
+                  />
+                </div>
+              ))}
           {data && (
             <TestState
               projectId={projectId}

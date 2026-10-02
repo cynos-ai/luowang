@@ -22,6 +22,7 @@ import { migrateProjectQueueContext } from '../src/server/db/migrations/0014-pro
 import { migrateProjectImageState } from '../src/server/db/migrations/0015-project-image-state.js';
 import { migrateProjectRunImage } from '../src/server/db/migrations/0016-project-run-image.js';
 import { migrateProjectReportIndexIdentity } from '../src/server/db/migrations/0017-project-report-index-identity.js';
+import { migrateRunStop } from '../src/server/db/migrations/0018-run-stop.js';
 import { createProjectApp } from '../src/server/projects/app.js';
 import { createProjectTestRequestQueue } from '../src/server/automation/queue.js';
 import { createProjectRunStore } from '../src/server/runs/store.js';
@@ -55,6 +56,7 @@ it('uses only new-schema administration routes, scoped Secrets, and the existing
   migrateProjectImageState(database.sqlite);
   migrateProjectRunImage(database.sqlite);
   migrateProjectReportIndexIdentity(database.sqlite);
+  migrateRunStop(database.sqlite);
   database.sqlite
     .prepare(
       `INSERT INTO system_metadata (key, value, created_at, updated_at)
@@ -76,6 +78,8 @@ it('uses only new-schema administration routes, scoped Secrets, and the existing
       name: url.endsWith('/a') ? 'a' : 'b',
     }),
     dispatcher: {
+      stopRequest: async (projectId, queueId) =>
+        createProjectTestRequestQueue(database.sqlite, projectId).requestStop(queueId),
       enqueue: (projectId, input) =>
         createProjectTestRequestQueue(database.sqlite, projectId).enqueue(input),
       drain: async () => {
@@ -587,6 +591,54 @@ it('uses only new-schema administration routes, scoped Secrets, and the existing
     assert.equal(merged.json().queue.requestKind, 'manual-merge-source');
     assert.equal(merged.json().queue.projectId, projectId);
     assert.equal(drains, 2);
+    const stopUrl = `/api/projects/${projectId}/queue/${queueId}/stop`;
+    assert.equal(
+      (await app.inject({ method: 'POST', url: stopUrl, payload: { confirmed: true } })).statusCode,
+      401,
+    );
+    assert.equal(
+      (
+        await app.inject({
+          method: 'POST',
+          url: stopUrl,
+          headers: { ...headers, origin: 'https://other.example' },
+          payload: { confirmed: true },
+        })
+      ).statusCode,
+      403,
+    );
+    assert.equal(
+      (
+        await app.inject({
+          method: 'POST',
+          url: `/api/projects/${projectB}/queue/${queueId}/stop`,
+          headers,
+          payload: { confirmed: true },
+        })
+      ).statusCode,
+      404,
+    );
+    for (const payload of [{}, { confirmed: false }, { confirmed: true, runId: 'foreign' }]) {
+      assert.equal(
+        (await app.inject({ method: 'POST', url: stopUrl, headers, payload })).statusCode,
+        400,
+      );
+    }
+    const stopped = await app.inject({
+      method: 'POST',
+      url: stopUrl,
+      headers,
+      payload: { confirmed: true },
+    });
+    assert.equal(stopped.statusCode, 200);
+    assert.equal(stopped.json().queue.status, 'interrupted');
+    assert.equal(stopped.json().queue.runId, null);
+    assert.deepEqual(
+      (
+        await app.inject({ method: 'POST', url: stopUrl, headers, payload: { confirmed: true } })
+      ).json(),
+      stopped.json(),
+    );
     assert.equal(
       (
         await app.inject({

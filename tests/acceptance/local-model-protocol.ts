@@ -15,6 +15,8 @@ import type {
 } from '../../src/server/runs/types.js';
 
 export type LocalModelBehavior =
+  | 'stall'
+  | 'browser-stall'
   | 'model-error'
   | 'missing-plan'
   | 'normal'
@@ -48,6 +50,7 @@ export interface LocalPiSessionRecord {
 }
 
 export interface LocalModelProtocol {
+  abortedRequests: number;
   sessions: LocalPiSessionRecord[];
   observedToolResults: Set<string>;
   requestCount: number;
@@ -125,9 +128,16 @@ export async function startLocalModelProtocol(
   const productionFactory = createPiAgentSessionFactory({ provider });
   const sessions: LocalPiSessionRecord[] = [];
   const recordingFactory = new RecordingProductionFactory(productionFactory, sessions);
-  const protocolState = { requestCount: 0, observedToolResults: new Set<string>() };
+  const protocolState = {
+    requestCount: 0,
+    abortedRequests: 0,
+    observedToolResults: new Set<string>(),
+  };
 
   return {
+    get abortedRequests() {
+      return protocolState.abortedRequests;
+    },
     sessions,
     observedToolResults: protocolState.observedToolResults,
     get requestCount() {
@@ -135,6 +145,7 @@ export async function startLocalModelProtocol(
     },
     sessionFactory: recordingFactory,
     close: async () => {
+      server.closeAllConnections();
       await new Promise<void>((resolve, reject) =>
         server.close((error) => (error ? reject(error) : resolve())),
       );
@@ -231,7 +242,7 @@ async function handleRequest(
   request: IncomingMessage,
   response: ServerResponse,
   behavior: LocalModelBehavior,
-  state: { requestCount: number; observedToolResults: Set<string> },
+  state: { requestCount: number; abortedRequests: number; observedToolResults: Set<string> },
 ): Promise<void> {
   if (request.method !== 'POST' || request.url !== '/v1/chat/completions') {
     response.writeHead(404).end();
@@ -239,6 +250,19 @@ async function handleRequest(
   }
   state.requestCount += 1;
   const body = JSON.parse(await readBody(request)) as ChatRequest;
+  if (
+    behavior === 'stall' ||
+    (behavior === 'browser-stall' && body.messages?.some((message) => message.role === 'tool'))
+  ) {
+    for (const message of body.messages ?? [])
+      if (message.role === 'tool') state.observedToolResults.add(messageText(message));
+    response.on('close', () => {
+      state.abortedRequests++;
+    });
+    response.writeHead(200, { 'content-type': 'text/event-stream' });
+    response.flushHeaders();
+    return;
+  }
   const toolNames = (body.tools ?? [])
     .map((tool) => tool.function?.name)
     .filter((name): name is string => Boolean(name));
@@ -345,6 +369,12 @@ function nextTool(
   behavior: LocalModelBehavior,
   sourceReferences: Array<{ receiptId: string; coverage: 'returned-range' }>,
 ): NextTool | null {
+  if (behavior === 'browser-stall')
+    return tool('mcp', {
+      server: 'playwright',
+      tool: 'browser_navigate',
+      args: { url: 'about:blank' },
+    });
   if (behavior === 'missing-plan' || behavior === 'model-error') return null;
   if (behavior === 'invalid-tool') {
     if (called.length === 0) {

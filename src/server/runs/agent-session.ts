@@ -53,8 +53,11 @@ class PiAgentSessionFactory implements AgentSessionFactory {
   constructor(private readonly provider: ProviderAdapter) {}
 
   async create(input: AgentSessionInput): Promise<AgentSession> {
+    input.signal?.throwIfAborted();
     const model = await this.provider.resolveModel(input.role);
+    input.signal?.throwIfAborted();
     const runtime = await this.provider.getRuntime();
+    input.signal?.throwIfAborted();
     const settings = SettingsManager.inMemory({
       defaultProvider: model.provider,
       defaultModel: model.id,
@@ -76,11 +79,21 @@ class PiAgentSessionFactory implements AgentSessionFactory {
       noPromptTemplates: true,
       noThemes: true,
       noContextFiles: true,
-      extensionFactories: input.extensionFactories ?? [],
+      extensionFactories: [
+        ...(input.extensionFactories ?? []),
+        (api) => {
+          api.on('tool_call', () =>
+            input.signal?.aborted
+              ? { block: true, reason: '管理员已停止测试，拒绝新操作' }
+              : undefined,
+          );
+        },
+      ],
       systemPrompt: input.systemPrompt,
       appendSystemPrompt: [],
     });
     await resourceLoader.reload();
+    input.signal?.throwIfAborted();
     const { session } = await createAgentSession({
       cwd: input.cwd,
       model,
@@ -90,18 +103,39 @@ class PiAgentSessionFactory implements AgentSessionFactory {
       settingsManager: settings,
       resourceLoader,
       noTools: 'builtin',
-      customTools: input.customTools,
+      customTools: input.customTools.map((tool) => ({
+        ...tool,
+        execute: (id, parameters, signal, update, context) => {
+          input.signal?.throwIfAborted();
+          return tool.execute(
+            id,
+            parameters,
+            input.signal ? AbortSignal.any([input.signal, ...(signal ? [signal] : [])]) : signal,
+            update,
+            context,
+          );
+        },
+      })),
     });
     // The SDK creates the extension registry but does not bind it automatically.
     // Binding emits session_start, which initializes session-scoped extensions
     // such as the Playwright MCP adapter before the first prompt is handled.
-    await session.bindExtensions({ mode: 'print' });
-    return new ManagedAgentSession(session, model.provider, model.id);
+    const managed = new ManagedAgentSession(session, model.provider, model.id, input.signal);
+    try {
+      input.signal?.throwIfAborted();
+      await session.bindExtensions({ mode: 'print' });
+      input.signal?.throwIfAborted();
+      return managed;
+    } catch (error) {
+      await managed.dispose();
+      throw error;
+    }
   }
 }
 
 class ManagedAgentSession implements AgentSession {
   private disposed = false;
+  private disposal: Promise<void> | undefined;
   readonly sessionId: string;
 
   constructor(
@@ -109,6 +143,7 @@ class ManagedAgentSession implements AgentSession {
       sessionId: string;
       readonly messages: ReadonlyArray<{ role: string; stopReason?: string }>;
       prompt(message: string): Promise<void>;
+      abort(): Promise<void>;
       getSessionStats(): {
         tokens: AgentSessionUsage['tokens'];
         cost: number;
@@ -120,6 +155,7 @@ class ManagedAgentSession implements AgentSession {
     },
     private readonly provider: string,
     private readonly model: string,
+    private readonly signal?: AbortSignal,
   ) {
     this.sessionId = session.sessionId;
   }
@@ -136,7 +172,24 @@ class ManagedAgentSession implements AgentSession {
 
   async prompt(message: string): Promise<void> {
     if (this.disposed) throw new Error('Agent session 已释放');
-    await this.session.prompt(message);
+    this.signal?.throwIfAborted();
+    let force: ReturnType<typeof setTimeout> | undefined;
+    const stop = () => {
+      // abort reaches the SDK request/tool signal; dispose alone is not cancellation.
+      void this.session.abort().catch(() => undefined);
+      force = setTimeout(() => {
+        void this.dispose().catch(() => undefined);
+      }, 30_000);
+      force.unref();
+    };
+    this.signal?.addEventListener('abort', stop, { once: true });
+    try {
+      await this.session.prompt(message);
+      this.signal?.throwIfAborted();
+    } finally {
+      this.signal?.removeEventListener('abort', stop);
+      if (force) clearTimeout(force);
+    }
     // Pi may resolve prompt() after a failed response. Inspect its final state
     // after retries; never expose errorMessage or assistant content.
     const last = this.session.messages.at(-1);
@@ -149,15 +202,23 @@ class ManagedAgentSession implements AgentSession {
   }
 
   async dispose(): Promise<void> {
-    if (this.disposed) return;
+    if (this.disposal) return this.disposal;
     this.disposed = true;
+    this.disposal = (async () => {
+      try {
+        // AgentSession.dispose() is synchronous and does not await async
+        // extension shutdown handlers. MCP owns a child process whose cwd is the
+        // Run evidence directory, so wait for session_shutdown before cleanup.
+        await this.session.extensionRunner.emit({ type: 'session_shutdown', reason: 'quit' });
+      } finally {
+        this.session.dispose();
+      }
+    })();
     try {
-      // AgentSession.dispose() is synchronous and does not await async
-      // extension shutdown handlers. MCP owns a child process whose cwd is the
-      // Run evidence directory, so wait for session_shutdown before cleanup.
-      await this.session.extensionRunner.emit({ type: 'session_shutdown', reason: 'quit' });
-    } finally {
-      this.session.dispose();
+      await this.disposal;
+    } catch (error) {
+      this.disposal = undefined;
+      throw error;
     }
   }
 }

@@ -6,6 +6,7 @@ export function ConfirmDialog({
   message,
   confirmLabel = '确认',
   danger = false,
+  error,
   onConfirm,
   onClose,
 }: {
@@ -14,6 +15,7 @@ export function ConfirmDialog({
   message: string;
   confirmLabel?: string;
   danger?: boolean;
+  error?: string;
   onConfirm: () => void;
   onClose: () => void;
 }) {
@@ -35,6 +37,7 @@ export function ConfirmDialog({
     >
       <h2>{title}</h2>
       <p>{message}</p>
+      {error && <p role="alert">{error}</p>}
       <div className="dialog-actions">
         <button className="button button-secondary" type="button" onClick={onClose}>
           返回

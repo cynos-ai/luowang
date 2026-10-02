@@ -14,6 +14,54 @@ import { assertLegacySchema, assertProjectSchema } from '../src/server/projects/
 afterEach(() => vi.unstubAllGlobals());
 
 describe('offline multi-project upgrade command', () => {
+  it('backs up schema 0017 before reliability migration and leaves a readable rollback copy', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'luowang-upgrade-stop-'));
+    const databasePath = join(root, 'luowang.db');
+    const database = new Database(databasePath);
+    const environment = { LUOWANG_DATA_DIR: root, LUOWANG_DATABASE_PATH: databasePath };
+    try {
+      runMigrations(database);
+      await runUpgradeCli(['backup', join(root, 'legacy')], environment);
+      await runUpgradeCli(['upgrade-empty', join(root, 'legacy')], environment);
+      database.exec(`DROP TABLE active_run_snapshots;
+        ALTER TABLE test_request_queue DROP COLUMN stop_requested_at;
+        ALTER TABLE test_request_queue DROP COLUMN stop_reason;
+        ALTER TABLE interrupted_run_records DROP COLUMN snapshot_json;
+        DELETE FROM schema_migrations WHERE version = '0018_run_stop';`);
+      const before = database.prepare('SELECT * FROM system_metadata ORDER BY key').all();
+      const backup = join(root, 'reliability');
+      assert.equal(
+        (await runUpgradeCli(['upgrade-reliability', backup], environment)).status,
+        'complete',
+      );
+      assert.deepEqual(
+        database.prepare('SELECT * FROM system_metadata ORDER BY key').all(),
+        before,
+      );
+      assert.equal(
+        (await runUpgradeCli(['upgrade-reliability', join(root, 'unused')], environment)).status,
+        'already_complete',
+      );
+      assert.equal(existsSync(join(root, 'unused')), false);
+      const old = new Database(join(backup, 'luowang-before-reliability-0018.db'), {
+        readonly: true,
+      });
+      try {
+        assertProjectSchema(old);
+        assert.deepEqual(old.prepare('SELECT * FROM system_metadata ORDER BY key').all(), before);
+        assert.equal(
+          old.prepare("SELECT 1 FROM schema_migrations WHERE version = '0018_run_stop'").get(),
+          undefined,
+        );
+      } finally {
+        old.close();
+      }
+    } finally {
+      database.close();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it('backs up an empty file database, upgrades it and blocks the legacy service', async () => {
     const root = await mkdtemp(join(tmpdir(), 'luowang-upgrade-cli-'));
     const databasePath = join(root, 'luowang.db');

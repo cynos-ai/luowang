@@ -16,6 +16,7 @@ const BODY_TOKENS = new Set([
 ]);
 
 export interface ControlledHttpOptions {
+  signal?: AbortSignal;
   baseUrl: string;
   cleanupUrl?: string;
   runId: string;
@@ -77,12 +78,16 @@ export function createControlledHttpTools(options: ControlledHttpOptions): ToolD
     headers: Record<string, string>,
     body?: string,
   ) => {
+    options.signal?.throwIfAborted();
     const response = await request(url, {
       method,
       headers,
       body,
       redirect: 'manual',
-      signal: AbortSignal.timeout(10_000),
+      signal: AbortSignal.any([
+        AbortSignal.timeout(10_000),
+        ...(options.signal ? [options.signal] : []),
+      ]),
     });
     for (const header of response.headers.getSetCookie()) {
       const pair = header.split(';', 1)[0];
