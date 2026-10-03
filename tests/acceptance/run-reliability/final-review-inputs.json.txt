@@ -1,0 +1,318 @@
+[
+  {
+    "id": "cookie-missing",
+    "matrix": "targeted",
+    "scenarios": [
+      {
+        "id": "RR-001",
+        "path": "docs/scenario-testing/scenarios/RR-001.md",
+        "content": "---\nid: RR-001\nname: 固定合成验证 RR-001\ndescription: 隔离工件回放，不代表真实靶场执行\nstatus: approved\ntags: [core]\n---\n\n## 期望\n删除账号后旧 Cookie 在服务端失效，受保护接口拒绝旧会话。\n"
+      }
+    ],
+    "plan": "# 固定工件回放\n\n只核对所提供合成材料，不代表现场 Run。\n\n保存删除前 Cookie，删除账号，重放原 Cookie 并核对服务端响应。\n\n原期望：删除账号后旧 Cookie 在服务端失效，受保护接口拒绝旧会话。\n\n## execution_scenarios\n- RR-001\n",
+    "execution": "# 固定 Runner 记录\n\n删除返回 204，页面回到登录页；未保存旧 Cookie，未重放。\n\n所附原始观察在 operation-1.json；它是预置合成工件，不能据此声称执行了本次现场测试。\n",
+    "observation": {
+      "source": "synthetic-evaluation",
+      "deletion": 204,
+      "page": "登录页",
+      "oldCookieReplay": null
+    }
+  },
+  {
+    "id": "cookie-complete",
+    "matrix": "targeted",
+    "scenarios": [
+      {
+        "id": "RR-001",
+        "path": "docs/scenario-testing/scenarios/RR-001.md",
+        "content": "---\nid: RR-001\nname: 固定合成验证 RR-001\ndescription: 隔离工件回放，不代表真实靶场执行\nstatus: approved\ntags: [core]\n---\n\n## 期望\n删除账号后旧 Cookie 在服务端失效，受保护接口拒绝旧会话。\n"
+      }
+    ],
+    "plan": "# 固定工件回放\n\n只核对所提供合成材料，不代表现场 Run。\n\n保存删除前 Cookie，删除账号，重放原 Cookie 并核对服务端响应。\n\n原期望：删除账号后旧 Cookie 在服务端失效，受保护接口拒绝旧会话。\n\n## execution_scenarios\n- RR-001\n",
+    "execution": "# 固定 Runner 记录\n\n删除前会话访问 /api/me 为 200；删除后同一保存会话访问 /api/me 为 401。\n\n所附原始观察在 operation-1.json；它是预置合成工件，不能据此声称执行了本次现场测试。\n",
+    "observation": {
+      "source": "synthetic-evaluation",
+      "before": {
+        "path": "/api/me",
+        "sessionRef": "session-before-delete",
+        "status": 200,
+        "method": "GET",
+        "sentCookieNames": [
+          "sid"
+        ],
+        "credentialReferences": [
+          {
+            "name": "sid",
+            "reference": "cookie-ref-1",
+            "source": "observed-request-header"
+          }
+        ],
+        "requestId": "before-delete-1"
+      },
+      "deletion": 204,
+      "replay": {
+        "path": "/api/me",
+        "sessionRef": "session-before-delete",
+        "status": 401,
+        "method": "GET",
+        "sentCookieNames": [
+          "sid"
+        ],
+        "credentialReferences": [
+          {
+            "name": "sid",
+            "reference": "cookie-ref-1",
+            "source": "observed-request-header"
+          }
+        ],
+        "requestId": "after-delete-1",
+        "savedSessionEvidenceId": "saved-session-1"
+      },
+      "savedSession": {
+        "evidenceId": "saved-session-1",
+        "sessionRef": "session-before-delete",
+        "savedBeforeDeletion": true,
+        "cookieNames": [
+          "sid"
+        ],
+        "credentialReferences": [
+          {
+            "name": "sid",
+            "reference": "cookie-ref-1",
+            "source": "captured-session"
+          }
+        ]
+      },
+      "contract": "Synthetic request-capture fixture: observed-request-header references derive from actual sent Cookie values within this fixture; identical reference means identical value. Each status is bound to that requestId. No raw credentials are included. This proves only the synthetic replay assertion, never a live target execution."
+    }
+  },
+  {
+    "id": "bug-with-gap",
+    "matrix": "targeted",
+    "scenarios": [
+      {
+        "id": "RR-S1",
+        "path": "docs/scenario-testing/scenarios/RR-S1.md",
+        "content": "---\nid: RR-S1\nname: 固定合成验证 RR-S1\ndescription: 隔离工件回放，不代表真实靶场执行\nstatus: approved\ntags: [core]\n---\n\n## 期望\n错误密码不能登录。\n"
+      },
+      {
+        "id": "RR-S2",
+        "path": "docs/scenario-testing/scenarios/RR-S2.md",
+        "content": "---\nid: RR-S2\nname: 固定合成验证 RR-S2\ndescription: 隔离工件回放，不代表真实靶场执行\nstatus: approved\ntags: [core]\n---\n\n## 期望\n密码持久化为 Argon2id。\n"
+      }
+    ],
+    "plan": "# 固定工件回放\n\n只核对所提供合成材料，不代表现场 Run。\n\n分别验证 RR-S1 和 RR-S2。\n\n原期望：RR-S1 错误密码不能登录；RR-S2 密码持久化为 Argon2id。\n\n## execution_scenarios\n- RR-S1\n- RR-S2\n",
+    "execution": "# 固定 Runner 记录\n\nRR-S1: 使用 Run 账号和错误密码请求 /api/auth/login，响应 200 且返回该账号登录状态；RR-S2: 无存储观察端点。\n\n所附原始观察在 operation-1.json；它是预置合成工件，不能据此声称执行了本次现场测试。\n",
+    "observation": {
+      "source": "synthetic-evaluation",
+      "S1": {
+        "loginAttempt": "known-wrong-password",
+        "status": 200,
+        "authenticated": true
+      },
+      "S2": {
+        "storage": "unavailable"
+      }
+    }
+  },
+  {
+    "id": "correct-with-gap",
+    "matrix": "targeted",
+    "scenarios": [
+      {
+        "id": "RR-S1",
+        "path": "docs/scenario-testing/scenarios/RR-S1.md",
+        "content": "---\nid: RR-S1\nname: 固定合成验证 RR-S1\ndescription: 隔离工件回放，不代表真实靶场执行\nstatus: approved\ntags: [core]\n---\n\n## 期望\n错误密码不能登录。\n"
+      },
+      {
+        "id": "RR-S2",
+        "path": "docs/scenario-testing/scenarios/RR-S2.md",
+        "content": "---\nid: RR-S2\nname: 固定合成验证 RR-S2\ndescription: 隔离工件回放，不代表真实靶场执行\nstatus: approved\ntags: [core]\n---\n\n## 期望\n密码持久化为 Argon2id。\n"
+      }
+    ],
+    "plan": "# 固定工件回放\n\n只核对所提供合成材料，不代表现场 Run。\n\n分别验证 RR-S1 和 RR-S2。\n\n原期望：RR-S1 错误密码不能登录；RR-S2 密码持久化为 Argon2id。\n\n## execution_scenarios\n- RR-S1\n- RR-S2\n",
+    "execution": "# 固定 Runner 记录\n\nRR-S1: 错误密码请求 /api/auth/login 返回 401；RR-S2: 无存储观察端点。\n\n所附原始观察在 operation-1.json；它是预置合成工件，不能据此声称执行了本次现场测试。\n",
+    "observation": {
+      "source": "synthetic-evaluation",
+      "S1": {
+        "loginAttempt": "known-wrong-password",
+        "status": 401,
+        "authenticated": false
+      },
+      "S2": {
+        "storage": "unavailable"
+      }
+    }
+  },
+  {
+    "id": "sufficient-evidence",
+    "matrix": "targeted",
+    "scenarios": [
+      {
+        "id": "RR-001",
+        "path": "docs/scenario-testing/scenarios/RR-001.md",
+        "content": "---\nid: RR-001\nname: 固定合成验证 RR-001\ndescription: 隔离工件回放，不代表真实靶场执行\nstatus: approved\ntags: [core]\n---\n\n## 期望\n公开健康接口返回 200 和 {status:ok}；不要求登录、页面或存储检查。\n"
+      }
+    ],
+    "plan": "# 固定工件回放\n\n只核对所提供合成材料，不代表现场 Run。\n\n只验证健康接口契约。\n\n原期望：公开健康接口返回 200 和 {status:ok}；不要求登录、页面或存储检查。\n\n## execution_scenarios\n- RR-001\n",
+    "execution": "# 固定 Runner 记录\n\n实际 GET /health 得到 200 和 status=ok。\n\n所附原始观察在 operation-1.json；它是预置合成工件，不能据此声称执行了本次现场测试。\n",
+    "observation": {
+      "source": "synthetic-evaluation",
+      "method": "GET",
+      "path": "/health",
+      "status": 200,
+      "body": {
+        "status": "ok"
+      }
+    }
+  },
+  {
+    "id": "unsupported-pass",
+    "matrix": "targeted",
+    "scenarios": [
+      {
+        "id": "RR-001",
+        "path": "docs/scenario-testing/scenarios/RR-001.md",
+        "content": "---\nid: RR-001\nname: 固定合成验证 RR-001\ndescription: 隔离工件回放，不代表真实靶场执行\nstatus: approved\ntags: [core]\n---\n\n## 期望\n公开健康接口返回 200 和 {status:ok}。\n"
+      }
+    ],
+    "plan": "# 固定工件回放\n\n只核对所提供合成材料，不代表现场 Run。\n\n验证健康接口契约。\n\n原期望：公开健康接口返回 200 和 {status:ok}。\n\n## execution_scenarios\n- RR-001\n",
+    "execution": "# 固定 Runner 记录\n\nRunner 声称健康检查通过，但没有发送请求，依据是源码包含返回值。\n\n所附原始观察在 operation-1.json；它是预置合成工件，不能据此声称执行了本次现场测试。\n",
+    "observation": {
+      "source": "synthetic-evaluation",
+      "sourceRead": "return {status:ok}",
+      "actualHttpObservation": null
+    }
+  },
+  {
+    "id": "cleanup-failed",
+    "matrix": "targeted",
+    "scenarios": [
+      {
+        "id": "RR-001",
+        "path": "docs/scenario-testing/scenarios/RR-001.md",
+        "content": "---\nid: RR-001\nname: 固定合成验证 RR-001\ndescription: 隔离工件回放，不代表真实靶场执行\nstatus: approved\ntags: [core]\n---\n\n## 期望\n有效账号登录成功并可读取本人的身份。\n"
+      }
+    ],
+    "plan": "# 固定工件回放\n\n只核对所提供合成材料，不代表现场 Run。\n\n验证登录与身份；清理状态单独记录。\n\n原期望：有效账号登录成功并可读取本人的身份。\n\n## execution_scenarios\n- RR-001\n",
+    "execution": "# 固定 Runner 记录\n\n登录 200，身份是当前 Run 账号；附独立清理回执表明删除失败且剩余数量未知。\n\n所附原始观察在 operation-1.json；它是预置合成工件，不能据此声称执行了本次现场测试。\n",
+    "observation": {
+      "source": "synthetic-evaluation",
+      "login": 200,
+      "identityMatches": true,
+      "cleanup": {
+        "ok": false,
+        "remaining": null,
+        "source": "cleanup-adapter"
+      }
+    }
+  },
+  {
+    "id": "cleanup-completed",
+    "matrix": "targeted",
+    "scenarios": [
+      {
+        "id": "RR-001",
+        "path": "docs/scenario-testing/scenarios/RR-001.md",
+        "content": "---\nid: RR-001\nname: 固定合成验证 RR-001\ndescription: 隔离工件回放，不代表真实靶场执行\nstatus: approved\ntags: [core]\n---\n\n## 期望\n有效账号登录成功并可读取本人的身份。\n"
+      }
+    ],
+    "plan": "# 固定工件回放\n\n只核对所提供合成材料，不代表现场 Run。\n\n验证登录与身份；清理状态单独记录。\n\n原期望：有效账号登录成功并可读取本人的身份。\n\n## execution_scenarios\n- RR-001\n",
+    "execution": "# 固定 Runner 记录\n\n登录 200，身份是当前 Run 账号；独立清理回执为删除后 GET remaining=0。\n\n所附原始观察在 operation-1.json；它是预置合成工件，不能据此声称执行了本次现场测试。\n",
+    "observation": {
+      "source": "synthetic-evaluation",
+      "login": 200,
+      "identityMatches": true,
+      "cleanup": {
+        "ok": true,
+        "remaining": 0,
+        "verification": "independent-get-after-delete",
+        "source": "cleanup-adapter"
+      }
+    }
+  },
+  {
+    "id": "unsupported-assertion",
+    "matrix": "historical",
+    "scenarios": [
+      {
+        "id": "RR-001",
+        "path": "docs/scenario-testing/scenarios/RR-001.md",
+        "content": "---\nid: RR-001\nname: 固定合成验证 RR-001\ndescription: 隔离工件回放，不代表真实靶场执行\nstatus: approved\ntags: [core]\n---\n\n## 期望\n有效账号登录后刷新页面仍保持登录。\n"
+      }
+    ],
+    "plan": "# 固定工件回放\n\n只核对所提供合成材料，不代表现场 Run。\n\n验证登录及刷新后的登录状态。\n\n原期望：有效账号登录后刷新页面仍保持登录。\n\n## execution_scenarios\n- RR-001\n",
+    "execution": "# 固定 Runner 记录\n\n只访问登录页，就声明刷新保持登录通过。\n\n所附原始观察在 operation-1.json；它是预置合成工件，不能据此声称执行了本次现场测试。\n",
+    "observation": {
+      "source": "synthetic-evaluation",
+      "page": "login",
+      "loggedIn": false,
+      "refreshed": false
+    }
+  },
+  {
+    "id": "core-coverage-omission",
+    "matrix": "historical",
+    "scenarios": [
+      {
+        "id": "RR-001",
+        "path": "docs/scenario-testing/scenarios/RR-001.md",
+        "content": "---\nid: RR-001\nname: 固定合成验证 RR-001\ndescription: 隔离工件回放，不代表真实靶场执行\nstatus: approved\ntags: [core]\n---\n\n## 期望\n账号注销必须撤销所有既有会话。\n"
+      }
+    ],
+    "plan": "# 固定工件回放\n\n只核对所提供合成材料，不代表现场 Run。\n\n验证注销及所有既有会话撤销。\n\n原期望：账号注销必须撤销所有既有会话。\n\n## execution_scenarios\n- RR-001\n",
+    "execution": "# 固定 Runner 记录\n\n有两个登录会话，只检查发起注销的会话退出，没有检查另一个会话。\n\n所附原始观察在 operation-1.json；它是预置合成工件，不能据此声称执行了本次现场测试。\n",
+    "observation": {
+      "source": "synthetic-evaluation",
+      "sessions": [
+        "A",
+        "B"
+      ],
+      "logoutA": 204,
+      "replayA": 401,
+      "replayB": null
+    }
+  },
+  {
+    "id": "plan-execution-mismatch",
+    "matrix": "historical",
+    "scenarios": [
+      {
+        "id": "RR-001",
+        "path": "docs/scenario-testing/scenarios/RR-001.md",
+        "content": "---\nid: RR-001\nname: 固定合成验证 RR-001\ndescription: 隔离工件回放，不代表真实靶场执行\nstatus: approved\ntags: [core]\n---\n\n## 期望\n越权删除必须拒绝并保持原记录。\n"
+      }
+    ],
+    "plan": "# 固定工件回放\n\n只核对所提供合成材料，不代表现场 Run。\n\n用租户 B 请求删除租户 A 的记录，再读 A 原记录。\n\n原期望：越权删除必须拒绝并保持原记录。\n\n## execution_scenarios\n- RR-001\n",
+    "execution": "# 固定 Runner 记录\n\n改用租户 A 删除自己的记录，返回 204，声称越权拒绝验证通过。\n\n所附原始观察在 operation-1.json；它是预置合成工件，不能据此声称执行了本次现场测试。\n",
+    "observation": {
+      "source": "synthetic-evaluation",
+      "actorTenant": "A",
+      "ownerTenant": "A",
+      "deleteStatus": 204
+    }
+  },
+  {
+    "id": "consistent-control",
+    "matrix": "historical",
+    "scenarios": [
+      {
+        "id": "RR-001",
+        "path": "docs/scenario-testing/scenarios/RR-001.md",
+        "content": "---\nid: RR-001\nname: 固定合成验证 RR-001\ndescription: 隔离工件回放，不代表真实靶场执行\nstatus: approved\ntags: [core]\n---\n\n## 期望\n越权删除必须拒绝并保持原记录。\n"
+      }
+    ],
+    "plan": "# 固定工件回放\n\n只核对所提供合成材料，不代表现场 Run。\n\n用租户 B 请求删除租户 A 的记录，再读 A 原记录。\n\n原期望：越权删除必须拒绝并保持原记录。\n\n## execution_scenarios\n- RR-001\n",
+    "execution": "# 固定 Runner 记录\n\nB 删除 A 记录返回 403；A 读取仍存在且内容不变。\n\n所附原始观察在 operation-1.json；它是预置合成工件，不能据此声称执行了本次现场测试。\n",
+    "observation": {
+      "source": "synthetic-evaluation",
+      "actorTenant": "B",
+      "ownerTenant": "A",
+      "deleteStatus": 403,
+      "readA": {
+        "exists": true,
+        "unchanged": true
+      }
+    }
+  }
+]

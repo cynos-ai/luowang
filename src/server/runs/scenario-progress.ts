@@ -80,7 +80,7 @@ class DefaultScenarioProgressController {
             _toolCallId: string,
             params: Static<typeof scenarioParameters>,
           ): Promise<AgentToolResult<Record<string, unknown>>> =>
-            this.execute(() => this.start(params.scenarioId)),
+            this.execute(() => this.start(params.scenarioId), params.scenarioId),
         },
         {
           name: 'finish_scenario',
@@ -91,7 +91,7 @@ class DefaultScenarioProgressController {
             _toolCallId: string,
             params: Static<typeof scenarioParameters>,
           ): Promise<AgentToolResult<Record<string, unknown>>> =>
-            this.execute(() => this.finish(params.scenarioId)),
+            this.execute(() => this.finish(params.scenarioId), params.scenarioId),
         },
       ],
       completionError: () => this.completionError(),
@@ -216,10 +216,17 @@ class DefaultScenarioProgressController {
 
   private async execute(
     operation: () => Record<string, unknown>,
+    scenarioId?: string,
   ): Promise<AgentToolResult<Record<string, unknown>>> {
     try {
       const result = operation();
-      return createTextResult(JSON.stringify(result), result);
+      // Capture the accepted transition before another tool can advance the controller.
+      const progressEvent = {
+        ...this.operationContext(),
+        ...(scenarioId !== undefined ? { scenarioId: scenarioId.trim(), scope: 'scenario' } : {}),
+        at: this.options.state.updatedAt,
+      };
+      return createTextResult(JSON.stringify(result), { ...result, progressEvent });
     } catch (error) {
       return createTextResult(error instanceof Error ? error.message : '场景进度更新失败', {
         error: true,

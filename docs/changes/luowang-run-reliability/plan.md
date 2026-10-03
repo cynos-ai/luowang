@@ -1,7 +1,7 @@
 # 测试运行可靠性与问题处理 Plan
 
 - 日期：2026-10-03
-- 状态：用户已授权完整实施；Phase 0 已集成，Phase 1 开发与验证进行中，Phase 2–6 待实施。
+- 状态：Phase 0–4 已经 PR 集成 develop；Phase 5–6 的实现、完整评测与现场验收已执行，最终 PR #125 待检查后集成。工程验证通过，模型仍有一例重复探测及一例未交付计划，不能声明全部 AC 或模型效果通过；人工评分 not_run。
 - [Intent](intent.md) · [Spec](spec.md)
 
 本计划把前一阶段收尾和六组相关能力组织为一轮完整改进：先集成并行基线，建立停止及持久化边界，再减少无效操作、补上诊断与重测入口，最后验证模型效果和真实运行。交付目标是管理员能完成“看条件、开测试、看进度、停止、处理问题、重测”的日常流程。
@@ -185,3 +185,81 @@
 - 用量继续写入 Harness 私有 `agent-usage.json`（v2，可读取已有 v1 回执；历史时间缺失仍为 null），摘要进入原 Run/recovery 读模型。追加 `0020_run_telemetry` 的 `run_store_runs.telemetry_json`，当前离线升级备份为 `luowang-before-reliability-0020.db`，旧记录无字段为 unknown；原长期实例未升级。中止恢复在运行目录缺失时仍保留 SQLite checkpoint，断电期间阶段结束时间未知。
 - Phase 4 本地 Docker 全量单测 512 passed / 2 skipped、typecheck/lint 退出码 0（`.cynos/run-telemetry-verified.log`）；生产构建与 UI workflow 退出码 0（`.cynos/run-telemetry-ui.log`）。专项包括回执去重、同角色不同初始化 Session、未知用量、部分估价、固定终态时间、重复归档导入、读取后重启恢复和数据库冲突。此前失败保留在过程日志中，未用失败记录作为通过证明。
 - 四个完整执行模型输入在调用前另行包装冻结：授权 Node/Python 固定应用源码配两条 approved 场景；仅评测副本排除无关场景/历史报告，原件不变。Python `/health` 路径在模型调用前校正，v2 冻结记录保留在 `full-input-wrapper-v2-freeze.json`。Git 挂载所有权预检失败均为零模型调用，最终使用所属用户的隔离 clone，并在 `full-driver-freeze.json` 固定驱动后开始基线 12 次真实应用执行。它使用本地证据传输与评测场景副本，不冒充持久候选的 Git/OSS 联合验收。
+
+- PR #124 最终 head `79a01628a8104f4915fa608e7e67078e37c6ccde` 经 [完整 quality / runtime CI](https://github.com/cynos-ai/luowang/actions/runs/37090531284) 通过，通过 PR 合入 develop `95b3059`。Phase 5 从该版本创建 `feat/run-reliability-evaluation`。
+- 基线全部 72 次执行尝试已完成：历史规划 24、Reviewer/最终 Main 回放 36、真实应用完整 Run 12；调用完成与语义评分分开。完整 Run 用隔离 Docker Node/Python 应用、原生产 Session/工具/MCP、固定本地场景副本和本地证据传输，无远程归档；12 例均形成 completed，但不据此推断所有判据通过。
+- 可复现驱动位于 `tests/acceptance/run-reliability/`：模板保留实际冻结驱动的原字节，`run-matrix.mjs candidate planning|review|full` 在 `.cynos/run-reliability/` 的受控资源、固定输入及候选源码副本上运行。驱动拒绝覆盖既有尝试，保留实际响应/工具轨迹/SDK 用量并绑定输入、驱动及源码版本，不增加费用或次数上限。预检必须先通过。
+- AI 评分使用固定原判据和实际输出；原规划判据的 critical/forbidden/allowed 结构由 v2 适配器无损展开。v1 适配失败的评分调用保留，不能计为模型质量失败或通过；评分器 JSON 合约失败同样保留并另行复核，不用新测试抽样替换。AI 评分不等于人工评分，后者仍为 not_run。
+- 新增本批 live 绑定检查，沿用既有 live queue/Run API 契约，核对批次、candidate/image、角色、模型、检查器、实例、项目、queue/Run、target 和配置；校验实际文件哈希并拒绝缺失/越界。定向错绑与完整性反例通过（`.cynos/run-reliability/evaluation-checks.log`）。它只验证归属和完整性，各 live 案例仍须由实际操作与断言证明，不能用一份 manifest 冒充所有 AC。
+
+- Phase 5 首轮候选固定为 `af73a8dda840635c86a4343a7a09643e2dc12279`；quality `sha256:212f40ab83f229d5e463e5d6ceeac6e8679069b5c2f47497f66c8c655bc03799`、runtime `sha256:4a5f6e6973d940e1c7ee100ba894ce07efbdf71b8d5f4119a6927f064fa3cdc1`。完整 local 聚合退出 0（`.cynos/run-reliability/final-local-reports/`），[该 head CI](https://github.com/cynos-ai/luowang/actions/runs/37091737470) 通过；未把未提供 live 输入的聚合 blocked 计为现场失败或通过。
+- 首轮模型失败保留：候选 storage-present 第一次创建账号遗漏 Run 前缀末尾分隔符，实际观察 accounts=0，Reviewer 正确保留 blocked；environment-unavailable 存在重复请求及猜测端口。针对 Runner 补充完整前缀、实际落库标记与登记区别，以及已确认连接失败后停止重复探测、不改主机/端口的约束。后续使用独立 candidate-correction 源码冻结，完整重跑四个 full-run 正反子例各三次，不覆盖首轮结果。
+- 原 cookie-complete 合成正例只含 sessionRef 与状态顺序，不符合既有“原凭据与实际请求头关联”的证据规则；模型保持 blocked 不应靠放松 Reviewer 规则改成通过。保留原输入/结果，另冻结 `review-correction-inputs.json.txt`，为正例加入 observed-request-header 同值引用、保存关联及请求/响应绑定，负例不变；两版本各三次另列，不能把输入补强归因为模型改进。
+- 首轮 runtime 原生双 MCP/browser 隔离、Docker A 实际命令中止/B 独立完成均通过（`runtime-browser-preflight.log`、`native-docker-stop.log`）。新持久候选 `luowang-rr-live` 使用独立卷和两套独立应用，4192 端口；原长期实例不变。A/B 曾同时运行、A2 排队取消无 Run；A 在 Runner 期间请求停止后为 interrupted、result=null，所属 Docker/MCP/browser 退出，plan/execution 保留。B 继续到最终 Main 后因缺 report.md 失败，不能称本组正常联合链路通过。相关失败与实际进程快照位于 `.cynos/run-reliability/live/`。
+- 准备阶段 queue 4 在尚无 Run 时保存停止意图，随后强杀并重启新 Harness；恢复后仍 interrupted、runId=null，未复活；已取消 queue 3 同样保持终态。首轮实际停止证明与后续最终候选证明分别记录。
+- 历史卷 `luowang-v061-closure-data-20260926-r2` 无使用者时只读挂载，数据库及 WAL/SHM（若存在）复制到独立目录。候选 runtime 执行真实 `upgrade-reliability` 至 0020，核对历史所有旧表旧列、外键、quick_check、Secret 解密与归属，恢复该命令生成的备份后再核对；1 项目、9 Run、29 报告、7 项 Secret 全部保持，原 DB 文件哈希未变（`history-migration.log`）。备份恢复要求匹配主密钥/配置，未直接降级原实例。
+- `f006446` 修订候选的完整 local、[CI](https://github.com/cynos-ai/luowang/actions/runs/37092981535)、生产 MCP/browser 和 Docker 停止隔离、历史迁移恢复均通过。runtime 为 `sha256:f49b0e8bca62a11891dd35f9f4f528633dc6c1090f8b90bec14c0479245a425b`。独立 4193 实例完成真实中途停止、排队/准备取消、强杀运行中 Session、停止请求后立即重启、幂等关联重测；六组行为断言及绑定/文件完整性检查通过，原始证据保存在 `live-correction/`。
+- Node Run `01M3ZX15NFH0FF7PZD79BHVTBN` 功能 blocked（保留存储缺口），临时错误 Git 凭据使归档 partial；恢复原 scoped Secret 后观测后台 Git 开始，再并发提交两次手工重试，归档 completed、工件/telemetry 字节不变，GitHub 该报告路径只有一次发布提交 `737ad8db8b34abc618bf7d80bc30b05ccc22b7a3`。Python Run `01M3ZWVEN052DCF6X31TXGB14Y` 四场景 passed，临时错误清理凭据导致 4 项残留警告但不改结论；恢复凭据后按该 Run 清理，独立 GET 余量零，旧报告不改写。两个远端 report/review 与本地工件 hash 相同。
+- Run `01M3ZXKQA802S7ZK3KXTB733XP` 额外实际核验旧 Cookie：受控 HTTP 保存会话后 GET `/api/me` 为 200；退出/删除后同一 sessionSnapshotId、savedSessionEvidenceId 且携原 Cookie 的 GET 为 401，Reviewer 实际读取。该 Run 完成并归档；浏览器与 HTTP 合成账号链路分开，未把 HTTP 重放冒充浏览器原 Cookie 重放。
+- 原 environment-available 包装使用只有注册页的 Python 靶场，不能当作登录页期望的充分正例。保留全部原始结果与评分，另用已授权 Node 固定应用、原样 RR-HEALTH/RR-PAGE 场景建立两版本各三次正反对照。此为测试资源修正，不是降低期望或模型改进；原期望“登录页”未改成“注册页”。
+- 真实评测揭示进度证据竞态：`finish_scenario(A)` 与 `start_scenario(B)` 连续调用时，旧包装器 await 后重新读取当前场景，能把完成 A 错记为 B。修复为 controller 在成功状态变更当刻冻结事件的场景、完成集合与时间，完成事件保留已完成场景身份；后续异步落证据只用该快照，不回读可变状态。新增连续工具调用回归，定向 19 tests、typecheck/lint 通过（`progress-fix-tests.log`）。这属于客观取证修复；此前模型指出的异常保留，不倒改历史证据。后续最终实现重新冻结并执行受影响完整模型及现场验证。
+
+### 最终候选验证与交付边界（2026-10-03）
+
+最终实现冻结为 `36548bf249b530f15a0aa6857cd555248a3b7548`，runtime `sha256:1216021ab15725d84cbf43f71201ddf33eb341569ca0153e657a821768186f56`，quality `sha256:66842341ff8d6a5985bc20f5f7d62d2a83f284610af43ff264383f0c2e6c1934`。源文件、角色、模型及镜像分别绑定于受控目录 `.cynos/run-reliability/candidate-final-freeze.json` 和 `candidate-final-images-freeze.json`。后续仅补文档和冻结评测模板的 PR head 与此实现提交分开，不把旧实现证明偷换为新代码证明。
+
+- [该实现 head 的完整 CI](https://github.com/cynos-ai/luowang/actions/runs/37094642939) 通过。质量容器 `luowang-rr-final-quality-v3` 的 `npm run test:acceptance:local` 退出 0，报告 `final-v3-local-reports/2026-10-03T03-55-16-280Z-local/report.json` 为 local passed；其中未提供输入的 live/release blocked 不计作现场结果。包含 SDK/SSE 中止、UI 768/1024/1440px、Escape、双击、迟到响应和资源未知保留占用等工程覆盖。
+- 最终 runtime 的两套真实 MCP/browser 隔离通过；原生 Docker A 实际命令启动后中止并删除所属容器、B 独立完成，并发 close 幂等通过。证据为 `runtime-browser-final.log`、`native-docker-stop-final.log`。
+- 历史卷 `luowang-v061-closure-data-20260926-r2` 只读复制，最终 runtime 升级至 0020、校验并恢复匹配备份：1 项目、9 Run、29 报告、7 项 Secret 保持；生产 Run Store 前后读取比较包含 34 工件、838 evidence 引用，历史 telemetry 为 unknown。原件已有一 Run 缺 review，副本原样保留，不补造。见 `history-migration-final.log`、`history-read-final-v2.log`；初次过强的“所有历史都有 review”断言失败日志仍保留。回退使用此次 `luowang-before-reliability-0020.db` 与匹配主密钥/配置，原持久实例未升级。
+
+### 最终模型矩阵
+
+最终候选重新执行全部 72 次：历史规划 24、Reviewer/最终 Main 回放 36、真实应用完整执行 12；其中 23/24 规划交付，36/36 回放和 12/12 完整执行形成工件。规划 `no-docs-r2` 未交付 plan，保留 incomplete，没有替换抽样。最终批次为 144 个实际 Session、853 个代理模型请求；这不是 72 个完整现场 Run，也不是 Provider 账单。
+
+全部研究合计 252 次案例尝试、551 个 Session、3861 个代理请求，不含持久实例 live 和外部评分请求：基线 72、初始候选 72、Runner 修订完整执行 12、Cookie 输入修正两版本各 6、环境资源修正两版本各 6、最终候选 72。每一批输入、版本与失败独立保留，未合并抽取最好结果。统计来源 `final-study-summary.json`；完整运行和回放按原目录分类。
+
+外部 AI 评分完成 72 次尝试，其中 4 次评分传输/JSON 失败，另由当前开发 AI 按原判据逐项复核并保存 packet/工件 hash（`assistant-review-*.json`），没有补跑被评分模型。外部评分漏判了环境不可用 r2 的重复探测，按实际工具轨迹覆盖为不符合。最终 **70 符合、1 不符合、1 未知**；这是 AI 复核及客观轨迹审计，`humanScoring=not_run`，不是人工通过率。
+
+| 六类专项子例 | 最终符合/尝试 | 证据层与限制 |
+| --- | --- | --- |
+| storage-missing / storage-present | 各 3/3 | 独立应用完整 Run；缺观察入口保留 blocked，有入口时实际创建、观察、清理 |
+| cookie-missing / cookie-complete | 各 3/3 | 冻结工件回放；complete 使用补强后的原请求头/保存快照关联，不冒充现场 |
+| environment-unavailable | 2/3 | r2 重复请求并省略端口再次导航；不能称 AC-RR-03 全部通过 |
+| environment-available | 3/3 | 改用有登录页的已授权 Node 应用，原登录页期望不变 |
+| bug-with-gap / correct-with-gap | 各 3/3 | 回放，保留已确认 Bug 与独立缺口 |
+| sufficient-evidence / unsupported-pass | 各 3/3 | 回放，充分证据不误阻塞，缺证据不通过 |
+| cleanup-failed / cleanup-completed | 各 3/3 | 回放，清理不改功能结论；另有真实清理故障证明 |
+
+历史八类规划中 bug-fix、capability、deprecation、missing-conditions、permission-persistence、refactor、spec-conflict 各 3/3；no-docs 为 2/3 符合、1/3 incomplete/unknown。四类 Reviewer 历史输入 consistent-control、core-coverage-omission、plan-execution-mismatch、unsupported-assertion 各 3/3。#95 的历史基线缺一次审核产物及评分合约失败仍留原记录，不能因最终批次结果而关闭 #95。
+
+比较结论限于固定样本：存储正例从初始候选 2/3 到修订及最终 3/3；Cookie 输入补强使案例真正具备正例证据，不能把输入修正当作模型收益。原 Python 正例没有登录页，原评分不作为正确正例比较。环境不可用实际 HTTP/浏览器导航次数：基线三次分别 4/2、5/1、2/2；初始候选 4/77、2/3、3/2；最终 1/1、2/2、1/1。另有同 Node 环境的基线对照 4/2、4/3、3/2，修订候选对照 2/1、1/1、1/2。减少了反复探测，但没有消除。
+
+最终 environment-unavailable-r2 的 execution 概述声称未改端口，后文及原始记录却记载省略端口再导航；外部评分也漏判。保留这项模型自述与操作不一致，不能仅凭正确 blocked 结论判该例整体符合。未据此增加端口扫描、网络自动重试或硬编码自然语言分类。专项存储/Cookie 核心样本达到要求，但整轮模型行为目标仍有残项，不宣称普遍成功率或全部效果通过。
+
+### 最终持久实例联合验收
+
+实例 `luowang-rr-live-final`（4194）使用独立卷 `luowang-rr-live-final-data-20261003`、独立 Node/Python 应用，绑定上述最终 runtime；旧 4191/4192/4193 实例及所有历史资产保留。Node 项目 `4f3ef5e0-5b85-4044-a93e-46aead9a9c5a`，Python 项目 `6a45fd46-0b6d-4a09-a811-311db2acd7c7`，均为配置 revision 3；fault Secret 已恢复，最终配置指纹与 manifest 相同。
+
+| 实际请求 | Run / target | 观察结果 |
+| --- | --- | --- |
+| Node q1 / Python q2 同时执行 | `01M3ZYK136VEC4NCVWFC58PGR5` / `5d50f66532c535e2500d3b0a67e4e888f80b0272`；`01M3ZYK18129P9JM799X1A95DB` / `fa65797585b6a196f7d5a41099593ee3376ca4cd` | 两者进入 Runner；停止 Node 后所属 Docker/MCP/browser 退出，interrupted/result=null，保留 plan/execution。Python 继续四 Session，4 场景 passed 并归档 |
+| Node q3 排队取消 | 无 Run | 重启后仍 interrupted/user_requested，无假 Run |
+| Node q4 幂等关联重测 | `01M3ZYPQ49KV3FDF03FMRVK1NA` / 同 q1 target | 双请求同一新 Run，sourceRunId 指向 q1；登录 passed，注册因真实存储入口 404 而 blocked，原期望保留 |
+| Python q5 Session 中强杀 | `01M3ZZMJRZ7NK1B5Z772B04HXJ` / `4cced3138225130b1d9f2515a39621fc665f9def` | 普通异常 interrupted，stopReason=null，未恢复模型 Session |
+| Node q6 准备阶段停止后强杀 | 无 Run | preparing 时持久化停止，重启后 user_requested，未复活 |
+| Python q7 运行中停止后立即强杀 | `01M3ZZNPBGH0FZRPA3P0H1EZEM` / 同 q5 target | 停止响应时仍 running，重启后 interrupted/user_requested；无后续 Session，result=null |
+
+- Node q4 通过错误项目 Git Secret 制造归档 partial。恢复原 Secret 后，首次手工/后台竞争重试仍出现 `GIT_COMMAND_FAILED`，相关失败保留于 `retry-archive.log`，不推断网络根因。随后原有后台重试完成归档；前后 plan/execution/review/report 及 telemetry 完全一致，没有新增模型调用。最终报告路径只有一次远端发布提交 `15126fc4509a126b1df4bb767538931f195507e7`。**最终 live 证明的是失败后最终恢复、工件不变与唯一发布，不是成功竞争重试**；成功竞争的工程测试和中间候选 live 另列，不偷换为最终候选现场通过。
+- Python q2 在 Reviewer 阶段故意失效 scoped 清理 Secret，形成 4 项清理警告，功能仍 passed。恢复原 Secret 后按该 Run GET→DELETE→GET，余量 0，旧报告不重写。其报告路径唯一发布提交 `4cced3138225130b1d9f2515a39621fc665f9def`。两个 Run 远端 report/review 与本地 hash 相同；项目/Run 所属 evidence API 实际读回 11 个 OSS 图片对象。首次误用旧全局 evidence 路由 404 不当作 OSS 丢失。
+- Node q4 的真实旧 Cookie 链：operation 33 保存、34 同快照 `/api/me` 200、35 退出、36 同快照且携 `cynos_session` 返回 401；38 保存、39 正对照 200、40 删除、41 同快照 401。Reviewer 实际读取并保留 HTTP/浏览器账号路径差异，不把受控 HTTP 快照说成浏览器 Cookie 重放。注册密码存储缺口仍 blocked。
+- 8 组现场证明的绑定/文件完整性检查通过，检查器 SHA-256 `6e1ee6306cac1f92daf313abeb33a4707f3ea4236245d1609d6a2c3eee5834dd`；具体断言见 `live-final/{finish-audit,collect-proofs,remote-audit,oss-audit-v2}.mjs`、`proof-validation.json`。资源未知保留占用是工程反例，没有伪造实际 Docker daemon 故障。
+
+### AC 状态与未完成指标
+
+- AC-RR-01、02、04–09、11、12、14、15：对应实现、工程与适用现场证明通过；不是目标应用所有场景 passed。
+- AC-RR-03：部分达到。必要期望保留，仍有最终环境负例 r2 重复请求/改端口及自述不一致；保留为后续模型质量问题。
+- AC-RR-10：互斥幂等工程验证通过，最终实例故障恢复/唯一发布/零新增模型通过；最终现场首次竞争重试失败，成功竞争现场只在中间候选发生，保留该限制。
+- AC-RR-13：完整矩阵、修订复评及失败记录已执行；效果不是全通过。历史 #95 与 humanScoring=not_run 独立保留。
+- AC-RR-16：同一最终候选双项目正常/停止/异常、Git/OSS、清理和历史迁移恢复已验证；Node 正常完成的功能结果是 blocked，不改成 passed。
+- 已有长期实例、历史卷/报告、失败批次及冻结输入均保留；初始评测中一个缺前缀末尾分隔符的合成账号可能不被 scoped adapter 匹配，位于隔离评测应用，未谎称已清理。未触及生产或扩大任意数据删除权限。
+- 本轮以工程功能、评测执行和明确残项交付 develop；不发布、不创建 tag、不合入 main、不升级原持久实例。#93/#104 继续暂缓，#95 不关闭。模型残项没有通过不断补抽或降低原期望消除。

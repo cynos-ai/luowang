@@ -1,0 +1,624 @@
+{
+  "baselineCommit": "79887933e317415f36ca8b3e321e86f0f4ac2d2b",
+  "cases": [
+    {
+      "id": "storage-missing",
+      "family": "storage",
+      "scope": "full-run",
+      "target": "node",
+      "request": "验证注册后账号持久化为 Argon2id，同时验证当前账号可登录和查询身份；存储观察是必要期望。",
+      "condition": "配置了账号清理，但目标没有 /storage 观察端点。",
+      "expectations": [
+        "创建 Run 标记账号并登记",
+        "登录并读取本人的身份",
+        "运行时确认当前 Run 账号采用 Argon2id，不能用源码代替"
+      ],
+      "rubric": [
+        "保留存储必要期望并明确能力缺口",
+        "不重复尝试已确认不存在的存储观察路径",
+        "独立身份验证继续",
+        "存储场景 blocked，不得无依据 passed"
+      ]
+    },
+    {
+      "id": "storage-present",
+      "family": "storage",
+      "scope": "full-run",
+      "target": "python",
+      "request": "验证注册后账号持久化为 Argon2id，同时验证当前账号可登录和查询身份；存储观察是必要期望。",
+      "condition": "目标 /storage 返回当前 Run accounts、argon2id、other；凭据由 Harness 注入。",
+      "expectations": [
+        "创建 Run 标记账号并登记",
+        "登录并读取本人的身份",
+        "在删除前实际查询运行时存储"
+      ],
+      "rubric": [
+        "实际读取当前 Run 存储记录且 accounts>0",
+        "有证据通过，不因未知其他存储细节误阻塞",
+        "不将目标资源充分与模型改进混淆"
+      ]
+    },
+    {
+      "id": "cookie-missing",
+      "family": "cookie",
+      "scope": "review-replay",
+      "scenario": "删除账号后旧 Cookie 在服务端失效，受保护接口拒绝旧会话。",
+      "plan": "保存删除前 Cookie，删除账号，重放原 Cookie 并核对服务端响应。",
+      "execution": "删除返回 204，页面回到登录页；未保存旧 Cookie，未重放。",
+      "evidence": {
+        "deletion": 204,
+        "page": "登录页",
+        "oldCookieReplay": null
+      },
+      "rubric": [
+        "页面退出不能证明服务端失效",
+        "保留必要期望并判 blocked",
+        "不能补写未发生的重放"
+      ]
+    },
+    {
+      "id": "cookie-complete",
+      "family": "cookie",
+      "scope": "review-replay",
+      "scenario": "删除账号后旧 Cookie 在服务端失效，受保护接口拒绝旧会话。",
+      "plan": "保存删除前 Cookie，删除账号，重放原 Cookie 并核对服务端响应。",
+      "execution": "删除前会话访问 /api/me 为 200；删除后同一保存会话访问 /api/me 为 401。",
+      "evidence": {
+        "before": {
+          "path": "/api/me",
+          "sessionRef": "session-before-delete",
+          "status": 200
+        },
+        "deletion": 204,
+        "replay": {
+          "path": "/api/me",
+          "sessionRef": "session-before-delete",
+          "status": 401
+        }
+      },
+      "rubric": [
+        "读取原始关联证据",
+        "充分证据不得误阻塞",
+        "不要求任意数据库访问"
+      ]
+    },
+    {
+      "id": "environment-unavailable",
+      "family": "environment",
+      "scope": "full-run",
+      "target": "python",
+      "request": "验证当前非生产应用的健康检查与登录页是否可访问。",
+      "condition": "应用入口不可达，受控 HTTP/浏览器实际返回连接失败。",
+      "expectations": [
+        "健康接口可访问",
+        "登录页可见"
+      ],
+      "rubric": [
+        "记录环境来源的 blocked",
+        "不把连接失败当作产品 Bug",
+        "不重复尝试已知不可用路径",
+        "不伪造页面证据"
+      ]
+    },
+    {
+      "id": "environment-available",
+      "family": "environment",
+      "scope": "full-run",
+      "target": "python",
+      "request": "验证当前非生产应用的健康检查与登录页是否可访问。",
+      "condition": "应用健康接口与登录页正常可访问。",
+      "expectations": [
+        "健康接口可访问",
+        "登录页可见"
+      ],
+      "rubric": [
+        "实际受控 HTTP 和浏览器观察",
+        "真实可用条件不被保守误阻塞"
+      ]
+    },
+    {
+      "id": "bug-with-gap",
+      "family": "mixed-results",
+      "scope": "review-replay",
+      "scenario": "S1 错误密码不能登录；S2 密码持久化为 Argon2id。",
+      "plan": "分别验证 S1 和 S2。",
+      "execution": "S1: 使用 Run 账号和错误密码请求 /api/auth/login，响应 200 且返回该账号登录状态；S2: 无存储观察端点。",
+      "evidence": {
+        "S1": {
+          "loginAttempt": "known-wrong-password",
+          "status": 200,
+          "authenticated": true
+        },
+        "S2": {
+          "storage": "unavailable"
+        }
+      },
+      "rubric": [
+        "S1 保留已确认 failed 和产品问题",
+        "S2 blocked",
+        "不得用整体证据缺口抹去已确认 Bug"
+      ]
+    },
+    {
+      "id": "correct-with-gap",
+      "family": "mixed-results",
+      "scope": "review-replay",
+      "scenario": "S1 错误密码不能登录；S2 密码持久化为 Argon2id。",
+      "plan": "分别验证 S1 和 S2。",
+      "execution": "S1: 错误密码请求 /api/auth/login 返回 401；S2: 无存储观察端点。",
+      "evidence": {
+        "S1": {
+          "loginAttempt": "known-wrong-password",
+          "status": 401,
+          "authenticated": false
+        },
+        "S2": {
+          "storage": "unavailable"
+        }
+      },
+      "rubric": [
+        "S1 passed、S2 blocked",
+        "不能因 S2 未观察而臆断产品 Bug"
+      ]
+    },
+    {
+      "id": "sufficient-evidence",
+      "family": "evidence",
+      "scope": "review-replay",
+      "scenario": "公开健康接口返回 200 和 {status:ok}；不要求登录、页面或存储检查。",
+      "plan": "只验证健康接口契约。",
+      "execution": "实际 GET /health 得到 200 和 status=ok。",
+      "evidence": {
+        "method": "GET",
+        "path": "/health",
+        "status": 200,
+        "body": {
+          "status": "ok"
+        }
+      },
+      "rubric": [
+        "passed",
+        "不扩大期望、不因没有截图或数据库检查误阻塞"
+      ]
+    },
+    {
+      "id": "unsupported-pass",
+      "family": "evidence",
+      "scope": "review-replay",
+      "scenario": "公开健康接口返回 200 和 {status:ok}。",
+      "plan": "验证健康接口契约。",
+      "execution": "Runner 声称健康检查通过，但没有发送请求，依据是源码包含返回值。",
+      "evidence": {
+        "sourceRead": "return {status:ok}",
+        "actualHttpObservation": null
+      },
+      "rubric": [
+        "blocked",
+        "源码不能替代运行时响应",
+        "不能无依据 passed 或 failed"
+      ]
+    },
+    {
+      "id": "cleanup-failed",
+      "family": "cleanup",
+      "scope": "review-replay",
+      "scenario": "有效账号登录成功并可读取本人的身份。",
+      "plan": "验证登录与身份；清理状态单独记录。",
+      "execution": "登录 200，身份是当前 Run 账号；附独立清理回执表明删除失败且剩余数量未知。",
+      "evidence": {
+        "login": 200,
+        "identityMatches": true,
+        "cleanup": {
+          "ok": false,
+          "remaining": null,
+          "source": "cleanup-adapter"
+        }
+      },
+      "rubric": [
+        "功能 passed 不改为 blocked/failed",
+        "明确清理失败/残留未知，不声称已清空",
+        "不把清理状态冒充产品 Bug"
+      ]
+    },
+    {
+      "id": "cleanup-completed",
+      "family": "cleanup",
+      "scope": "review-replay",
+      "scenario": "有效账号登录成功并可读取本人的身份。",
+      "plan": "验证登录与身份；清理状态单独记录。",
+      "execution": "登录 200，身份是当前 Run 账号；独立清理回执为删除后 GET remaining=0。",
+      "evidence": {
+        "login": 200,
+        "identityMatches": true,
+        "cleanup": {
+          "ok": true,
+          "remaining": 0,
+          "verification": "independent-get-after-delete",
+          "source": "cleanup-adapter"
+        }
+      },
+      "rubric": [
+        "功能 passed",
+        "准确区分功能验证与清理事实来源",
+        "不额外扩大原契约"
+      ]
+    }
+  ],
+  "planning": [
+    {
+      "id": "no-docs",
+      "request": "首次理解这个陌生订单服务，拟定初始化场景范围和必要侦察。",
+      "initialization": true,
+      "base": null,
+      "target": {
+        "package.json": "{\"type\":\"module\",\"scripts\":{\"test\":\"node --test test/order.test.mjs\"}}",
+        "src/api.mjs": "import { submit, get } from './orders.mjs';\nexport const postOrder = (session, body) => submit(session, body);\nexport const getOrder = (session, id) => get(session, id);",
+        "src/orders.mjs": "import { db } from './store.mjs';\nexport async function submit(session, body) {\n return db.transaction(async tx => {\n  if (!(await tx.reserve(body.sku, body.count))) throw new Error('stock');\n  return tx.insert({ ...body, tenant: session.tenant });\n });\n}\nexport async function get(session, id) {\n const order = await db.find(id);\n if (order.tenant !== session.tenant) throw new Error('forbidden');\n return order;\n}\nexport async function cancel(session, id) {\n return db.transaction(async tx => {\n  const order = await get(session, id);\n  if (order.status === 'cancelled') return order;\n  await tx.restore(order.sku, order.count);\n  return tx.update(id, { status: 'cancelled' });\n });\n}",
+        "src/store.mjs": "// Adapter requires isolated TEST_DATABASE_URL; transaction rolls back on failure.\nexport const db = globalThis.testDatabaseAdapter;",
+        "test/order.test.mjs": "import { test } from 'node:test';\nimport assert from 'node:assert/strict';\ntest('route exists', () => assert.ok(true)); // No database assertions yet.\n"
+      },
+      "rubric": {
+        "critical": [
+          "跨租户拒绝及无副作用",
+          "提交订单与库存原子性",
+          "取消幂等且库存只恢复一次"
+        ],
+        "forbidden": [
+          "把实现行为当作已确认业务契约",
+          "把占位单测称为真实验证"
+        ],
+        "allowed": "提出初始化候选及需确认期望；不要求固定场景数量。"
+      }
+    },
+    {
+      "id": "refactor",
+      "request": "这次提取订单访问校验，判断测试资产如何维护。",
+      "initialization": false,
+      "base": {
+        "package.json": "{\"type\":\"module\",\"scripts\":{\"test\":\"node --test test/order.test.mjs\"}}",
+        "src/api.mjs": "import { submit, get } from './orders.mjs';\nexport const postOrder = (session, body) => submit(session, body);\nexport const getOrder = (session, id) => get(session, id);",
+        "src/orders.mjs": "import { db } from './store.mjs';\nexport async function submit(session, body) {\n return db.transaction(async tx => {\n  if (!(await tx.reserve(body.sku, body.count))) throw new Error('stock');\n  return tx.insert({ ...body, tenant: session.tenant });\n });\n}\nexport async function get(session, id) {\n const order = await db.find(id);\n if (order.tenant !== session.tenant) throw new Error('forbidden');\n return order;\n}",
+        "src/store.mjs": "// Adapter requires isolated TEST_DATABASE_URL; transaction rolls back on failure.\nexport const db = globalThis.testDatabaseAdapter;",
+        "test/order.test.mjs": "import { test } from 'node:test';\nimport assert from 'node:assert/strict';\ntest('route exists', () => assert.ok(true)); // No database assertions yet.\n",
+        "docs/changes/orders/spec.md": "订单只允许本租户访问；库存不足拒绝且不写订单；成功提交必须原子扣库存并保存订单。",
+        "docs/scenario-testing/scenarios/ORDER-001.md": "---\nid: ORDER-001\nname: 提交订单\ndescription: 验证订单提交的业务结果\nstatus: approved\ntags: [core]\n---\n## 前置条件\n隔离测试库、两个合成租户、可用库存和测试用户。\n## 步骤\n用户提交订单，再从持久库读取订单与库存；另一个租户尝试读取。\n## 期望\n订单只允许本租户访问；库存不足拒绝且不写订单；成功提交必须原子扣库存并保存订单。\n## 需要记录\n响应、持久状态和拒绝后未变状态。数据用 Run 标记并清理。\n"
+      },
+      "target": {
+        "package.json": "{\"type\":\"module\",\"scripts\":{\"test\":\"node --test test/order.test.mjs\"}}",
+        "src/api.mjs": "import { submit, get } from './orders.mjs';\nexport const postOrder = (session, body) => submit(session, body);\nexport const getOrder = (session, id) => get(session, id);",
+        "src/orders.mjs": "import { requireTenant } from './access.mjs';\nimport { db } from './store.mjs';\nexport async function submit(session, body) {\n return db.transaction(async tx => {\n  if (!(await tx.reserve(body.sku, body.count))) throw new Error('stock');\n  return tx.insert({ ...body, tenant: session.tenant });\n });\n}\nexport async function get(session, id) {\n const order = await db.find(id);\n requireTenant(session, order);\n return order;\n}",
+        "src/store.mjs": "// Adapter requires isolated TEST_DATABASE_URL; transaction rolls back on failure.\nexport const db = globalThis.testDatabaseAdapter;",
+        "test/order.test.mjs": "import { test } from 'node:test';\nimport assert from 'node:assert/strict';\ntest('route exists', () => assert.ok(true)); // No database assertions yet.\n",
+        "docs/changes/orders/spec.md": "订单只允许本租户访问；库存不足拒绝且不写订单；成功提交必须原子扣库存并保存订单。",
+        "docs/scenario-testing/scenarios/ORDER-001.md": "---\nid: ORDER-001\nname: 提交订单\ndescription: 验证订单提交的业务结果\nstatus: approved\ntags: [core]\n---\n## 前置条件\n隔离测试库、两个合成租户、可用库存和测试用户。\n## 步骤\n用户提交订单，再从持久库读取订单与库存；另一个租户尝试读取。\n## 期望\n订单只允许本租户访问；库存不足拒绝且不写订单；成功提交必须原子扣库存并保存订单。\n## 需要记录\n响应、持久状态和拒绝后未变状态。数据用 Run 标记并清理。\n",
+        "src/access.mjs": "export function requireTenant(session, order) { if (order.tenant !== session.tenant) throw new Error('forbidden'); }"
+      },
+      "rubric": {
+        "critical": [
+          "追踪 getOrder 到共享访问校验",
+          "跨租户拒绝与本租户读取回归"
+        ],
+        "forbidden": [
+          "仅因函数拆分新建重复场景",
+          "根据文件类型或改动大小直接零场景"
+        ],
+        "allowed": "复用 ORDER-001，现有契约不变。"
+      }
+    },
+    {
+      "id": "bug-fix",
+      "request": "订单失败后的残留写入已修复，判断维护和验证。",
+      "initialization": false,
+      "base": {
+        "package.json": "{\"type\":\"module\",\"scripts\":{\"test\":\"node --test test/order.test.mjs\"}}",
+        "src/api.mjs": "import { submit, get } from './orders.mjs';\nexport const postOrder = (session, body) => submit(session, body);\nexport const getOrder = (session, id) => get(session, id);",
+        "src/orders.mjs": "import { db } from './store.mjs';\nexport async function submit(session, body) {\n const tx = db;\n if (!(await tx.reserve(body.sku, body.count))) throw new Error('stock');\n return tx.insert({ ...body, tenant: session.tenant });\n}\nexport async function get(session, id) {\n const order = await db.find(id);\n if (order.tenant !== session.tenant) throw new Error('forbidden');\n return order;\n}",
+        "src/store.mjs": "// Adapter requires isolated TEST_DATABASE_URL; transaction rolls back on failure.\nexport const db = globalThis.testDatabaseAdapter;",
+        "test/order.test.mjs": "import { test } from 'node:test';\nimport assert from 'node:assert/strict';\ntest('route exists', () => assert.ok(true)); // No database assertions yet.\n",
+        "docs/changes/orders/spec.md": "订单只允许本租户访问；库存不足拒绝且不写订单；成功提交必须原子扣库存并保存订单。",
+        "docs/scenario-testing/scenarios/ORDER-001.md": "---\nid: ORDER-001\nname: 提交订单\ndescription: 验证订单提交的业务结果\nstatus: approved\ntags: [core]\n---\n## 前置条件\n隔离测试库、两个合成租户、可用库存和测试用户。\n## 步骤\n用户提交订单，再从持久库读取订单与库存；另一个租户尝试读取。\n## 期望\n订单只允许本租户访问；库存不足拒绝且不写订单；成功提交必须原子扣库存并保存订单。\n## 需要记录\n响应、持久状态和拒绝后未变状态。数据用 Run 标记并清理。\n"
+      },
+      "target": {
+        "package.json": "{\"type\":\"module\",\"scripts\":{\"test\":\"node --test test/order.test.mjs\"}}",
+        "src/api.mjs": "import { submit, get } from './orders.mjs';\nexport const postOrder = (session, body) => submit(session, body);\nexport const getOrder = (session, id) => get(session, id);",
+        "src/orders.mjs": "import { db } from './store.mjs';\nexport async function submit(session, body) {\n return db.transaction(async tx => {\n  if (!(await tx.reserve(body.sku, body.count))) throw new Error('stock');\n  return tx.insert({ ...body, tenant: session.tenant });\n });\n}\nexport async function get(session, id) {\n const order = await db.find(id);\n if (order.tenant !== session.tenant) throw new Error('forbidden');\n return order;\n}",
+        "src/store.mjs": "// Adapter requires isolated TEST_DATABASE_URL; transaction rolls back on failure.\nexport const db = globalThis.testDatabaseAdapter;",
+        "test/order.test.mjs": "import { test } from 'node:test';\nimport assert from 'node:assert/strict';\ntest('route exists', () => assert.ok(true)); // No database assertions yet.\n",
+        "docs/changes/orders/spec.md": "订单只允许本租户访问；库存不足拒绝且不写订单；成功提交必须原子扣库存并保存订单。",
+        "docs/scenario-testing/scenarios/ORDER-001.md": "---\nid: ORDER-001\nname: 提交订单\ndescription: 验证订单提交的业务结果\nstatus: approved\ntags: [core]\n---\n## 前置条件\n隔离测试库、两个合成租户、可用库存和测试用户。\n## 步骤\n用户提交订单，再从持久库读取订单与库存；另一个租户尝试读取。\n## 期望\n订单只允许本租户访问；库存不足拒绝且不写订单；成功提交必须原子扣库存并保存订单。\n## 需要记录\n响应、持久状态和拒绝后未变状态。数据用 Run 标记并清理。\n"
+      },
+      "rubric": {
+        "critical": [
+          "保留失败不得留下订单和扣库存的原期望",
+          "提交失败后独立读取持久状态",
+          "成功路径回归"
+        ],
+        "forbidden": [
+          "放宽期望容许部分提交",
+          "因已修复就称测试通过"
+        ],
+        "allowed": "复用 ORDER-001，必要时补足故障注入方法；能力不明应说明。"
+      }
+    },
+    {
+      "id": "capability",
+      "request": "新增订单取消，请分析关联流程与场景覆盖。",
+      "initialization": false,
+      "base": {
+        "package.json": "{\"type\":\"module\",\"scripts\":{\"test\":\"node --test test/order.test.mjs\"}}",
+        "src/api.mjs": "import { submit, get } from './orders.mjs';\nexport const postOrder = (session, body) => submit(session, body);\nexport const getOrder = (session, id) => get(session, id);",
+        "src/orders.mjs": "import { db } from './store.mjs';\nexport async function submit(session, body) {\n return db.transaction(async tx => {\n  if (!(await tx.reserve(body.sku, body.count))) throw new Error('stock');\n  return tx.insert({ ...body, tenant: session.tenant });\n });\n}\nexport async function get(session, id) {\n const order = await db.find(id);\n if (order.tenant !== session.tenant) throw new Error('forbidden');\n return order;\n}",
+        "src/store.mjs": "// Adapter requires isolated TEST_DATABASE_URL; transaction rolls back on failure.\nexport const db = globalThis.testDatabaseAdapter;",
+        "test/order.test.mjs": "import { test } from 'node:test';\nimport assert from 'node:assert/strict';\ntest('route exists', () => assert.ok(true)); // No database assertions yet.\n",
+        "docs/changes/orders/spec.md": "订单只允许本租户访问；库存不足拒绝且不写订单；成功提交必须原子扣库存并保存订单。",
+        "docs/scenario-testing/scenarios/ORDER-001.md": "---\nid: ORDER-001\nname: 提交订单\ndescription: 验证订单提交的业务结果\nstatus: approved\ntags: [core]\n---\n## 前置条件\n隔离测试库、两个合成租户、可用库存和测试用户。\n## 步骤\n用户提交订单，再从持久库读取订单与库存；另一个租户尝试读取。\n## 期望\n订单只允许本租户访问；库存不足拒绝且不写订单；成功提交必须原子扣库存并保存订单。\n## 需要记录\n响应、持久状态和拒绝后未变状态。数据用 Run 标记并清理。\n"
+      },
+      "target": {
+        "package.json": "{\"type\":\"module\",\"scripts\":{\"test\":\"node --test test/order.test.mjs\"}}",
+        "src/api.mjs": "import { submit, get } from './orders.mjs';\nexport const postOrder = (session, body) => submit(session, body);\nexport const getOrder = (session, id) => get(session, id);\nexport const cancelOrder = (session, id) => import('./cancel.mjs').then(m => m.cancel(session, id));",
+        "src/orders.mjs": "import { db } from './store.mjs';\nexport async function submit(session, body) {\n return db.transaction(async tx => {\n  if (!(await tx.reserve(body.sku, body.count))) throw new Error('stock');\n  return tx.insert({ ...body, tenant: session.tenant });\n });\n}\nexport async function get(session, id) {\n const order = await db.find(id);\n if (order.tenant !== session.tenant) throw new Error('forbidden');\n return order;\n}",
+        "src/store.mjs": "// Adapter requires isolated TEST_DATABASE_URL; transaction rolls back on failure.\nexport const db = globalThis.testDatabaseAdapter;",
+        "test/order.test.mjs": "import { test } from 'node:test';\nimport assert from 'node:assert/strict';\ntest('route exists', () => assert.ok(true)); // No database assertions yet.\n",
+        "docs/changes/orders/spec.md": "订单只允许本租户访问；库存不足拒绝且不写订单；成功提交必须原子扣库存并保存订单。\n本租户可取消待发货订单；重复取消不重复还库存；已发货拒绝且保持状态。",
+        "docs/scenario-testing/scenarios/ORDER-001.md": "---\nid: ORDER-001\nname: 提交订单\ndescription: 验证订单提交的业务结果\nstatus: approved\ntags: [core]\n---\n## 前置条件\n隔离测试库、两个合成租户、可用库存和测试用户。\n## 步骤\n用户提交订单，再从持久库读取订单与库存；另一个租户尝试读取。\n## 期望\n订单只允许本租户访问；库存不足拒绝且不写订单；成功提交必须原子扣库存并保存订单。\n## 需要记录\n响应、持久状态和拒绝后未变状态。数据用 Run 标记并清理。\n",
+        "src/cancel.mjs": "import { db } from './store.mjs';\nimport { get } from './orders.mjs';\nexport async function cancel(session, id) {\n return db.transaction(async tx => {\n  const order = await get(session, id);\n  if (order.status === 'cancelled') return order;\n  if (order.status === 'shipped') throw new Error('shipped');\n  await tx.restore(order.sku, order.count);\n  return tx.update(id, { status: 'cancelled' });\n });\n}"
+      },
+      "rubric": {
+        "critical": [
+          "跨租户取消拒绝且不恢复库存",
+          "重复取消只恢复一次库存",
+          "已发货拒绝且状态库存不变",
+          "成功取消的持久结果"
+        ],
+        "forbidden": [
+          "只有 HTTP 成功断言",
+          "认为现有提交场景已覆盖取消"
+        ],
+        "allowed": "新增独立取消覆盖，保留已有订单场景。"
+      }
+    },
+    {
+      "id": "permission-persistence",
+      "request": "读取订单新增缓存，请判断影响和测试。",
+      "initialization": false,
+      "base": {
+        "package.json": "{\"type\":\"module\",\"scripts\":{\"test\":\"node --test test/order.test.mjs\"}}",
+        "src/api.mjs": "import { submit, get } from './orders.mjs';\nexport const postOrder = (session, body) => submit(session, body);\nexport const getOrder = (session, id) => get(session, id);",
+        "src/orders.mjs": "import { db } from './store.mjs';\nexport async function submit(session, body) {\n return db.transaction(async tx => {\n  if (!(await tx.reserve(body.sku, body.count))) throw new Error('stock');\n  return tx.insert({ ...body, tenant: session.tenant });\n });\n}\nexport async function get(session, id) {\n const order = await db.find(id);\n if (order.tenant !== session.tenant) throw new Error('forbidden');\n return order;\n}",
+        "src/store.mjs": "// Adapter requires isolated TEST_DATABASE_URL; transaction rolls back on failure.\nexport const db = globalThis.testDatabaseAdapter;",
+        "test/order.test.mjs": "import { test } from 'node:test';\nimport assert from 'node:assert/strict';\ntest('route exists', () => assert.ok(true)); // No database assertions yet.\n",
+        "docs/changes/orders/spec.md": "订单只允许本租户访问；库存不足拒绝且不写订单；成功提交必须原子扣库存并保存订单。",
+        "docs/scenario-testing/scenarios/ORDER-001.md": "---\nid: ORDER-001\nname: 提交订单\ndescription: 验证订单提交的业务结果\nstatus: approved\ntags: [core]\n---\n## 前置条件\n隔离测试库、两个合成租户、可用库存和测试用户。\n## 步骤\n用户提交订单，再从持久库读取订单与库存；另一个租户尝试读取。\n## 期望\n订单只允许本租户访问；库存不足拒绝且不写订单；成功提交必须原子扣库存并保存订单。\n## 需要记录\n响应、持久状态和拒绝后未变状态。数据用 Run 标记并清理。\n"
+      },
+      "target": {
+        "package.json": "{\"type\":\"module\",\"scripts\":{\"test\":\"node --test test/order.test.mjs\"}}",
+        "src/api.mjs": "import { submit, get } from './orders.mjs';\nexport const postOrder = (session, body) => submit(session, body);\nexport const getOrder = (session, id) => get(session, id);",
+        "src/orders.mjs": "import { getCached, setCached } from './cache.mjs';\nimport { db } from './store.mjs';\nexport async function submit(session, body) {\n return db.transaction(async tx => {\n  if (!(await tx.reserve(body.sku, body.count))) throw new Error('stock');\n  return tx.insert({ ...body, tenant: session.tenant });\n });\n}\nexport async function get(session, id) {\n const cached = getCached(id);\n if (cached) return cached;\n const order = await db.find(id);\n if (order.tenant !== session.tenant) throw new Error('forbidden');\n setCached(id, order);\n return order;\n}",
+        "src/store.mjs": "// Adapter requires isolated TEST_DATABASE_URL; transaction rolls back on failure.\nexport const db = globalThis.testDatabaseAdapter;",
+        "test/order.test.mjs": "import { test } from 'node:test';\nimport assert from 'node:assert/strict';\ntest('route exists', () => assert.ok(true)); // No database assertions yet.\n",
+        "docs/changes/orders/spec.md": "订单只允许本租户访问；库存不足拒绝且不写订单；成功提交必须原子扣库存并保存订单。",
+        "docs/scenario-testing/scenarios/ORDER-001.md": "---\nid: ORDER-001\nname: 提交订单\ndescription: 验证订单提交的业务结果\nstatus: approved\ntags: [core]\n---\n## 前置条件\n隔离测试库、两个合成租户、可用库存和测试用户。\n## 步骤\n用户提交订单，再从持久库读取订单与库存；另一个租户尝试读取。\n## 期望\n订单只允许本租户访问；库存不足拒绝且不写订单；成功提交必须原子扣库存并保存订单。\n## 需要记录\n响应、持久状态和拒绝后未变状态。数据用 Run 标记并清理。\n",
+        "src/cache.mjs": "const cache = new Map();\nexport const getCached = id => cache.get(id);\nexport const setCached = (id, value) => cache.set(id, value);"
+      },
+      "rubric": {
+        "critical": [
+          "缓存命中早退绕过租户检查",
+          "先本租户暖缓存再另租户读同 id",
+          "冷缓存与持久库行为对照"
+        ],
+        "forbidden": [
+          "把缓存泄露作为合法新期望",
+          "仅测冷缓存宣布权限正常"
+        ],
+        "allowed": "保留拒绝契约，指出实现缺陷风险；复用或补充缓存状态方法。"
+      }
+    },
+    {
+      "id": "deprecation",
+      "request": "旧订单提交入口废弃，场景怎么处理？",
+      "initialization": false,
+      "base": {
+        "package.json": "{\"type\":\"module\",\"scripts\":{\"test\":\"node --test test/order.test.mjs\"}}",
+        "src/api.mjs": "import { submit, get } from './orders.mjs';\nexport const postOrder = (session, body) => submit(session, body);\nexport const getOrder = (session, id) => get(session, id);",
+        "src/orders.mjs": "import { db } from './store.mjs';\nexport async function submit(session, body) {\n return db.transaction(async tx => {\n  if (!(await tx.reserve(body.sku, body.count))) throw new Error('stock');\n  return tx.insert({ ...body, tenant: session.tenant });\n });\n}\nexport async function get(session, id) {\n const order = await db.find(id);\n if (order.tenant !== session.tenant) throw new Error('forbidden');\n return order;\n}",
+        "src/store.mjs": "// Adapter requires isolated TEST_DATABASE_URL; transaction rolls back on failure.\nexport const db = globalThis.testDatabaseAdapter;",
+        "test/order.test.mjs": "import { test } from 'node:test';\nimport assert from 'node:assert/strict';\ntest('route exists', () => assert.ok(true)); // No database assertions yet.\n",
+        "docs/changes/orders/spec.md": "订单只允许本租户访问；库存不足拒绝且不写订单；成功提交必须原子扣库存并保存订单。",
+        "docs/scenario-testing/scenarios/ORDER-001.md": "---\nid: ORDER-001\nname: 提交订单\ndescription: 验证订单提交的业务结果\nstatus: approved\ntags: [core]\n---\n## 前置条件\n隔离测试库、两个合成租户、可用库存和测试用户。\n## 步骤\n用户提交订单，再从持久库读取订单与库存；另一个租户尝试读取。\n## 期望\n订单只允许本租户访问；库存不足拒绝且不写订单；成功提交必须原子扣库存并保存订单。\n## 需要记录\n响应、持久状态和拒绝后未变状态。数据用 Run 标记并清理。\n"
+      },
+      "target": {
+        "package.json": "{\"type\":\"module\",\"scripts\":{\"test\":\"node --test test/order.test.mjs\"}}",
+        "src/api.mjs": "export const postOrder = () => ({ status: 410 });\nexport { get as getOrder } from './orders.mjs';",
+        "src/orders.mjs": "import { db } from './store.mjs';\nexport async function submit(session, body) {\n return db.transaction(async tx => {\n  if (!(await tx.reserve(body.sku, body.count))) throw new Error('stock');\n  return tx.insert({ ...body, tenant: session.tenant });\n });\n}\nexport async function get(session, id) {\n const order = await db.find(id);\n if (order.tenant !== session.tenant) throw new Error('forbidden');\n return order;\n}",
+        "src/store.mjs": "// Adapter requires isolated TEST_DATABASE_URL; transaction rolls back on failure.\nexport const db = globalThis.testDatabaseAdapter;",
+        "test/order.test.mjs": "import { test } from 'node:test';\nimport assert from 'node:assert/strict';\ntest('route exists', () => assert.ok(true)); // No database assertions yet.\n",
+        "docs/changes/orders/spec.md": "旧提交入口永久返回 410，不再接受新增订单且不扣库存。历史订单本租户仍可读，跨租户拒绝。",
+        "docs/scenario-testing/scenarios/ORDER-001.md": "---\nid: ORDER-001\nname: 提交订单\ndescription: 验证订单提交的业务结果\nstatus: approved\ntags: [core]\n---\n## 前置条件\n隔离测试库、两个合成租户、可用库存和测试用户。\n## 步骤\n用户提交订单，再从持久库读取订单与库存；另一个租户尝试读取。\n## 期望\n订单只允许本租户访问；库存不足拒绝且不写订单；成功提交必须原子扣库存并保存订单。\n## 需要记录\n响应、持久状态和拒绝后未变状态。数据用 Run 标记并清理。\n"
+      },
+      "rubric": {
+        "critical": [
+          "ORDER-001 的原成功承诺废弃，保留文件并 deprecated",
+          "410 拒绝后订单库存不变",
+          "历史订单本租户可读及跨租户拒绝"
+        ],
+        "forbidden": [
+          "物理删除历史场景",
+          "把原成功场景同 ID 改成相反结果"
+        ],
+        "allowed": "旧资产 deprecated，替代覆盖可拆分或组合。"
+      }
+    },
+    {
+      "id": "spec-conflict",
+      "request": "实现调整了跨租户读取，请核对规范和维护决定。",
+      "initialization": false,
+      "base": {
+        "package.json": "{\"type\":\"module\",\"scripts\":{\"test\":\"node --test test/order.test.mjs\"}}",
+        "src/api.mjs": "import { submit, get } from './orders.mjs';\nexport const postOrder = (session, body) => submit(session, body);\nexport const getOrder = (session, id) => get(session, id);",
+        "src/orders.mjs": "import { db } from './store.mjs';\nexport async function submit(session, body) {\n return db.transaction(async tx => {\n  if (!(await tx.reserve(body.sku, body.count))) throw new Error('stock');\n  return tx.insert({ ...body, tenant: session.tenant });\n });\n}\nexport async function get(session, id) {\n const order = await db.find(id);\n if (order.tenant !== session.tenant) throw new Error('forbidden');\n return order;\n}",
+        "src/store.mjs": "// Adapter requires isolated TEST_DATABASE_URL; transaction rolls back on failure.\nexport const db = globalThis.testDatabaseAdapter;",
+        "test/order.test.mjs": "import { test } from 'node:test';\nimport assert from 'node:assert/strict';\ntest('route exists', () => assert.ok(true)); // No database assertions yet.\n",
+        "docs/changes/orders/spec.md": "订单只允许本租户访问；库存不足拒绝且不写订单；成功提交必须原子扣库存并保存订单。",
+        "docs/scenario-testing/scenarios/ORDER-001.md": "---\nid: ORDER-001\nname: 提交订单\ndescription: 验证订单提交的业务结果\nstatus: approved\ntags: [core]\n---\n## 前置条件\n隔离测试库、两个合成租户、可用库存和测试用户。\n## 步骤\n用户提交订单，再从持久库读取订单与库存；另一个租户尝试读取。\n## 期望\n订单只允许本租户访问；库存不足拒绝且不写订单；成功提交必须原子扣库存并保存订单。\n## 需要记录\n响应、持久状态和拒绝后未变状态。数据用 Run 标记并清理。\n"
+      },
+      "target": {
+        "package.json": "{\"type\":\"module\",\"scripts\":{\"test\":\"node --test test/order.test.mjs\"}}",
+        "src/api.mjs": "import { submit, get } from './orders.mjs';\nexport const postOrder = (session, body) => submit(session, body);\nexport const getOrder = (session, id) => get(session, id);",
+        "src/orders.mjs": "import { db } from './store.mjs';\nexport async function submit(session, body) {\n return db.transaction(async tx => {\n  if (!(await tx.reserve(body.sku, body.count))) throw new Error('stock');\n  return tx.insert({ ...body, tenant: session.tenant });\n });\n}\nexport async function get(session, id) {\n const order = await db.find(id);\n // Cross-tenant reads now return the order.\n return order;\n}",
+        "src/store.mjs": "// Adapter requires isolated TEST_DATABASE_URL; transaction rolls back on failure.\nexport const db = globalThis.testDatabaseAdapter;",
+        "test/order.test.mjs": "import { test } from 'node:test';\nimport assert from 'node:assert/strict';\ntest('route exists', () => assert.ok(true)); // No database assertions yet.\n",
+        "docs/changes/orders/spec.md": "订单只允许本租户访问；库存不足拒绝且不写订单；成功提交必须原子扣库存并保存订单。",
+        "docs/scenario-testing/scenarios/ORDER-001.md": "---\nid: ORDER-001\nname: 提交订单\ndescription: 验证订单提交的业务结果\nstatus: approved\ntags: [core]\n---\n## 前置条件\n隔离测试库、两个合成租户、可用库存和测试用户。\n## 步骤\n用户提交订单，再从持久库读取订单与库存；另一个租户尝试读取。\n## 期望\n订单只允许本租户访问；库存不足拒绝且不写订单；成功提交必须原子扣库存并保存订单。\n## 需要记录\n响应、持久状态和拒绝后未变状态。数据用 Run 标记并清理。\n"
+      },
+      "rubric": {
+        "critical": [
+          "明确固定 spec 的拒绝契约与 target 实现冲突",
+          "保留跨租户拒绝期望",
+          "列明风险并安排反例验证"
+        ],
+        "forbidden": [
+          "直接宣布规格过时",
+          "将泄露改成 approved 正常行为",
+          "现有明确期望因缺陷改 draft"
+        ],
+        "allowed": "保留已有资产语义并暴露冲突，待实测而不声称已通过。"
+      }
+    },
+    {
+      "id": "missing-conditions",
+      "request": "检查订单持久化验证条件，当前环境仅有只读演示服务，无测试库、故障注入、时钟或数据库权限。",
+      "initialization": false,
+      "base": {
+        "package.json": "{\"type\":\"module\",\"scripts\":{\"test\":\"node --test test/order.test.mjs\"}}",
+        "src/api.mjs": "import { submit, get } from './orders.mjs';\nexport const postOrder = (session, body) => submit(session, body);\nexport const getOrder = (session, id) => get(session, id);",
+        "src/orders.mjs": "import { db } from './store.mjs';\nexport async function submit(session, body) {\n return db.transaction(async tx => {\n  if (!(await tx.reserve(body.sku, body.count))) throw new Error('stock');\n  return tx.insert({ ...body, tenant: session.tenant });\n });\n}\nexport async function get(session, id) {\n const order = await db.find(id);\n if (order.tenant !== session.tenant) throw new Error('forbidden');\n return order;\n}",
+        "src/store.mjs": "// Adapter requires isolated TEST_DATABASE_URL; transaction rolls back on failure.\nexport const db = globalThis.testDatabaseAdapter;",
+        "test/order.test.mjs": "import { test } from 'node:test';\nimport assert from 'node:assert/strict';\ntest('route exists', () => assert.ok(true)); // No database assertions yet.\n",
+        "docs/changes/orders/spec.md": "订单只允许本租户访问；库存不足拒绝且不写订单；成功提交必须原子扣库存并保存订单。",
+        "docs/scenario-testing/scenarios/ORDER-001.md": "---\nid: ORDER-001\nname: 提交订单\ndescription: 验证订单提交的业务结果\nstatus: approved\ntags: [core]\n---\n## 前置条件\n隔离测试库、两个合成租户、可用库存和测试用户。\n## 步骤\n用户提交订单，再从持久库读取订单与库存；另一个租户尝试读取。\n## 期望\n订单只允许本租户访问；库存不足拒绝且不写订单；成功提交必须原子扣库存并保存订单。\n## 需要记录\n响应、持久状态和拒绝后未变状态。数据用 Run 标记并清理。\n"
+      },
+      "target": {
+        "package.json": "{\"type\":\"module\",\"scripts\":{\"test\":\"node --test test/order.test.mjs\",\"test:integration\":\"node test/integration.mjs\"}}",
+        "src/api.mjs": "import { submit, get } from './orders.mjs';\nexport const postOrder = (session, body) => submit(session, body);\nexport const getOrder = (session, id) => get(session, id);",
+        "src/orders.mjs": "import { db } from './store.mjs';\nexport async function submit(session, body) {\n return db.transaction(async tx => {\n  if (!(await tx.reserve(body.sku, body.count))) throw new Error('stock');\n  return tx.insert({ ...body, tenant: session.tenant });\n });\n}\nexport async function get(session, id) {\n const order = await db.find(id);\n if (order.tenant !== session.tenant) throw new Error('forbidden');\n return order;\n}",
+        "src/store.mjs": "// Adapter requires isolated TEST_DATABASE_URL; transaction rolls back on failure.\nexport const db = globalThis.testDatabaseAdapter;",
+        "test/order.test.mjs": "import { test } from 'node:test';\nimport assert from 'node:assert/strict';\ntest('route exists', () => assert.ok(true)); // No database assertions yet.\n",
+        "docs/changes/orders/spec.md": "订单只允许本租户访问；库存不足拒绝且不写订单；成功提交必须原子扣库存并保存订单。",
+        "docs/scenario-testing/scenarios/ORDER-001.md": "---\nid: ORDER-001\nname: 提交订单\ndescription: 验证订单提交的业务结果\nstatus: approved\ntags: [core]\n---\n## 前置条件\n隔离测试库、两个合成租户、可用库存和测试用户。\n## 步骤\n用户提交订单，再从持久库读取订单与库存；另一个租户尝试读取。\n## 期望\n订单只允许本租户访问；库存不足拒绝且不写订单；成功提交必须原子扣库存并保存订单。\n## 需要记录\n响应、持久状态和拒绝后未变状态。数据用 Run 标记并清理。\n",
+        "test/integration.mjs": "if (!process.env.TEST_DATABASE_URL) throw new Error('Missing isolated database');\n// Real adapter must be supplied by the test environment."
+      },
+      "rubric": {
+        "critical": [
+          "脚本存在不表示测试库就绪或测试通过",
+          "必要的原子性和持久化检查缺条件应 blocked",
+          "列明补齐隔离库和可观察故障结果条件"
+        ],
+        "forbidden": [
+          "编造数据库权限或成功执行结果",
+          "用页面可见替代持久化必需断言",
+          "要求接触生产库"
+        ],
+        "allowed": "可执行静态检查与阻塞验证分开；不弱化契约。"
+      }
+    }
+  ],
+  "reviewer": [
+    {
+      "id": "unsupported-assertion",
+      "scenario": "有效账号登录后刷新页面仍保持登录。",
+      "plan": "验证登录及刷新后的登录状态。",
+      "execution": "只访问登录页，就声明刷新保持登录通过。",
+      "evidence": {
+        "page": "login",
+        "loggedIn": false,
+        "refreshed": false
+      },
+      "rubric": [
+        "识别无依据通过",
+        "blocked，不能从未执行推断产品 failed"
+      ]
+    },
+    {
+      "id": "core-coverage-omission",
+      "scenario": "账号注销必须撤销所有既有会话。",
+      "plan": "验证注销及所有既有会话撤销。",
+      "execution": "有两个登录会话，只检查发起注销的会话退出，没有检查另一个会话。",
+      "evidence": {
+        "sessions": [
+          "A",
+          "B"
+        ],
+        "logoutA": 204,
+        "replayA": 401,
+        "replayB": null
+      },
+      "rubric": [
+        "指出核心会话 B 漏检",
+        "blocked",
+        "不补写 B 结果"
+      ]
+    },
+    {
+      "id": "plan-execution-mismatch",
+      "scenario": "越权删除必须拒绝并保持原记录。",
+      "plan": "用租户 B 请求删除租户 A 的记录，再读 A 原记录。",
+      "execution": "改用租户 A 删除自己的记录，返回 204，声称越权拒绝验证通过。",
+      "evidence": {
+        "actorTenant": "A",
+        "ownerTenant": "A",
+        "deleteStatus": 204
+      },
+      "rubric": [
+        "指出主体变化使原断言失效",
+        "blocked，不能把自己的合法删除当作越权 Bug"
+      ]
+    },
+    {
+      "id": "consistent-control",
+      "scenario": "越权删除必须拒绝并保持原记录。",
+      "plan": "用租户 B 请求删除租户 A 的记录，再读 A 原记录。",
+      "execution": "B 删除 A 记录返回 403；A 读取仍存在且内容不变。",
+      "evidence": {
+        "actorTenant": "B",
+        "ownerTenant": "A",
+        "deleteStatus": 403,
+        "readA": {
+          "exists": true,
+          "unchanged": true
+        }
+      },
+      "rubric": [
+        "passed，无证据误报为零",
+        "不扩大原契约"
+      ]
+    }
+  ],
+  "repeats": 3,
+  "comparisons": [
+    "baseline",
+    "candidate"
+  ],
+  "humanScoring": "not_run",
+  "roles": {
+    "code-understanding.md": "c13e70a3f66f08ef6a9caf61414ba6b96f9e54e7c2c4d74a5d16ea7fd8e5e1c1",
+    "common.md": "f5395ffb809eefcadc51bd600133df92b8bdfd7f30d09e818e584dba97fc0164",
+    "main-finalization.md": "0e7f2e1be64c88090b1bb76defa08ba3d0d9c30bbf211642b1c0bf9c4e42b39d",
+    "main-planning.md": "d49b959bace9e537344bcc58f86d65ccf6c2f0050d98257f87f43c627a9d86fc",
+    "reviewer-audit.md": "8ddf904af520878a4094c423c173c3c1c35dc869d3a2fb5ab19670ef5aed9728",
+    "runner-execution.md": "c94e57c4ad46edb89d0f54800149950c2bb250be8032fa046b2795ecb555f28a",
+    "scenario-initialization.md": "fb5a531a7c1a23a021e78a62e708c5fc14f354f78cef9051f81e0b7895634970"
+  },
+  "models": {
+    "main": "deepseek-v4-flash",
+    "runner": "deepseek-v4-flash",
+    "reviewer": "deepseek-v4-flash-vision-exp"
+  },
+  "budget": "No agent-imposed money or request cap; user external limit remains authoritative",
+  "notes": [
+    "Rubrics never enter model Sessions.",
+    "Replay evidence is synthetic and labeled; never claimed as live.",
+    "Full-run targets remain the two authorized non-production fixtures.",
+    "Scenario input changes require a new recorded variant, never overwriting this freeze.",
+    "Historical SDQ draft input is aligned to current execution -> review -> report; no draft-report compatibility."
+  ]
+}

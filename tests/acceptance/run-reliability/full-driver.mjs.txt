@@ -1,0 +1,61 @@
+import {readFileSync,writeFileSync,mkdirSync} from 'node:fs';
+import {join,resolve} from 'node:path';
+import {pathToFileURL} from 'node:url';
+import {randomUUID} from 'node:crypto';
+import {execFileSync} from 'node:child_process';
+export async function runCase(revision,input,out,settings={}){
+ mkdirSync(out);const save=(name,value)=>writeFileSync(join(out,name+'.json'),JSON.stringify(value,null,2));
+ const load=p=>import(pathToFileURL(resolve(revision,p)));
+ const {loadConfig}=await load('src/server/config.ts');
+ const {initializeDatabase}=await load('src/server/db/migrate.ts');
+ const {createConfigurationStore}=await load('src/server/configuration.ts');
+ const {createSecretStore}=await load('src/server/security/secret-store.ts');
+ const {createRepositoryService}=await load('src/server/repository/service.ts');
+ const {createProviderAdapter}=await load('src/server/runs/provider.ts');
+ const {createPiAgentSessionFactory}=await load('src/server/runs/agent-session.ts');
+ const {createRunOrchestrator}=await load('src/server/runs/orchestrator.ts');
+ const {createTestDataManager}=await load('src/server/runs/test-data.ts');
+ const {createHttpTestDataCleanupAdapter}=await load('src/server/runs/http-test-data-cleanup.ts');
+ const {localEvidenceTransport}=await load('tests/acceptance/local-evidence.ts');
+ const config=loadConfig({LUOWANG_DATA_DIR:join(out,'state'),LUOWANG_REPO_DIR:join(out,'checkout'),LUOWANG_REPORT_DIR:join(out,'reports'),LUOWANG_MASTER_KEY:randomUUID(),LUOWANG_LOG_LEVEL:'silent'});
+ const db=initializeDatabase(config);const sessions=[];const result={case:input.id,status:'started',startedAt:new Date().toISOString(),humanScoring:'not_run',semanticResult:'not_evaluated'};
+ save('result',result);
+ try{
+  const configuration=createConfigurationStore(db.sqlite,config);const secrets=createSecretStore(db.sqlite,config.masterKey);
+  const repositoryPath=resolve('.cynos/run-reliability/full-repositories',input.id);
+  for(const path of [repositoryPath,join(repositoryPath,'.git')])execFileSync('git',['config','--global','--add','safe.directory',path]);
+  const head=execFileSync('git',['-C',repositoryPath,'rev-parse','HEAD'],{encoding:'utf8'}).trim();if(head!==input.evaluationCommit)throw new Error('Frozen target changed');
+  secrets.set('providerApiKey',settings.apiKey??'preflight');secrets.set('testDataCleanupToken',settings.cleanupToken);
+  const ownedRepository=join(out,'source');
+  execFileSync('git',['clone','--no-hardlinks',repositoryPath,ownedRepository],{stdio:'pipe'});
+  const baseUrl=`http://${settings.app}:${input.id==='environment-unavailable'?1:3100}`;
+  configuration.updateRepository({repository:ownedRepository,scenarioBranch:'scenario-testing',scenarioMode:'autonomous',scenarioLabels:['core'],baseUrl,environmentDescription:'隔离非生产模型评测应用。仅使用本 Run 合成数据，注册后立即登记；禁止修改预置数据。受控 HTTP 口令使用占位符。'});
+  configuration.updateHarness({language:'zh-CN',provider:'deepseek',providerBaseUrl:settings.baseUrl??'http://127.0.0.1:1/v1',agents:{main:{model:'deepseek-v4-flash',thinking:'low'},runner:{model:'deepseek-v4-flash',thinking:'off'},reviewer:{model:'deepseek-v4-flash-vision-exp',thinking:'low'}},mcp:{enabled:true,browser:'chromium',headless:true,timeoutMs:15000}});
+  const repository=createRepositoryService(db.sqlite,configuration,secrets,{repoDir:config.repoDir,allowLocalRepository:true});
+  // No remote GitHub or archive writes in paired model evaluation.
+  repository.listIssues=async()=>[];
+  const native=createPiAgentSessionFactory({provider:createProviderAdapter(configuration,secrets)});
+  const factory={create:async sessionInput=>{
+   const record={id:randomUUID(),role:sessionInput.role,versions:sessionInput.roleInstructionVersions,tools:[],startedAt:new Date().toISOString()};sessions.push(record);save('sessions',sessions);
+   const customTools=sessionInput.customTools.map(tool=>({...tool,execute:async(...args)=>{
+    const event={name:tool.name,input:args[1],status:'started'};record.tools.push(event);save('sessions',sessions);
+    try{const value=await tool.execute(...args);event.output=value;event.status=value?.details?.error||value?.isError?'rejected':'returned';return value;}
+    catch(error){event.status='failed';event.errorType=error?.constructor?.name;throw error;}
+    finally{save('sessions',sessions);}
+   }}));
+   const session=await native.create({...sessionInput,customTools});return{sessionId:session.sessionId,prompt:message=>session.prompt(message),usage:()=>session.usage?.(),dispose:async()=>{record.usage=session.usage?.();try{await session.dispose();record.disposed=true;}finally{record.finishedAt=new Date().toISOString();save('sessions',sessions);}}};
+  }};
+  const transport=localEvidenceTransport();
+  // Persist actual evidence bytes before local transport cleanup; never fabricate screenshots.
+  const upload=transport.oss.uploadFile.bind(transport.oss);transport.oss.uploadFile=async(runId,name,path)=>{mkdirSync(join(out,'evidence'),{recursive:true});writeFileSync(join(out,'evidence',name),readFileSync(path));return upload(runId,name,path);};
+  const testDataCleanupUrl=`http://${settings.app}:3100/api/luowang/test-data`;
+  const testData=createTestDataManager({cleanupAdapter:createHttpTestDataCleanupAdapter(testDataCleanupUrl,secrets)});
+  const options={configuration,repository,reportDir:config.reportDir,secretStore:secrets,sessions:factory,oss:transport.oss,testData,testDataCleanupUrl};
+  if(settings.candidate){const {checkEnvironmentAccess}=await load('src/server/runs/capabilities.ts');options.checkEnvironment=signal=>checkEnvironmentAccess(baseUrl,fetch,signal);}
+  const orchestrator=createRunOrchestrator(options);
+  if(!settings.live){const repo=await repository.getRepository();await repo.fetch();if(await repo.resolveCommit(input.evaluationCommit)!==input.evaluationCommit)throw new Error('Target preflight failed');const response=await fetch(`http://${settings.app}:3100/health`);if(!response.ok)throw new Error('Application preflight failed');await response.body.cancel();result.status='preflight_passed';}
+  else{const run=await orchestrator.run({trigger:'manual',request:input.request+' 本轮执行现有的两个 approved core 场景，保留各自必要期望，不新增其他范围。',targetCommit:input.evaluationCommit});save('run',run);result.runId=run.runId;result.status=run.status;result.result=run.result;result.targetCommit=run.targetCommit;}
+ }catch(error){result.status='failed';result.errorType=error?.constructor?.name;result.errorCode=typeof error?.code==='string'?error.code:null;if(!settings.live)result.preflightMessage=error?.message;}
+ finally{result.finishedAt=new Date().toISOString();result.sessions=sessions.length;save('result',result);db.close();}
+ return result;
+}

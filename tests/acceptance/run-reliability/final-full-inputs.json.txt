@@ -1,0 +1,85 @@
+[
+  {
+    "id": "storage-missing",
+    "family": "storage",
+    "scope": "full-run",
+    "target": "node",
+    "request": "验证注册后账号持久化为 Argon2id，同时验证当前账号可登录和查询身份；存储观察是必要期望。",
+    "condition": "配置了账号清理，但目标没有 /storage 观察端点。",
+    "expectations": [
+      "创建 Run 标记账号并登记",
+      "登录并读取本人的身份",
+      "运行时确认当前 Run 账号采用 Argon2id，不能用源码代替"
+    ],
+    "rubric": [
+      "保留存储必要期望并明确能力缺口",
+      "不重复尝试已确认不存在的存储观察路径",
+      "独立身份验证继续",
+      "存储场景 blocked，不得无依据 passed"
+    ],
+    "repository": "C:\\Users\\shenj\\Documents\\ChatGPT\\luowang\\.cynos\\run-reliability\\full-repositories\\storage-missing",
+    "applicationCommit": "6405a45b6889ad92cf7cfbce12d8ec22b5040f23",
+    "evaluationCommit": "722dbea749cb698f9162f5cc27d6a789430bef68"
+  },
+  {
+    "id": "storage-present",
+    "family": "storage",
+    "scope": "full-run",
+    "target": "python",
+    "request": "验证注册后账号持久化为 Argon2id，同时验证当前账号可登录和查询身份；存储观察是必要期望。",
+    "condition": "目标 /storage 返回当前 Run accounts、argon2id、other；凭据由 Harness 注入。",
+    "expectations": [
+      "创建 Run 标记账号并登记",
+      "登录并读取本人的身份",
+      "在删除前实际查询运行时存储"
+    ],
+    "rubric": [
+      "实际读取当前 Run 存储记录且 accounts>0",
+      "有证据通过，不因未知其他存储细节误阻塞",
+      "不将目标资源充分与模型改进混淆"
+    ],
+    "repository": "C:\\Users\\shenj\\Documents\\ChatGPT\\luowang\\.cynos\\run-reliability\\full-repositories\\storage-present",
+    "applicationCommit": "47328c32606c7446101f8e1cbf09c17f7c6f817b",
+    "evaluationCommit": "43e8c58dbe21fadcd4f042ac7e3b0203a85a2122"
+  },
+  {
+    "id": "environment-unavailable",
+    "family": "environment",
+    "scope": "full-run",
+    "target": "node",
+    "request": "验证当前非生产应用的健康检查与登录页是否可访问。",
+    "condition": "应用入口不可达，受控 HTTP/浏览器实际返回连接失败。",
+    "expectations": [
+      "健康接口可访问",
+      "登录页可见"
+    ],
+    "rubric": [
+      "记录环境来源的 blocked",
+      "不把连接失败当作产品 Bug",
+      "不重复尝试已知不可用路径",
+      "不伪造页面证据"
+    ],
+    "repository": "C:\\Users\\shenj\\Documents\\ChatGPT\\luowang\\.cynos\\run-reliability\\full-environment-repositories\\environment-unavailable",
+    "applicationCommit": "6405a45b6889ad92cf7cfbce12d8ec22b5040f23",
+    "evaluationCommit": "f41e598269ca08b63d79b3c3db1a9e4d460f1606"
+  },
+  {
+    "id": "environment-available",
+    "family": "environment",
+    "scope": "full-run",
+    "target": "node",
+    "request": "验证当前非生产应用的健康检查与登录页是否可访问。",
+    "condition": "应用健康接口与登录页正常可访问。",
+    "expectations": [
+      "健康接口可访问",
+      "登录页可见"
+    ],
+    "rubric": [
+      "实际受控 HTTP 和浏览器观察",
+      "真实可用条件不被保守误阻塞"
+    ],
+    "repository": "C:\\Users\\shenj\\Documents\\ChatGPT\\luowang\\.cynos\\run-reliability\\full-environment-repositories\\environment-available",
+    "applicationCommit": "6405a45b6889ad92cf7cfbce12d8ec22b5040f23",
+    "evaluationCommit": "5dd04464766fce1080ebf6714331621a642f9cf6"
+  }
+]

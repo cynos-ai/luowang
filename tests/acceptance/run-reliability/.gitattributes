@@ -1,0 +1,2 @@
+# Frozen evaluator artifacts are hashed as bytes, including their original line endings.
+*.txt -text
