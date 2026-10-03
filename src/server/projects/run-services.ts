@@ -18,6 +18,7 @@ import { createProjectImageStateStore } from './image-state.js';
 import { createProjectRunImageStore } from './run-image.js';
 import { readInstanceId } from './instance-id.js';
 import type { ProjectTaskRuntime } from './task-runtime.js';
+import { checkEnvironmentAccess } from '../runs/capabilities.js';
 
 /** Assemble every Run dependency from one claimed task; never consult a selected project. */
 export function createProjectRunServices(options: {
@@ -60,6 +61,9 @@ export function createProjectRunServices(options: {
       : undefined,
   });
   const runs = createRunOrchestrator({
+    capabilityConfiguration: { projectId, revision: task.configRevision },
+    checkEnvironment: (signal) =>
+      checkEnvironmentAccess(task.configuration.getRepository().baseUrl, fetch, signal),
     configuration: task.configuration,
     repository,
     indexer,

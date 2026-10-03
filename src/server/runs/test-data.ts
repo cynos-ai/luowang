@@ -12,6 +12,32 @@ export interface TestDataEntry {
 
 export class UnsupportedCleanupScopeError extends Error {}
 
+export class StorageCapabilityError extends Error {
+  constructor(
+    readonly code:
+      | 'not_configured'
+      | 'unsupported_endpoint'
+      | 'access_denied'
+      | 'invalid_response'
+      | 'request_failed',
+  ) {
+    super('受控存储观察不可用');
+  }
+}
+
+export interface StorageCapability {
+  status: 'available' | 'unavailable' | 'unknown';
+  checkedAt: string | null;
+  reason:
+    | 'verified_contract'
+    | 'not_configured'
+    | 'unsupported_endpoint'
+    | 'access_denied'
+    | 'invalid_response'
+    | 'request_failed'
+    | 'not_checked';
+}
+
 export interface TestDataVerificationReceipt {
   sourceId: string;
   sourceKind: 'cleanup-adapter';
@@ -34,7 +60,7 @@ export interface TestDataAdapterObservation {
 
 export interface TestDataCleanupAdapter {
   id: string;
-  inspectStorage?(runId: string): Promise<TestAccountStorageObservation>;
+  inspectStorage?(runId: string, signal?: AbortSignal): Promise<TestAccountStorageObservation>;
   cleanupAndVerify(
     input: Readonly<{ runId: string; entry: TestDataEntry }>,
   ): Promise<TestDataAdapterObservation>;
@@ -72,10 +98,11 @@ export interface TestDataManager {
   /** Adapter configuration, not proof of successful cleanup; omitted means unknown. */
   readonly cleanupAvailable?: boolean;
   readonly storageInspectionAvailable?: boolean;
+  checkStorageCapability?(runId: string, signal?: AbortSignal): Promise<StorageCapability>;
   prefix(runId: string): string;
   register(runId: string, entry: TestDataEntry): Promise<void>;
   pending(runId: string): TestDataRecord[];
-  inspectStorage?(runId: string): Promise<TestAccountStorageObservation>;
+  inspectStorage?(runId: string, signal?: AbortSignal): Promise<TestAccountStorageObservation>;
   cleanup(runId: string): Promise<TestDataCleanupResult>;
   finalize(runId: string): TestDataFinalResult;
 }
@@ -106,6 +133,43 @@ class DefaultTestDataManager implements TestDataManager {
 
   get storageInspectionAvailable(): boolean {
     return this.options.cleanupAdapter?.inspectStorage !== undefined;
+  }
+
+  async checkStorageCapability(runId: string, signal?: AbortSignal): Promise<StorageCapability> {
+    signal?.throwIfAborted();
+    if (!/^[0-9A-HJKMNP-TV-Z]{26}$/.test(runId)) throw new Error('Run ID 无效');
+    const inspect = this.options.cleanupAdapter?.inspectStorage;
+    if (!inspect)
+      return {
+        status: 'unavailable',
+        checkedAt: this.now().toISOString(),
+        reason: 'not_configured',
+      };
+    try {
+      // This read verifies the endpoint contract, not any scenario's stored data.
+      const result = await inspect.call(this.options.cleanupAdapter, runId, signal);
+      signal?.throwIfAborted();
+      if (
+        result.runId !== runId ||
+        ![result.accounts, result.argon2id, result.other].every(
+          (count) => Number.isSafeInteger(count) && count >= 0,
+        ) ||
+        result.accounts !== result.argon2id + result.other
+      )
+        throw new StorageCapabilityError('invalid_response');
+      return {
+        status: 'available',
+        checkedAt: this.now().toISOString(),
+        reason: 'verified_contract',
+      };
+    } catch (error) {
+      signal?.throwIfAborted();
+      return {
+        status: 'unavailable',
+        checkedAt: this.now().toISOString(),
+        reason: error instanceof StorageCapabilityError ? error.code : 'request_failed',
+      };
+    }
   }
 
   prefix(runId: string): string {
@@ -146,13 +210,18 @@ class DefaultTestDataManager implements TestDataManager {
       .sort((a, b) => a.id.localeCompare(b.id));
   }
 
-  async inspectStorage(runId: string): Promise<TestAccountStorageObservation> {
+  async inspectStorage(
+    runId: string,
+    signal?: AbortSignal,
+  ): Promise<TestAccountStorageObservation> {
+    signal?.throwIfAborted();
     if (!/^[0-9A-HJKMNP-TV-Z]{26}$/.test(runId)) throw new Error('Run ID 无效');
     if (!this.pending(runId).some((entry) => entry.cleanupScope === 'website-accounts'))
       throw new Error('当前 Run 尚未登记官网测试账号');
     const adapter = this.options.cleanupAdapter;
     if (!adapter?.inspectStorage) throw new Error('未配置受控账号存储观察');
-    const result = await adapter.inspectStorage(runId);
+    const result = await adapter.inspectStorage(runId, signal);
+    signal?.throwIfAborted();
     if (
       result.runId !== runId ||
       ![result.accounts, result.argon2id, result.other].every(
@@ -271,6 +340,7 @@ export function createTestDataTools(
   runId: string,
   scenarioId?: string,
   captureStorageObservation?: (observation: TestAccountStorageObservation) => Promise<string>,
+  storageCapability?: StorageCapability,
 ): ToolDefinition[] {
   const cleanupNote =
     manager.cleanupAvailable === true
@@ -325,7 +395,10 @@ export function createTestDataTools(
           JSON.stringify(manager.pending(runId).map(({ id, status }) => ({ id, status }))),
         ),
     },
-    ...(manager.storageInspectionAvailable && manager.inspectStorage && captureStorageObservation
+    ...(storageCapability?.status !== 'unavailable' &&
+    manager.storageInspectionAvailable &&
+    manager.inspectStorage &&
+    captureStorageObservation
       ? [
           {
             name: 'inspect_test_account_storage',
@@ -333,9 +406,9 @@ export function createTestDataTools(
             description:
               '只读当前 Run 已登记账号在受控非生产数据库中的存储格式汇总；注册后、删除账号前调用。只返回数量，不返回密码、哈希、邮箱或其他 Run 数据。结果保存为本 Run 的审核证据。',
             parameters: Type.Object({}, { additionalProperties: false }),
-            execute: async () => {
+            execute: async (_id, _params, signal) => {
               try {
-                const observation = await manager.inspectStorage!(runId);
+                const observation = await manager.inspectStorage!(runId, signal);
                 const evidenceId = await captureStorageObservation(observation);
                 return createTextResult(JSON.stringify({ ...observation, evidenceId }));
               } catch {
