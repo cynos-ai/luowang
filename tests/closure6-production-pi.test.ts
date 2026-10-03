@@ -52,24 +52,14 @@ describe('Closure 6 local production Pi path', () => {
     assert.equal(accounting.costBasis, 'sdk-catalog-estimate-not-provider-bill');
     assert.equal(accounting.totals.sdkEstimatedCostUsd, null);
     assert.equal('agent-usage.json' in result.artifacts, false);
-    assert.equal(
-      accounting.totals.tokens.total,
-      accounting.sessions.reduce(
-        (sum: number, entry: { usage: { tokens: { total: number } } }) =>
-          sum + entry.usage.tokens.total,
-        0,
-      ),
-    );
+    assert.equal(accounting.totals.tokens, null); // This protocol fixture sends no usage.
     assert.deepEqual(
       accounting.sessions.map((entry: { kind: string }) => entry.kind),
       ['main-planning', 'runner-execution', 'reviewer-audit', 'main-finalization'],
     );
-    assert.ok(
-      accounting.sessions.every(
-        (entry: { usage: { tokens: { total: number }; sdkEstimatedCostUsd: number | null } }) =>
-          Number.isFinite(entry.usage.tokens.total) && entry.usage.sdkEstimatedCostUsd === null,
-      ),
-    );
+    assert.ok(accounting.sessions.every((entry: { usage: unknown }) => entry.usage === null));
+    assert.equal(result.telemetry?.sessions.length, 4);
+    assert.ok(result.telemetry?.stages.every((stage) => stage.finishedAt !== null));
     assert.ok(
       [...context.model.observedToolResults].some((value) => value.includes('旧计划未修改')),
     );

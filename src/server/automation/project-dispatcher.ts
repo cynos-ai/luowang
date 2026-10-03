@@ -379,8 +379,10 @@ export function createProjectAutomationDispatcher(options: {
           if (item.stopRequestedAt) {
             const recovery = createProjectRunRecoveryStore(options.database, item.projectId);
             const saved = recovery.get(runId);
+            const checkpoint = recovery.readCheckpoint?.(runId);
             recovery.record(
               {
+                ...checkpoint,
                 ...detail,
                 ...saved,
                 runId,
@@ -393,7 +395,12 @@ export function createProjectAutomationDispatcher(options: {
                 targetCommit:
                   item.resolvedTargetCommit ?? saved?.targetCommit ?? detail?.targetCommit ?? null,
                 includedCommits: saved?.includedCommits ?? detail?.includedCommits ?? [],
-                startedAt: item.claimedAt ?? item.createdAt,
+                startedAt:
+                  saved?.startedAt ??
+                  detail?.startedAt ??
+                  checkpoint?.startedAt ??
+                  item.claimedAt ??
+                  item.createdAt,
                 finishedAt: saved?.finishedAt ?? new Date().toISOString(),
                 artifactNames: saved?.artifactNames ?? detail?.artifactNames ?? [],
                 stopRequestedAt: item.stopRequestedAt,

@@ -112,6 +112,9 @@ export function createProjectConsoleService(input: {
           currentScenario: run?.currentScenario ?? null,
           progress: run?.scenarioProgress ?? null,
           updatedAt: run?.updatedAt ?? item.updatedAt,
+          telemetry: run?.telemetry,
+          stageStartedAt: run?.telemetry?.stages.at(-1)?.startedAt ?? (run ? null : item.claimedAt),
+          lastActivityAt: run?.activities?.at(-1)?.at ?? run?.updatedAt ?? item.updatedAt,
         });
       }
       const recentRuns: WorkspaceRecentRun[] = [];

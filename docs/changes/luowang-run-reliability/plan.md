@@ -179,3 +179,9 @@
 - 当前离线升级追加 `0019_run_followup`（包含前置 0018），新增来源 Run 与项目内唯一重测幂等键。当前命令备份名为 `luowang-before-reliability-0019.db`；旧程序回退必须恢复该次匹配备份和主密钥/配置，不能直接读新 schema。前述 0018 文件名仅对应 Phase 1 历史版本。
 - Phase 3 本地 Docker 全量单测 509 passed / 2 skipped（`.cynos/run-followup-all-tests.log`）；生产构建与 UI workflow 退出码 0（`.cynos/run-followup-build.log`、`.cynos/run-followup-ui.log`），覆盖三档宽度、确认框 Escape、失败后复用幂等键、双击单请求、项目切换迟到响应、归档结果及新旧配置/未知 target。新增工作台共用诊断后定向 7 passed，typecheck/lint 退出码 0（`.cynos/run-followup-final-check.log`）。以上不代替最终候选 live。
 - Reviewer 基线矩阵已完成 36 次调用尝试（专项 24、历史 12），保留实际失败；包括历史 plan/execution mismatch 第一次未写 review 的失败，没有补抽替换。输出位于 `.cynos/run-reliability/review-baseline/`，包装器冻结在 `review-wrapper-freeze.json`。语义评分及候选比较待 Phase 5，人工评分 not_run。
+
+- PR #123 最终 head `75458db375376a92d6c8753a31f3e4ddb49b174c` 经 [完整 quality / runtime CI](https://github.com/cynos-ai/luowang/actions/runs/37088879341) 通过，通过 PR 合入 develop `5d94434`。Phase 4 从该版本创建 `feat/run-timing-usage`。
+- Phase 4：实际阶段切换保存起止时间，终态时长固定；当前执行和 Run 页展示最近活动距今及数据刷新时间，页面轮询失败与后端无新活动分别说明。Session 使用稳定身份去重，SDK 没有可用记录时为 unknown，未结算或不完整记录为 partial；input/output/cache read/write/SDK total 保持原口径，估价不当作账单，不引入费用上限。正常四 Session 与初始化分流保持。
+- 用量继续写入 Harness 私有 `agent-usage.json`（v2，可读取已有 v1 回执；历史时间缺失仍为 null），摘要进入原 Run/recovery 读模型。追加 `0020_run_telemetry` 的 `run_store_runs.telemetry_json`，当前离线升级备份为 `luowang-before-reliability-0020.db`，旧记录无字段为 unknown；原长期实例未升级。中止恢复在运行目录缺失时仍保留 SQLite checkpoint，断电期间阶段结束时间未知。
+- Phase 4 本地 Docker 全量单测 512 passed / 2 skipped、typecheck/lint 退出码 0（`.cynos/run-telemetry-verified.log`）；生产构建与 UI workflow 退出码 0（`.cynos/run-telemetry-ui.log`）。专项包括回执去重、同角色不同初始化 Session、未知用量、部分估价、固定终态时间、重复归档导入、读取后重启恢复和数据库冲突。此前失败保留在过程日志中，未用失败记录作为通过证明。
+- 四个完整执行模型输入在调用前另行包装冻结：授权 Node/Python 固定应用源码配两条 approved 场景；仅评测副本排除无关场景/历史报告，原件不变。Python `/health` 路径在模型调用前校正，v2 冻结记录保留在 `full-input-wrapper-v2-freeze.json`。Git 挂载所有权预检失败均为零模型调用，最终使用所属用户的隔离 clone，并在 `full-driver-freeze.json` 固定驱动后开始基线 12 次真实应用执行。它使用本地证据传输与评测场景副本，不冒充持久候选的 Git/OSS 联合验收。

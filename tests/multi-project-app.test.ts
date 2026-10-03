@@ -22,7 +22,7 @@ import { migrateProjectQueueContext } from '../src/server/db/migrations/0014-pro
 import { migrateProjectImageState } from '../src/server/db/migrations/0015-project-image-state.js';
 import { migrateProjectRunImage } from '../src/server/db/migrations/0016-project-run-image.js';
 import { migrateProjectReportIndexIdentity } from '../src/server/db/migrations/0017-project-report-index-identity.js';
-import { migrateRunFollowup } from '../src/server/db/migrations/0019-run-followup.js';
+import { migrateRunTelemetry } from '../src/server/db/migrations/0020-run-telemetry.js';
 import { createProjectApp } from '../src/server/projects/app.js';
 import { createProjectTestRequestQueue } from '../src/server/automation/queue.js';
 import { createProjectRunStore } from '../src/server/runs/store.js';
@@ -56,7 +56,7 @@ it('uses only new-schema administration routes, scoped Secrets, and the existing
   migrateProjectImageState(database.sqlite);
   migrateProjectRunImage(database.sqlite);
   migrateProjectReportIndexIdentity(database.sqlite);
-  migrateRunFollowup(database.sqlite);
+  migrateRunTelemetry(database.sqlite);
   database.sqlite
     .prepare(
       `INSERT INTO system_metadata (key, value, created_at, updated_at)
@@ -675,6 +675,24 @@ it('uses only new-schema administration routes, scoped Secrets, and the existing
     );
     createProjectRunStore(database.sqlite, projectId).importCompleted({
       runId: 'RUN-A',
+      telemetry: {
+        stages: [
+          {
+            phase: 'runner',
+            startedAt: '2026-01-01T00:00:00.000Z',
+            finishedAt: '2026-01-01T00:01:00.000Z',
+          },
+        ],
+        sessions: [
+          {
+            sessionId: 'one',
+            kind: 'runner-execution',
+            startedAt: null,
+            finishedAt: '2026-01-01T00:01:00.000Z',
+            usage: null,
+          },
+        ],
+      },
       trigger: 'manual',
       baseCommit: null,
       targetCommit: 'a'.repeat(40),
@@ -807,6 +825,17 @@ it('uses only new-schema administration routes, scoped Secrets, and the existing
     });
     assert.ok(parseLiveQueueResponse(queueResponse.json()).length > 0);
     const store = createProjectRunStore(database.sqlite, projectId);
+    const persisted = store.get('RUN-A')!;
+    assert.deepEqual(storedRunDetail.json().run.telemetry, persisted.telemetry);
+    store.importCompleted(persisted);
+    assert.equal(
+      createProjectRunStore(database.sqlite, projectId).get('RUN-A')?.telemetry?.sessions.length,
+      1,
+    );
+    assert.throws(
+      () => store.importCompleted({ ...persisted, telemetry: { stages: [], sessions: [] } }),
+      /telemetry 冲突/,
+    );
     store.importCompleted({
       ...store.get('RUN-A')!,
       runId: 'SPECIAL-REVIEW',

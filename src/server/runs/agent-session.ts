@@ -141,7 +141,11 @@ class ManagedAgentSession implements AgentSession {
   constructor(
     private readonly session: {
       sessionId: string;
-      readonly messages: ReadonlyArray<{ role: string; stopReason?: string }>;
+      readonly messages: ReadonlyArray<{
+        role: string;
+        stopReason?: string;
+        usage?: { totalTokens: number };
+      }>;
       prompt(message: string): Promise<void>;
       abort(): Promise<void>;
       getSessionStats(): {
@@ -160,13 +164,27 @@ class ManagedAgentSession implements AgentSession {
     this.sessionId = session.sessionId;
   }
 
-  usage(): AgentSessionUsage {
+  usage(): AgentSessionUsage | undefined {
     const stats = this.session.getSessionStats();
+    if (
+      stats.tokens.total <= 0 ||
+      Object.values(stats.tokens).some((value) => !Number.isFinite(value) || value < 0)
+    )
+      return undefined;
     return {
       provider: this.provider,
       model: this.model,
       tokens: { ...stats.tokens },
       sdkEstimatedCostUsd: Number.isFinite(stats.cost) && stats.cost > 0 ? stats.cost : null,
+      completeness: this.session.messages.some(
+        (message) =>
+          message.role === 'assistant' &&
+          (!message.usage ||
+            message.usage.totalTokens <= 0 ||
+            ['error', 'aborted', 'length'].includes(message.stopReason ?? '')),
+      )
+        ? 'partial'
+        : 'complete',
     };
   }
 

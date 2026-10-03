@@ -1,3 +1,5 @@
+import { summarizeUsage } from '../../shared/run-telemetry.js';
+import type { SessionUsageRecord } from '../../shared/types.js';
 import { randomBytes } from 'node:crypto';
 import { lstat, mkdir, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises';
 import { dirname, isAbsolute, relative, resolve, sep } from 'node:path';
@@ -248,43 +250,50 @@ export class RunWorkspace implements RunArtifactReader {
   }
 
   /** Harness-only per-Session accounting; never exposed as a model-readable artifact. */
-  async recordAgentUsage(kind: AgentSessionKind, usage: AgentSessionUsage): Promise<void> {
+  async recordAgentUsage(
+    kind: AgentSessionKind,
+    usage: AgentSessionUsage | null,
+    identity: { sessionId: string; startedAt: string | null; finishedAt: string } = {
+      sessionId: randomBytes(16).toString('hex'),
+      startedAt: null,
+      finishedAt: new Date().toISOString(),
+    },
+  ): Promise<void> {
     const path = resolve(this.directory, 'agent-usage.json');
-    let records: Array<{ kind: AgentSessionKind; usage: AgentSessionUsage }> = [];
+    let records: SessionUsageRecord[] = [];
     try {
       const info = await lstat(path);
       if (!info.isFile() || info.isSymbolicLink() || info.size > 64 * 1024)
         throw new RunWorkspaceError('ARTIFACT_INVALID', '模型用量记录无效');
       const saved = JSON.parse(await readFile(path, 'utf8')) as {
         version: number;
-        sessions: typeof records;
+        sessions: SessionUsageRecord[];
       };
-      if (saved.version !== 1 || !Array.isArray(saved.sessions) || saved.sessions.length > 16)
+      if (
+        ![1, 2].includes(saved.version) ||
+        !Array.isArray(saved.sessions) ||
+        saved.sessions.length > 16
+      )
         throw new RunWorkspaceError('ARTIFACT_INVALID', '模型用量记录无效');
-      records = saved.sessions;
+      records = saved.sessions.map((record, index) => ({
+        ...record,
+        sessionId: record.sessionId ?? `legacy:${index}`,
+        startedAt: record.startedAt ?? null,
+        finishedAt: record.finishedAt ?? null,
+        ...(saved.version === 1 ? { settled: true } : {}),
+      }));
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
     }
-    records.push({ kind, usage });
-    const totals = records.reduce(
-      (sum, record) => ({
-        input: sum.input + record.usage.tokens.input,
-        output: sum.output + record.usage.tokens.output,
-        cacheRead: sum.cacheRead + record.usage.tokens.cacheRead,
-        cacheWrite: sum.cacheWrite + record.usage.tokens.cacheWrite,
-        total: sum.total + record.usage.tokens.total,
-      }),
-      { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-    );
+    const record = { kind, usage, ...identity };
+    const existing = records.findIndex((item) => item.sessionId === identity.sessionId);
+    if (existing < 0) records.push(record);
+    else records[existing] = record;
+    const summary = summarizeUsage(records);
     const content = JSON.stringify({
-      version: 1,
+      version: 2,
       costBasis: 'sdk-catalog-estimate-not-provider-bill',
-      totals: {
-        tokens: totals,
-        sdkEstimatedCostUsd: records.every((record) => record.usage.sdkEstimatedCostUsd !== null)
-          ? records.reduce((sum, record) => sum + record.usage.sdkEstimatedCostUsd!, 0)
-          : null,
-      },
+      totals: { tokens: summary.tokens, sdkEstimatedCostUsd: summary.sdkEstimatedCostUsd },
       sessions: records,
     });
     const temporary = resolve(

@@ -1,4 +1,4 @@
-import { randomBytes } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 import { appendScreenshotLabels } from './screenshot-inspection.js';
 import type { Logger } from 'pino';
 import { Type } from 'typebox';
@@ -313,6 +313,7 @@ class DefaultRunOrchestrator implements RunOrchestrator {
         currentScenario: null,
         scenarioProgress: { completed: 0, total: 0 },
         activities: [{ at: startedAt, message: 'Run 已创建，等待准备', kind: 'phase' }],
+        telemetry: { stages: [{ phase: 'preparing', startedAt, finishedAt: null }], sessions: [] },
         blockingReasons: [],
         updatedAt: startedAt,
         stopController: new AbortController(),
@@ -1828,6 +1829,13 @@ class DefaultRunOrchestrator implements RunOrchestrator {
     let session: AgentSession | undefined;
     let stage = 'role-instructions';
     let disposeFailure: unknown;
+    const sessionRecord: import('../../shared/types.js').SessionUsageRecord = {
+      sessionId: randomUUID(),
+      kind: sessionKind,
+      startedAt: this.now().toISOString(),
+      finishedAt: null,
+      usage: null,
+    };
     try {
       this.assertNotStopped();
       const instructions = await this.roleInstructions.load(sessionKind, initialization);
@@ -1847,6 +1855,11 @@ class DefaultRunOrchestrator implements RunOrchestrator {
       input.signal = this.activeRun?.stopController?.signal;
       stage = 'session-create';
       session = await this.sessions.create(input);
+      if (this.activeRun?.telemetry) {
+        this.activeRun.telemetry.sessions.push(sessionRecord);
+        this.checkpoint(this.activeRun);
+      }
+
       stage = 'session-prompt';
       await session.prompt(input.userMessage);
       this.assertNotStopped();
@@ -1886,16 +1899,30 @@ class DefaultRunOrchestrator implements RunOrchestrator {
       );
       throw error;
     } finally {
+      sessionRecord.finishedAt = this.now().toISOString();
       if (session) {
         try {
           const usage = session.usage?.();
-          if (usage) await workspace.recordAgentUsage(sessionKind, usage);
+          sessionRecord.usage = usage ?? null;
         } catch (error) {
           this.options.logger?.warn(
             { sessionKind, errorName: error instanceof Error ? error.name : 'UnknownError' },
             'agent session usage unavailable',
           );
         }
+        try {
+          if (session)
+            await workspace.recordAgentUsage(sessionKind, sessionRecord.usage, {
+              ...sessionRecord,
+              finishedAt: sessionRecord.finishedAt!,
+            });
+        } catch {
+          this.options.logger?.warn(
+            { sessionKind },
+            'agent session accounting could not be persisted',
+          );
+        }
+        if (this.activeRun) this.checkpoint(this.activeRun);
         try {
           if (this.activeRun?.stopRequestedAt)
             await this.closeStoppedResource(async () => {
@@ -2246,6 +2273,7 @@ class DefaultRunOrchestrator implements RunOrchestrator {
         blockingReasons: state.blockingReasons,
         scenarioProgress: state.scenarioProgress,
         activities: state.activities,
+        telemetry: state.telemetry,
         specialRun: options.specialRun,
         scenarioMode: options.scenarioMode,
         initialization: options.initialization,
@@ -2313,8 +2341,14 @@ class DefaultRunOrchestrator implements RunOrchestrator {
     kind: 'phase' | 'info' | 'warning' = 'phase',
     code?: RunActivity['code'],
   ): void {
-    state.phase = phase;
     const at = this.now().toISOString();
+    if (state.telemetry && state.phase !== phase) {
+      const previous = state.telemetry.stages.at(-1);
+      if (previous && previous.finishedAt === null) previous.finishedAt = at;
+      if (!['completed', 'failed', 'interrupted'].includes(phase))
+        state.telemetry.stages.push({ phase, startedAt: at, finishedAt: null });
+    }
+    state.phase = phase;
     state.updatedAt = at;
     state.activities = [
       ...(state.activities ?? []),
@@ -2664,6 +2698,7 @@ function toSummary(state: RunSnapshot): RunSummary {
     errorMessage: state.errorMessage,
     artifactNames: [...state.artifactNames],
   };
+  if (state.telemetry) summary.telemetry = structuredClone(state.telemetry);
   if (state.evidence && state.evidence.length > 0) {
     summary.evidence = state.evidence.map((reference) => ({ ...reference }));
   }
