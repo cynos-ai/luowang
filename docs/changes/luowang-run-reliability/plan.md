@@ -185,3 +185,9 @@
 - 用量继续写入 Harness 私有 `agent-usage.json`（v2，可读取已有 v1 回执；历史时间缺失仍为 null），摘要进入原 Run/recovery 读模型。追加 `0020_run_telemetry` 的 `run_store_runs.telemetry_json`，当前离线升级备份为 `luowang-before-reliability-0020.db`，旧记录无字段为 unknown；原长期实例未升级。中止恢复在运行目录缺失时仍保留 SQLite checkpoint，断电期间阶段结束时间未知。
 - Phase 4 本地 Docker 全量单测 512 passed / 2 skipped、typecheck/lint 退出码 0（`.cynos/run-telemetry-verified.log`）；生产构建与 UI workflow 退出码 0（`.cynos/run-telemetry-ui.log`）。专项包括回执去重、同角色不同初始化 Session、未知用量、部分估价、固定终态时间、重复归档导入、读取后重启恢复和数据库冲突。此前失败保留在过程日志中，未用失败记录作为通过证明。
 - 四个完整执行模型输入在调用前另行包装冻结：授权 Node/Python 固定应用源码配两条 approved 场景；仅评测副本排除无关场景/历史报告，原件不变。Python `/health` 路径在模型调用前校正，v2 冻结记录保留在 `full-input-wrapper-v2-freeze.json`。Git 挂载所有权预检失败均为零模型调用，最终使用所属用户的隔离 clone，并在 `full-driver-freeze.json` 固定驱动后开始基线 12 次真实应用执行。它使用本地证据传输与评测场景副本，不冒充持久候选的 Git/OSS 联合验收。
+
+- PR #124 最终 head `79a01628a8104f4915fa608e7e67078e37c6ccde` 经 [完整 quality / runtime CI](https://github.com/cynos-ai/luowang/actions/runs/37090531284) 通过，通过 PR 合入 develop `95b3059`。Phase 5 从该版本创建 `feat/run-reliability-evaluation`。
+- 基线全部 72 次执行尝试已完成：历史规划 24、Reviewer/最终 Main 回放 36、真实应用完整 Run 12；调用完成与语义评分分开。完整 Run 用隔离 Docker Node/Python 应用、原生产 Session/工具/MCP、固定本地场景副本和本地证据传输，无远程归档；12 例均形成 completed，但不据此推断所有判据通过。
+- 可复现驱动位于 `tests/acceptance/run-reliability/`：模板保留实际冻结驱动的原字节，`run-matrix.mjs candidate planning|review|full` 在 `.cynos/run-reliability/` 的受控资源、固定输入及候选源码副本上运行。驱动拒绝覆盖既有尝试，保留实际响应/工具轨迹/SDK 用量并绑定输入、驱动及源码版本，不增加费用或次数上限。预检必须先通过。
+- AI 评分使用固定原判据和实际输出；原规划判据的 critical/forbidden/allowed 结构由 v2 适配器无损展开。v1 适配失败的评分调用保留，不能计为模型质量失败或通过；评分器 JSON 合约失败同样保留并另行复核，不用新测试抽样替换。AI 评分不等于人工评分，后者仍为 not_run。
+- 新增本批 live 绑定检查，沿用既有 live queue/Run API 契约，核对批次、candidate/image、角色、模型、检查器、实例、项目、queue/Run、target 和配置；校验实际文件哈希并拒绝缺失/越界。定向错绑与完整性反例通过（`.cynos/run-reliability/evaluation-checks.log`）。它只验证归属和完整性，各 live 案例仍须由实际操作与断言证明，不能用一份 manifest 冒充所有 AC。

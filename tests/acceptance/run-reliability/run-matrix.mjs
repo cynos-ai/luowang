@@ -1,0 +1,205 @@
+import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
+import { resolve, join } from 'node:path';
+import { createHash } from 'node:crypto';
+import { parseEnv } from 'node:util';
+import { pathToFileURL } from 'node:url';
+import { modelProxy } from '../record-accuracy/proxy.mjs';
+
+// This runner belongs to the frozen run-reliability study, not the product scheduler.
+const [revision, matrix] = process.argv.slice(2);
+if (
+  !['baseline', 'candidate'].includes(revision) ||
+  !['planning', 'review', 'full'].includes(matrix)
+)
+  throw new Error(
+    'Usage: node --import tsx tests/acceptance/run-reliability/run-matrix.mjs baseline|candidate planning|review|full',
+  );
+const root = resolve('.cynos/run-reliability');
+const hash = (bytes) => createHash('sha256').update(bytes).digest('hex');
+const read = (path) => JSON.parse(readFileSync(path));
+const save = (path, value) => writeFileSync(path, JSON.stringify(value, null, 2));
+const inputs = read(join(root, 'frozen-inputs.json'));
+if (
+  hash(readFileSync(join(root, 'frozen-inputs.json'))) !==
+  hash(readFileSync(new URL('./frozen-inputs.json.txt', import.meta.url)))
+)
+  throw new Error('Original frozen input changed');
+if (revision === 'candidate') {
+  const frozen = read(join(root, 'candidate-freeze.json'));
+  for (const file of frozen.files)
+    if (hash(readFileSync(join(root, 'candidate', file.path))) !== file.sha256)
+      throw new Error('Candidate source changed');
+}
+const version =
+  revision === 'baseline'
+    ? inputs.baselineCommit
+    : read(join(root, 'candidate-freeze.json')).commit;
+const template = readFileSync(new URL(`./${matrix}-driver.mjs.txt`, import.meta.url), 'utf8');
+const driver = template.replaceAll('__REVISION_ROOT__', `./${revision}`);
+const driverPath = join(root, `packaged-${matrix}-${revision}.mjs`);
+if (!existsSync(driverPath)) writeFileSync(driverPath, driver, { flag: 'wx' });
+if (hash(readFileSync(driverPath)) !== hash(driver)) throw new Error('Existing driver changed');
+const { runCase } = await import(pathToFileURL(driverPath));
+const inputPath = join(
+  root,
+  matrix === 'planning'
+    ? 'frozen-inputs.json'
+    : matrix === 'review'
+      ? 'review-wrapped-inputs.json'
+      : 'full-wrapped-inputs-v2.json',
+);
+const inputBytes = readFileSync(inputPath);
+if (
+  matrix === 'review' &&
+  hash(inputBytes) !== hash(readFileSync(new URL('./review-inputs.json.txt', import.meta.url)))
+)
+  throw new Error('Reviewer input changed');
+if (
+  matrix === 'full' &&
+  hash(inputBytes) !== read(join(root, 'full-input-wrapper-v2-freeze.json')).inputsSha256
+)
+  throw new Error('Full-run input changed');
+const cases = matrix === 'planning' ? inputs.planning : JSON.parse(inputBytes);
+const output = join(root, `${matrix === 'planning' ? 'historical-planning' : matrix}-${revision}`);
+mkdirSync(output, { recursive: true });
+const resources = matrix === 'full' ? read(join(root, 'full-resources.json')) : null;
+const execute = (input, out, options = {}) => {
+  if (matrix === 'planning')
+    return runCase(
+      join(root, revision),
+      input,
+      join(root, 'planning-repositories', input.id),
+      out,
+      { candidate: true, ...options },
+    );
+  if (matrix === 'review') return runCase(input, out, options);
+  const resource = resources.projects.find(
+    (project) => project.revision === revision && project.kind === input.target,
+  );
+  if (!resource) throw new Error('Isolated application resource missing');
+  return runCase(join(root, revision), input, out, {
+    ...resource,
+    candidate: revision === 'candidate',
+    ...options,
+  });
+};
+for (const input of cases) {
+  const out = join(output, `preflight-packaged-${input.id}`);
+  if (existsSync(out)) {
+    if (read(join(out, 'result.json')).status !== 'preflight_passed')
+      throw new Error('Inspect failed preflight before further work');
+    continue;
+  }
+  const raw = await execute(input, out);
+  if ((raw.result ?? raw).status !== 'preflight_passed')
+    throw new Error('Production tool preflight failed; no model calls');
+}
+const freeze = {
+  version,
+  inputSha256: hash(inputBytes),
+  driverSha256: hash(driver),
+  matrix,
+  frozenAt: new Date().toISOString(),
+  humanScoring: 'not_run',
+};
+const freezePath = join(root, `${matrix}-${revision}-execution-freeze.json`);
+if (!existsSync(freezePath))
+  writeFileSync(freezePath, JSON.stringify(freeze, null, 2), { flag: 'wx' });
+else if (
+  ['version', 'inputSha256', 'driverSha256'].some((key) => read(freezePath)[key] !== freeze[key])
+)
+  throw new Error('Execution freeze changed');
+const env = parseEnv(readFileSync('.env', 'utf8'));
+if (!env.DEEPSEEK_API_KEY) throw new Error('Provider credential unavailable');
+const endpoint = env.DEEPSEEK_BASE_URL.replace(/\/$/, '') + '/chat/completions';
+for (let repeat = 1; repeat <= 3; repeat++)
+  for (const input of cases) {
+    const group = matrix === 'planning' ? 'historical' : (input.matrix ?? 'targeted');
+    const name =
+      matrix === 'planning' ? `${input.id}-r${repeat}` : `${group}-${input.id}-r${repeat}`;
+    const out = join(output, name);
+    const raw = join(output, `${name}-responses`);
+    if (existsSync(out) || existsSync(raw))
+      throw new Error('Refuse to overwrite any prior model attempt');
+    mkdirSync(raw);
+    const receipts = [];
+    let active;
+    const proxy = modelProxy(
+      {
+        stop: (reason) => {
+          if (active) active.stop = reason;
+        },
+        request: async (model, operation) => {
+          const receipt = {
+            index: receipts.length + 1,
+            model,
+            startedAt: new Date().toISOString(),
+          };
+          receipts.push(receipt);
+          active = receipt;
+          try {
+            await operation(receipt);
+            receipt.status = 'completed';
+          } catch (error) {
+            receipt.status = 'failed';
+            receipt.failureType = error?.constructor?.name;
+            throw error;
+          } finally {
+            receipt.finishedAt = new Date().toISOString();
+            save(join(raw, 'requests.json'), receipts);
+          }
+        },
+      },
+      endpoint,
+      env.DEEPSEEK_API_KEY,
+      async (...args) => {
+        const response = await fetch(...args);
+        const receipt = active;
+        const bytes = Buffer.from(await response.clone().arrayBuffer());
+        writeFileSync(join(raw, `${receipt.index}.response`), bytes, { flag: 'wx', mode: 0o600 });
+        receipt.responseSha256 = hash(bytes);
+        return response;
+      },
+    );
+    await new Promise((resolve) => proxy.listen(0, '127.0.0.1', resolve));
+    console.log(JSON.stringify({ event: 'start', revision, case: name }));
+    try {
+      await execute(input, out, {
+        live: true,
+        baseUrl: `http://127.0.0.1:${proxy.address().port}/v1`,
+        apiKey: 'evaluation-proxy',
+      });
+    } catch (error) {
+      mkdirSync(out, { recursive: true });
+      if (!existsSync(join(out, 'result.json')))
+        save(join(out, 'result.json'), {
+          case: input.id,
+          status: 'failed',
+          failureType: error?.constructor?.name,
+          finishedAt: new Date().toISOString(),
+          humanScoring: 'not_run',
+        });
+    } finally {
+      save(join(out, 'binding.json'), {
+        ...freeze,
+        repeat,
+        case: input.id,
+        matrix: group,
+        kind:
+          matrix === 'full'
+            ? 'actual-application-full-run-local-scenario-overlay'
+            : `${matrix}-replay`,
+        requests: receipts.length,
+      });
+      proxy.closeAllConnections();
+      await new Promise((resolve) => proxy.close(resolve));
+      console.log(
+        JSON.stringify({
+          event: 'finish',
+          case: name,
+          status: read(join(out, 'result.json')).status,
+          requests: receipts.length,
+        }),
+      );
+    }
+  }
