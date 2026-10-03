@@ -1102,8 +1102,10 @@ class DefaultRunOrchestrator implements RunOrchestrator {
             await evidenceStore.captureObservation(context.targetCommit, {
               source: 'scenario-progress',
               event: tool.name,
-              at: this.now().toISOString(),
-              ...operationContext(),
+              ...((result.details as Record<string, unknown>).progressEvent as Record<
+                string,
+                unknown
+              >),
             });
           } catch {
             this.addBlockingReason(context, '场景进度证据保存失败');

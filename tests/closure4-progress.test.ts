@@ -12,6 +12,40 @@ const SCENARIOS = [
 ] as const;
 
 describe('Closure 4 Runner scenario progress', () => {
+  it('keeps accepted event identity when consecutive tools advance before their promises settle', async () => {
+    const controller = createScenarioProgressController({
+      state: runState(),
+      allowedScenarios: SCENARIOS,
+      now: clockSequence(),
+    });
+    await invokeOk(controller.tools, 'begin_scenario_execution', {
+      scenarioIds: SCENARIOS.map((scenario) => scenario.id),
+    });
+    await invokeOk(controller.tools, 'start_scenario', { scenarioId: SCENARIOS[0].id });
+    const finished = invoke(controller.tools, 'finish_scenario', { scenarioId: SCENARIOS[0].id });
+    const started = invoke(controller.tools, 'start_scenario', { scenarioId: SCENARIOS[1].id });
+    const finishedLast = invoke(controller.tools, 'finish_scenario', {
+      scenarioId: SCENARIOS[1].id,
+    });
+    const events = (await Promise.all([finished, started, finishedLast])).map(
+      (result) => result.details.progressEvent as Record<string, unknown>,
+    );
+    assert.deepEqual(
+      events.map((event) => event.scenarioId),
+      [SCENARIOS[0].id, SCENARIOS[1].id, SCENARIOS[1].id],
+    );
+    assert.deepEqual(
+      events.map((event) => event.completed),
+      [[SCENARIOS[0].id], [SCENARIOS[0].id], SCENARIOS.map((scenario) => scenario.id)],
+    );
+    assert.deepEqual(
+      events.map((event) => event.at),
+      ['2026-09-01T04:00:03.000Z', '2026-09-01T04:00:04.000Z', '2026-09-01T04:00:05.000Z'],
+    );
+    assert.ok(events.every((event) => event.scope === 'scenario'));
+    assert.equal(controller.operationContext().scenarioId, null);
+  });
+
   it('updates current scenario, 0/N to N/N progress, activities, and timestamps', async () => {
     const state = runState();
     const clock = clockSequence();
