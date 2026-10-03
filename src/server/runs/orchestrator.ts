@@ -77,6 +77,11 @@ import type { TargetSearchResult } from './change-evidence.js';
 import { createTestDataManager, createTestDataTools, type TestDataManager } from './test-data.js';
 import { createControlledHttpTools } from './controlled-http.js';
 import {
+  collectRunCapabilities,
+  type EnvironmentObservation,
+  type RunCapabilities,
+} from './capabilities.js';
+import {
   createRoleInstructionLoader,
   RoleInstructionError,
   type RoleInstructionLoader,
@@ -110,6 +115,8 @@ const SENSITIVE_PATH =
   /(^|\/)(?:\.env(?:\.|$)|.*(?:secret|credential|password|token|private[-_]?key|key\.txt).*)/i;
 
 export interface RunOrchestratorOptions {
+  capabilityConfiguration?: RunCapabilities['configuration'];
+  checkEnvironment?: (signal?: AbortSignal) => Promise<EnvironmentObservation>;
   configuration: ConfigurationStore;
   repository: RepositoryService;
   indexer?: RepositoryIndexer;
@@ -454,6 +461,18 @@ class DefaultRunOrchestrator implements RunOrchestrator {
             (value): value is string => Boolean(value),
           ),
       });
+
+      context.capabilities = await collectRunCapabilities({
+        runId: context.runId,
+        baseUrl: this.options.configuration.getRepository().baseUrl,
+        browserConfigured: this.options.browser?.isEnabled() ?? false,
+        testData: this.options.testData ?? createTestDataManager(),
+        configuration: this.options.capabilityConfiguration,
+        checkEnvironment: this.options.checkEnvironment,
+        signal: state.stopController?.signal,
+        now: this.now,
+      });
+      this.assertNotStopped();
 
       if (context.initialization)
         await this.assessInitializationPreflight(context, prepared.repository);
@@ -1168,6 +1187,7 @@ class DefaultRunOrchestrator implements RunOrchestrator {
             ...observation,
           });
         },
+        context.capabilities?.accountStorage,
       ),
       ...(evidenceStore && this.options.configuration.getRepository().baseUrl
         ? createControlledHttpTools({
@@ -1199,8 +1219,10 @@ class DefaultRunOrchestrator implements RunOrchestrator {
       createArtifactWriterTool(
         'write_execution',
         '写入执行记录',
-        '写入本次 Run 的完整 execution.md，记录命令、观察、失败和清理情况。',
+        '交付完整 execution.md 前逐项核对原计划必要验证与实际证据；有能力的遗漏须在本 Session 补做，缺资源保留 blocked 和已确认失败。记录观察、证据、偏差与未完成项。',
         (content) => {
+          const progressError = progress?.completionError();
+          if (progressError) throw new RunOrchestratorError('RUN_ARTIFACT_INVALID', progressError);
           // Never persist raw output when the Secret Store is unavailable.
           let clean: string;
           try {
@@ -1399,6 +1421,9 @@ class DefaultRunOrchestrator implements RunOrchestrator {
     if (browser?.isEnabled()) {
       try {
         const connectivity = await browser.checkConnectivity();
+        if (context.capabilities)
+          context.capabilities.browser.verification =
+            connectivity.status === 'ok' ? 'available' : 'unavailable';
         if (connectivity.status !== 'ok') {
           this.addBlockingReason(
             context,
@@ -1406,6 +1431,7 @@ class DefaultRunOrchestrator implements RunOrchestrator {
           );
         }
       } catch {
+        if (context.capabilities) context.capabilities.browser.verification = 'unavailable';
         this.addBlockingReason(context, 'Playwright MCP 连通性检查失败');
       }
     }
@@ -2846,6 +2872,7 @@ scenario_results 必须是 YAML 数组，每项只能有 id 和 result。confirm
 
 function mainPlanningContext(context: RunContext) {
   return {
+    capabilities: context.capabilities ?? null,
     runId: context.runId,
     request: context.request,
     trigger: context.trigger,
@@ -2863,6 +2890,7 @@ function mainPlanningContext(context: RunContext) {
 
 function runnerContext(context: RunContext) {
   return {
+    capabilities: context.capabilities ?? null,
     runId: context.runId,
     request: context.request,
     trigger: context.trigger,
@@ -2879,6 +2907,7 @@ function runnerContext(context: RunContext) {
 
 function reviewerContext(context: RunContext) {
   return {
+    capabilities: context.capabilities ?? null,
     runId: context.runId,
     trigger: context.trigger,
     targetCommit: context.targetCommit,

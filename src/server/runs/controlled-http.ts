@@ -39,11 +39,22 @@ export function createControlledHttpTools(options: ControlledHttpOptions): ToolD
   options.registerSensitiveValue(runPassword);
   options.registerSensitiveValue(wrongPassword);
   const clients = new Map<string, Map<string, string>>();
+  // Opaque handles and Cookie bytes live only inside this Runner Session.
+  const snapshots = new Map<
+    string,
+    { clientId: string; cookies: Map<string, string>; evidenceId: string }
+  >();
 
   const requestParameters = Type.Object({
     clientId: Type.String({ description: '隔离的 HTTP 会话名称；不同名称不共享 Cookie' }),
     method: Type.Union([Type.Literal('GET'), Type.Literal('POST'), Type.Literal('DELETE')]),
     path: Type.String({ description: '配置的非生产应用内的绝对路径，不含域名、查询或片段' }),
+    sessionSnapshotId: Type.Optional(
+      Type.String({
+        description:
+          'save_test_http_session 返回的当前 Session 句柄；仅 GET 重放保存时的原 Cookie，不使用后续新登录凭据',
+      }),
+    ),
     body: Type.Optional(
       Type.String({
         description:
@@ -120,18 +131,36 @@ export function createControlledHttpTools(options: ControlledHttpOptions): ToolD
             params.body === undefined
               ? undefined
               : resolveBody(params.body, options, runPassword, wrongPassword);
-          const jar = clients.get(params.clientId) ?? new Map<string, string>();
-          clients.set(params.clientId, jar);
+          const snapshot = params.sessionSnapshotId
+            ? snapshots.get(params.sessionSnapshotId)
+            : undefined;
+          if (
+            params.sessionSnapshotId !== undefined &&
+            (!snapshot || snapshot.clientId !== params.clientId || params.method !== 'GET')
+          )
+            throw new Error('保存的 HTTP 会话无效；仅允许所属客户端 GET 重放');
+          const jar = snapshot
+            ? new Map(snapshot.cookies)
+            : (clients.get(params.clientId) ?? new Map<string, string>());
+          if (!snapshot) clients.set(params.clientId, jar);
           const headers: Record<string, string> = {};
           if (body !== undefined) headers['content-type'] = 'application/json';
           if (jar.size)
             headers.cookie = [...jar].map(([key, value]) => `${key}=${value}`).join('; ');
+          const sentCookieNames = [...jar.keys()];
           const { response, responseBody } = await perform(url, params.method, headers, body);
           const setCookieNames = updateCookies(jar, response.headers.getSetCookie());
           const result = {
             method: params.method,
             path: url.pathname,
             clientId: params.clientId,
+            sentCookieNames,
+            ...(snapshot
+              ? {
+                  sessionSnapshotId: params.sessionSnapshotId,
+                  savedSessionEvidenceId: snapshot.evidenceId,
+                }
+              : {}),
             status: response.status,
             contentType: response.headers.get('content-type')?.split(';')[0] ?? null,
             body: responseBody,
@@ -140,6 +169,34 @@ export function createControlledHttpTools(options: ControlledHttpOptions): ToolD
           };
           const evidenceId = await capture({ source: 'controlled-test-http', ...result });
           return createTextResult(JSON.stringify({ ...result, evidenceId }));
+        } catch (error) {
+          return createTextResult(safeError(error), { error: true });
+        }
+      },
+    },
+    {
+      name: 'save_test_http_session',
+      label: '保存当前 HTTP 会话供旧 Cookie 重放',
+      description:
+        '在退出或删除账号前保存当前 HTTP 客户端的 Cookie。只返回当前 Runner Session 的句柄和证据 ID，不返回 Cookie 值。随后 request_test_http 以同一 clientId 和 sessionSnapshotId 发 GET，实际核对服务端是否拒绝原会话；保存本身不证明撤销。',
+      parameters: Type.Object({ clientId: Type.String() }, { additionalProperties: false }),
+      execute: async (_id, params: { clientId: string }) => {
+        try {
+          options.signal?.throwIfAborted();
+          const jar = clients.get(params.clientId);
+          if (!jar?.size || snapshots.size >= 32)
+            throw new Error('当前 HTTP 客户端没有可保存的 Cookie，或保存数量已达上限');
+          const sessionSnapshotId = randomBytes(16).toString('hex');
+          const cookies = new Map(jar);
+          const record = {
+            source: 'controlled-test-http-session',
+            clientId: params.clientId,
+            sessionSnapshotId,
+            cookieNames: [...cookies.keys()],
+          };
+          const evidenceId = await capture(record);
+          snapshots.set(sessionSnapshotId, { clientId: params.clientId, cookies, evidenceId });
+          return createTextResult(JSON.stringify({ ...record, evidenceId }));
         } catch (error) {
           return createTextResult(safeError(error), { error: true });
         }

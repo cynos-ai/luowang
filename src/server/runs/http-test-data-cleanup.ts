@@ -1,5 +1,9 @@
 import type { SecretStore } from '../security/secret-store.js';
-import { UnsupportedCleanupScopeError, type TestDataCleanupAdapter } from './test-data.js';
+import {
+  StorageCapabilityError,
+  UnsupportedCleanupScopeError,
+  type TestDataCleanupAdapter,
+} from './test-data.js';
 
 const RUN_ID = /^[0-9A-HJKMNP-TV-Z]{26}$/;
 
@@ -26,26 +30,32 @@ export function createHttpTestDataCleanupAdapter(
   }
   return {
     id: 'run-scoped-http-cleanup',
-    async inspectStorage(runId) {
+    async inspectStorage(runId, signal) {
       if (!RUN_ID.test(runId)) throw new Error('账号存储观察范围无效');
       const token = secrets.get('testDataCleanupToken');
-      if (!token || token.length < 32) throw new Error('账号存储观察凭据未配置或无效');
+      if (!token || token.length < 32) throw new StorageCapabilityError('not_configured');
       const response = await request(base.href.replace(/\/$/, '') + '/' + runId + '/storage', {
         method: 'GET',
         redirect: 'error',
-        signal: AbortSignal.timeout(10_000),
+        signal: AbortSignal.any([AbortSignal.timeout(10_000), ...(signal ? [signal] : [])]),
         headers: { authorization: `Bearer ${token}` },
       });
       if (response.status !== 200) {
         await response.body?.cancel();
-        throw new Error('账号存储观察服务未确认成功');
+        throw new StorageCapabilityError(
+          response.status === 404 || response.status === 405
+            ? 'unsupported_endpoint'
+            : response.status === 401 || response.status === 403
+              ? 'access_denied'
+              : 'request_failed',
+        );
       }
       const body = await readBoundedText(response, 1024);
       let data: unknown;
       try {
         data = JSON.parse(body);
       } catch {
-        throw new Error('账号存储观察响应无效');
+        throw new StorageCapabilityError('invalid_response');
       }
       if (
         !data ||
@@ -60,7 +70,7 @@ export function createHttpTestDataCleanupAdapter(
         ) ||
         data.accounts !== (data.argon2id as number) + (data.other as number)
       )
-        throw new Error('账号存储观察响应范围或计数无效');
+        throw new StorageCapabilityError('invalid_response');
       return {
         runId,
         accounts: data.accounts as number,

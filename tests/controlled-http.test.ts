@@ -11,6 +11,91 @@ function toolResult(
 }
 
 describe('controlled non-production HTTP tools', () => {
+  it('replays the saved original Cookie after logout and re-login, with scoped evidence and no raw credential', async () => {
+    let loginCount = 0;
+    const sent: Array<string | undefined> = [];
+    const records: Record<string, unknown>[] = [];
+    const values: string[] = [];
+    const options = {
+      baseUrl: 'http://app.test',
+      runId: RUN_ID,
+      getTestPassword: () => undefined,
+      getCleanupToken: () => undefined,
+      registerSensitiveValue: (value: string) => values.push(value),
+      redact: (text: string) =>
+        values.reduce((out, value) => out.replaceAll(value, '[REDACTED]'), text),
+      capture: async (record: Record<string, unknown>) => {
+        records.push(record);
+        return `operation-${records.length}.json`;
+      },
+      request: async (url: RequestInfo | URL, init?: RequestInit) => {
+        const cookie = (init?.headers as Record<string, string>).cookie;
+        sent.push(cookie);
+        if (String(url).endsWith('/login'))
+          return new Response('{}', {
+            headers: { 'set-cookie': `sid=secret-${++loginCount}; Path=/; HttpOnly` },
+          });
+        if (String(url).endsWith('/logout'))
+          return new Response('{}', { headers: { 'set-cookie': 'sid=; Max-Age=0; Path=/' } });
+        return new Response('{}', { status: cookie === 'sid=secret-1' ? 401 : 200 });
+      },
+    };
+    const tools = createControlledHttpTools(options);
+    const http = tools.find((tool) => tool.name === 'request_test_http')!;
+    const save = tools.find((tool) => tool.name === 'save_test_http_session')!;
+    await http.execute('login', { clientId: 'a', method: 'POST', path: '/login' });
+    const snapshot = toolResult(await save.execute('save', { clientId: 'a' }));
+    await http.execute('logout', { clientId: 'a', method: 'POST', path: '/logout' });
+    await http.execute('login2', { clientId: 'a', method: 'POST', path: '/login' });
+    const replay = toolResult(
+      await http.execute('replay', {
+        clientId: 'a',
+        method: 'GET',
+        path: '/me',
+        sessionSnapshotId: snapshot.sessionSnapshotId,
+      }),
+    );
+    expect(sent.at(-1)).toBe('sid=secret-1');
+    expect(replay).toMatchObject({
+      status: 401,
+      sentCookieNames: ['sid'],
+      savedSessionEvidenceId: snapshot.evidenceId,
+      sessionSnapshotId: snapshot.sessionSnapshotId,
+    });
+    await http.execute('current', { clientId: 'a', method: 'GET', path: '/me' });
+    expect(sent.at(-1)).toBe('sid=secret-2');
+    const count = sent.length;
+    for (const params of [
+      { clientId: 'b', method: 'GET' },
+      { clientId: 'a', method: 'DELETE' },
+    ]) {
+      expect(
+        (
+          await http.execute('invalid', {
+            ...params,
+            path: '/me',
+            sessionSnapshotId: snapshot.sessionSnapshotId,
+          })
+        ).details?.error,
+      ).toBe(true);
+    }
+    const other = createControlledHttpTools(options).find(
+      (tool) => tool.name === 'request_test_http',
+    )!;
+    expect(
+      (
+        await other.execute('foreign', {
+          clientId: 'a',
+          method: 'GET',
+          path: '/me',
+          sessionSnapshotId: snapshot.sessionSnapshotId,
+        })
+      ).details?.error,
+    ).toBe(true);
+    expect(sent).toHaveLength(count);
+    expect(JSON.stringify([snapshot, replay, records])).not.toMatch(/secret-[12]/);
+  });
+
   it('uses isolated cookie clients, bounded same-origin paths, and secret placeholders', async () => {
     const calls: Array<{ url: string; init: RequestInit }> = [];
     const captured: Record<string, unknown>[] = [];

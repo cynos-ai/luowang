@@ -10,6 +10,7 @@ import type {
 import type { InlineExtension, ToolDefinition } from '@earendil-works/pi-coding-agent';
 import type { ScenarioPatchValidation } from '../repository/scenario-patch.js';
 import type { SelectedScenarioSnapshot } from './selected-scenarios.js';
+import type { RunCapabilities } from './capabilities.js';
 
 export type AgentRole = 'main-a' | 'runner' | 'reviewer' | 'main-b';
 
@@ -40,6 +41,7 @@ export interface RunInput {
 }
 
 export interface RunContext {
+  capabilities?: RunCapabilities;
   runId: string;
   request: string;
   trigger: RunTrigger;

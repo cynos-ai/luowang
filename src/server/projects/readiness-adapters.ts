@@ -16,6 +16,7 @@ import { createProjectImageStateStore } from './image-state.js';
 import { createProjectRuntimeSecretStore } from './runtime-access.js';
 import type { ProjectReadinessDependencies, ReadinessCheck } from './readiness.js';
 import type { ProjectRecord } from './store.js';
+import { checkEnvironmentAccess } from '../runs/capabilities.js';
 
 /** Live, side-effect-free readiness checks. Image construction is a separate explicit operation. */
 export function createLiveProjectReadinessAdapters(input: {
@@ -96,32 +97,16 @@ export function createLiveProjectReadinessAdapters(input: {
         : failed('deployment', 'OSS 检查失败');
     },
     async checkEnvironment(_project, config) {
-      let url: URL;
-      try {
-        url = new URL(config.baseUrl);
-        if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password) {
-          return failed('environment', '测试环境 URL 无效');
-        }
-      } catch {
-        return failed('environment', '测试环境 URL 无效');
-      }
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 10_000);
-      try {
-        const response = await request(url, {
-          method: 'GET',
-          redirect: 'manual',
-          signal: controller.signal,
-          headers: { accept: '*/*' },
-        });
-        return response.status < 500
-          ? ok('environment', '测试环境可访问')
-          : failed('environment', '测试环境返回服务错误');
-      } catch {
-        return failed('environment', '测试环境不可达或检查超时');
-      } finally {
-        clearTimeout(timeout);
-      }
+      const result = await checkEnvironmentAccess(config.baseUrl, request);
+      if (result.status === 'reachable') return ok('environment', '测试环境可访问');
+      return failed(
+        'environment',
+        result.reason === 'invalid_url'
+          ? '测试环境 URL 无效'
+          : result.reason === 'server_error'
+            ? '测试环境返回服务错误'
+            : '测试环境不可达或检查超时',
+      );
     },
     async checkImage(project, config) {
       const token = input.secrets.project(project.projectId).get('gitToken');

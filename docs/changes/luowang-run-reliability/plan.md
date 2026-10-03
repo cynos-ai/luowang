@@ -159,7 +159,7 @@
 ### 实施记录（2026-10-03）
 
 - Phase 0：审查 #120 的队列原子认领、准备占槽、Git clone 锁及恢复边界，未发现阻塞集成的问题。核对 head `8861421629736d0c6d61b9b65d4cc1a48f1708ca` 与 [quality 成功记录](https://github.com/cynos-ai/luowang/actions/runs/37024776048)，通过 PR 合并至 develop `79887933e317415f36ca8b3e321e86f0f4ac2d2b`。未发布。新功能从该 develop 创建 `feat/run-stop`。
-- Phase 1（尚未集成）：请求停止标记先在 SQLite 原子保存，再中止当前 Session；运行中恢复摘要保存于项目所属的 `active_run_snapshots`，终止摘要与回收 checkpoint 在同一事务提交。队列取消没有假 Run。完成提交窗口拒绝取消，不取消归档。
+- Phase 1（已集成）：请求停止标记先在 SQLite 原子保存，再中止当前 Session；运行中恢复摘要保存于项目所属的 `active_run_snapshots`，终止摘要与回收 checkpoint 在同一事务提交。队列取消没有假 Run。完成提交窗口拒绝取消，不取消归档。
 - 迁移 `0018_run_stop` 只追加停止字段、恢复摘要及活动 checkpoint；已有项目数据库启动前须停机执行 `npm run db:multi-project -- upgrade-reliability <new-backup-dir>`。命令先备份并做 quick_check；旧版本不能直接读取新 schema，回退要停机恢复 `luowang-before-reliability-0018.db` 和原匹配主密钥/配置，保留原工件目录。本阶段未升级任何既有长期实例；历史实际卷演练待 Phase 6。
 - 停止定向工程测试已验证四角色阶段、准备与排队取消、跨项目并行、重启停止归因、普通收尾失败与停止竞争、API 认证/同源/归属/幂等。具体全量计数待最终提交检查回填，不把过程单测当成最终候选验收。
 - 生产 Pi SDK 接本地 SSE 协议：实际 HTTP 流关闭且无模型重试；两个实际 Playwright MCP/browser Session 中停止 A 后，A 的 MCP 及浏览器子进程退出，B 保持运行。固定 MCP stdio 构建适配等待 close 事件，不能仅把 SIGKILL 已发送当作退出。
@@ -169,3 +169,7 @@
 - Phase 1 当前提交 `f6d546584807c538810e8f763859425d7e52bcab`，PR #121；工程镜像 `sha256:9e1ebbcc715e8d906b0e8452c847cbc7a5d6e2b2d753cca47c7f18ad842f7e3e` 的 format/lint/typecheck、497 passed / 2 skipped、local 聚合与 E2E 全部通过，退出码 0。该镜像在最后四个 SDK 创建边界停止检查加入前构建；新增边界已定向重验 6 passed，最终 PR head 以 CI 为准。local 报告保存在 `.cynos/run-reliability/phase1-local/2026-10-02T18-12-56-379Z-local/report.json`；未提供现场输入而显示 live/release blocked，不能当作现场验收结果。
 - #94/#118/#119 已按 #120 的对应实现和定向证明关闭；#93/#104 继续暂缓，#95 保持开放。
 - 在修改角色资源前冻结两组模型输入：基线 `7988793`、专项 12 子例、历史 8 类规划与 4 类 Reviewer、各版本各 3 次。输入文件 `.cynos/run-reliability/frozen-inputs.json` 的 SHA-256 为 `e6d473cf06f7ca4b4437476a2cc2e7c0e1b9e26afd26d5e165c8aebecaa954cc`；冻结时无候选模型输出。新增或包装输入的差异须另记，不追溯覆盖该冻结。
+
+- PR #121 最终 head `fa9dd4c1861c28eb47a8fe3d150c3e430bf83026` 经 [完整 quality / runtime CI](https://github.com/cynos-ai/luowang/actions/runs/37047525402) 通过，通过 PR 合入 develop `c2d3088`。后续能力事实功能从该集成版本创建 `feat/run-capability-facts`；没有发布或升级长期实例。
+- Phase 2 实施中：复用环境 readiness 的只读 HTTP 检查；规划前通过本 Run 的受控存储端点核验契约。区分未配置、404/405、401/403、无效响应和未知请求失败，零账号只证明入口可读，不是功能证据。缺口留给模型按原场景逐项判断，不新增自然语言分类器。HTTP 旧会话快照只保存于所属 Runner Session，GET 重放返回保存证据与实际请求关联，不向模型返回 Cookie。
+- 历史规划基线 8 × 3 个真实模型案例已执行，生产 Session / source tools 使用冻结基线 `7988793`，输出位于 `.cynos/run-reliability/historical-planning-baseline/`。包装器在首个模型请求前以 `planning-wrapper-v2-freeze.json` 固定（修正 Windows 换行导致失败类别未写入）；Git 挂载所有权预检失败另留记录，未调用模型。24 例均已交付计划，完整响应、工具轨迹与 SDK 用量留存；这只表示调用完成，语义复核及候选比较尚未完成，humanScoring 仍为 not_run。

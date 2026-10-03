@@ -576,6 +576,13 @@ describe('Phase 3 agent run', () => {
     );
     assert.match(mainToolContext, /historyIssuesAvailable/);
     assert.match(mainToolContext, /indexedReports/);
+    assert.deepEqual(JSON.parse(mainToolContext).capabilities.accountStorage, {
+      status: 'unavailable',
+      checkedAt: JSON.parse(mainToolContext).capabilities.accountStorage.checkedAt,
+      reason: 'not_configured',
+    });
+    assert.equal(JSON.parse(runnerToolContext).capabilities.accountStorage.status, 'unavailable');
+    assert.doesNotMatch(context.sessions.inputs[3]!.userMessage, /capabilities|accountStorage/);
     assert.doesNotMatch(runnerToolContext, /historyIssues|indexedReports|indexedScenarios/);
   });
 
