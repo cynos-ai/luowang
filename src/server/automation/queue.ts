@@ -23,6 +23,7 @@ export interface TestRequestInput {
 }
 
 export interface TestRequestRecord {
+  sourceRunId?: string | null;
   stopRequestedAt?: string | null;
   stopReason?: 'user_requested' | null;
   queueId: number;
@@ -63,6 +64,7 @@ export interface QueueCompletion {
 }
 
 export interface TestRequestQueue {
+  enqueueFollowup(sourceRunId: string, idempotencyKey: string, request: string): TestRequestRecord;
   requestStop(queueId: number): TestRequestRecord;
   enqueue(input: TestRequestInput): TestRequestRecord;
   claimNext(): TestRequestRecord | null;
@@ -151,6 +153,46 @@ class SqliteTestRequestQueue implements TestRequestQueue {
     private readonly requestId: () => string,
     private readonly projectId: string | null,
   ) {}
+
+  enqueueFollowup(sourceRunId: string, idempotencyKey: string, request: string): TestRequestRecord {
+    if (!/^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/.test(sourceRunId))
+      throw new TestRequestQueueError('QUEUE_REQUEST_INVALID', '来源 Run ID 无效');
+    if (!this.projectId || !/^[A-Za-z0-9_-]{16,128}$/.test(idempotencyKey))
+      throw new TestRequestQueueError('QUEUE_REQUEST_INVALID', '关联重测需要项目归属和有效幂等键');
+    return this.database.transaction(() => {
+      const existing = this.database
+        .prepare(
+          'SELECT queue_id, source_run_id FROM test_request_queue WHERE project_id = ? AND retest_key = ?',
+        )
+        .get(this.projectId, idempotencyKey) as
+        { queue_id: number; source_run_id: string } | undefined;
+      if (existing) {
+        if (existing.source_run_id !== sourceRunId)
+          throw new TestRequestQueueError('QUEUE_REQUEST_INVALID', '幂等键已用于另一个来源 Run');
+        return this.get(existing.queue_id)!;
+      }
+      const owner = this.database
+        .prepare(
+          `SELECT 1 FROM test_request_queue WHERE project_id = ? AND run_id = ? AND status IN ('completed', 'failed', 'interrupted')
+        UNION ALL SELECT 1 FROM run_store_runs WHERE project_id = ? AND run_id = ?
+        UNION ALL SELECT 1 FROM interrupted_run_records WHERE project_id = ? AND run_id = ? LIMIT 1`,
+        )
+        .get(this.projectId, sourceRunId, this.projectId, sourceRunId, this.projectId, sourceRunId);
+      if (!owner)
+        throw new TestRequestQueueError('QUEUE_NOT_FOUND', '项目中不存在已结束的来源 Run');
+      const created = this.enqueue({
+        request,
+        trigger: 'manual',
+        requestKind: 'manual-current-head',
+      });
+      this.database
+        .prepare(
+          'UPDATE test_request_queue SET source_run_id = ?, retest_key = ? WHERE project_id = ? AND queue_id = ?',
+        )
+        .run(sourceRunId, idempotencyKey, this.projectId, created.queueId);
+      return this.get(created.queueId)!;
+    })();
+  }
 
   enqueue(input: TestRequestInput): TestRequestRecord {
     const normalized = normalizeInput(input);
@@ -611,6 +653,7 @@ class SqliteTestRequestQueue implements TestRequestQueue {
 }
 
 interface QueueRow {
+  source_run_id?: string | null;
   stop_requested_at?: string | null;
   stop_reason?: 'user_requested' | null;
   queue_id: number;
@@ -769,6 +812,7 @@ function uniqueTriggers(values: RunTrigger[]): RunTrigger[] {
 
 function toRecord(row: QueueRow): TestRequestRecord {
   return {
+    sourceRunId: row.source_run_id ?? null,
     stopRequestedAt: row.stop_requested_at ?? null,
     stopReason: row.stop_reason ?? null,
     queueId: row.queue_id,

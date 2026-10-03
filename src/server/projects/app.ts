@@ -60,7 +60,7 @@ import {
 import { inspectProjectResources, type ProjectResourceInventory } from './resource-inventory.js';
 import { registerProjectRunRoutes } from './run-routes.js';
 import { assertProjectSchema } from './schema-mode.js';
-import { RUN_STOP_VERSION } from '../db/migrations/0018-run-stop.js';
+import { RUN_FOLLOWUP_VERSION } from '../db/migrations/0019-run-followup.js';
 import { createProjectStore } from './store.js';
 
 export interface ProjectAppOptions {
@@ -85,7 +85,7 @@ export async function createProjectApp(options: ProjectAppOptions) {
   const database = options.database.sqlite;
   assertProjectSchema(database);
   if (
-    !database.prepare('SELECT 1 FROM schema_migrations WHERE version = ?').get(RUN_STOP_VERSION)
+    !database.prepare('SELECT 1 FROM schema_migrations WHERE version = ?').get(RUN_FOLLOWUP_VERSION)
   ) {
     throw new Error(
       '多项目数据库需要离线升级：db:multi-project upgrade-reliability <new-backup-dir>',

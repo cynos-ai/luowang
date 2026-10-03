@@ -252,13 +252,60 @@ export async function registerProjectRunRoutes(
       async (request) => {
         const run = await readRun(request.params.projectId, request.params.runId);
         if (!run) throw new AppError('RUN_NOT_FOUND', 'Run 不存在', 404);
+        const requests = queueFor(request.params.projectId).list();
+        const queue = requests.find((item) => item.runId === run.runId) ?? null;
+        const source = queue?.sourceRunId
+          ? await readRun(request.params.projectId, queue.sourceRunId)
+          : null;
         return {
           run,
-          queue:
-            queueFor(request.params.projectId)
-              .list()
-              .find((item) => item.runId === run.runId) ?? null,
+          queue,
+          source: source
+            ? {
+                runId: source.runId,
+                targetCommit: source.targetCommit,
+                configRevision:
+                  requests.find((item) => item.runId === source.runId)?.configRevision ?? null,
+              }
+            : null,
+          followups: requests.filter((item) => item.sourceRunId === run.runId),
         };
+      },
+    );
+    routes.post<{ Params: { projectId: string; runId: string } }>(
+      '/api/projects/:projectId/runs/:runId/retest',
+      async (request, reply) => {
+        const { projectId, runId } = request.params;
+        const source = await readRun(projectId, runId);
+        if (!source) throw new AppError('RUN_NOT_FOUND', 'Run 不存在', 404);
+        const body = readInput(request);
+        if (
+          body.confirmed !== true ||
+          typeof body.idempotencyKey !== 'string' ||
+          Object.keys(body).some((key) => !['confirmed', 'idempotencyKey'].includes(key))
+        )
+          throw new AppError('RETEST_REQUEST_INVALID', '关联重测必须确认并提供幂等键', 400);
+        if (!['completed', 'failed', 'interrupted'].includes(source.status))
+          throw new AppError('RETEST_STATE_INVALID', '来源测试尚未结束', 409);
+        const queue = queueFor(projectId).enqueueFollowup(
+          runId,
+          body.idempotencyKey,
+          source.request || '重新测试当前场景分支版本',
+        );
+        startDrain();
+        return reply.status(202).send({ queue });
+      },
+    );
+    routes.post<{ Params: { projectId: string; runId: string } }>(
+      '/api/projects/:projectId/runs/:runId/archive/retry',
+      async (request) => {
+        const { projectId, runId } = request.params;
+        if (!(await readRun(projectId, runId)))
+          throw new AppError('RUN_NOT_FOUND', 'Run 不存在', 404);
+        const body = readInput(request);
+        if (Object.keys(body).length !== 0)
+          throw new AppError('ARCHIVE_RETRY_INVALID', '归档重试不接受额外字段', 400);
+        return { queue: await options.dispatcher.retryArchive(projectId, runId) };
       },
     );
     routes.get<{ Params: { projectId: string; runId: string; objectId: string } }>(

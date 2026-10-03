@@ -112,6 +112,11 @@ const writes: string[] = [];
 const apiRequests: string[] = [];
 let stopFailure = false;
 let stopGate: Promise<void> | null = null;
+let followupGate: Promise<void> | null = null;
+let followupFailure = false;
+let archiveRetryable = true;
+const retestKeys: string[] = [];
+const linkedRequests: (typeof fixture.projectData)[string]['queue'] = [];
 
 const server = createServer(async (request, response) => {
   const pathname = new URL(request.url ?? '/', 'http://localhost').pathname;
@@ -489,6 +494,15 @@ try {
         const baseRun = projectData.runs[0];
         return route.fulfill({
           json: {
+            queue: {
+              ...fixture.projectData[projects[1].projectId].queue[0],
+              queueId: 1,
+              runId: baseRun.runId,
+              status: 'completed',
+              configRevision: 1,
+              archiveStatus: archiveRetryable ? 'partial' : 'completed',
+            },
+            followups: linkedRequests,
             run: {
               ...baseRun,
               status: 'completed',
@@ -508,7 +522,7 @@ try {
               archive: {
                 reportStatus: 'published',
                 reportCommitSha: 'f'.repeat(40),
-                archiveStatus: 'completed',
+                archiveStatus: archiveRetryable ? 'partial' : 'completed',
                 archiveError: null,
                 progressed: true,
                 progressedAt: fixture.now,
@@ -525,6 +539,31 @@ try {
             },
           },
         });
+      }
+      if (suffix === `/runs/${projectData.runs[0].runId}/retest` && method === 'POST') {
+        const body = request.postDataJSON();
+        assert.equal(body.confirmed, true);
+        assert.match(body.idempotencyKey, /^[0-9a-f-]{36}$/);
+        retestKeys.push(body.idempotencyKey);
+        if (followupGate) await followupGate;
+        if (followupFailure)
+          return route.fulfill({ status: 409, json: { error: { message: '合成重测冲突' } } });
+        const queue = {
+          ...fixture.projectData[projects[1].projectId].queue[0],
+          queueId: 91,
+          runId: null,
+          status: 'queued' as const,
+          sourceRunId: projectData.runs[0].runId,
+          configRevision: 2,
+          resolvedTargetCommit: null,
+        };
+        linkedRequests.push(queue);
+        return route.fulfill({ status: 202, json: { queue } });
+      }
+      if (suffix === `/runs/${projectData.runs[0].runId}/archive/retry` && method === 'POST') {
+        assert.deepEqual(request.postDataJSON(), {});
+        archiveRetryable = false;
+        return route.fulfill({ json: { queue: { archiveStatus: 'completed' } } });
       }
       if (suffix === '/repository/sync' && method === 'POST') {
         return route.fulfill({
@@ -896,6 +935,54 @@ try {
   await page.getByText('正式报告已发布').waitFor();
   await page.goto(`${origin}/projects/${projects[0].projectId}/runs/${fixtureRunId}`);
   await page.getByText('数据清理告警：合成清理告警。该告警不改写正式测试结论。').waitFor();
+  await page.getByRole('button', { name: '重试归档', exact: true }).click();
+  await page.getByText('归档重试已结束：completed；原测试结论保持。').waitFor();
+  await page.getByRole('button', { name: '重试归档', exact: true }).waitFor({ state: 'detached' });
+  for (const width of [768, 1024, 1440]) {
+    await page.setViewportSize({ width, height: 900 });
+    await page.getByRole('button', { name: '重新测试当前版本', exact: true }).click();
+    await page
+      .getByRole('dialog')
+      .getByText(/认领时固定当前场景分支提交/)
+      .waitFor();
+    assert.equal(
+      await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth),
+      false,
+    );
+    await page.keyboard.press('Escape');
+    await page.getByRole('dialog').waitFor({ state: 'detached' });
+  }
+  followupFailure = true;
+  await page.getByRole('button', { name: '重新测试当前版本', exact: true }).click();
+  await page.getByRole('dialog').getByRole('button', { name: '创建新测试', exact: true }).click();
+  await page.getByRole('dialog').getByRole('alert').getByText('合成重测冲突').waitFor();
+  followupFailure = false;
+  let releaseFollowup!: () => void;
+  followupGate = new Promise<void>((resolve) => {
+    releaseFollowup = resolve;
+  });
+  const retestsBefore = retestKeys.length;
+  await page
+    .getByRole('dialog')
+    .getByRole('button', { name: '创建新测试', exact: true })
+    .dblclick();
+  await page.getByRole('dialog').getByRole('button', { name: '正在提交…' }).waitFor();
+  assert.equal(retestKeys.length, retestsBefore + 1);
+  assert.equal(retestKeys[0], retestKeys[1], 'ambiguous retry keeps the same request token');
+  await page.goto(`${origin}/projects/${projects[1].projectId}/test`);
+  releaseFollowup();
+  followupGate = null;
+  await page.waitForTimeout(100);
+  assert.equal(await page.getByText(/已创建关联请求/).count(), 0);
+  await page.goto(`${origin}/projects/${projects[0].projectId}/runs/${fixtureRunId}`);
+  await page
+    .getByRole('region', { name: '关联测试' })
+    .getByText(/请求 #91/)
+    .waitFor();
+  await page
+    .getByRole('region', { name: '关联测试' })
+    .getByText(/新旧 target 尚不能比较/)
+    .waitFor();
   await page.getByRole('link', { name: '审核', exact: true }).click();
   await page
     .locator('.detail-panel > header')

@@ -17,11 +17,124 @@ import { migrateProjectQueueContext } from '../src/server/db/migrations/0014-pro
 import { createProjectConfigurationStore } from '../src/server/projects/configuration.js';
 import { createProjectStore } from '../src/server/projects/store.js';
 import { createScopedSecretStore } from '../src/server/security/scoped-secret-store.js';
-import { migrateRunStop } from '../src/server/db/migrations/0018-run-stop.js';
+import { migrateRunFollowup } from '../src/server/db/migrations/0019-run-followup.js';
 import { createProjectRunRecoveryStore } from '../src/server/automation/recovery.js';
 import type { RunDetail, RunSummary } from '../src/shared/types.js';
 
 describe('project automation dispatcher', () => {
+  it('creates one linked current-head request per project token and preserves the old merge request', async () => {
+    const fixture = setup();
+    try {
+      const queue = fixture.queue(fixture.a.projectId);
+      const old = queue.enqueue({
+        request: 'original',
+        trigger: 'manual',
+        requestKind: 'manual-merge-source',
+        sourceRef: 'feature/old',
+        confirmed: true,
+      });
+      queue.claimNext();
+      const runId = '01K00000000000000000000000';
+      queue.markPrepared(old.queueId, 'a'.repeat(40), 'existing-branch');
+      queue.markResolved(old.queueId, 'a'.repeat(40));
+      queue.markStarted(old.queueId, runId);
+      queue.fail(old.queueId, 'interrupted', 'interrupted');
+      const before = queue.get(old.queueId);
+      const first = queue.enqueueFollowup(runId, 'synthetic-idempotency-key', 'original');
+      const anotherHandle = fixture.queue(fixture.a.projectId);
+      assert.deepEqual(
+        anotherHandle.enqueueFollowup(runId, 'synthetic-idempotency-key', 'ignored repeat'),
+        first,
+      );
+      assert.equal(first.sourceRunId, runId);
+      assert.equal(first.requestKind, 'manual-current-head');
+      assert.equal(first.sourceRef, null);
+      assert.equal(first.resolvedTargetCommit, null);
+      assert.deepEqual(queue.get(old.queueId), before);
+      assert.throws(
+        () =>
+          fixture
+            .queue(fixture.b.projectId)
+            .enqueueFollowup(runId, 'synthetic-idempotency-key', 'foreign'),
+        /不存在/,
+      );
+      assert.throws(
+        () =>
+          queue.enqueueFollowup(
+            '01K00000000000000000000001',
+            'synthetic-idempotency-key',
+            'collision',
+          ),
+        /另一个/,
+      );
+      fixture.database
+        .prepare("UPDATE projects SET status = 'paused' WHERE project_id = ?")
+        .run(fixture.a.projectId);
+      assert.deepEqual(
+        queue.enqueueFollowup(runId, 'synthetic-idempotency-key', 'repeat after pause'),
+        first,
+      );
+      assert.throws(
+        () => queue.enqueueFollowup(runId, 'another-idempotency-key', 'new after pause'),
+        /暂停/,
+      );
+    } finally {
+      fixture.database.close();
+    }
+  });
+
+  it('shares one archive retry between manual double clicks and the background without starting a model', async () => {
+    const fixture = setup();
+    const entered = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    let archives = 0;
+    let starts = 0;
+    const dispatcher = fixture.dispatcher((id) =>
+      fakeServices(id, {
+        start: async (runId) => {
+          starts++;
+          return { runId };
+        },
+        archive: async () => {
+          archives++;
+          entered.resolve();
+          await release.promise;
+          return archiveResult();
+        },
+      }),
+    );
+    try {
+      const queue = fixture.queue(fixture.a.projectId);
+      const item = queue.enqueue({ request: 'original', trigger: 'manual' });
+      queue.claimNext();
+      const runId = '01K00000000000000000000000';
+      queue.markStarted(item.queueId, runId);
+      queue.markWaitingArchive(item.queueId, runId);
+      queue.complete(item.queueId, { runId, archiveStatus: 'failed' });
+      fixture.database
+        .prepare(
+          "UPDATE test_request_queue SET updated_at = '2000-01-01T00:00:00Z' WHERE queue_id = ?",
+        )
+        .run(item.queueId);
+      const first = dispatcher.retryArchive(fixture.a.projectId, runId);
+      await entered.promise;
+      const repeated = dispatcher.retryArchive(fixture.a.projectId, runId);
+      const background = dispatcher.retryArchives(new Date('2099-01-01'));
+      assert.equal(archives, 1);
+      release.resolve();
+      await Promise.all([first, repeated, background]);
+      assert.equal(archives, 1);
+      assert.equal(starts, 0);
+      assert.equal(queue.get(item.queueId)?.archiveStatus, 'completed');
+      await dispatcher.retryArchive(fixture.a.projectId, runId);
+      assert.equal(archives, 1);
+      assert.throws(() => dispatcher.retryArchive(fixture.b.projectId, runId), /不存在/);
+    } finally {
+      release.resolve();
+      await dispatcher.stop();
+      fixture.database.close();
+    }
+  });
   it('cancels queued requests idempotently and refuses a different project', async () => {
     const fixture = setup();
     const dispatcher = fixture.dispatcher((id) => fakeServices(id, {}));
@@ -622,7 +735,7 @@ function setup() {
   migrateLegacyRunOwnership(database, null);
   migrateLegacyConfigurationOwnership(database, null);
   migrateProjectQueueContext(database);
-  migrateRunStop(database);
+  migrateRunFollowup(database);
   const projects = createProjectStore(database, {
     id: (() => {
       const ids = ['11111111-1111-4111-8111-111111111111', '22222222-2222-4222-8222-222222222222'];

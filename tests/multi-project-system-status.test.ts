@@ -172,6 +172,15 @@ it('aggregates persisted project facts without running external checks', async (
     assert.equal(workspace.recentRuns[0].project.projectId, projectA.projectId);
     assert.ok(workspace.attention.some((item) => item.kind === 'blocked_run'));
     assert.ok(workspace.attention.some((item) => item.kind === 'cleanup_failed'));
+    assert.equal(
+      workspace.attention.find((item) => item.kind === 'cleanup_failed')?.diagnostic
+        ?.firstObservedAt,
+      now,
+    );
+    assert.equal(
+      workspace.attention.find((item) => item.kind === 'blocked_run')?.diagnostic?.source,
+      'historical-unknown',
+    );
     assert.ok(
       workspace.attention.some(
         (item) => item.kind === 'not_ready' && item.project?.projectId === projectBId,

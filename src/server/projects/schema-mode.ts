@@ -1,5 +1,6 @@
 import type Database from 'better-sqlite3';
 import { RUN_STOP_VERSION } from '../db/migrations/0018-run-stop.js';
+import { RUN_FOLLOWUP_VERSION } from '../db/migrations/0019-run-followup.js';
 
 const LEGACY_VERSIONS = new Set([
   '0000_foundation',
@@ -56,7 +57,11 @@ export function assertProjectSchema(database: Database.Database): void {
   );
   if (
     versions.size !==
-      LEGACY_VERSIONS.size + PROJECT_VERSIONS.length + (versions.has(RUN_STOP_VERSION) ? 1 : 0) ||
+      LEGACY_VERSIONS.size +
+        PROJECT_VERSIONS.length +
+        (versions.has(RUN_STOP_VERSION) ? 1 : 0) +
+        (versions.has(RUN_FOLLOWUP_VERSION) ? 1 : 0) ||
+    (versions.has(RUN_FOLLOWUP_VERSION) && !versions.has(RUN_STOP_VERSION)) ||
     [...LEGACY_VERSIONS, ...PROJECT_VERSIONS].some((version) => !versions.has(version))
   ) {
     throw new Error('多项目数据库迁移不完整或包含未知版本');

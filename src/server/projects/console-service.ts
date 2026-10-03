@@ -1,3 +1,4 @@
+import { diagnoseRun } from '../../shared/run-diagnostics.js';
 import type Database from 'better-sqlite3';
 
 import type {
@@ -369,47 +370,29 @@ function addProjectAttention(
       target: { kind: 'project-readiness', projectId: project.projectId },
     });
   }
-  if (run?.result === 'blocked') {
-    items.push({
-      id: `blocked:${project.projectId}:${run.runId}`,
-      kind: 'blocked_run',
-      severity: 'warning',
-      title: '测试被阻塞',
-      detail: run.runId,
-      occurredAt: run.finishedAt,
-      project: reference,
-      target: { kind: 'run', projectId: project.projectId, runId: run.runId },
-    });
-  }
-  if (
-    run?.activities.some(
-      (activity) =>
-        activity.code === 'test_data_cleanup_failed' ||
-        activity.code === 'test_data_cleanup_record_failed',
-    )
-  ) {
-    items.push({
-      id: `cleanup:${project.projectId}:${run.runId}`,
-      kind: 'cleanup_failed',
-      severity: 'warning',
-      title: '测试数据清理需要处理',
-      detail: run.runId,
-      occurredAt: run.updatedAt,
-      project: reference,
-      target: { kind: 'run', projectId: project.projectId, runId: run.runId },
-    });
-  }
-  if (run && ['failed', 'partial'].includes(run.archiveStatus)) {
-    items.push({
-      id: `archive:${project.projectId}:${run.runId}`,
-      kind: 'archive_failed',
-      severity: 'error',
-      title: '归档需要处理',
-      detail: run.runId,
-      occurredAt: run.updatedAt,
-      project: reference,
-      target: { kind: 'run', projectId: project.projectId, runId: run.runId },
-    });
+  if (run) {
+    const diagnostics = diagnoseRun({ ...run, archive: run });
+    const presentations = [
+      ['verification-gap', 'blocked', 'blocked_run', '测试被阻塞', 'warning'],
+      ['cleanup', 'cleanup', 'cleanup_failed', '测试数据清理需要处理', 'warning'],
+      ['archive', 'archive', 'archive_failed', '归档需要处理', 'error'],
+    ] as const;
+    for (const [diagnosticKind, prefix, kind, title, severity] of presentations) {
+      const matching = diagnostics.filter((item) => item.kind === diagnosticKind);
+      for (const [index, diagnostic] of matching.entries()) {
+        items.push({
+          id: `${prefix}:${project.projectId}:${run.runId}:${index}`,
+          kind,
+          severity,
+          title,
+          detail: `${run.runId}：${diagnostic.message}`,
+          occurredAt: diagnostic.lastObservedAt,
+          diagnostic,
+          project: reference,
+          target: { kind: 'run', projectId: project.projectId, runId: run.runId },
+        });
+      }
+    }
   }
   if (run?.scenarioStatus === 'pull_request' && run.scenarioPrUrl) {
     items.push({

@@ -64,6 +64,21 @@ function AttentionList({ workspace }: { workspace: WorkspaceResponse }) {
               <div>
                 <strong>{item.title}</strong>
                 <p>{item.detail}</p>
+                {item.diagnostic && (
+                  <p>
+                    来源：
+                    {
+                      {
+                        harness: '系统记录',
+                        reviewer: 'Reviewer 审核',
+                        administrator: '管理员操作',
+                        'historical-unknown': '历史记录，具体分类未知',
+                      }[item.diagnostic.source]
+                    }
+                    {' · '}首次：{item.diagnostic.firstObservedAt ?? '未知'}
+                    {' · '}最近：{item.diagnostic.lastObservedAt ?? '未知'}
+                  </p>
+                )}
               </div>
               <AppLink className="text-link" to={targetRoute(item.target)}>
                 查看
