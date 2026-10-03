@@ -1,0 +1,89 @@
+[
+  {
+    "id": "cookie-missing",
+    "matrix": "targeted",
+    "scenarios": [
+      {
+        "id": "RR-001",
+        "path": "docs/scenario-testing/scenarios/RR-001.md",
+        "content": "---\nid: RR-001\nname: 固定合成验证 RR-001\ndescription: 隔离工件回放，不代表真实靶场执行\nstatus: approved\ntags: [core]\n---\n\n## 期望\n删除账号后旧 Cookie 在服务端失效，受保护接口拒绝旧会话。\n"
+      }
+    ],
+    "plan": "# 固定工件回放\n\n只核对所提供合成材料，不代表现场 Run。\n\n保存删除前 Cookie，删除账号，重放原 Cookie 并核对服务端响应。\n\n原期望：删除账号后旧 Cookie 在服务端失效，受保护接口拒绝旧会话。\n\n## execution_scenarios\n- RR-001\n",
+    "execution": "# 固定 Runner 记录\n\n删除返回 204，页面回到登录页；未保存旧 Cookie，未重放。\n\n所附原始观察在 operation-1.json；它是预置合成工件，不能据此声称执行了本次现场测试。\n",
+    "observation": {
+      "source": "synthetic-evaluation",
+      "deletion": 204,
+      "page": "登录页",
+      "oldCookieReplay": null
+    }
+  },
+  {
+    "id": "cookie-complete",
+    "matrix": "targeted",
+    "scenarios": [
+      {
+        "id": "RR-001",
+        "path": "docs/scenario-testing/scenarios/RR-001.md",
+        "content": "---\nid: RR-001\nname: 固定合成验证 RR-001\ndescription: 隔离工件回放，不代表真实靶场执行\nstatus: approved\ntags: [core]\n---\n\n## 期望\n删除账号后旧 Cookie 在服务端失效，受保护接口拒绝旧会话。\n"
+      }
+    ],
+    "plan": "# 固定工件回放\n\n只核对所提供合成材料，不代表现场 Run。\n\n保存删除前 Cookie，删除账号，重放原 Cookie 并核对服务端响应。\n\n原期望：删除账号后旧 Cookie 在服务端失效，受保护接口拒绝旧会话。\n\n## execution_scenarios\n- RR-001\n",
+    "execution": "# 固定 Runner 记录\n\n删除前会话访问 /api/me 为 200；删除后同一保存会话访问 /api/me 为 401。\n\n所附原始观察在 operation-1.json；它是预置合成工件，不能据此声称执行了本次现场测试。\n",
+    "observation": {
+      "source": "synthetic-evaluation",
+      "before": {
+        "path": "/api/me",
+        "sessionRef": "session-before-delete",
+        "status": 200,
+        "method": "GET",
+        "sentCookieNames": [
+          "sid"
+        ],
+        "credentialReferences": [
+          {
+            "name": "sid",
+            "reference": "cookie-ref-1",
+            "source": "observed-request-header"
+          }
+        ],
+        "requestId": "before-delete-1"
+      },
+      "deletion": 204,
+      "replay": {
+        "path": "/api/me",
+        "sessionRef": "session-before-delete",
+        "status": 401,
+        "method": "GET",
+        "sentCookieNames": [
+          "sid"
+        ],
+        "credentialReferences": [
+          {
+            "name": "sid",
+            "reference": "cookie-ref-1",
+            "source": "observed-request-header"
+          }
+        ],
+        "requestId": "after-delete-1",
+        "savedSessionEvidenceId": "saved-session-1"
+      },
+      "savedSession": {
+        "evidenceId": "saved-session-1",
+        "sessionRef": "session-before-delete",
+        "savedBeforeDeletion": true,
+        "cookieNames": [
+          "sid"
+        ],
+        "credentialReferences": [
+          {
+            "name": "sid",
+            "reference": "cookie-ref-1",
+            "source": "captured-session"
+          }
+        ]
+      },
+      "contract": "Synthetic request-capture fixture: observed-request-header references derive from actual sent Cookie values within this fixture; identical reference means identical value. Each status is bound to that requestId. No raw credentials are included. This proves only the synthetic replay assertion, never a live target execution."
+    }
+  }
+]

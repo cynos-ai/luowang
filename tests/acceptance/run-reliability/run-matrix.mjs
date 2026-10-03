@@ -6,15 +6,19 @@ import { pathToFileURL } from 'node:url';
 import { modelProxy } from '../record-accuracy/proxy.mjs';
 
 // This runner belongs to the frozen run-reliability study, not the product scheduler.
-const [revision, matrix] = process.argv.slice(2);
+const [revision, matrix, correction] = process.argv.slice(2);
 if (
   !['baseline', 'candidate'].includes(revision) ||
-  !['planning', 'review', 'full'].includes(matrix)
+  !['planning', 'review', 'full'].includes(matrix) ||
+  (correction !== undefined && correction !== 'correction') ||
+  (correction && (matrix === 'planning' || (matrix === 'full' && revision === 'baseline')))
 )
   throw new Error(
     'Usage: node --import tsx tests/acceptance/run-reliability/run-matrix.mjs baseline|candidate planning|review|full',
   );
 const root = resolve('.cynos/run-reliability');
+const sourceRevision = revision === 'candidate' && correction ? 'candidate-correction' : revision;
+const batchRevision = `${revision}${correction ? '-correction' : ''}`;
 const hash = (bytes) => createHash('sha256').update(bytes).digest('hex');
 const read = (path) => JSON.parse(readFileSync(path));
 const save = (path, value) => writeFileSync(path, JSON.stringify(value, null, 2));
@@ -25,18 +29,18 @@ if (
 )
   throw new Error('Original frozen input changed');
 if (revision === 'candidate') {
-  const frozen = read(join(root, 'candidate-freeze.json'));
+  const frozen = read(join(root, `${sourceRevision}-freeze.json`));
   for (const file of frozen.files)
-    if (hash(readFileSync(join(root, 'candidate', file.path))) !== file.sha256)
+    if (hash(readFileSync(join(root, sourceRevision, file.path))) !== file.sha256)
       throw new Error('Candidate source changed');
 }
 const version =
   revision === 'baseline'
     ? inputs.baselineCommit
-    : read(join(root, 'candidate-freeze.json')).commit;
+    : read(join(root, `${sourceRevision}-freeze.json`)).commit;
 const template = readFileSync(new URL(`./${matrix}-driver.mjs.txt`, import.meta.url), 'utf8');
-const driver = template.replaceAll('__REVISION_ROOT__', `./${revision}`);
-const driverPath = join(root, `packaged-${matrix}-${revision}.mjs`);
+const driver = template.replaceAll('__REVISION_ROOT__', `./${sourceRevision}`);
+const driverPath = join(root, `packaged-${matrix}-${batchRevision}.mjs`);
 if (!existsSync(driverPath)) writeFileSync(driverPath, driver, { flag: 'wx' });
 if (hash(readFileSync(driverPath)) !== hash(driver)) throw new Error('Existing driver changed');
 const { runCase } = await import(pathToFileURL(driverPath));
@@ -45,13 +49,23 @@ const inputPath = join(
   matrix === 'planning'
     ? 'frozen-inputs.json'
     : matrix === 'review'
-      ? 'review-wrapped-inputs.json'
+      ? correction
+        ? 'review-correction-inputs.json'
+        : 'review-wrapped-inputs.json'
       : 'full-wrapped-inputs-v2.json',
 );
 const inputBytes = readFileSync(inputPath);
 if (
   matrix === 'review' &&
-  hash(inputBytes) !== hash(readFileSync(new URL('./review-inputs.json.txt', import.meta.url)))
+  hash(inputBytes) !==
+    hash(
+      readFileSync(
+        new URL(
+          correction ? './review-correction-inputs.json.txt' : './review-inputs.json.txt',
+          import.meta.url,
+        ),
+      ),
+    )
 )
   throw new Error('Reviewer input changed');
 if (
@@ -60,13 +74,16 @@ if (
 )
   throw new Error('Full-run input changed');
 const cases = matrix === 'planning' ? inputs.planning : JSON.parse(inputBytes);
-const output = join(root, `${matrix === 'planning' ? 'historical-planning' : matrix}-${revision}`);
+const output = join(
+  root,
+  `${matrix === 'planning' ? 'historical-planning' : matrix}-${batchRevision}`,
+);
 mkdirSync(output, { recursive: true });
 const resources = matrix === 'full' ? read(join(root, 'full-resources.json')) : null;
 const execute = (input, out, options = {}) => {
   if (matrix === 'planning')
     return runCase(
-      join(root, revision),
+      join(root, sourceRevision),
       input,
       join(root, 'planning-repositories', input.id),
       out,
@@ -77,7 +94,7 @@ const execute = (input, out, options = {}) => {
     (project) => project.revision === revision && project.kind === input.target,
   );
   if (!resource) throw new Error('Isolated application resource missing');
-  return runCase(join(root, revision), input, out, {
+  return runCase(join(root, sourceRevision), input, out, {
     ...resource,
     candidate: revision === 'candidate',
     ...options,
@@ -99,10 +116,11 @@ const freeze = {
   inputSha256: hash(inputBytes),
   driverSha256: hash(driver),
   matrix,
+  correction: correction ?? null,
   frozenAt: new Date().toISOString(),
   humanScoring: 'not_run',
 };
-const freezePath = join(root, `${matrix}-${revision}-execution-freeze.json`);
+const freezePath = join(root, `${matrix}-${batchRevision}-execution-freeze.json`);
 if (!existsSync(freezePath))
   writeFileSync(freezePath, JSON.stringify(freeze, null, 2), { flag: 'wx' });
 else if (
