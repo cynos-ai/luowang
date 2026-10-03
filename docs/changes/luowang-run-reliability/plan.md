@@ -171,5 +171,11 @@
 - 在修改角色资源前冻结两组模型输入：基线 `7988793`、专项 12 子例、历史 8 类规划与 4 类 Reviewer、各版本各 3 次。输入文件 `.cynos/run-reliability/frozen-inputs.json` 的 SHA-256 为 `e6d473cf06f7ca4b4437476a2cc2e7c0e1b9e26afd26d5e165c8aebecaa954cc`；冻结时无候选模型输出。新增或包装输入的差异须另记，不追溯覆盖该冻结。
 
 - PR #121 最终 head `fa9dd4c1861c28eb47a8fe3d150c3e430bf83026` 经 [完整 quality / runtime CI](https://github.com/cynos-ai/luowang/actions/runs/37047525402) 通过，通过 PR 合入 develop `c2d3088`。后续能力事实功能从该集成版本创建 `feat/run-capability-facts`；没有发布或升级长期实例。
-- Phase 2 实施中：复用环境 readiness 的只读 HTTP 检查；规划前通过本 Run 的受控存储端点核验契约。区分未配置、404/405、401/403、无效响应和未知请求失败，零账号只证明入口可读，不是功能证据。缺口留给模型按原场景逐项判断，不新增自然语言分类器。HTTP 旧会话快照只保存于所属 Runner Session，GET 重放返回保存证据与实际请求关联，不向模型返回 Cookie。
+- Phase 2（工程已集成，模型效果待验收）：复用环境 readiness 的只读 HTTP 检查；规划前通过本 Run 的受控存储端点核验契约。区分未配置、404/405、401/403、无效响应和未知请求失败，零账号只证明入口可读，不是功能证据。缺口留给模型按原场景逐项判断，不新增自然语言分类器。HTTP 旧会话快照只保存于所属 Runner Session，GET 重放返回保存证据与实际请求关联，不向模型返回 Cookie。
 - 历史规划基线 8 × 3 个真实模型案例已执行，生产 Session / source tools 使用冻结基线 `7988793`，输出位于 `.cynos/run-reliability/historical-planning-baseline/`。包装器在首个模型请求前以 `planning-wrapper-v2-freeze.json` 固定（修正 Windows 换行导致失败类别未写入）；Git 挂载所有权预检失败另留记录，未调用模型。24 例均已交付计划，完整响应、工具轨迹与 SDK 用量留存；这只表示调用完成，语义复核及候选比较尚未完成，humanScoring 仍为 not_run。
+
+- PR #122 最终 head `9052702d1fc5038f7f8c1fed3cd0cfdc412a2e62` 经 [完整 quality / runtime CI](https://github.com/cynos-ai/luowang/actions/runs/37087010855) 通过，通过 PR 合入 develop `333044d`。Phase 3 从该版本创建 `feat/run-recovery-actions`。
+- Phase 3：Run/工作台共用事实诊断，首次时间缺失保留 unknown；准备失败展示原请求和已解析 Git 事实。重测通过项目与幂等键事务创建普通 current-head 请求、保存来源 Run，保留原报告，不回放 merge-source。手工和后台归档重试共用原 Archiver 与互斥 Promise，不调用模型。
+- 当前离线升级追加 `0019_run_followup`（包含前置 0018），新增来源 Run 与项目内唯一重测幂等键。当前命令备份名为 `luowang-before-reliability-0019.db`；旧程序回退必须恢复该次匹配备份和主密钥/配置，不能直接读新 schema。前述 0018 文件名仅对应 Phase 1 历史版本。
+- Phase 3 本地 Docker 全量单测 509 passed / 2 skipped（`.cynos/run-followup-all-tests.log`）；生产构建与 UI workflow 退出码 0（`.cynos/run-followup-build.log`、`.cynos/run-followup-ui.log`），覆盖三档宽度、确认框 Escape、失败后复用幂等键、双击单请求、项目切换迟到响应、归档结果及新旧配置/未知 target。新增工作台共用诊断后定向 7 passed，typecheck/lint 退出码 0（`.cynos/run-followup-final-check.log`）。以上不代替最终候选 live。
+- Reviewer 基线矩阵已完成 36 次调用尝试（专项 24、历史 12），保留实际失败；包括历史 plan/execution mismatch 第一次未写 review 的失败，没有补抽替换。输出位于 `.cynos/run-reliability/review-baseline/`，包装器冻结在 `review-wrapper-freeze.json`。语义评分及候选比较待 Phase 5，人工评分 not_run。

@@ -17,6 +17,7 @@ import { Field } from '../../components/FormControls';
 import { PageHeading } from '../../components/PageHeading';
 import { StatusLabel } from '../../components/StatusLabel';
 import { StopRequestButton } from '../../components/StopRequestButton';
+import { diagnosePreparation } from '../../../shared/run-diagnostics';
 import type { ProjectDetailResponse } from '../../project-types';
 
 type TestPageData = {
@@ -152,6 +153,36 @@ export function ProjectTestPage({ projectId }: { projectId: string }) {
           error={!data ? resource.error : ''}
           onRetry={resource.reload}
         >
+          {data?.queue.map((item) => {
+            const problem = diagnosePreparation(item);
+            return (
+              problem && (
+                <section
+                  className="content-block"
+                  key={`preparation-${item.queueId}`}
+                  aria-label={`请求 ${item.queueId} 准备详情`}
+                >
+                  <h2>请求 #{item.queueId} · 尚无测试结论</h2>
+                  <p>{problem.message}</p>
+                  <p>
+                    请求种类：{item.requestKind} · 首次观察：{problem.firstObservedAt ?? '未知'} ·
+                    最近观察：{problem.lastObservedAt ?? '未知'}
+                  </p>
+                  {item.requestKind === 'manual-merge-source' && (
+                    <p>
+                      此请求涉及来源分支合并；已准备提交 {item.preparedMergeCommit ?? '未记录'}
+                      ，已固定 target {item.resolvedTargetCommit ?? '未知'}。请先核对原请求的 Git
+                      事实，再决定是否新建合并请求。
+                    </p>
+                  )}
+                  <AppLink to={{ name: 'project-readiness', projectId }}>重新检查项目条件</AppLink>
+                  <AppLink to={{ name: 'project-settings', projectId, section: 'environment' }}>
+                    查看项目环境配置
+                  </AppLink>
+                </section>
+              )
+            );
+          })}
           {data &&
             data.queue
               .filter((item) => item.status === 'queued' || item.status === 'running')

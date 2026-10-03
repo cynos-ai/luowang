@@ -7,7 +7,7 @@ import Database from 'better-sqlite3';
 
 import { loadConfig } from '../config.js';
 import { migrateProjectReportIndexIdentity } from '../db/migrations/0017-project-report-index-identity.js';
-import { migrateRunStop, RUN_STOP_VERSION } from '../db/migrations/0018-run-stop.js';
+import { migrateRunFollowup, RUN_FOLLOWUP_VERSION } from '../db/migrations/0019-run-followup.js';
 import { GitHubClient } from '../repository/github.js';
 import { createSecretStore } from '../security/secret-store.js';
 import { createLegacyBackup, verifyLegacyBackup } from './legacy-backup.js';
@@ -61,7 +61,7 @@ export async function runUpgradeCli(
       if (
         database
           .prepare('SELECT 1 FROM schema_migrations WHERE version = ?')
-          .get(reliability ? RUN_STOP_VERSION : '0017_project_report_index_identity')
+          .get(reliability ? RUN_FOLLOWUP_VERSION : '0017_project_report_index_identity')
       ) {
         assertProjectSchema(database);
         return { status: 'already_complete' };
@@ -71,7 +71,7 @@ export async function runUpgradeCli(
       await mkdir(backupPath);
       const databaseBackupPath = join(
         backupPath,
-        reliability ? 'luowang-before-reliability-0018.db' : 'luowang-before-index-0017.db',
+        reliability ? 'luowang-before-reliability-0019.db' : 'luowang-before-index-0017.db',
       );
       await database.backup(databaseBackupPath);
       const backup = new Database(databaseBackupPath, { readonly: true, fileMustExist: true });
@@ -86,7 +86,7 @@ export async function runUpgradeCli(
       const before = (
         database.prepare('SELECT COUNT(*) AS count FROM indexed_reports').get() as { count: number }
       ).count;
-      if (reliability) migrateRunStop(database);
+      if (reliability) migrateRunFollowup(database);
       else migrateProjectReportIndexIdentity(database);
       const after = (
         database.prepare('SELECT COUNT(*) AS count FROM indexed_reports').get() as { count: number }

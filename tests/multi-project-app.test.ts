@@ -22,7 +22,7 @@ import { migrateProjectQueueContext } from '../src/server/db/migrations/0014-pro
 import { migrateProjectImageState } from '../src/server/db/migrations/0015-project-image-state.js';
 import { migrateProjectRunImage } from '../src/server/db/migrations/0016-project-run-image.js';
 import { migrateProjectReportIndexIdentity } from '../src/server/db/migrations/0017-project-report-index-identity.js';
-import { migrateRunStop } from '../src/server/db/migrations/0018-run-stop.js';
+import { migrateRunFollowup } from '../src/server/db/migrations/0019-run-followup.js';
 import { createProjectApp } from '../src/server/projects/app.js';
 import { createProjectTestRequestQueue } from '../src/server/automation/queue.js';
 import { createProjectRunStore } from '../src/server/runs/store.js';
@@ -56,7 +56,7 @@ it('uses only new-schema administration routes, scoped Secrets, and the existing
   migrateProjectImageState(database.sqlite);
   migrateProjectRunImage(database.sqlite);
   migrateProjectReportIndexIdentity(database.sqlite);
-  migrateRunStop(database.sqlite);
+  migrateRunFollowup(database.sqlite);
   database.sqlite
     .prepare(
       `INSERT INTO system_metadata (key, value, created_at, updated_at)
@@ -64,6 +64,7 @@ it('uses only new-schema administration routes, scoped Secrets, and the existing
     )
     .run();
   let drains = 0;
+  let archiveRetries = 0;
   let stalledRepository: GitRepository | null = null;
   const evidenceReads: Array<{ projectId: string; key: string }> = [];
   let activeRun: { projectId: string; run: RunSummary } | null = null;
@@ -87,6 +88,14 @@ it('uses only new-schema administration routes, scoped Secrets, and the existing
       },
       recover: async () => {},
       retryArchives: async () => {},
+      retryArchive: async (projectId, runId) => {
+        archiveRetries++;
+        const queue = createProjectTestRequestQueue(database.sqlite, projectId)
+          .list()
+          .find((item) => item.runId === runId);
+        assert.ok(queue);
+        return queue;
+      },
       maxConcurrentProjects: 2,
       stop: async () => undefined,
       currentRuns: async () => (activeRun ? [activeRun] : []),
@@ -884,6 +893,107 @@ it('uses only new-schema administration routes, scoped Secrets, and the existing
       ).statusCode,
       404,
     );
+    database.sqlite
+      .prepare("UPDATE projects SET status = 'active' WHERE project_id = ?")
+      .run(projectId);
+    const retestUrl = `/api/projects/${projectId}/runs/RUN-A/retest`;
+    const retestBody = { confirmed: true, idempotencyKey: 'fixed-api-followup-token' };
+    assert.equal(
+      (await app.inject({ method: 'POST', url: retestUrl, payload: retestBody })).statusCode,
+      401,
+    );
+    assert.equal(
+      (
+        await app.inject({
+          method: 'POST',
+          url: retestUrl,
+          headers: { ...headers, origin: 'https://foreign.example' },
+          payload: retestBody,
+        })
+      ).statusCode,
+      403,
+    );
+    assert.equal(
+      (
+        await app.inject({
+          method: 'POST',
+          url: `/api/projects/${projectB}/runs/RUN-A/retest`,
+          headers,
+          payload: retestBody,
+        })
+      ).statusCode,
+      404,
+    );
+    for (const payload of [
+      { confirmed: true },
+      { ...retestBody, targetCommit: 'b'.repeat(40) },
+      { ...retestBody, confirmed: false },
+    ])
+      assert.equal(
+        (await app.inject({ method: 'POST', url: retestUrl, headers, payload })).statusCode,
+        400,
+      );
+    const firstFollowup = await app.inject({
+      method: 'POST',
+      url: retestUrl,
+      headers,
+      payload: retestBody,
+    });
+    assert.equal(firstFollowup.statusCode, 202, firstFollowup.body);
+    const repeatedFollowup = await app.inject({
+      method: 'POST',
+      url: retestUrl,
+      headers,
+      payload: retestBody,
+    });
+    assert.deepEqual(repeatedFollowup.json(), firstFollowup.json());
+    assert.equal(firstFollowup.json().queue.sourceRunId, 'RUN-A');
+    assert.equal(firstFollowup.json().queue.resolvedTargetCommit, null);
+    assert.equal(firstFollowup.json().queue.requestKind, 'manual-current-head');
+    const oldAfterFollowup = await app.inject({
+      method: 'GET',
+      url: `/api/projects/${projectId}/runs/RUN-A`,
+      headers,
+    });
+    assert.deepEqual(oldAfterFollowup.json().run, storedRunDetail.json().run);
+    assert.equal(oldAfterFollowup.json().followups.length, 1);
+    const retryUrl = `/api/projects/${projectId}/runs/${failedRunId}/archive/retry`;
+    assert.equal(
+      (await app.inject({ method: 'POST', url: retryUrl, payload: {} })).statusCode,
+      401,
+    );
+    assert.equal(
+      (
+        await app.inject({
+          method: 'POST',
+          url: retryUrl,
+          headers: { ...headers, origin: 'https://foreign.example' },
+          payload: {},
+        })
+      ).statusCode,
+      403,
+    );
+    assert.equal(
+      (await app.inject({ method: 'POST', url: retryUrl, headers, payload: { runId: 'foreign' } }))
+        .statusCode,
+      400,
+    );
+    assert.equal(
+      (
+        await app.inject({
+          method: 'POST',
+          url: `/api/projects/${projectB}/runs/${failedRunId}/archive/retry`,
+          headers,
+          payload: {},
+        })
+      ).statusCode,
+      404,
+    );
+    assert.equal(
+      (await app.inject({ method: 'POST', url: retryUrl, headers, payload: {} })).statusCode,
+      200,
+    );
+    assert.equal(archiveRetries, 1);
     const password = await app.inject({
       method: 'POST',
       url: '/api/auth/password',

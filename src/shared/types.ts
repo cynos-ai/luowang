@@ -453,6 +453,8 @@ export interface OperationsCurrentResponse {
 }
 
 export interface OperationsQueueItem {
+  sourceRunId?: string | null;
+  configRevision?: number | null;
   stopRequestedAt?: string | null;
   stopReason?: 'user_requested' | null;
   queueId: number;
@@ -631,6 +633,7 @@ export type ConsoleTarget =
   | { kind: 'system' };
 
 export interface WorkspaceAttentionItem {
+  diagnostic?: import('./run-diagnostics.js').RunDiagnostic;
   id: string;
   kind: WorkspaceAttentionKind;
   severity: 'warning' | 'error';

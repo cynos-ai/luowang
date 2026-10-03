@@ -17,6 +17,7 @@ import { MarkdownView } from '../../components/MarkdownView';
 import { PageHeading } from '../../components/PageHeading';
 import { StatusLabel } from '../../components/StatusLabel';
 import { StopRequestButton } from '../../components/StopRequestButton';
+import { RunFollowupActions } from '../../components/RunFollowupActions';
 
 const tabLabels: Record<RunDetailTab, string> = {
   summary: '摘要',
@@ -31,6 +32,8 @@ type RunPageData = {
   run: OperationsRunDetail;
   report: IndexedReport | null;
   queue: OperationsQueueItem | null;
+  source: { runId: string; targetCommit: string | null; configRevision: number | null } | null;
+  followups: OperationsQueueItem[];
 };
 
 export function ProjectRunPage({
@@ -47,6 +50,8 @@ export function ProjectRunPage({
       const run = await requestJson<{
         run: OperationsRunDetail;
         queue?: OperationsQueueItem | null;
+        source?: RunPageData['source'];
+        followups?: OperationsQueueItem[];
       }>(`/api/projects/${projectId}/runs/${encodeURIComponent(runId)}`, { signal });
       let report: IndexedReport | null = null;
       try {
@@ -59,7 +64,13 @@ export function ProjectRunPage({
       } catch (cause) {
         if (signal.aborted) throw cause;
       }
-      return { run: run.run, report, queue: run.queue ?? null };
+      return {
+        run: run.run,
+        report,
+        queue: run.queue ?? null,
+        source: run.source ?? null,
+        followups: run.followups ?? [],
+      };
     },
     [projectId, runId],
   );
@@ -68,11 +79,15 @@ export function ProjectRunPage({
   );
   const data = resource.value;
   const active = data?.queue?.status === 'running' || data?.queue?.status === 'queued';
+  const refreshing =
+    active ||
+    data?.queue?.status === 'waiting_archive' ||
+    data?.followups.some((item) => ['queued', 'running', 'waiting_archive'].includes(item.status));
   useEffect(() => {
-    if (!active) return;
+    if (!refreshing) return;
     const timer = setInterval(resource.reload, 3000);
     return () => clearInterval(timer);
-  }, [active, resource.reload]);
+  }, [refreshing, resource.reload]);
   return (
     <section className="page-content run-detail-page">
       <PageHeading title={`测试 ${shortId(runId)}`} scope="当前项目 · 测试记录" />
@@ -104,11 +119,84 @@ export function ProjectRunPage({
           error={!data ? resource.error : ''}
           onRetry={resource.reload}
         >
-          {data && <RunTab projectId={projectId} data={data} tab={tab} />}
+          {data && (
+            <>
+              {tab === 'summary' && (
+                <>
+                  <RunFollowupActions
+                    projectId={projectId}
+                    run={data.run}
+                    queue={data.queue}
+                    onChanged={resource.reload}
+                  />
+                  {(data.source || data.followups.length > 0) && (
+                    <section className="content-block" aria-label="关联测试">
+                      <h2>关联测试</h2>
+                      {data.source && (
+                        <p>
+                          来源{' '}
+                          <AppLink
+                            to={{
+                              name: 'project-run',
+                              projectId,
+                              runId: data.source.runId,
+                              tab: 'summary',
+                            }}
+                          >
+                            {data.source.runId}
+                          </AppLink>{' '}
+                          · {compareTarget(data.source.targetCommit, data.run.targetCommit)} ·
+                          配置：
+                          {compareRevision(data.source.configRevision, data.queue?.configRevision)}
+                        </p>
+                      )}
+                      {data.followups.map((item) => (
+                        <p key={item.queueId}>
+                          请求 #{item.queueId} · {item.status} ·{' '}
+                          {item.runId ? (
+                            <AppLink
+                              to={{
+                                name: 'project-run',
+                                projectId,
+                                runId: item.runId,
+                                tab: 'summary',
+                              }}
+                            >
+                              {item.runId}
+                            </AppLink>
+                          ) : (
+                            '尚未创建 Run'
+                          )}{' '}
+                          · {compareTarget(data.run.targetCommit, item.resolvedTargetCommit)} ·
+                          配置：{compareRevision(data.queue?.configRevision, item.configRevision)}
+                        </p>
+                      ))}
+                    </section>
+                  )}
+                </>
+              )}
+              <RunTab projectId={projectId} data={data} tab={tab} />
+            </>
+          )}
         </AsyncRegion>
       </div>
     </section>
   );
+}
+
+function compareTarget(before: string | null, after: string | null): string {
+  return !before || !after
+    ? '新旧 target 尚不能比较'
+    : before === after
+      ? 'target 与来源相同'
+      : `target 已变化：${before.slice(0, 12)} → ${after.slice(0, 12)}`;
+}
+function compareRevision(before?: number | null, after?: number | null): string {
+  return before == null || after == null
+    ? '修订记录不足'
+    : before === after
+      ? `相同（${after}）`
+      : `已变化（${before} → ${after}）`;
 }
 
 function RunTab({

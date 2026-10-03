@@ -24,6 +24,7 @@ import {
   type TestRequestInput,
   type TestRequestQueue,
   type TestRequestRecord,
+  TestRequestQueueError,
 } from './queue.js';
 
 export interface ProjectDispatchServices {
@@ -33,6 +34,7 @@ export interface ProjectDispatchServices {
 }
 
 export interface ProjectAutomationDispatcher {
+  retryArchive(projectId: string, runId: string): Promise<TestRequestRecord>;
   stopRequest(projectId: string, queueId: number): Promise<TestRequestRecord>;
   readonly maxConcurrentProjects: number;
   enqueue(projectId: string, input: TestRequestInput): TestRequestRecord;
@@ -104,6 +106,47 @@ export function createProjectAutomationDispatcher(options: {
   const activeRuns = new Map<string, { runId: string; runs: RunOrchestrator }>();
   const preparingRuns = new Map<number, { runId: string; runs: RunOrchestrator }>();
   const deferredArchives = new Set<number>();
+  const archiveRetries = new Map<number, Promise<TestRequestRecord>>();
+
+  function retryArchive(projectId: string, runId: string): Promise<TestRequestRecord> {
+    const queue = queueFor(projectId);
+    const item = queue.list().find((row) => row.runId === runId);
+    if (!item) throw new TestRequestQueueError('QUEUE_NOT_FOUND', '项目归档请求不存在');
+    const existing = archiveRetries.get(item.queueId);
+    if (existing) return existing;
+    if (
+      stopping ||
+      recovering ||
+      awaitsCutoverActivation(options.database, projectId) ||
+      item.status !== 'completed'
+    )
+      throw new TestRequestQueueError('QUEUE_STATE_INVALID', '本次请求尚不能重试归档');
+    if (item.archiveStatus === 'completed') return Promise.resolve(item);
+    if (item.archiveStatus !== 'failed' && item.archiveStatus !== 'partial')
+      throw new TestRequestQueueError('QUEUE_STATE_INVALID', '没有可重试的归档失败');
+    const operation = Promise.resolve()
+      .then(async () => {
+        try {
+          const result = await servicesFor(item, 'archive-retry').archiver.retry(runId);
+          return queue.recordArchiveRetry(item.queueId, runId, {
+            archiveStatus: result.status,
+            progressed: result.progressed,
+            errorMessage: result.errorMessage,
+          });
+        } catch (error) {
+          return queue.recordArchiveRetry(item.queueId, runId, {
+            archiveStatus: 'failed',
+            progressed: false,
+            errorMessage: safeMessage(error),
+          });
+        }
+      })
+      .finally(() => {
+        archiveRetries.delete(item.queueId);
+      });
+    archiveRetries.set(item.queueId, operation);
+    return operation;
+  }
 
   async function retryArchivesInner(at: Date): Promise<void> {
     for (const item of createTestRequestQueue(options.database).list()) {
@@ -133,25 +176,9 @@ export function createProjectAutomationDispatcher(options: {
         at.getTime() - Date.parse(item.updatedAt) < 60_000
       )
         continue;
-      const queue = queueFor(item.projectId);
       try {
-        const services = servicesFor(item, 'archive-retry');
-        const result = await services.archiver.retry(item.runId);
-        queue.recordArchiveRetry(item.queueId, item.runId, {
-          archiveStatus: result.status,
-          progressed: result.progressed,
-          errorMessage: result.errorMessage,
-        });
+        await retryArchive(item.projectId, item.runId);
       } catch (error) {
-        try {
-          queue.recordArchiveRetry(item.queueId, item.runId, {
-            archiveStatus: 'failed',
-            progressed: false,
-            errorMessage: safeMessage(error),
-          });
-        } catch (recordError) {
-          logError(recordError, 'project archive retry status update failed');
-        }
         options.logger?.warn(
           {
             projectId: item.projectId,
@@ -413,6 +440,7 @@ export function createProjectAutomationDispatcher(options: {
     return result;
   };
   return {
+    retryArchive,
     async stopRequest(projectId, queueId) {
       const queue = queueFor(projectId);
       const before = queue.get(queueId);
@@ -446,6 +474,7 @@ export function createProjectAutomationDispatcher(options: {
       await recoveryPromise;
       await drain();
       await retryPromise;
+      await Promise.allSettled([...archiveRetries.values()]);
     },
     retryArchives(at = new Date()) {
       if (retryPromise) return retryPromise;
