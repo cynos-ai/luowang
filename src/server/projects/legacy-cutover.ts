@@ -12,7 +12,7 @@ import { migrateProjectQueueContext } from '../db/migrations/0014-project-queue-
 import { migrateProjectImageState } from '../db/migrations/0015-project-image-state.js';
 import { migrateProjectRunImage } from '../db/migrations/0016-project-run-image.js';
 import { migrateProjectReportIndexIdentity } from '../db/migrations/0017-project-report-index-identity.js';
-import { migrateRunFollowup } from '../db/migrations/0019-run-followup.js';
+import { migrateRunTelemetry } from '../db/migrations/0020-run-telemetry.js';
 import type { VerifiedGitHubRepositoryIdentity } from '../repository/github.js';
 import { verifyLegacyBackup } from './legacy-backup.js';
 import { fingerprintLegacyDatabase } from './legacy-fingerprint.js';
@@ -99,7 +99,7 @@ export async function applyLegacyProjectCutover(input: LegacyCutoverInput): Prom
     migrateProjectImageState(input.database);
     migrateProjectRunImage(input.database);
     migrateProjectReportIndexIdentity(input.database);
-    migrateRunFollowup(input.database);
+    migrateRunTelemetry(input.database);
     if ((input.database.pragma('foreign_key_check') as unknown[]).length > 0) {
       throw new Error('升级后的数据库外键检查失败');
     }
@@ -146,7 +146,7 @@ export async function applyEmptyLegacyCutover(input: {
     migrateProjectImageState(input.database);
     migrateProjectRunImage(input.database);
     migrateProjectReportIndexIdentity(input.database);
-    migrateRunFollowup(input.database);
+    migrateRunTelemetry(input.database);
     if ((input.database.pragma('foreign_key_check') as unknown[]).length > 0) {
       throw new Error('升级后的数据库外键检查失败');
     }

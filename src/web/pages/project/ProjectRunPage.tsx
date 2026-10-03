@@ -18,6 +18,7 @@ import { PageHeading } from '../../components/PageHeading';
 import { StatusLabel } from '../../components/StatusLabel';
 import { StopRequestButton } from '../../components/StopRequestButton';
 import { RunFollowupActions } from '../../components/RunFollowupActions';
+import { RunTelemetryPanel } from '../../components/RunTelemetryPanel';
 
 const tabLabels: Record<RunDetailTab, string> = {
   summary: '摘要',
@@ -123,6 +124,12 @@ export function ProjectRunPage({
             <>
               {tab === 'summary' && (
                 <>
+                  <RunTelemetryPanel
+                    telemetry={data.run.telemetry}
+                    active={data.run.status === 'running' || data.run.status === 'queued'}
+                    lastActivityAt={data.run.activities?.at(-1)?.at ?? data.run.updatedAt}
+                    fetchedAt={resource.fetchedAt}
+                  />
                   <RunFollowupActions
                     projectId={projectId}
                     run={data.run}

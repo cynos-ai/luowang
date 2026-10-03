@@ -508,6 +508,36 @@ try {
               status: 'completed',
               phase: 'completed',
               result: 'passed',
+              telemetry: {
+                stages: [
+                  {
+                    phase: 'runner',
+                    startedAt: '2026-01-01T00:00:00Z',
+                    finishedAt: '2026-01-01T00:01:30Z',
+                  },
+                ],
+                sessions: [
+                  {
+                    sessionId: 'known',
+                    kind: 'runner-execution',
+                    startedAt: null,
+                    finishedAt: fixture.now,
+                    usage: {
+                      provider: 'fixture',
+                      model: 'fixture',
+                      tokens: { input: 10, output: 5, cacheRead: 2, cacheWrite: 3, total: 20 },
+                      sdkEstimatedCostUsd: null,
+                    },
+                  },
+                  {
+                    sessionId: 'unknown',
+                    kind: 'reviewer-audit',
+                    startedAt: null,
+                    finishedAt: fixture.now,
+                    usage: null,
+                  },
+                ],
+              },
               finishedAt: fixture.now,
               scenarioResults: [{ id: 'AUTH-LOGIN-001', result: 'passed' }],
               activities: [
@@ -935,6 +965,11 @@ try {
   await page.getByText('正式报告已发布').waitFor();
   await page.goto(`${origin}/projects/${projects[0].projectId}/runs/${fixtureRunId}`);
   await page.getByText('数据清理告警：合成清理告警。该告警不改写正式测试结论。').waitFor();
+  const telemetry = page.getByRole('region', { name: '运行时间与模型用量' });
+  await telemetry.getByText(/耗时 1 分 30 秒/).waitFor();
+  await telemetry.getByText(/已结束 Session 的部分用量/).waitFor();
+  await telemetry.getByText(/reviewer-audit.*输入 未知/).waitFor();
+  await telemetry.getByText(/SDK 估价.*未知.*不是 Provider 账单/).waitFor();
   await page.getByRole('button', { name: '重试归档', exact: true }).click();
   await page.getByText('归档重试已结束：completed；原测试结论保持。').waitFor();
   await page.getByRole('button', { name: '重试归档', exact: true }).waitFor({ state: 'detached' });

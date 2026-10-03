@@ -24,13 +24,14 @@ describe('offline multi-project upgrade command', () => {
       await runUpgradeCli(['backup', join(root, 'legacy')], environment);
       await runUpgradeCli(['upgrade-empty', join(root, 'legacy')], environment);
       database.exec(`DROP TABLE active_run_snapshots;
+        ALTER TABLE run_store_runs DROP COLUMN telemetry_json;
         DROP INDEX test_request_retest_key;
         ALTER TABLE test_request_queue DROP COLUMN source_run_id;
         ALTER TABLE test_request_queue DROP COLUMN retest_key;
         ALTER TABLE test_request_queue DROP COLUMN stop_requested_at;
         ALTER TABLE test_request_queue DROP COLUMN stop_reason;
         ALTER TABLE interrupted_run_records DROP COLUMN snapshot_json;
-        DELETE FROM schema_migrations WHERE version IN ('0018_run_stop', '0019_run_followup');`);
+        DELETE FROM schema_migrations WHERE version IN ('0018_run_stop', '0019_run_followup', '0020_run_telemetry');`);
       const before = database.prepare('SELECT * FROM system_metadata ORDER BY key').all();
       const backup = join(root, 'reliability');
       assert.equal(
@@ -46,7 +47,7 @@ describe('offline multi-project upgrade command', () => {
         'already_complete',
       );
       assert.equal(existsSync(join(root, 'unused')), false);
-      const old = new Database(join(backup, 'luowang-before-reliability-0019.db'), {
+      const old = new Database(join(backup, 'luowang-before-reliability-0020.db'), {
         readonly: true,
       });
       try {

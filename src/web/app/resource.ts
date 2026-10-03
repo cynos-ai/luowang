@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 export type ResourceState<T> = {
+  fetchedAt: string | null;
   value: T | null;
   loading: boolean;
   error: string;
@@ -17,6 +18,7 @@ export function useResource<T>(
   errorMessageRef.current = errorMessage;
   const [revision, setRevision] = useState(0);
   const [state, setState] = useState<Omit<ResourceState<T>, 'reload'>>({
+    fetchedAt: null,
     value: null,
     loading: true,
     error: '',
@@ -30,12 +32,13 @@ export function useResource<T>(
     void load(controller.signal).then(
       (value) => {
         if (!controller.signal.aborted && generation.current === currentGeneration) {
-          setState({ value, loading: false, error: '' });
+          setState({ value, loading: false, error: '', fetchedAt: new Date().toISOString() });
         }
       },
       (cause: unknown) => {
         if (!controller.signal.aborted && generation.current === currentGeneration) {
           setState((current) => ({
+            fetchedAt: current.fetchedAt,
             value: current.value,
             loading: false,
             error: errorMessageRef.current(cause),

@@ -8,6 +8,7 @@ import { AppLink } from '../app/navigation';
 import { AsyncRegion } from '../components/AsyncRegion';
 import { PageHeading } from '../components/PageHeading';
 import { StatusLabel } from '../components/StatusLabel';
+import { RunTelemetryPanel } from '../components/RunTelemetryPanel';
 
 const workspaceError = (cause: unknown) => toUserMessage(cause, '工作台读取失败');
 
@@ -122,6 +123,14 @@ function ActiveRun({ workspace }: { workspace: WorkspaceResponse }) {
                 {active.project.displayName} · {active.runId ?? '准备目标'}
               </AppLink>
               <p>{active.stage}</p>
+              <RunTelemetryPanel
+                compact
+                telemetry={active.telemetry}
+                active={true}
+                stageStartedAt={active.stageStartedAt}
+                lastActivityAt={active.lastActivityAt}
+                fetchedAt={workspace.fetchedAt}
+              />
             </div>
             <strong>
               {active.progress ? `${active.progress.completed}/${active.progress.total}` : '—'}

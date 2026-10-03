@@ -372,6 +372,7 @@ function presentRun(
     activities:
       base.activities && base.activities.length > 0 ? base.activities : stored?.activities,
     blockingReasons: base.blockingReasons ?? stored?.blockingReasons,
+    telemetry: base.telemetry ?? stored?.telemetry,
     updatedAt: base.updatedAt ?? stored?.updatedAt,
     archive: stored
       ? {

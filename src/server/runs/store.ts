@@ -18,6 +18,7 @@ export type StoredScenarioStatus =
   'not_applicable' | 'pending' | 'published' | 'pull_request' | 'failed';
 
 export interface CompletedRunImport {
+  telemetry?: import('../../shared/types.js').RunTelemetry;
   runId: string;
   trigger: RunTrigger;
   request?: string;
@@ -58,6 +59,7 @@ export interface StoredRunIssue {
 }
 
 export interface StoredRun {
+  telemetry?: import('../../shared/types.js').RunTelemetry;
   runId: string;
   status: 'completed';
   trigger: RunTrigger;
@@ -201,6 +203,7 @@ class SqliteRunStore implements RunStore {
         }
         this.assertStoredArtifacts(input.runId, input.artifacts);
         this.mergeCompletionDetails(existing, input, timestamp);
+        this.mergeTelemetry(input);
         this.ensureIssueRows(input, timestamp);
         return;
       }
@@ -253,6 +256,7 @@ class SqliteRunStore implements RunStore {
           )
           .run(input.runId, name, content, timestamp, timestamp);
       }
+      this.mergeTelemetry(input);
       this.ensureIssueRows(input, timestamp);
     })();
     const stored = this.get(input.runId);
@@ -529,6 +533,23 @@ class SqliteRunStore implements RunStore {
     }
   }
 
+  private mergeTelemetry(input: CompletedRunImport): void {
+    if (input.telemetry === undefined) return;
+    // Legacy single-project readers remain supported for historical tools and fixtures.
+    const columns = this.database.prepare('PRAGMA table_info(run_store_runs)').all() as Array<{
+      name: string;
+    }>;
+    if (!columns.some((column) => column.name === 'telemetry_json')) return;
+    const current = this.readRunRow(input.runId)?.telemetry_json;
+    const value = JSON.stringify(input.telemetry);
+    if (current && current !== value)
+      throw new RunStoreError('RUN_STORE_CONFLICT', 'Run telemetry 冲突');
+    if (!current)
+      this.database
+        .prepare('UPDATE run_store_runs SET telemetry_json = ? WHERE run_id = ?')
+        .run(value, input.runId);
+  }
+
   private mergeCompletionDetails(row: RunRow, input: CompletedRunImport, timestamp: string): void {
     const evidence = input.evidence === undefined ? undefined : JSON.stringify(input.evidence);
     const blockingReasons =
@@ -562,10 +583,16 @@ class SqliteRunStore implements RunStore {
       throw new RunStoreError('RUN_STORE_CONFLICT', `Run activities 冲突：${input.runId}`);
     }
     if (
-      (evidence !== undefined && row.evidence_json === '[]') ||
-      (blockingReasons !== undefined && row.blocking_reasons_json === '[]') ||
-      (scenarioProgress !== undefined && row.scenario_progress_json === 'null') ||
-      (activities !== undefined && row.activities_json === '[]')
+      (evidence !== undefined && evidence !== row.evidence_json && row.evidence_json === '[]') ||
+      (blockingReasons !== undefined &&
+        blockingReasons !== row.blocking_reasons_json &&
+        row.blocking_reasons_json === '[]') ||
+      (scenarioProgress !== undefined &&
+        scenarioProgress !== row.scenario_progress_json &&
+        row.scenario_progress_json === 'null') ||
+      (activities !== undefined &&
+        activities !== row.activities_json &&
+        row.activities_json === '[]')
     ) {
       this.database
         .prepare(
@@ -616,6 +643,7 @@ class SqliteRunStore implements RunStore {
 }
 
 interface RunRow {
+  telemetry_json?: string | null;
   run_id: string;
   status: 'completed';
   trigger: RunTrigger;
@@ -714,6 +742,14 @@ function toStoredRun(
       null,
     ),
     activities: parseJson<RunActivity[]>(row.activities_json, []),
+    ...(row.telemetry_json
+      ? {
+          telemetry: parseJson<import('../../shared/types.js').RunTelemetry | undefined>(
+            row.telemetry_json,
+            undefined,
+          ),
+        }
+      : {}),
     issues: issues.map(toStoredIssue),
     specialRun: row.report_status === 'not_applicable',
     createdAt: row.created_at,

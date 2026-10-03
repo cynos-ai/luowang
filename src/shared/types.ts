@@ -298,6 +298,7 @@ export type RunPhase =
   | 'interrupted';
 
 export interface RunSummary {
+  telemetry?: RunTelemetry;
   stopRequestedAt?: string | null;
   stopReason?: 'user_requested' | null;
   runId: string;
@@ -329,6 +330,28 @@ export interface RunSummary {
 
 export interface RunDetail extends RunSummary {
   artifacts: Record<string, string>;
+}
+
+export interface ModelUsage {
+  provider: string;
+  model: string;
+  tokens: { input: number; output: number; cacheRead: number; cacheWrite: number; total: number };
+  sdkEstimatedCostUsd: number | null;
+  completeness?: 'complete' | 'partial';
+}
+
+export interface SessionUsageRecord {
+  settled?: boolean;
+  sessionId: string;
+  kind: string;
+  startedAt: string | null;
+  finishedAt: string | null;
+  usage: ModelUsage | null;
+}
+
+export interface RunTelemetry {
+  stages: Array<{ phase: RunPhase; startedAt: string; finishedAt: string | null }>;
+  sessions: SessionUsageRecord[];
 }
 
 export interface RunActivity {
@@ -576,6 +599,9 @@ export interface ConsoleRunReference {
 }
 
 export interface WorkspaceActiveRun extends Omit<ConsoleRunReference, 'runId'> {
+  telemetry?: RunTelemetry;
+  stageStartedAt?: string | null;
+  lastActivityAt?: string | null;
   queueId: number;
   runId: string | null;
   project: ConsoleProjectReference;

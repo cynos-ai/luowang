@@ -241,6 +241,34 @@ describe('project automation dispatcher', () => {
       queue.claimNext();
       queue.markResolved(item.queueId, 'a'.repeat(40));
       queue.markStarted(item.queueId, '01JQ7K6D5J4P3N2M1H0G9F8E7D');
+      const telemetry: NonNullable<RunSummary['telemetry']> = {
+        stages: [{ phase: 'runner', startedAt: '2026-01-01T00:00:00.000Z', finishedAt: null }],
+        sessions: [
+          {
+            sessionId: 'incomplete-session',
+            kind: 'runner-execution',
+            startedAt: '2026-01-01T00:00:00.000Z',
+            finishedAt: null,
+            usage: null,
+          },
+        ],
+      };
+      createProjectRunRecoveryStore(fixture.database, fixture.a.projectId).checkpoint!({
+        runId: '01JQ7K6D5J4P3N2M1H0G9F8E7D',
+        status: 'running',
+        phase: 'runner',
+        result: null,
+        request: 'original request',
+        trigger: 'manual',
+        baseCommit: null,
+        targetCommit: 'a'.repeat(40),
+        includedCommits: [],
+        startedAt: '2026-01-01T00:00:00.000Z',
+        finishedAt: null,
+        errorMessage: null,
+        artifactNames: [],
+        telemetry,
+      });
       const stopped = queue.requestStop(item.queueId);
       const restarted = fixture.dispatcher((id) => fakeServices(id, {}));
       await restarted.recover();
@@ -251,6 +279,8 @@ describe('project automation dispatcher', () => {
       assert.equal(recovered?.stopRequestedAt, stopped.stopRequestedAt);
       assert.equal(recovered?.targetCommit, 'a'.repeat(40));
       assert.equal(recovered?.request, 'original request');
+      assert.deepEqual(recovered?.telemetry, telemetry);
+      assert.equal(recovered?.telemetry?.stages[0].finishedAt, null);
       assert.equal(recovered?.result, null);
       assert.match(recovered!.errorMessage!, /未知/);
     } finally {
