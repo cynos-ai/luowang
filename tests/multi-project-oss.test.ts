@@ -31,7 +31,7 @@ describe('project-bound OSS', () => {
       });
       configuration.updateHarness({
         oss: {
-          endpoint: 'https://oss.example.test',
+          endpoint: 'oss.example.test',
           region: 'test-region',
           bucket: 'test-bucket',
           publicBaseUrl: '',
@@ -43,14 +43,18 @@ describe('project-bound OSS', () => {
       secrets.deployment().set('ossAccessKeyId', 'access-id');
       secrets.deployment().set('ossAccessKeySecret', 'access-secret');
       const uploaded: string[] = [];
+      let configuredEndpoint = '';
       const options = {
-        clientFactory: () => ({
-          send: async (command: unknown) => {
-            const key = (command as { input: { Key: string } }).input.Key;
-            uploaded.push(key);
-            return {};
-          },
-        }),
+        clientFactory: (clientConfig) => {
+          configuredEndpoint = String(clientConfig.endpoint);
+          return {
+            send: async (command: unknown) => {
+              const key = (command as { input: { Key: string } }).input.Key;
+              uploaded.push(key);
+              return {};
+            },
+          };
+        },
       };
       const ossA = createProjectOssAdapter(database, a.projectId, configuration, secrets, options);
       const ossB = createProjectOssAdapter(database, b.projectId, configuration, secrets, options);
@@ -62,6 +66,7 @@ describe('project-bound OSS', () => {
       await ossA.putObject(keyA, Buffer.from('A'), 'image/png');
       await ossB.putObject(keyB, Buffer.from('B'), 'image/png');
       assert.deepEqual(uploaded, [keyA, keyB]);
+      assert.equal(configuredEndpoint, 'https://oss.example.test/');
       assert.throws(() => ossB.stableUrlForKey(keyA), /当前项目/);
       await assert.rejects(() => ossB.getObject(keyA), /当前项目/);
       await assert.rejects(() => ossB.deleteObject(keyA), /当前项目/);

@@ -21,7 +21,7 @@ import {
   type TargetTextReadResult,
   type TargetChangeEvidenceOptions,
 } from './change-evidence.js';
-import { effectiveStageThinking, type ProviderAdapter } from './provider.js';
+import { effectiveStageThinking, selectStageThinking, type ProviderAdapter } from './provider.js';
 import type {
   AgentRole,
   AgentSession,
@@ -55,13 +55,14 @@ class PiAgentSessionFactory implements AgentSessionFactory {
   async create(input: AgentSessionInput): Promise<AgentSession> {
     input.signal?.throwIfAborted();
     const model = await this.provider.resolveModel(input.role);
+    const thinking = selectStageThinking(model, input.role);
     input.signal?.throwIfAborted();
     const runtime = await this.provider.getRuntime();
     input.signal?.throwIfAborted();
     const settings = SettingsManager.inMemory({
       defaultProvider: model.provider,
       defaultModel: model.id,
-      defaultThinkingLevel: input.config.thinking,
+      defaultThinkingLevel: thinking,
       defaultTools: [],
       extensions: [],
       skills: [],
@@ -97,7 +98,7 @@ class PiAgentSessionFactory implements AgentSessionFactory {
     const { session } = await createAgentSession({
       cwd: input.cwd,
       model,
-      thinkingLevel: input.config.thinking,
+      thinkingLevel: thinking,
       modelRuntime: runtime,
       sessionManager: SessionManager.inMemory(input.cwd),
       settingsManager: settings,

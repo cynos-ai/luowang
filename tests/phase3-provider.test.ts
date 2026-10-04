@@ -11,6 +11,7 @@ import { loadConfig } from '../src/server/config.js';
 import { initializeDatabase } from '../src/server/db/migrate.js';
 import {
   createProviderAdapter,
+  selectStageThinking,
   supportedThinkingLevels,
   type PiModel,
 } from '../src/server/runs/provider.js';
@@ -86,7 +87,7 @@ describe('Phase 3 Provider connectivity', () => {
       assert.doesNotMatch(JSON.stringify(result), /private-fixture-value|response_format/);
     },
   );
-  it('distinguishes missing configuration, unknown Provider, missing model, and unsupported thinking', async () => {
+  it('distinguishes missing configuration, unknown Provider, and missing model', async () => {
     const notConfigured = await makeAdapter({ provider: '' });
     const notConfiguredResult = await notConfigured.checkConnectivity();
     assert.equal(notConfiguredResult.status, 'not_configured');
@@ -109,16 +110,6 @@ describe('Phase 3 Provider connectivity', () => {
     assert.equal(missingModelResult.status, 'failed');
     assert.equal(missingModelResult.code, 'MODEL_NOT_FOUND');
 
-    const unsupportedThinking = await makeAdapter({
-      provider: 'openai',
-      key: 'synthetic-key',
-      model: 'gpt-4',
-      thinking: 'medium',
-    });
-    const unsupportedThinkingResult = await unsupportedThinking.checkConnectivity();
-    assert.equal(unsupportedThinkingResult.status, 'failed');
-    assert.equal(unsupportedThinkingResult.code, 'THINKING_UNSUPPORTED');
-
     const unsupportedVision = await makeAdapter({
       provider: 'openai',
       key: 'synthetic-key',
@@ -138,7 +129,7 @@ describe('Phase 3 Provider connectivity', () => {
     assert.equal(result.code, 'AUTH_NOT_CONFIGURED');
   });
 
-  it('validates effective stage thinking rather than stored preferences', async () => {
+  it('selects stage thinking from each model supported levels rather than stored preferences', async () => {
     const adapter = await makeAdapter({
       provider: 'openai',
       model: 'gpt-4',
@@ -147,8 +138,8 @@ describe('Phase 3 Provider connectivity', () => {
     });
     assert.equal((await adapter.resolveModel('main-b')).id, 'gpt-4');
     assert.equal((await adapter.resolveModel('runner')).id, 'gpt-4');
-    await assert.rejects(adapter.resolveModel('main-a'), /thinking level：low/);
-    await assert.rejects(adapter.resolveModel('reviewer'), /thinking level：low/);
+    assert.equal((await adapter.resolveModel('main-a')).id, 'gpt-4');
+    assert.equal((await adapter.resolveModel('reviewer')).id, 'gpt-4');
   });
 
   it('lists the static Provider catalog, filters models, and applies a configured base URL', async () => {
@@ -178,6 +169,30 @@ describe('Phase 3 Provider connectivity', () => {
     } as unknown as PiModel;
     assert.deepEqual(supportedThinkingLevels(model), ['minimal', 'low', 'medium', 'high', 'max']);
     assert.deepEqual(supportedThinkingLevels({ reasoning: false } as unknown as PiModel), ['off']);
+  });
+
+  it('maps low-intent stages to the second supported level and off-intent stages to the first', () => {
+    const glm53 = {
+      reasoning: true,
+      thinkingLevelMap: {
+        off: null,
+        minimal: null,
+        low: 'low',
+        medium: null,
+        high: 'high',
+        xhigh: null,
+        max: 'max',
+      },
+    } as unknown as PiModel;
+    assert.deepEqual(supportedThinkingLevels(glm53), ['low', 'high', 'max']);
+    assert.equal(selectStageThinking(glm53, 'runner'), 'low');
+    assert.equal(selectStageThinking(glm53, 'main-b'), 'low');
+    assert.equal(selectStageThinking(glm53, 'main-a'), 'high');
+    assert.equal(selectStageThinking(glm53, 'reviewer'), 'high');
+
+    const nonReasoning = { reasoning: false } as unknown as PiModel;
+    assert.equal(selectStageThinking(nonReasoning, 'runner'), 'off');
+    assert.equal(selectStageThinking(nonReasoning, 'reviewer'), 'off');
   });
 });
 

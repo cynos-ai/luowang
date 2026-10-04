@@ -1738,6 +1738,51 @@
   color: var(--lw-muted);
 }
 
+.settings-subsection-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+  margin-top: 4px;
+}
+
+.settings-subsection-heading h3,
+.settings-subsection-heading p {
+  margin: 0;
+}
+
+.settings-subsection-heading h3 {
+  font-size: 24px;
+}
+
+.settings-subsection-heading p {
+  color: var(--lw-muted);
+}
+
+.field-label-with-help {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.field-help {
+  display: inline-grid;
+  width: 20px;
+  height: 20px;
+  place-items: center;
+  border: 2px solid currentColor;
+  border-radius: 50%;
+  font-size: 12px;
+  font-weight: 900;
+  line-height: 1;
+  cursor: help;
+}
+
+.field-help:focus-visible {
+  outline: 3px solid var(--lw-red);
+  outline-offset: 2px;
+}
+
 .agent-config {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(150px, 0.45fr);
@@ -1748,6 +1793,23 @@
 
 .agent-config h3 {
   grid-column: 1 / -1;
+}
+
+.adaptive-thinking {
+  display: grid;
+  align-content: center;
+  gap: 4px;
+  padding: 11px 13px;
+  border: 2px solid var(--lw-line);
+}
+
+.adaptive-thinking span,
+.adaptive-thinking small {
+  color: var(--lw-muted);
+}
+
+.adaptive-thinking strong {
+  font-size: 18px;
 }
 
 .check-field {
@@ -1769,8 +1831,23 @@
   min-width: 180px;
 }
 
-.secret-row .field {
+.secret-row .field,
+.secret-row .secret-input {
   min-width: min(360px, 40vw);
+}
+
+.secret-input {
+  width: 100%;
+  padding: 13px 14px;
+  border: 2px solid var(--lw-ink);
+  background: var(--lw-paper);
+  color: var(--lw-ink);
+  font: inherit;
+}
+
+.secret-input:focus {
+  outline: 3px solid var(--lw-red);
+  outline-offset: 2px;
 }
 
 .account-settings-layout {
@@ -1795,11 +1872,13 @@
 
   .dependency-row .inline-actions,
   .secret-row .inline-actions,
-  .secret-row .field {
+  .secret-row .field,
+  .secret-row .secret-input {
     grid-column: 1 / -1;
   }
 
-  .secret-row .field {
+  .secret-row .field,
+  .secret-row .secret-input {
     min-width: 0;
   }
 }
@@ -1815,6 +1894,12 @@
   .secret-row {
     grid-template-columns: 1fr;
     align-items: start;
+  }
+
+  .settings-subsection-heading {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 4px;
   }
 
   .agent-config h3 {

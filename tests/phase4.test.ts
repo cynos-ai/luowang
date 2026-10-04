@@ -149,6 +149,12 @@ describe('Phase 4 browser and evidence boundaries', () => {
     assert.equal(url.includes('signature'), false);
   });
 
+  it('keeps evidence behind the authenticated gateway in private access mode', async () => {
+    const fixture = await createStorageFixture({ accessMode: 'private' });
+    const key = fixture.oss.objectKey('01K00000000000000000000001', 'screenshot.png');
+    assert.equal(fixture.oss.stableUrlForKey(key).startsWith('/api/evidence/'), true);
+  });
+
   it('keeps Playwright MCP headless, isolated, snapshot-based, and without unsafe tools', async () => {
     const dataDirectory = await mkdtemp(join(tmpdir(), 'luowang-phase4-browser-'));
     cleanup.push(async () => rm(dataDirectory, { recursive: true, force: true }));
@@ -361,7 +367,11 @@ interface StorageFixture {
 }
 
 async function createStorageFixture(
-  overrides: { publicBaseUrl?: string; clientError?: { value: unknown } } = {},
+  overrides: {
+    publicBaseUrl?: string;
+    accessMode?: 'public' | 'private';
+    clientError?: { value: unknown };
+  } = {},
 ): Promise<StorageFixture> {
   const directory = await mkdtemp(join(tmpdir(), 'luowang-phase4-storage-'));
   cleanup.push(async () => rm(directory, { recursive: true, force: true }));
@@ -378,7 +388,7 @@ async function createStorageFixture(
       region: 'test-region',
       bucket: 'test-bucket',
       publicBaseUrl: overrides.publicBaseUrl ?? 'https://cdn.example.test/evidence',
-      accessMode: 'private',
+      accessMode: overrides.accessMode ?? (overrides.publicBaseUrl === '' ? 'private' : 'public'),
       objectPrefix: 'phase4',
     },
   });

@@ -13,7 +13,7 @@ export function Field({
   error,
   children,
 }: {
-  label: string;
+  label: ReactNode;
   hint?: string;
   error?: string;
   children: ReactNode;
