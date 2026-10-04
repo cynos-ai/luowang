@@ -168,11 +168,42 @@
 }
 
 .operator-menu summary {
-  padding: 10px 12px;
+  position: relative;
+  display: grid;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  place-items: center;
   border: 3px solid var(--lw-ink);
-  background: var(--lw-paper);
+  border-radius: 50%;
+  background: var(--lw-red);
+  color: #fff;
   cursor: pointer;
   list-style: none;
+  box-shadow: 3px 3px 0 var(--lw-ink);
+}
+
+.operator-menu[open] summary,
+.operator-menu summary:hover {
+  transform: translate(-1px, -1px);
+  box-shadow: 5px 5px 0 var(--lw-ink);
+}
+
+.operator-avatar {
+  font-family: var(--lw-mono);
+  font-size: 16px;
+  font-weight: 900;
+}
+
+.operator-presence {
+  position: absolute;
+  right: -2px;
+  bottom: 1px;
+  width: 11px;
+  height: 11px;
+  border: 2px solid var(--lw-ink);
+  border-radius: 50%;
+  background: var(--lw-green);
 }
 
 .operator-menu summary::-webkit-details-marker {
@@ -401,6 +432,21 @@
   color: var(--lw-ink);
 }
 
+.field select {
+  appearance: none;
+  padding-right: 40px;
+  background-image:
+    linear-gradient(45deg, transparent 50%, var(--lw-ink) 50%),
+    linear-gradient(135deg, var(--lw-ink) 50%, transparent 50%);
+  background-position:
+    calc(100% - 18px) 19px,
+    calc(100% - 12px) 19px;
+  background-repeat: no-repeat;
+  background-size:
+    6px 6px,
+    6px 6px;
+}
+
 .field textarea {
   min-height: 112px;
   resize: vertical;
@@ -419,6 +465,79 @@
 .field-invalid select,
 .field-invalid textarea {
   border-color: var(--lw-red);
+}
+
+.combo-box {
+  position: relative;
+}
+
+.combo-box > input {
+  padding-right: 42px;
+}
+
+.combo-toggle {
+  position: absolute;
+  z-index: 1;
+  top: 3px;
+  right: 3px;
+  width: 38px;
+  height: 38px;
+  border: 0;
+  border-left: 2px solid var(--lw-line);
+  background: transparent;
+  color: var(--lw-ink);
+  font: inherit;
+  font-size: 20px;
+  cursor: pointer;
+}
+
+.combo-options {
+  position: absolute;
+  z-index: 30;
+  top: calc(100% + 5px);
+  right: 0;
+  left: 0;
+  display: grid;
+  max-height: 260px;
+  overflow: auto;
+  border: 3px solid var(--lw-ink);
+  background: #fff;
+  box-shadow: 6px 6px 0 var(--lw-red);
+}
+
+.combo-option {
+  display: grid;
+  gap: 2px;
+  padding: 10px 12px;
+  border: 0;
+  border-bottom: 1px solid var(--lw-line);
+  background: #fff;
+  color: var(--lw-ink);
+  text-align: left;
+  cursor: pointer;
+}
+
+.combo-option:last-child {
+  border-bottom: 0;
+}
+
+.combo-option:hover,
+.combo-option[data-active],
+.combo-option[aria-selected='true'] {
+  background: var(--lw-ink);
+  color: #fff;
+}
+
+.combo-option small {
+  color: inherit;
+  opacity: 0.72;
+}
+
+.combo-empty {
+  padding: 12px;
+  margin: 0;
+  color: var(--lw-muted);
+  font-size: 12px;
 }
 
 .status-label {

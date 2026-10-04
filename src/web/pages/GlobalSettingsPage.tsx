@@ -12,9 +12,8 @@ import { AppLink, useNavigationBlocker } from '../app/navigation';
 import type { GlobalSettingSection } from '../app/route';
 import { useResource } from '../app/resource';
 import { AsyncRegion } from '../components/AsyncRegion';
-import { Field, ModelCapabilities } from '../components/FormControls';
+import { ComboBox, Field, ModelCapabilities } from '../components/FormControls';
 import { PageHeading } from '../components/PageHeading';
-import { StatusLabel } from '../components/StatusLabel';
 
 const sections: Array<[GlobalSettingSection, string]> = [
   ['models', '模型与角色'],
@@ -318,15 +317,39 @@ function ModelSettings({
     };
   }, [provider]);
 
-  const catalogStatus = loading
-    ? '正在加载已知模型目录…'
-    : catalog.error
-      ? `目录加载失败：${catalog.error}`
-      : models.length > 0
-        ? `已载入 ${models.length} 个已知模型`
-        : provider
-          ? '暂无已知模型'
-          : '';
+  useEffect(() => {
+    if (loading || !models.length) return;
+    const current = latestValue.current;
+    let changed = false;
+    const agents = { ...current.agents };
+    for (const role of ['main', 'runner', 'reviewer'] as const) {
+      const model = models.find((item) => item.id === current.agents[role].model);
+      if (
+        !model?.thinkingLevels.length ||
+        model.thinkingLevels.includes(current.agents[role].thinking)
+      )
+        continue;
+      agents[role] = {
+        ...current.agents[role],
+        thinking: relativeThinkingLevel(model.thinkingLevels, role === 'runner' ? 0 : 1),
+      };
+      changed = true;
+    }
+    if (changed) latestChange.current({ ...current, agents });
+  }, [loading, models]);
+
+  const providerOptions = providers.map((item) => ({
+    value: item.id,
+    label: item.name,
+    detail: item.id === item.name ? undefined : item.id,
+  }));
+  const modelOptions = models.map((item) => ({
+    value: item.id,
+    label: item.name,
+    detail: [item.input.includes('image') ? '视觉' : '文本', item.reasoning ? '推理' : '']
+      .filter(Boolean)
+      .join(' · '),
+  }));
 
   return (
     <>
@@ -334,20 +357,14 @@ function ModelSettings({
       <div className="form-grid">
         <div className="model-service-fields">
           <Field label="Provider">
-            <input
-              list="global-provider-catalog"
+            <ComboBox
+              ariaLabel="Provider"
               disabled={disabled}
               value={value.provider}
-              onChange={(event) => applyProvider(event.target.value)}
+              options={providerOptions}
+              onChange={applyProvider}
             />
           </Field>
-          <datalist id="global-provider-catalog">
-            {providers.map((item) => (
-              <option key={item.id} value={item.id}>
-                {item.name}
-              </option>
-            ))}
-          </datalist>
           <Field label="Provider Base URL">
             <input
               aria-label="Provider Base URL"
@@ -356,40 +373,41 @@ function ModelSettings({
               onChange={(event) => set({ providerBaseUrl: event.target.value })}
             />
           </Field>
-          <Field
-            label="Provider API Key"
-            hint={
-              providerApiKeyMetadata?.configured
-                ? `已配置 ${providerApiKeyMetadata.masked ?? ''}`
-                : '未配置'
-            }
-          >
-            <input
-              aria-label="Provider API Key"
-              type="password"
-              autoComplete="new-password"
-              disabled={disabled}
-              value={providerApiKey}
-              onChange={(event) => onProviderApiKey(event.target.value)}
-            />
-          </Field>
-          {providerApiKeyMetadata?.configured && (
-            <div className="inline-actions">
+          <div className="secret-inline-field" data-configured={providerApiKeyMetadata?.configured}>
+            <Field label="Provider API Key">
+              <input
+                aria-label="Provider API Key"
+                type="password"
+                autoComplete="new-password"
+                disabled={disabled}
+                placeholder={
+                  providerApiKeyMetadata?.configured ? '已配置 · 输入新值可轮换' : '输入凭据'
+                }
+                value={providerApiKey}
+                onChange={(event) => onProviderApiKey(event.target.value)}
+              />
+            </Field>
+            {providerApiKeyMetadata?.configured && (
               <button
-                className="button"
+                className="secret-clear"
                 type="button"
+                aria-label="清除 Provider API Key"
+                title="清除 Provider API Key"
                 disabled={disabled}
                 onClick={onClearProviderApiKey}
               >
-                清除 Provider API Key
+                清除
               </button>
-            </div>
-          )}
+            )}
+          </div>
         </div>
         {providerError && <p className="notice notice-warning">{providerError}</p>}
-        {catalogStatus && (
-          <p className="catalog-summary" role="status">
-            {catalogStatus}
+        {(loading || catalog.error) && (
+          <p
+            className={`catalog-state ${catalog.error ? 'catalog-state-error' : ''}`}
+            role="status"
+          >
+            {catalog.error ? `目录加载失败：${catalog.error}` : '正在加载模型…'}
           </p>
         )}
         {(['main', 'runner', 'reviewer'] as const).map((role) => {
@@ -402,56 +420,80 @@ function ModelSettings({
                   : '该模型不支持图像输入，视觉场景将被阻塞。'
                 : '未匹配到当前 Provider 的视觉模型，无法确认截图审核能力。'
               : undefined;
-          const listId = `global-model-catalog-${role}`;
-          const automaticThinking = selected
-            ? role === 'main'
-              ? `规划 ${relativeThinkingLevel(selected.thinkingLevels, 1)} · 收尾 ${relativeThinkingLevel(selected.thinkingLevels, 0)}`
-              : relativeThinkingLevel(selected.thinkingLevels, role === 'runner' ? 0 : 1)
-            : '选择目录中的模型后显示';
+          const thinkingLevels = selected?.thinkingLevels.length
+            ? selected.thinkingLevels
+            : [value.agents[role].thinking];
           return (
             <div className="agent-config" key={role}>
               <h3>
-                {role === 'main'
-                  ? 'Main（含 Final Main）'
-                  : role === 'runner'
-                    ? 'Runner'
-                    : 'Reviewer（需要视觉）'}
+                {role === 'main' ? 'Main' : role === 'runner' ? 'Runner' : 'Reviewer'}
+                {role === 'reviewer' && (
+                  <span
+                    className="field-help"
+                    tabIndex={0}
+                    role="img"
+                    aria-label="Reviewer 模型要求：需要支持图像输入，用于审核截图证据。"
+                    title="需要支持图像输入，用于审核截图证据。"
+                  >
+                    ?
+                  </span>
+                )}
               </h3>
               <Field label="模型" error={reviewerWarning}>
-                <input
-                  type="search"
-                  list={listId}
+                <ComboBox
+                  ariaLabel={`${role === 'main' ? 'Main' : role === 'runner' ? 'Runner' : 'Reviewer'} 模型`}
                   disabled={disabled}
                   value={value.agents[role].model}
+                  options={modelOptions}
+                  onChange={(modelId) => {
+                    const model = models.find((item) => item.id === modelId);
+                    const thinking = model?.thinkingLevels.length
+                      ? relativeThinkingLevel(model.thinkingLevels, role === 'runner' ? 0 : 1)
+                      : value.agents[role].thinking;
+                    set({
+                      agents: {
+                        ...value.agents,
+                        [role]: { ...value.agents[role], model: modelId, thinking },
+                      },
+                    });
+                  }}
+                />
+              </Field>
+              {selected && (
+                <div className="model-meta">
+                  <ModelCapabilities model={selected} />
+                </div>
+              )}
+              <Field label="Thinking">
+                <select
+                  aria-label={`${role === 'main' ? 'Main' : role === 'runner' ? 'Runner' : 'Reviewer'} Thinking`}
+                  disabled={disabled || !selected}
+                  value={
+                    thinkingLevels.includes(value.agents[role].thinking)
+                      ? value.agents[role].thinking
+                      : thinkingLevels[
+                          role === 'runner' ? 0 : Math.min(1, thinkingLevels.length - 1)
+                        ]
+                  }
                   onChange={(event) =>
                     set({
                       agents: {
                         ...value.agents,
-                        [role]: { ...value.agents[role], model: event.target.value },
+                        [role]: {
+                          ...value.agents[role],
+                          thinking: event.target.value as ThinkingLevel,
+                        },
                       },
                     })
                   }
-                />
+                >
+                  {thinkingLevels.map((level) => (
+                    <option key={level} value={level}>
+                      {level}
+                    </option>
+                  ))}
+                </select>
               </Field>
-              <datalist id={listId}>
-                {models.map((item) => (
-                  <option key={item.id} value={item.id}>
-                    {item.name} · {item.input.includes('image') ? '视觉' : '文本'}
-                    {item.reasoning ? ' · 推理' : ''}
-                  </option>
-                ))}
-              </datalist>
-              {selected && (
-                <div className="model-meta">
-                  <ModelCapabilities model={selected} />
-                  <small>{selected.name}</small>
-                </div>
-              )}
-              <div className="adaptive-thinking">
-                <span>Thinking 自动选择</span>
-                <strong>{automaticThinking}</strong>
-                <small>按模型实际支持的档位从低到高选择。</small>
-              </div>
             </div>
           );
         })}
@@ -735,22 +777,24 @@ function DeploymentSecrets({
       <SectionTitle title={title} text="凭据加密保存，不会回显或进入普通配置导出。" />
       <div className="secret-list">
         {keys.map((key) => (
-          <article className="secret-row" key={key}>
-            <div>
-              <h3>{labels[key]}</h3>
-              <StatusLabel tone={metadata[key]?.configured ? 'success' : 'warning'}>
-                {metadata[key]?.configured ? `已配置 ${metadata[key].masked ?? ''}` : '未配置'}
-              </StatusLabel>
+          <article className="secret-row" data-configured={metadata[key]?.configured} key={key}>
+            <h3>{labels[key]}</h3>
+            <div className="secret-input-wrap">
+              <input
+                className="secret-input"
+                type="password"
+                aria-label={`${metadata[key]?.configured ? '轮换' : '设置'}${labels[key]}`}
+                autoComplete="new-password"
+                placeholder={metadata[key]?.configured ? '已配置 · 输入新值可轮换' : '输入凭据'}
+                value={values[key] ?? ''}
+                onChange={(event) => onValue(key, event.target.value)}
+              />
+              {metadata[key]?.configured && (
+                <span className="secret-configured-mark" aria-hidden="true">
+                  ✓
+                </span>
+              )}
             </div>
-            <input
-              className="secret-input"
-              type="password"
-              aria-label={`${metadata[key]?.configured ? '轮换' : '设置'}${labels[key]}`}
-              autoComplete="new-password"
-              placeholder={metadata[key]?.configured ? '输入新值以轮换' : '输入凭据'}
-              value={values[key] ?? ''}
-              onChange={(event) => onValue(key, event.target.value)}
-            />
             <div className="inline-actions">
               <button
                 className="button button-primary"

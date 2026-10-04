@@ -172,7 +172,7 @@ try {
     await reviewerCard.getByLabel('模型').fill('deepseek-v4-flash');
     await reviewerCard.getByText('该模型不支持图像输入', { exact: false }).waitFor();
     await reviewerCard.getByLabel('模型').fill('deepseek-v4-flash-vision-exp');
-    await reviewerCard.getByText('视觉', { exact: true }).waitFor();
+    await reviewerCard.getByLabel('视觉', { exact: true }).waitFor();
 
     await page.getByRole('heading', { name: 'GitHub 仓库' }).waitFor();
     await page.getByLabel('目标仓库').fill('https://github.com/cynos-ai/cynos-website');

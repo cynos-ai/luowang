@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react';
+import { useEffect, useId, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 
 import type {
   ConfigResponse,
@@ -140,11 +140,154 @@ export function ModelCapabilities({ model }: { model: ProviderModelInfo | undefi
     return <span className="model-capabilities model-capabilities-empty">未匹配模型目录</span>;
   const vision = model.input.some((input) => input.toLowerCase() === 'image');
   return (
-    <span className="model-capabilities">
-      <span className="capability-badge">文本</span>
-      {vision && <span className="capability-badge capability-vision">视觉</span>}
-      {model.reasoning && <span className="capability-badge capability-reasoning">推理</span>}
+    <span className="model-capabilities" aria-label="能力">
+      <CapabilityIcon label="文本" path="M5 3h10l4 4v14H5z M15 3v5h4 M8 12h8 M8 16h6" />
+      {vision && (
+        <CapabilityIcon
+          label="视觉"
+          path="M2 12s4-6 10-6 10 6 10 6-4 6-10 6S2 12 2 12z M12 9a3 3 0 1 0 0 6 3 3 0 0 0 0-6z"
+        />
+      )}
+      {model.reasoning && (
+        <CapabilityIcon
+          label="推理"
+          path="M9 18h6 M10 22h4 M8 14c-1.3-1.1-2-2.7-2-4.5a6 6 0 0 1 12 0c0 1.8-.7 3.4-2 4.5-.8.7-1 1.3-1 2H9c0-.7-.2-1.3-1-2z"
+        />
+      )}
     </span>
+  );
+}
+
+function CapabilityIcon({ label, path }: { label: string; path: string }) {
+  return (
+    <span className="capability-icon" role="img" aria-label={label} title={label}>
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <path d={path} />
+      </svg>
+    </span>
+  );
+}
+
+export type ComboBoxOption = { value: string; label: string; detail?: string };
+
+export function ComboBox({
+  ariaLabel,
+  value,
+  options,
+  disabled = false,
+  placeholder,
+  onChange,
+}: {
+  ariaLabel: string;
+  value: string;
+  options: ComboBoxOption[];
+  disabled?: boolean;
+  placeholder?: string;
+  onChange: (value: string) => void;
+}) {
+  const listId = useId();
+  const root = useRef<HTMLDivElement>(null);
+  const [open, setOpen] = useState(false);
+  const [active, setActive] = useState(-1);
+  const normalized = value.trim().toLowerCase();
+  const filtered = options.filter((option) => {
+    const text = `${option.value} ${option.label} ${option.detail ?? ''}`.toLowerCase();
+    return !normalized || text.includes(normalized);
+  });
+
+  useEffect(() => {
+    const close = (event: PointerEvent) => {
+      if (!root.current?.contains(event.target as Node)) setOpen(false);
+    };
+    document.addEventListener('pointerdown', close);
+    return () => document.removeEventListener('pointerdown', close);
+  }, []);
+  useEffect(() => setActive(-1), [value, options]);
+
+  function choose(option: ComboBoxOption) {
+    onChange(option.value);
+    setOpen(false);
+    setActive(-1);
+  }
+  function onKeyDown(event: KeyboardEvent<HTMLInputElement>) {
+    if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+      event.preventDefault();
+      setOpen(true);
+      const delta = event.key === 'ArrowDown' ? 1 : -1;
+      setActive((current) => {
+        if (!filtered.length) return -1;
+        if (current < 0) return delta > 0 ? 0 : filtered.length - 1;
+        return (current + delta + filtered.length) % filtered.length;
+      });
+    } else if (event.key === 'Enter' && open && active >= 0 && filtered[active]) {
+      event.preventDefault();
+      choose(filtered[active]);
+    } else if (event.key === 'Escape') {
+      setOpen(false);
+    }
+  }
+
+  return (
+    <div
+      className="combo-box"
+      ref={root}
+      onBlur={(event) => {
+        if (!event.currentTarget.contains(event.relatedTarget)) setOpen(false);
+      }}
+    >
+      <input
+        role="combobox"
+        aria-label={ariaLabel}
+        aria-autocomplete="list"
+        aria-expanded={open}
+        aria-controls={listId}
+        aria-activedescendant={active >= 0 ? `${listId}-${active}` : undefined}
+        autoComplete="off"
+        disabled={disabled}
+        placeholder={placeholder}
+        value={value}
+        onChange={(event) => {
+          onChange(event.target.value);
+          setOpen(true);
+        }}
+        onFocus={() => setOpen(true)}
+        onKeyDown={onKeyDown}
+      />
+      <button
+        className="combo-toggle"
+        type="button"
+        tabIndex={-1}
+        aria-label={`展开${ariaLabel}选项`}
+        disabled={disabled}
+        onClick={() => setOpen((current) => !current)}
+      >
+        <span aria-hidden="true">⌄</span>
+      </button>
+      {open && !disabled && (
+        <div className="combo-options" id={listId} role="listbox">
+          {filtered.length ? (
+            filtered.map((option, index) => (
+              <button
+                id={`${listId}-${index}`}
+                className="combo-option"
+                type="button"
+                role="option"
+                aria-selected={option.value === value}
+                data-active={index === active || undefined}
+                key={option.value}
+                onPointerDown={(event) => event.preventDefault()}
+                onClick={() => choose(option)}
+              >
+                <strong>{option.label}</strong>
+                {option.detail && <small>{option.detail}</small>}
+              </button>
+            ))
+          ) : (
+            <p className="combo-empty">可继续使用当前输入值</p>
+          )}
+        </div>
+      )}
+    </div>
   );
 }
 

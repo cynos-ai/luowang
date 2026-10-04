@@ -1070,7 +1070,7 @@ try {
   await page.goto(`${origin}/settings/models`);
   await page.getByText(/全局执行配置已锁定，相关测试记录/).waitFor();
   assert.equal(await page.getByRole('button', { name: '保存本分组' }).isDisabled(), true);
-  assert.equal(await page.getByLabel('Provider API Key').isDisabled(), true);
+  assert.equal(await page.getByLabel('Provider API Key', { exact: true }).isDisabled(), true);
   assert.equal(
     await page.getByRole('button', { name: '清除 Provider API Key' }).isDisabled(),
     true,
@@ -1088,55 +1088,50 @@ try {
   globalSettingsUnlocked = true;
   await page.goto(`${origin}/settings/models`);
   await page.getByRole('heading', { name: '模型与角色' }).waitFor();
-  await page.getByText('已载入 2 个已知模型').waitFor();
-  assert.equal(await page.getByText('Thinking 自动选择', { exact: true }).count(), 3);
-  await page.getByText('规划 low · 收尾 off', { exact: true }).waitFor();
-  assert.equal(await page.locator('#global-provider-catalog option').count(), 2);
-  assert.equal(await page.locator('#global-model-catalog-reviewer option').count(), 2);
-  const roleModels = page.locator('.agent-config input[type="search"]');
-  await roleModels.nth(2).fill('deepseek-v4-flash');
+  await page.getByRole('heading', { name: 'Main', exact: true }).waitFor();
+  assert.equal(await page.getByText(/已载入 .* 个已知模型/).count(), 0);
+  assert.equal(await page.getByText('Thinking 自动选择', { exact: true }).count(), 0);
+  assert.equal(await page.locator('datalist').count(), 0);
+  assert.equal(
+    await page.getByLabel(/Reviewer 模型要求/).getAttribute('title'),
+    '需要支持图像输入，用于审核截图证据。',
+  );
+  await page.locator('.model-capabilities .capability-icon').first().waitFor();
+  assert.equal(await page.locator('.model-capabilities .capability-icon').count(), 7);
+  const mainThinking = page.getByLabel('Main Thinking');
+  const runnerThinking = page.getByLabel('Runner Thinking');
+  const reviewerThinking = page.getByLabel('Reviewer Thinking');
+  assert.deepEqual(await mainThinking.locator('option').allTextContents(), ['off', 'low']);
+  assert.equal(await mainThinking.inputValue(), 'low');
+  assert.equal(await runnerThinking.inputValue(), 'low');
+  assert.equal(await reviewerThinking.inputValue(), 'low');
+  await mainThinking.selectOption('off');
+  const roleModels = [
+    page.getByRole('combobox', { name: 'Main 模型' }),
+    page.getByRole('combobox', { name: 'Runner 模型' }),
+    page.getByRole('combobox', { name: 'Reviewer 模型' }),
+  ];
+  await roleModels[2].fill('deepseek-v4-flash');
   await page.getByText('该模型不支持图像输入，视觉场景将被阻塞。').waitFor();
-  await roleModels.nth(2).fill('deepseek-v4-flash-vision-exp');
+  await roleModels[2].fill('deepseek-v4-flash-vision-exp');
   assert.equal(await page.getByText('该模型不支持图像输入，视觉场景将被阻塞。').count(), 0);
-  const providerInput = page.locator('input[list="global-provider-catalog"]');
+  const providerInput = page.getByRole('combobox', { name: 'Provider', exact: true });
   const baseUrlInput = page.getByLabel('Provider Base URL');
   assert.equal(await baseUrlInput.inputValue(), 'https://provider.example.test/v1');
-  const assertCatalogLayout = async () => {
-    const status = await page.locator('.catalog-summary').boundingBox();
-    assert.ok(status);
-    for (const role of await page.locator('.agent-config').all()) {
-      const box = await role.boundingBox();
-      assert.ok(box && box.y >= status.y + status.height - 1, 'catalog occupies its own row');
-    }
+  for (const width of [768, 1024, 1440]) {
+    await page.setViewportSize({ width, height: 900 });
     assert.equal(
       await page.evaluate(
         () => document.documentElement.scrollWidth <= document.documentElement.clientWidth,
       ),
       true,
     );
-  };
-  for (const width of [768, 1440]) {
-    await page.setViewportSize({ width, height: 900 });
-    await assertCatalogLayout();
-    delayOpenAiCatalog = true;
-    await providerInput.fill('openai');
-    await page.getByText('正在加载已知模型目录…').waitFor();
-    await assertCatalogLayout();
-    await page.getByText('已载入 1 个已知模型').waitFor();
-    await assertCatalogLayout();
-    await providerInput.fill('unknown-fixture');
-    await page.getByText('暂无已知模型', { exact: true }).waitFor();
-    await assertCatalogLayout();
-    catalogFailure = true;
-    await providerInput.fill('openai-compatible');
-    await page.getByText(/目录加载失败：目录暂不可用/).waitFor();
-    await assertCatalogLayout();
-    catalogFailure = false;
-    await providerInput.fill('openai');
-    await page.getByText('已载入 1 个已知模型').waitFor();
-    await providerInput.fill('openai-compatible');
-    await page.getByText('已载入 2 个已知模型').waitFor();
   }
+  await providerInput.focus();
+  await providerInput.press('ArrowDown');
+  assert.equal(await page.getByRole('listbox').count(), 1);
+  await providerInput.press('Escape');
+  assert.equal(await page.getByRole('listbox').count(), 0);
   delayOpenAiCatalog = true;
   const pendingCatalog = page.waitForRequest((request) =>
     request.url().includes('/api/provider/models?provider=openai'),
@@ -1144,31 +1139,41 @@ try {
   await providerInput.fill('openai');
   assert.equal(await baseUrlInput.inputValue(), 'https://api.openai.example.test/v1');
   await pendingCatalog;
-  await providerInput.fill('openai-compatible');
-  assert.equal(await baseUrlInput.inputValue(), 'https://provider.example.test/v1');
-  await page.getByText('已载入 2 个已知模型').waitFor();
+  await page.getByText('正在加载模型…').waitFor();
   await page.waitForTimeout(550);
-  assert.equal(
-    await page.locator('#global-model-catalog-main option[value="gpt-vision-fixture"]').count(),
-    0,
-  );
-  delayOpenAiCatalog = false;
+  assert.equal(await page.getByText('正在加载模型…').count(), 0);
+  await providerInput.fill('unknown-fixture');
+  await page.waitForTimeout(350);
+  assert.equal(await page.getByText(/已载入|暂无已知模型/).count(), 0);
   catalogFailure = true;
-  await providerInput.fill('openai');
-  await page.getByText(/目录加载失败：目录暂不可用/).waitFor();
-  await roleModels.nth(0).fill('manual-model-id');
-  assert.equal(await roleModels.nth(0).inputValue(), 'manual-model-id');
-  catalogFailure = false;
   await providerInput.fill('openai-compatible');
-  await page.getByText('已载入 2 个已知模型').waitFor();
-  await roleModels.nth(0).fill('deepseek-v4-flash');
+  await page.getByText(/目录加载失败：目录暂不可用/).waitFor();
+  await roleModels[0].fill('manual-model-id');
+  assert.equal(await roleModels[0].inputValue(), 'manual-model-id');
+  catalogFailure = false;
+  delayOpenAiCatalog = false;
+  const compatibleCatalog = page.waitForResponse((response) =>
+    response.url().includes('/api/provider/models?provider=openai-compatible'),
+  );
+  await providerInput.fill('');
+  await providerInput.fill('openai-compatible');
+  await compatibleCatalog;
+  await page.waitForTimeout(20);
+  await roleModels[0].fill('deepseek');
+  await page.getByRole('option', { name: /DeepSeek Flash/ }).click();
+  assert.equal(await mainThinking.inputValue(), 'low');
+  await mainThinking.selectOption('off');
   await providerInput.fill('fixture-provider');
   assert.equal(await baseUrlInput.inputValue(), '');
-  await page.getByLabel('Provider API Key').fill('synthetic-provider-key');
+  const providerSecret = page.getByLabel('Provider API Key', { exact: true });
+  assert.match((await providerSecret.getAttribute('placeholder')) ?? '', /已配置/);
+  assert.equal(await page.getByText(/已配置 .*\*+/).count(), 0);
+  await providerSecret.fill('synthetic-provider-key');
   await page.getByRole('button', { name: '保存本分组' }).click();
   await page.getByText('配置与 Provider API Key 已保存。').waitFor();
   assert.ok(writes.includes('PUT /api/deployment'));
   assert.ok(writes.includes('PUT /api/deployment/secrets/providerApiKey'));
+  assert.equal(deploymentConfiguration.agents.main.thinking, 'off');
   assert.equal((await page.locator('body').innerText()).includes('synthetic-provider-key'), false);
   page.once('dialog', async (dialog) => {
     assert.match(dialog.message(), /清除该凭据/);
@@ -1177,7 +1182,6 @@ try {
   await page.getByRole('button', { name: '清除 Provider API Key' }).click();
   await page.getByText('凭据已清除。', { exact: true }).waitFor();
   assert.ok(writes.includes('DELETE /api/deployment/secrets/providerApiKey'));
-
   await page.goto(`${origin}/settings/object-storage`);
   assert.equal(await page.getByRole('link', { name: '全局凭据', exact: true }).count(), 0);
   assert.equal((await page.locator('body').innerText()).includes('GitHub Token'), false);

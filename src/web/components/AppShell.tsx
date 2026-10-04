@@ -52,7 +52,12 @@ export function AppShell({
           </AppLink>
         </nav>
         <details className="operator-menu" key={route.name}>
-          <summary aria-label="打开用户菜单">管理员</summary>
+          <summary aria-label="打开用户菜单" title="管理员">
+            <span className="operator-avatar" aria-hidden="true">
+              管
+            </span>
+            <span className="operator-presence" aria-hidden="true" />
+          </summary>
           <div className="operator-menu-popover">
             <AppLink to={{ name: 'account' }}>账号设置</AppLink>
             <button type="button" onClick={onLogout}>

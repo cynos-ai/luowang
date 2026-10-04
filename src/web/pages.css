@@ -473,34 +473,40 @@
   gap: 16px;
 }
 
-.catalog-summary {
-  grid-column: 1 / -1;
-  padding: 10px 12px;
+.catalog-state {
+  justify-self: start;
+  padding: 4px 8px;
   margin: 0;
-  border: 2px solid var(--lw-line);
-  background: var(--lw-paper);
-  color: var(--lw-ink);
+  color: var(--lw-muted);
   font-size: 0.8rem;
 }
 
-.role-requirement,
-.capability-badge {
+.catalog-state-error {
+  color: var(--lw-red);
+}
+
+.model-capabilities {
+  display: inline-flex;
+  gap: 5px;
+}
+
+.capability-icon {
+  display: inline-grid;
+  width: 25px;
+  height: 25px;
+  place-items: center;
   border: 1px solid var(--lw-ink);
   background: var(--lw-paper);
-  color: var(--lw-ink);
 }
 
-.role-requirement-vision,
-.capability-vision {
-  border-color: var(--lw-red);
-  background: var(--lw-paper);
-  color: var(--lw-ink);
-}
-
-.capability-reasoning {
-  border-color: var(--lw-amber);
-  background: var(--lw-paper);
-  color: var(--lw-ink);
+.capability-icon svg {
+  width: 17px;
+  height: 17px;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.8;
 }
 
 .model-meta small,
@@ -1784,6 +1790,7 @@
 }
 
 .agent-config {
+  position: relative;
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(150px, 0.45fr);
   gap: 12px;
@@ -1793,23 +1800,16 @@
 
 .agent-config h3 {
   grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-right: 94px;
 }
 
-.adaptive-thinking {
-  display: grid;
-  align-content: center;
-  gap: 4px;
-  padding: 11px 13px;
-  border: 2px solid var(--lw-line);
-}
-
-.adaptive-thinking span,
-.adaptive-thinking small {
-  color: var(--lw-muted);
-}
-
-.adaptive-thinking strong {
-  font-size: 18px;
+.agent-config .model-meta {
+  position: absolute;
+  top: 13px;
+  right: 14px;
 }
 
 .check-field {
@@ -1827,8 +1827,32 @@
   accent-color: var(--lw-red);
 }
 
-.secret-row > div:first-child {
-  min-width: 180px;
+.secret-inline-field {
+  position: relative;
+}
+
+.secret-inline-field .field input {
+  padding-right: 68px;
+}
+
+.secret-inline-field[data-configured='true'] .field input,
+.secret-row[data-configured='true'] .secret-input {
+  border-color: var(--lw-green);
+  background: color-mix(in srgb, var(--lw-green) 7%, #fff);
+}
+
+.secret-clear {
+  position: absolute;
+  right: 8px;
+  bottom: 8px;
+  padding: 4px 7px;
+  border: 0;
+  background: transparent;
+  color: var(--lw-red);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 900;
+  cursor: pointer;
 }
 
 .secret-row .field,
@@ -1843,6 +1867,30 @@
   background: var(--lw-paper);
   color: var(--lw-ink);
   font: inherit;
+}
+
+.secret-input-wrap {
+  position: relative;
+}
+
+.secret-input-wrap .secret-input {
+  padding-right: 40px;
+}
+
+.secret-configured-mark {
+  position: absolute;
+  top: 50%;
+  right: 13px;
+  display: grid;
+  width: 21px;
+  height: 21px;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--lw-green);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 900;
+  transform: translateY(-50%);
 }
 
 .secret-input:focus {
@@ -1873,11 +1921,12 @@
   .dependency-row .inline-actions,
   .secret-row .inline-actions,
   .secret-row .field,
-  .secret-row .secret-input {
+  .secret-row .secret-input-wrap {
     grid-column: 1 / -1;
   }
 
   .secret-row .field,
+  .secret-row .secret-input-wrap,
   .secret-row .secret-input {
     min-width: 0;
   }

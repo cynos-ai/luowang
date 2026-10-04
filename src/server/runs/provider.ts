@@ -255,11 +255,7 @@ class PiProviderAdapter implements ProviderAdapter {
         `${role} 模型不存在：${provider}/${agent.model.trim()}`,
       );
     }
-    selectStageThinking(model, role);
-    if (role === 'main-a') {
-      // Validate both uses of the one Main model without adding a fourth agent/check.
-      selectStageThinking(model, 'main-b');
-    }
+    selectStageThinking(model, role, agent.thinking);
     return model;
   }
 
@@ -325,14 +321,19 @@ class MemoryCredentialStore {
   }
 }
 
-/** Product stage policy; persisted three-agent preferences are not rewritten. */
+/** Default used when a role has no valid persisted preference for its selected model. */
 export function effectiveStageThinking(role: AgentRole): ThinkingLevel {
-  return role === 'main-a' || role === 'reviewer' ? 'low' : 'off';
+  return role === 'runner' ? 'off' : 'low';
 }
 
-/** Map the stage's relative intent to the selected model's actual supported levels. */
-export function selectStageThinking(model: PiModel, role: AgentRole): ThinkingLevel {
+/** Keep a supported preference, otherwise map the role default to the model's levels. */
+export function selectStageThinking(
+  model: PiModel,
+  role: AgentRole,
+  configured?: ThinkingLevel,
+): ThinkingLevel {
   const levels = supportedThinkingLevels(model);
+  if (configured && levels.includes(configured)) return configured;
   const relativeIndex = effectiveStageThinking(role) === 'low' ? 1 : 0;
   const selected = levels[Math.min(relativeIndex, levels.length - 1)];
   if (!selected) {
