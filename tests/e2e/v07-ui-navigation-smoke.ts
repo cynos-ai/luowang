@@ -99,7 +99,6 @@ try {
     ['/settings/browser', '全局设置'],
     ['/settings/object-storage', '全局设置'],
     ['/settings/local-data', '全局设置'],
-    ['/settings/credentials', '全局设置'],
     ['/account', '账号设置'],
     [`${projectRoot}/overview`, '项目概览'],
     [`${projectRoot}/test`, '测试'],
@@ -122,6 +121,11 @@ try {
     await page.getByRole('heading', { level: 1, name: title, exact: true }).waitFor();
     assert.equal(await page.locator('h1').count(), 1);
   }
+
+  await page.goto(`${origin}/settings/credentials`);
+  await page.getByRole('heading', { level: 1, name: '全局设置', exact: true }).waitFor();
+  assert.equal(new URL(page.url()).pathname, '/settings/models');
+  assert.equal(await page.getByRole('link', { name: '全局凭据', exact: true }).count(), 0);
 
   await page.goto(`${origin}/does-not-exist`);
   await page.getByRole('heading', { name: '页面不存在' }).waitFor();

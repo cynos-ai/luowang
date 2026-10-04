@@ -2,7 +2,13 @@ import { strict as assert } from 'node:assert';
 
 import { it } from 'vitest';
 
-import { appPath, legacyHashRedirect, parseAppPath, type AppRoute } from '../src/web/app/route.js';
+import {
+  appPath,
+  legacyHashRedirect,
+  legacySettingsRedirect,
+  parseAppPath,
+  type AppRoute,
+} from '../src/web/app/route.js';
 
 const projectId = '11111111-1111-4111-8111-111111111111';
 
@@ -18,7 +24,7 @@ it('parses every frozen v0.7.0 console route', () => {
     ['/settings/browser', { name: 'global-settings', section: 'browser' }],
     ['/settings/object-storage', { name: 'global-settings', section: 'object-storage' }],
     ['/settings/local-data', { name: 'global-settings', section: 'local-data' }],
-    ['/settings/credentials', { name: 'global-settings', section: 'credentials' }],
+    ['/settings/credentials', { name: 'global-settings', section: 'models' }],
     ['/account', { name: 'account' }],
     [`/projects/${projectId}/overview`, { name: 'project-overview', projectId }],
     [`/projects/${projectId}/test`, { name: 'project-test', projectId }],
@@ -54,6 +60,12 @@ it('parses every frozen v0.7.0 console route', () => {
   ];
 
   for (const [path, expected] of cases) assert.deepEqual(parseAppPath(path), expected, path);
+});
+
+it('canonicalizes the removed global credentials page without affecting project credentials', () => {
+  assert.equal(legacySettingsRedirect('/settings/credentials'), '/settings/models');
+  assert.equal(legacySettingsRedirect('/settings/credentials/'), '/settings/models');
+  assert.equal(legacySettingsRedirect(`/projects/${projectId}/settings/credentials`), null);
 });
 
 it('generates canonical paths that round-trip through the parser', () => {

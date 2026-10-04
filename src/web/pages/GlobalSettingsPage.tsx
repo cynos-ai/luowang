@@ -20,7 +20,6 @@ const sections: Array<[GlobalSettingSection, string]> = [
   ['browser', '浏览器'],
   ['object-storage', '对象存储'],
   ['local-data', '本地数据'],
-  ['credentials', '全局凭据'],
 ];
 type DeploymentSecret = 'providerApiKey' | 'ossAccessKeyId' | 'ossAccessKeySecret';
 type DeploymentResponse = {
@@ -78,11 +77,11 @@ export function GlobalSettingsPage({ section }: { section: GlobalSettingSection 
   const lockRuns =
     resource.value?.workspace.activeRuns.map((item) => item.runId ?? `准备请求 ${item.queueId}`) ??
     [];
-  const locked = lockRuns.length > 0 && section !== 'credentials';
+  const locked = lockRuns.length > 0;
 
   async function saveConfiguration(event: FormEvent) {
     event.preventDefault();
-    if (!configuration || locked || section === 'credentials') return;
+    if (!configuration || locked) return;
     setBusy('save');
     setMessage('');
     setError('');
@@ -139,7 +138,7 @@ export function GlobalSettingsPage({ section }: { section: GlobalSettingSection 
   }
 
   async function clearSecret(key: DeploymentSecret) {
-    if (!window.confirm('确定清除该全局凭据吗？受影响的项目可能无法运行。')) return;
+    if (!window.confirm('确定清除该凭据吗？受影响的项目可能无法运行或归档。')) return;
     setBusy(key);
     setMessage('');
     setError('');
@@ -186,48 +185,38 @@ export function GlobalSettingsPage({ section }: { section: GlobalSettingSection 
             error={!resource.value ? resource.error : ''}
             onRetry={resource.reload}
           >
-            {resource.value &&
-              configuration &&
-              (section === 'credentials' ? (
-                <CredentialsSection
-                  metadata={resource.value.deployment.secrets}
-                  values={secretDraft}
-                  busy={busy}
-                  onValue={(key, value) =>
+            {resource.value && configuration && (
+              <form className="settings-form" onSubmit={saveConfiguration}>
+                <GlobalSection
+                  section={section}
+                  value={configuration}
+                  disabled={Boolean(busy) || locked}
+                  secretBusy={busy}
+                  secretDraft={secretDraft}
+                  secretMetadata={resource.value.deployment.secrets}
+                  onChange={setDraft}
+                  onSecretValue={(key, value) =>
                     setSecretDraft((current) => ({ ...current, [key]: value }))
                   }
-                  onSave={(key) => void saveSecret(key)}
-                  onClear={(key) => void clearSecret(key)}
+                  onSaveSecret={(key) => void saveSecret(key)}
+                  onClearSecret={(key) => void clearSecret(key)}
                 />
-              ) : (
-                <form className="settings-form" onSubmit={saveConfiguration}>
-                  <GlobalSection
-                    section={section}
-                    value={configuration}
+                <div className="settings-actions">
+                  <button
+                    className="button button-primary"
+                    type="submit"
                     disabled={Boolean(busy) || locked}
-                    providerApiKey={secretDraft.providerApiKey ?? ''}
-                    providerApiKeyMetadata={resource.value.deployment.secrets.providerApiKey}
-                    onChange={setDraft}
-                    onProviderApiKey={(value) =>
-                      setSecretDraft((current) => ({ ...current, providerApiKey: value }))
-                    }
-                  />
-                  <div className="settings-actions">
-                    <button
-                      className="button button-primary"
-                      type="submit"
-                      disabled={Boolean(busy) || locked}
-                    >
-                      {busy ? '保存中…' : '保存本分组'}
-                    </button>
-                    {section !== 'local-data' && (
-                      <AppLink className="text-link" to={{ name: 'system' }}>
-                        查看最近连接状态
-                      </AppLink>
-                    )}
-                  </div>
-                </form>
-              ))}
+                  >
+                    {busy ? '保存中…' : '保存本分组'}
+                  </button>
+                  {section !== 'local-data' && (
+                    <AppLink className="text-link" to={{ name: 'system' }}>
+                      查看最近连接状态
+                    </AppLink>
+                  )}
+                </div>
+              </form>
+            )}
           </AsyncRegion>
         </div>
       </div>
@@ -242,6 +231,7 @@ function ModelSettings({
   providerApiKeyMetadata,
   onChange,
   onProviderApiKey,
+  onClearProviderApiKey,
 }: {
   value: HarnessConfig;
   disabled: boolean;
@@ -249,6 +239,7 @@ function ModelSettings({
   providerApiKeyMetadata: SecretMetadata | undefined;
   onChange: (value: HarnessConfig) => void;
   onProviderApiKey: (value: string) => void;
+  onClearProviderApiKey: () => void;
 }) {
   const [providers, setProviders] = useState<ProviderInfo[]>([]);
   const [providerError, setProviderError] = useState('');
@@ -377,6 +368,18 @@ function ModelSettings({
               onChange={(event) => onProviderApiKey(event.target.value)}
             />
           </Field>
+          {providerApiKeyMetadata?.configured && (
+            <div className="inline-actions">
+              <button
+                className="button"
+                type="button"
+                disabled={disabled}
+                onClick={onClearProviderApiKey}
+              >
+                清除 Provider API Key
+              </button>
+            </div>
+          )}
         </div>
         {providerError && <p className="notice notice-warning">{providerError}</p>}
         {catalogStatus && (
@@ -468,18 +471,24 @@ function GlobalSection({
   section,
   value,
   disabled,
-  providerApiKey,
-  providerApiKeyMetadata,
+  secretBusy,
+  secretDraft,
+  secretMetadata,
   onChange,
-  onProviderApiKey,
+  onSecretValue,
+  onSaveSecret,
+  onClearSecret,
 }: {
-  section: Exclude<GlobalSettingSection, 'credentials'>;
+  section: GlobalSettingSection;
   value: HarnessConfig;
   disabled: boolean;
-  providerApiKey: string;
-  providerApiKeyMetadata: SecretMetadata | undefined;
+  secretBusy: string;
+  secretDraft: Partial<Record<DeploymentSecret, string>>;
+  secretMetadata: Record<DeploymentSecret, SecretMetadata>;
   onChange: (value: HarnessConfig) => void;
-  onProviderApiKey: (value: string) => void;
+  onSecretValue: (key: DeploymentSecret, value: string) => void;
+  onSaveSecret: (key: DeploymentSecret) => void;
+  onClearSecret: (key: DeploymentSecret) => void;
 }) {
   const set = (patch: Partial<HarnessConfig>) => onChange({ ...value, ...patch });
   if (section === 'models')
@@ -487,10 +496,11 @@ function GlobalSection({
       <ModelSettings
         value={value}
         disabled={disabled}
-        providerApiKey={providerApiKey}
-        providerApiKeyMetadata={providerApiKeyMetadata}
+        providerApiKey={secretDraft.providerApiKey ?? ''}
+        providerApiKeyMetadata={secretMetadata.providerApiKey}
         onChange={onChange}
-        onProviderApiKey={onProviderApiKey}
+        onProviderApiKey={(value) => onSecretValue('providerApiKey', value)}
+        onClearProviderApiKey={() => onClearSecret('providerApiKey')}
       />
     );
   if (section === 'browser')
@@ -580,6 +590,16 @@ function GlobalSection({
             </select>
           </Field>
         </div>
+        <DeploymentSecrets
+          title="访问凭据"
+          keys={['ossAccessKeyId', 'ossAccessKeySecret']}
+          metadata={secretMetadata}
+          values={secretDraft}
+          busy={secretBusy}
+          onValue={onSecretValue}
+          onSave={onSaveSecret}
+          onClear={onClearSecret}
+        />
       </>
     );
   return (
@@ -606,7 +626,9 @@ function GlobalSection({
   );
 }
 
-function CredentialsSection({
+function DeploymentSecrets({
+  title,
+  keys,
   metadata,
   values,
   busy,
@@ -614,6 +636,8 @@ function CredentialsSection({
   onSave,
   onClear,
 }: {
+  title: string;
+  keys: DeploymentSecret[];
   metadata: Record<DeploymentSecret, SecretMetadata>;
   values: Partial<Record<DeploymentSecret, string>>;
   busy: string;
@@ -628,9 +652,9 @@ function CredentialsSection({
   };
   return (
     <section>
-      <SectionTitle title="全局凭据" />
+      <SectionTitle title={title} text="凭据加密保存，不会回显或进入普通配置导出。" />
       <div className="secret-list">
-        {(Object.keys(labels) as DeploymentSecret[]).map((key) => (
+        {keys.map((key) => (
           <article className="secret-row" key={key}>
             <div>
               <h3>{labels[key]}</h3>
@@ -723,7 +747,7 @@ function sectionValue(section: GlobalSettingSection, value: HarnessConfig) {
   if (section === 'local-data') return value.local.retentionDays;
   return null;
 }
-function sectionPatch(section: Exclude<GlobalSettingSection, 'credentials'>, value: HarnessConfig) {
+function sectionPatch(section: GlobalSettingSection, value: HarnessConfig) {
   if (section === 'models')
     return {
       provider: value.provider,
