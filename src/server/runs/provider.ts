@@ -255,10 +255,10 @@ class PiProviderAdapter implements ProviderAdapter {
         `${role} 模型不存在：${provider}/${agent.model.trim()}`,
       );
     }
-    assertThinkingSupported(model, effectiveStageThinking(role), role);
+    selectStageThinking(model, role);
     if (role === 'main-a') {
       // Validate both uses of the one Main model without adding a fourth agent/check.
-      assertThinkingSupported(model, effectiveStageThinking('main-b'), 'main-b');
+      selectStageThinking(model, 'main-b');
     }
     return model;
   }
@@ -330,6 +330,17 @@ export function effectiveStageThinking(role: AgentRole): ThinkingLevel {
   return role === 'main-a' || role === 'reviewer' ? 'low' : 'off';
 }
 
+/** Map the stage's relative intent to the selected model's actual supported levels. */
+export function selectStageThinking(model: PiModel, role: AgentRole): ThinkingLevel {
+  const levels = supportedThinkingLevels(model);
+  const relativeIndex = effectiveStageThinking(role) === 'low' ? 1 : 0;
+  const selected = levels[Math.min(relativeIndex, levels.length - 1)];
+  if (!selected) {
+    throw new ProviderError('THINKING_UNSUPPORTED', `${role} 模型没有可用的 thinking level`);
+  }
+  return selected;
+}
+
 export function supportedThinkingLevels(model: PiModel): ThinkingLevel[] {
   return THINKING_LEVELS.filter((level) => isThinkingSupported(model, level));
 }
@@ -340,12 +351,6 @@ export function isThinkingSupported(model: PiModel, level: ThinkingLevel): boole
   if (mapped === null) return false;
   if ((level === 'xhigh' || level === 'max') && mapped === undefined) return false;
   return true;
-}
-
-function assertThinkingSupported(model: PiModel, level: ThinkingLevel, role: AgentRole): void {
-  if (!isThinkingSupported(model, level)) {
-    throw new ProviderError('THINKING_UNSUPPORTED', `${role} 模型不支持 thinking level：${level}`);
-  }
 }
 
 function configuredRole(role: AgentRole): 'main' | 'runner' | 'reviewer' {

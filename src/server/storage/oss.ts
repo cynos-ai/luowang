@@ -179,7 +179,7 @@ class S3OssAdapter implements OssAdapter {
     const settings = this.readSettings();
     if (!settings) throw new OssError('OSS_NOT_CONFIGURED', 'OSS 尚未完成配置');
 
-    if (settings.publicBaseUrl !== '') {
+    if (settings.accessMode === 'public' && settings.publicBaseUrl !== '') {
       const base = parsePublicBaseUrl(settings.publicBaseUrl);
       const basePath = base.pathname.endsWith('/') ? base.pathname : `${base.pathname}/`;
       base.pathname = `${basePath}${key.split('/').map(encodeURIComponent).join('/')}`;
@@ -505,7 +505,7 @@ function normalizeObjectPrefix(value: string): string {
 function parseEndpoint(value: string): URL {
   let endpoint: URL;
   try {
-    endpoint = new URL(value.trim());
+    endpoint = new URL(withDefaultHttps(value));
   } catch {
     throw new OssError('OSS_CONFIGURATION_INVALID', 'OSS endpoint 配置无效');
   }
@@ -520,7 +520,7 @@ function parseEndpoint(value: string): URL {
 function parsePublicBaseUrl(value: string): URL {
   let base: URL;
   try {
-    base = new URL(value);
+    base = new URL(withDefaultHttps(value));
   } catch {
     throw new OssError('OSS_CONFIGURATION_INVALID', 'OSS public base URL 配置无效');
   }
@@ -531,6 +531,11 @@ function parsePublicBaseUrl(value: string): URL {
     throw new OssError('OSS_CONFIGURATION_INVALID', 'OSS public base URL 不能包含查询参数');
   }
   return base;
+}
+
+function withDefaultHttps(value: string): string {
+  const trimmed = value.trim();
+  return /^[a-z][a-z\d+.-]*:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
 }
 
 function encodeObjectKey(key: string): string {

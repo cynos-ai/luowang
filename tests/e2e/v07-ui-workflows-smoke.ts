@@ -1076,8 +1076,8 @@ try {
     true,
   );
   await page.goto(`${origin}/settings/object-storage`);
-  assert.equal(await page.getByLabel('Endpoint').isDisabled(), true);
-  const lockedOssSecret = page.getByLabel('新值（不会回显）').first();
+  assert.equal(await page.getByLabel('Endpoint', { exact: true }).isDisabled(), true);
+  const lockedOssSecret = page.getByLabel('设置OSS Access Key ID');
   assert.equal(await lockedOssSecret.isEnabled(), true);
   await lockedOssSecret.fill('synthetic-locked-oss-id');
   assert.equal(
@@ -1089,6 +1089,8 @@ try {
   await page.goto(`${origin}/settings/models`);
   await page.getByRole('heading', { name: '模型与角色' }).waitFor();
   await page.getByText('已载入 2 个已知模型').waitFor();
+  assert.equal(await page.getByText('Thinking 自动选择', { exact: true }).count(), 3);
+  await page.getByText('规划 low · 收尾 off', { exact: true }).waitFor();
   assert.equal(await page.locator('#global-provider-catalog option').count(), 2);
   assert.equal(await page.locator('#global-model-catalog-reviewer option').count(), 2);
   const roleModels = page.locator('.agent-config input[type="search"]');
@@ -1180,10 +1182,27 @@ try {
   assert.equal(await page.getByRole('link', { name: '全局凭据', exact: true }).count(), 0);
   assert.equal((await page.locator('body').innerText()).includes('GitHub Token'), false);
   assert.equal((await page.locator('body').innerText()).includes('测试账号'), false);
-  await page.getByLabel('新值（不会回显）').nth(0).fill('synthetic-oss-id');
+  assert.equal((await page.locator('body').innerText()).includes('新值（不会回显）'), false);
+  const connectionHeading = await page.getByRole('heading', { name: '连接信息' }).boundingBox();
+  const credentialHeading = await page.getByRole('heading', { name: '访问凭据' }).boundingBox();
+  const advancedHeading = await page.getByRole('heading', { name: '高级选项' }).boundingBox();
+  assert.ok(connectionHeading && credentialHeading && advancedHeading);
+  assert.ok(connectionHeading.y < credentialHeading.y && credentialHeading.y < advancedHeading.y);
+  assert.match(
+    (await page.getByLabel(/Endpoint说明/).getAttribute('title')) ?? '',
+    /省略协议时自动使用 HTTPS/,
+  );
+  const endpoint = page.getByLabel('Endpoint', { exact: true });
+  await endpoint.fill('oss.example.test');
+  await endpoint.press('Tab');
+  assert.equal(await endpoint.inputValue(), 'https://oss.example.test');
+  await page.getByRole('button', { name: '保存本分组' }).click();
+  await page.getByText('配置已保存。', { exact: true }).waitFor();
+  assert.equal(deploymentConfiguration.oss.endpoint, 'https://oss.example.test');
+  await page.getByLabel('设置OSS Access Key ID').fill('synthetic-oss-id');
   await page.getByRole('button', { name: '保存', exact: true }).nth(0).click();
   await page.getByText('凭据已更新。', { exact: true }).waitFor();
-  await page.getByLabel('新值（不会回显）').nth(1).fill('synthetic-oss-key');
+  await page.getByLabel('设置OSS Access Key Secret').fill('synthetic-oss-key');
   await page.getByRole('button', { name: '保存', exact: true }).click();
   await page.getByText('凭据已更新。', { exact: true }).waitFor();
   assert.ok(writes.includes('PUT /api/deployment/secrets/ossAccessKeyId'));

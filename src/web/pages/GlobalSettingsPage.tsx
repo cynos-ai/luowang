@@ -5,6 +5,7 @@ import type {
   ProviderInfo,
   ProviderModelInfo,
   SecretMetadata,
+  ThinkingLevel,
 } from '../../shared/types';
 import { requestJson, toUserMessage } from '../api';
 import { AppLink, useNavigationBlocker } from '../app/navigation';
@@ -86,9 +87,11 @@ export function GlobalSettingsPage({ section }: { section: GlobalSettingSection 
     setMessage('');
     setError('');
     try {
+      const preparedConfiguration =
+        section === 'object-storage' ? normalizeOssConfiguration(configuration) : configuration;
       const response = await requestJson<{ configuration: HarnessConfig }>('/api/deployment', {
         method: 'PUT',
-        body: JSON.stringify(sectionPatch(section, configuration)),
+        body: JSON.stringify(sectionPatch(section, preparedConfiguration)),
       });
       setDraft(response.configuration);
       const apiKey = section === 'models' ? secretDraft.providerApiKey : undefined;
@@ -347,6 +350,7 @@ function ModelSettings({
           </datalist>
           <Field label="Provider Base URL">
             <input
+              aria-label="Provider Base URL"
               disabled={disabled}
               value={value.providerBaseUrl}
               onChange={(event) => set({ providerBaseUrl: event.target.value })}
@@ -361,6 +365,7 @@ function ModelSettings({
             }
           >
             <input
+              aria-label="Provider API Key"
               type="password"
               autoComplete="new-password"
               disabled={disabled}
@@ -398,6 +403,11 @@ function ModelSettings({
                 : '未匹配到当前 Provider 的视觉模型，无法确认截图审核能力。'
               : undefined;
           const listId = `global-model-catalog-${role}`;
+          const automaticThinking = selected
+            ? role === 'main'
+              ? `规划 ${relativeThinkingLevel(selected.thinkingLevels, 1)} · 收尾 ${relativeThinkingLevel(selected.thinkingLevels, 0)}`
+              : relativeThinkingLevel(selected.thinkingLevels, role === 'runner' ? 0 : 1)
+            : '选择目录中的模型后显示';
           return (
             <div className="agent-config" key={role}>
               <h3>
@@ -437,28 +447,11 @@ function ModelSettings({
                   <small>{selected.name}</small>
                 </div>
               )}
-              <Field label="Thinking">
-                <select
-                  disabled={disabled}
-                  value={value.agents[role].thinking}
-                  onChange={(event) =>
-                    set({
-                      agents: {
-                        ...value.agents,
-                        [role]: {
-                          ...value.agents[role],
-                          thinking: event.target
-                            .value as HarnessConfig['agents'][typeof role]['thinking'],
-                        },
-                      },
-                    })
-                  }
-                >
-                  {['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'].map((item) => (
-                    <option key={item}>{item}</option>
-                  ))}
-                </select>
-              </Field>
+              <div className="adaptive-thinking">
+                <span>Thinking 自动选择</span>
+                <strong>{automaticThinking}</strong>
+                <small>按模型实际支持的档位从低到高选择。</small>
+              </div>
             </div>
           );
         })}
@@ -556,27 +549,66 @@ function GlobalSection({
   if (section === 'object-storage')
     return (
       <>
-        <SectionTitle title="对象存储" />
+        <SectionTitle title="对象存储" text="配置所有项目共用的 S3 兼容存储。" />
+        <SettingsSubsection title="连接信息" text="完成连接所需的必填项。" />
         <div className="form-grid">
-          {(
-            [
-              ['endpoint', 'Endpoint'],
-              ['region', 'Region'],
-              ['bucket', 'Bucket'],
-              ['publicBaseUrl', 'Public URL'],
-              ['objectPrefix', 'Object prefix'],
-            ] as const
-          ).map(([key, label]) => (
-            <Field label={label} key={key}>
-              <input
-                disabled={disabled}
-                value={value.oss[key]}
-                onChange={(event) => set({ oss: { ...value.oss, [key]: event.target.value } })}
+          <Field
+            label={
+              <HelpLabel
+                label="Endpoint"
+                help="对象存储服务地址，例如 https://s3.cn-east-1.jdcloud-oss.com；省略协议时自动使用 HTTPS。"
               />
-            </Field>
-          ))}
-          <Field label="访问模式">
+            }
+          >
+            <input
+              aria-label="Endpoint"
+              disabled={disabled}
+              placeholder="https://s3.example.com"
+              value={value.oss.endpoint}
+              onBlur={(event) =>
+                set({
+                  oss: { ...value.oss, endpoint: normalizeWebUrl(event.currentTarget.value) },
+                })
+              }
+              onChange={(event) => set({ oss: { ...value.oss, endpoint: event.target.value } })}
+            />
+          </Field>
+          <Field
+            label={
+              <HelpLabel label="Bucket" help="存放测试证据的 Bucket 名，例如 luowang-files。" />
+            }
+          >
+            <input
+              aria-label="Bucket"
+              disabled={disabled}
+              placeholder="luowang-files"
+              value={value.oss.bucket}
+              onChange={(event) => set({ oss: { ...value.oss, bucket: event.target.value } })}
+            />
+          </Field>
+          <Field
+            label={
+              <HelpLabel label="Region" help="Bucket 所在区域，例如 cn-east-1 或 us-east-1。" />
+            }
+          >
+            <input
+              aria-label="Region"
+              disabled={disabled}
+              placeholder="cn-east-1"
+              value={value.oss.region}
+              onChange={(event) => set({ oss: { ...value.oss, region: event.target.value } })}
+            />
+          </Field>
+          <Field
+            label={
+              <HelpLabel
+                label="访问模式"
+                help="private 由罗网鉴权读取证据；public 使用下方 Public URL 生成公开地址。"
+              />
+            }
+          >
             <select
+              aria-label="访问模式"
               disabled={disabled}
               value={value.oss.accessMode}
               onChange={(event) =>
@@ -600,6 +632,54 @@ function GlobalSection({
           onSave={onSaveSecret}
           onClear={onClearSecret}
         />
+        <SettingsSubsection
+          title="高级选项"
+          text="选填；只有公开访问或需要统一目录前缀时才配置。"
+        />
+        <div className="form-grid">
+          <Field
+            label={
+              <HelpLabel
+                label="Public URL"
+                help="公开访问时的 Bucket 基础地址，例如 https://luowang-files.s3.cn-east-1.jdcloud-oss.com。"
+              />
+            }
+          >
+            <input
+              aria-label="Public URL"
+              disabled={disabled || value.oss.accessMode === 'private'}
+              placeholder="https://bucket.s3.example.com"
+              value={value.oss.publicBaseUrl}
+              onBlur={(event) =>
+                set({
+                  oss: {
+                    ...value.oss,
+                    publicBaseUrl: normalizeWebUrl(event.currentTarget.value),
+                  },
+                })
+              }
+              onChange={(event) =>
+                set({ oss: { ...value.oss, publicBaseUrl: event.target.value } })
+              }
+            />
+          </Field>
+          <Field
+            label={
+              <HelpLabel
+                label="Object prefix"
+                help="所有对象共享的可选目录前缀，例如 luowang；不要以斜杠开头。"
+              />
+            }
+          >
+            <input
+              aria-label="Object prefix"
+              disabled={disabled}
+              placeholder="luowang"
+              value={value.oss.objectPrefix}
+              onChange={(event) => set({ oss: { ...value.oss, objectPrefix: event.target.value } })}
+            />
+          </Field>
+        </div>
       </>
     );
   return (
@@ -662,14 +742,15 @@ function DeploymentSecrets({
                 {metadata[key]?.configured ? `已配置 ${metadata[key].masked ?? ''}` : '未配置'}
               </StatusLabel>
             </div>
-            <Field label="新值（不会回显）">
-              <input
-                type="password"
-                autoComplete="new-password"
-                value={values[key] ?? ''}
-                onChange={(event) => onValue(key, event.target.value)}
-              />
-            </Field>
+            <input
+              className="secret-input"
+              type="password"
+              aria-label={`${metadata[key]?.configured ? '轮换' : '设置'}${labels[key]}`}
+              autoComplete="new-password"
+              placeholder={metadata[key]?.configured ? '输入新值以轮换' : '输入凭据'}
+              value={values[key] ?? ''}
+              onChange={(event) => onValue(key, event.target.value)}
+            />
             <div className="inline-actions">
               <button
                 className="button button-primary"
@@ -694,6 +775,30 @@ function DeploymentSecrets({
         ))}
       </div>
     </section>
+  );
+}
+function SettingsSubsection({ title, text }: { title: string; text: string }) {
+  return (
+    <div className="settings-subsection-heading">
+      <h3>{title}</h3>
+      <p>{text}</p>
+    </div>
+  );
+}
+function HelpLabel({ label, help }: { label: string; help: string }) {
+  return (
+    <span className="field-label-with-help">
+      {label}
+      <span
+        className="field-help"
+        tabIndex={0}
+        role="img"
+        aria-label={`${label}说明：${help}`}
+        title={help}
+      >
+        ?
+      </span>
+    </span>
   );
 }
 function SectionTitle({ title, text }: { title: string; text?: string }) {
@@ -757,4 +862,25 @@ function sectionPatch(section: GlobalSettingSection, value: HarnessConfig) {
   if (section === 'browser') return { mcp: value.mcp };
   if (section === 'object-storage') return { oss: value.oss };
   return { local: { retentionDays: value.local.retentionDays } };
+}
+
+function normalizeOssConfiguration(value: HarnessConfig): HarnessConfig {
+  return {
+    ...value,
+    oss: {
+      ...value.oss,
+      endpoint: normalizeWebUrl(value.oss.endpoint),
+      publicBaseUrl: normalizeWebUrl(value.oss.publicBaseUrl),
+    },
+  };
+}
+
+function normalizeWebUrl(value: string): string {
+  const trimmed = value.trim();
+  if (!trimmed || /^[a-z][a-z\d+.-]*:\/\//i.test(trimmed)) return trimmed;
+  return `https://${trimmed}`;
+}
+
+function relativeThinkingLevel(levels: ThinkingLevel[], index: number): ThinkingLevel {
+  return levels[Math.min(index, levels.length - 1)] ?? 'off';
 }
