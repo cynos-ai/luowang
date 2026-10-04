@@ -1070,8 +1070,23 @@ try {
   await page.goto(`${origin}/settings/models`);
   await page.getByText(/全局执行配置已锁定，相关测试记录/).waitFor();
   assert.equal(await page.getByRole('button', { name: '保存本分组' }).isDisabled(), true);
+  assert.equal(await page.getByLabel('Provider API Key').isDisabled(), true);
+  assert.equal(
+    await page.getByRole('button', { name: '清除 Provider API Key' }).isDisabled(),
+    true,
+  );
+  await page.goto(`${origin}/settings/object-storage`);
+  assert.equal(await page.getByLabel('Endpoint').isDisabled(), true);
+  const lockedOssSecret = page.getByLabel('新值（不会回显）').first();
+  assert.equal(await lockedOssSecret.isEnabled(), true);
+  await lockedOssSecret.fill('synthetic-locked-oss-id');
+  assert.equal(
+    await page.getByRole('button', { name: '保存', exact: true }).first().isEnabled(),
+    true,
+  );
+  await lockedOssSecret.fill('');
   globalSettingsUnlocked = true;
-  await page.reload();
+  await page.goto(`${origin}/settings/models`);
   await page.getByRole('heading', { name: '模型与角色' }).waitFor();
   await page.getByText('已载入 2 个已知模型').waitFor();
   assert.equal(await page.locator('#global-provider-catalog option').count(), 2);
@@ -1153,12 +1168,27 @@ try {
   assert.ok(writes.includes('PUT /api/deployment'));
   assert.ok(writes.includes('PUT /api/deployment/secrets/providerApiKey'));
   assert.equal((await page.locator('body').innerText()).includes('synthetic-provider-key'), false);
-  await page.goto(`${origin}/settings/credentials`);
+  page.once('dialog', async (dialog) => {
+    assert.match(dialog.message(), /清除该凭据/);
+    await dialog.accept();
+  });
+  await page.getByRole('button', { name: '清除 Provider API Key' }).click();
+  await page.getByText('凭据已清除。', { exact: true }).waitFor();
+  assert.ok(writes.includes('DELETE /api/deployment/secrets/providerApiKey'));
+
+  await page.goto(`${origin}/settings/object-storage`);
+  assert.equal(await page.getByRole('link', { name: '全局凭据', exact: true }).count(), 0);
   assert.equal((await page.locator('body').innerText()).includes('GitHub Token'), false);
   assert.equal((await page.locator('body').innerText()).includes('测试账号'), false);
-  await page.getByLabel('新值（不会回显）').nth(1).fill('synthetic-oss-key');
+  await page.getByLabel('新值（不会回显）').nth(0).fill('synthetic-oss-id');
   await page.getByRole('button', { name: '保存', exact: true }).nth(0).click();
   await page.getByText('凭据已更新。', { exact: true }).waitFor();
+  await page.getByLabel('新值（不会回显）').nth(1).fill('synthetic-oss-key');
+  await page.getByRole('button', { name: '保存', exact: true }).click();
+  await page.getByText('凭据已更新。', { exact: true }).waitFor();
+  assert.ok(writes.includes('PUT /api/deployment/secrets/ossAccessKeyId'));
+  assert.ok(writes.includes('PUT /api/deployment/secrets/ossAccessKeySecret'));
+  assert.equal((await page.locator('body').innerText()).includes('synthetic-oss-id'), false);
   assert.equal((await page.locator('body').innerText()).includes('synthetic-oss-key'), false);
 
   await page.goto(`${origin}/account`);
@@ -1188,7 +1218,7 @@ try {
     `/projects/${projects[0].projectId}/scenarios/AUTH-LOGIN-001`,
     '/system',
     '/settings/models',
-    '/settings/credentials',
+    '/settings/object-storage',
     '/account',
   ];
   for (const width of [1440, 1024, 768]) {

@@ -21,7 +21,13 @@ import { ProjectSettingsPage } from '../pages/project/ProjectSettingsPage';
 import { ProjectTestPage } from '../pages/project/ProjectTestPage';
 import type { ProjectReference } from '../project-types';
 import { NavigationProvider, type NavigableRoute } from './navigation';
-import { appPath, legacyHashRedirect, parseAppPath, type AppRoute } from './route';
+import {
+  appPath,
+  legacyHashRedirect,
+  legacySettingsRedirect,
+  parseAppPath,
+  type AppRoute,
+} from './route';
 
 export default function AppRouter() {
   const [route, setRoute] = useState<AppRoute>(initialRoute);
@@ -45,7 +51,8 @@ export default function AppRouter() {
   const navigate = useCallback(
     (target: NavigableRoute | string, options: { replace?: boolean } = {}) => {
       if (!mayNavigate()) return;
-      const pathname = typeof target === 'string' ? target : appPath(target);
+      const requested = typeof target === 'string' ? target : appPath(target);
+      const pathname = legacySettingsRedirect(requested) ?? requested;
       if (options.replace) window.history.replaceState(null, '', pathname);
       else window.history.pushState(null, '', pathname);
       const next = parseAppPath(pathname);
@@ -86,7 +93,9 @@ export default function AppRouter() {
         window.history.pushState(null, '', routePath(routeRef.current));
         return;
       }
-      const next = parseAppPath(window.location.pathname);
+      const legacySettings = legacySettingsRedirect(window.location.pathname);
+      if (legacySettings) window.history.replaceState(null, '', legacySettings);
+      const next = parseAppPath(legacySettings ?? window.location.pathname);
       routeRef.current = next;
       setRoute(next);
     };
@@ -304,6 +313,11 @@ function initialRoute(): AppRoute {
   if (legacy) {
     window.history.replaceState(null, '', legacy);
     return parseAppPath(legacy);
+  }
+  const legacySettings = legacySettingsRedirect(window.location.pathname);
+  if (legacySettings) {
+    window.history.replaceState(null, '', legacySettings);
+    return parseAppPath(legacySettings);
   }
   if (window.location.pathname === '/') {
     window.history.replaceState(null, '', '/workspace');

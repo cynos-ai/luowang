@@ -1,10 +1,4 @@
-export const globalSettingSections = [
-  'models',
-  'browser',
-  'object-storage',
-  'local-data',
-  'credentials',
-] as const;
+export const globalSettingSections = ['models', 'browser', 'object-storage', 'local-data'] as const;
 
 export const projectSettingSections = [
   'general',
@@ -62,6 +56,7 @@ export function parseAppPath(input: string): AppRoute {
     if (segments[0] === 'account') return { name: 'account' };
   }
   if (segments[0] === 'settings' && segments.length === 2) {
+    if (segments[1] === 'credentials') return { name: 'global-settings', section: 'models' };
     const section = member(globalSettingSections, segments[1]);
     if (section) return { name: 'global-settings', section };
   }
@@ -136,6 +131,10 @@ export function legacyHashRedirect(hash: string): string | null {
   return projectId && PROJECT_ID.test(projectId)
     ? appPath({ name: 'project-overview', projectId })
     : null;
+}
+
+export function legacySettingsRedirect(pathname: string): string | null {
+  return normalizePathname(pathname) === '/settings/credentials' ? '/settings/models' : null;
 }
 
 function normalizePathname(input: string): string {
