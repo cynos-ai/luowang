@@ -43,3 +43,5 @@
 - 2026-10-05 共享依赖监控已接入配置变更、服务启动及 30 分钟周期刷新；相关 3 个测试文件在 quality 容器共 8 项通过。本地预览启动后自动检查模型 Provider、浏览器运行环境和对象存储，三项均产生真实成功快照，系统状态页可见检查时间且每 30 秒只读刷新。
 - 2026-10-05 提交前完整回归发现配置 YAML 未接受新增模型来源字段，已补来源和角色引用的严格字段校验，并验证拒绝来源内的凭据字段；同步补齐路由测试的新迁移及浏览器 workflow 的异步等待、资源模拟和新控件定位。
 - 本轮 quality 的格式、lint、类型、构建及全量单元通过（526 passed / 2 skipped）；完整 local 浏览器回归仍在执行，结果追加后才能声明本轮质量门完成。首次失败报告保存在本地忽略目录 `.cynos/settings-checkpoint-acceptance/` 和 `.cynos/settings-checkpoint-final/`。
+- 最终收尾：2026-10-05 `test:acceptance:local` 返回 `local=passed, live=blocked, release=blocked`；格式、lint、类型、全量单元（526 passed / 2 skipped）、构建、完整 E2E、Phase 9 和工程专项全部通过。报告：`.cynos/settings-verified-local/2026-10-05T09-05-14-987Z-local/report.json`。新版 workflow 已覆盖命名 Token 接入、语言 SelectBox、模型分区、系统设置接口及项目资源返回，不删除原流程/视口断言。
+- 同一实现的 runtime 镜像构建通过；只读文件系统、隔离 tmpfs、断网条件下原生 MCP/截图预检 `passed`，`modelRequests=0`。未部署长期实例、未运行真实模型联合验收或发布；旧失败证据保留。

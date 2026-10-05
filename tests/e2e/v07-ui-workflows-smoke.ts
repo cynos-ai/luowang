@@ -430,6 +430,8 @@ try {
           json: {
             project: projects[0],
             configuration: projectAConfiguration,
+            resources: { githubCredentialId: null, executionServerId: null },
+            managedFiles: [],
             secrets: {
               gitToken: { configured: true, masked: '••••' },
               testUsername: { configured: true, masked: '••••' },
@@ -721,7 +723,18 @@ try {
     }
     const suffix = pathname.slice(base.length);
     if (suffix === '' && method === 'GET') {
-      return route.fulfill({ json: { project: newProject, configuration, secrets } });
+      return route.fulfill({
+        json: {
+          project: newProject,
+          configuration,
+          secrets,
+          resources: {
+            githubCredentialId: '44444444-4444-4444-8444-444444444444',
+            executionServerId: null,
+          },
+          managedFiles: [],
+        },
+      });
     }
     if (suffix === '/readiness/status' && method === 'GET') {
       return route.fulfill({ json: { readiness: readiness() } });
@@ -1162,7 +1175,8 @@ try {
   await lockedOssSecret.fill('');
   globalSettingsUnlocked = true;
   await page.goto(`${origin}/settings/models`);
-  await page.getByRole('heading', { name: '模型与角色' }).waitFor();
+  await page.getByRole('heading', { name: '模型配置', exact: true }).waitFor();
+  await page.getByRole('heading', { name: '角色配置', exact: true }).waitFor();
   await page.getByRole('heading', { name: '测试组长', exact: true }).waitFor();
   assert.equal(await page.getByText(/已载入 .* 个已知模型/).count(), 0);
   assert.equal(await page.getByText('Thinking 自动选择', { exact: true }).count(), 0);
@@ -1280,7 +1294,12 @@ try {
     await page.setViewportSize({ width, height: 900 });
     for (const path of responsivePaths) {
       await page.goto(`${origin}${path}`);
-      await page.locator('h1').waitFor();
+      await page
+        .locator('h1')
+        .waitFor()
+        .catch(() => {
+          throw new Error(`Missing page heading at ${path}: ${pageErrors.join('; ')}`);
+        });
       await page.addStyleTag({ content: 'html { overflow-y: scroll; scrollbar-gutter: stable; }' });
       assert.ok(
         await page.evaluate(() => document.documentElement.clientWidth < window.innerWidth),
