@@ -4,6 +4,7 @@ import type Database from 'better-sqlite3';
 
 import { ConfigurationError } from '../configuration.js';
 import type { ScopedSecretStore } from '../security/scoped-secret-store.js';
+import { isManagedFilePath } from './managed-file-path.js';
 import { invalidateProjectReadiness } from './readiness.js';
 
 export type GithubCredential = {
@@ -760,15 +761,7 @@ function serverAuthType(value: unknown): 'password' | 'private-key' {
 function managedFilePath(value: unknown): string {
   if (typeof value !== 'string') throw new ConfigurationError('配置文件路径无效');
   const path = value.trim();
-  if (
-    !path ||
-    path.length > 255 ||
-    path.includes('\\') ||
-    /^[a-z]:/i.test(path) ||
-    path.startsWith('/') ||
-    path.split('/').some((part) => !part || part === '.' || part === '..') ||
-    hasControlCharacter(path)
-  ) {
+  if (!isManagedFilePath(path)) {
     throw new ConfigurationError('配置文件必须是项目内相对路径');
   }
   return path;

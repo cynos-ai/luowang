@@ -16,6 +16,7 @@ import { reconcileExecutionResourceLedger } from '../src/server/projects/executi
 import { createExecutionResourceLedger } from '../src/server/projects/resource-ledger.js';
 import { createProjectStore } from '../src/server/projects/store.js';
 import type { ScopedSecretStore } from '../src/server/security/scoped-secret-store.js';
+import { registerActiveExecutionResource } from '../src/server/projects/active-execution-resources.js';
 
 it('keeps capacity occupied when Docker resource discovery fails', async () => {
   const database = new Database(':memory:');
@@ -62,6 +63,68 @@ it('keeps capacity occupied when Docker resource discovery fails', async () => {
     assert.deepEqual(result, { released: 0, unknown: 1 });
     assert.equal(ledger.get(resource.resourceId).state, 'unknown');
     assert.equal(ledger.get(resource.resourceId).occupiesSlot, true);
+  } finally {
+    database.close();
+  }
+});
+
+it('does not recover a manual preparation that is still active in this process', async () => {
+  const database = new Database(':memory:');
+  const instanceId = '11111111-1111-4111-8111-111111111111';
+  try {
+    runMigrations(database);
+    ensureSystemMetadata(database, { appVersion: 'test', id: () => instanceId });
+    runMigrations(database, [projectIdentityMigration]);
+    migrateLegacyRunOwnership(database, null);
+    migrateLegacyConfigurationOwnership(database, null);
+    migrateProjectQueueContext(database);
+    migrateProjectImageState(database);
+    migrateConnectionResources(database);
+    const project = createProjectStore(database).createVerified({
+      displayName: 'Active preparation',
+      repository: { githubRepositoryId: '2', owner: 'cynos-ai', name: 'active' },
+    });
+    migrateExecutionRuntime(database);
+    const ledger = createExecutionResourceLedger(database, instanceId);
+    const resource = ledger.plan({
+      projectId: project.projectId,
+      attemptId: 'manual-preparation',
+      executionLocationId: `local:${instanceId}`,
+      executionLocationRevision: 1,
+      resourceType: 'image-preparation',
+      ownerLabels: { 'luowang.instance-id': instanceId },
+    });
+    const unregister = registerActiveExecutionResource(resource.resourceId);
+    let adapters = 0;
+    const options = {
+      adapterFactory: async (): Promise<ExecutionAdapter> => {
+        adapters += 1;
+        return {
+          locationId: `local:${instanceId}`,
+          async execute() {
+            return { stdout: '', stderr: '', code: 0 };
+          },
+          async upload() {},
+          async download() {},
+          async uploadTree() {},
+          async downloadTree() {},
+          async removeTree() {},
+          async close() {},
+        };
+      },
+    };
+    assert.deepEqual(
+      await reconcileExecutionResourceLedger(database, {} as ScopedSecretStore, options),
+      { released: 0, unknown: 0 },
+    );
+    assert.equal(adapters, 0);
+    assert.equal(ledger.get(resource.resourceId).state, 'planned');
+    unregister();
+    assert.deepEqual(
+      await reconcileExecutionResourceLedger(database, {} as ScopedSecretStore, options),
+      { released: 1, unknown: 0 },
+    );
+    assert.equal(ledger.get(resource.resourceId).state, 'released');
   } finally {
     database.close();
   }

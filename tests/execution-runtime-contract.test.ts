@@ -69,6 +69,26 @@ describe('execution runtime safety contracts', () => {
         /Compose|路径|端口|插值|危险/,
       );
   });
+  it('resolves Compose paths from the configured file directory', () => {
+    const result = normalizeComposeDefinition({
+      ...identity,
+      enabledServices: ['app'],
+      composeFile: 'deploy/compose.yml',
+      source: `services:\n  app:\n    build: .\n    ports: ["3000"]\n    volumes: ["../config:/app/config"]\n`,
+    });
+    assert.equal((result.services.app.build as { context: string }).context, 'deploy');
+    assert.deepEqual(result.services.app.volumes, ['./config:/app/config:ro']);
+    assert.throws(
+      () =>
+        normalizeComposeDefinition({
+          ...identity,
+          enabledServices: ['app'],
+          composeFile: 'deploy/compose.yml',
+          source: 'services:\n  app:\n    build: ../../outside\n',
+        }),
+      /越界/,
+    );
+  });
   it('redacts env, JSON and YAML scalar values even when stream chunks split a secret', () => {
     const redactor = new StreamingSecretRedactor([
       'TOKEN=alpha-secret\njson: bravo-secret\n{"password":"charlie-secret"}',

@@ -24,30 +24,33 @@ export class ProjectImagePreparationError extends Error {
 }
 
 export interface ProjectImagePreparationDependencies {
-  ensureDocker(): Promise<void>;
+  ensureDocker(signal?: AbortSignal): Promise<void>;
   prepareSource(input: {
     repository: GitRepository;
     projectId: string;
     targetCommit: string;
     dockerfilePath: string;
     storageRoot: string;
+    signal?: AbortSignal;
   }): Promise<ProjectImageSource>;
   build(input: {
     projectId: string;
     instanceId: string;
     source: ProjectImageSource;
+    signal?: AbortSignal;
   }): Promise<ProjectImageBuild>;
-  inspect(input: ProjectImageKey & { imageId: string }): Promise<boolean>;
+  inspect(input: ProjectImageKey & { imageId: string; signal?: AbortSignal }): Promise<boolean>;
 }
 
 export function createProjectImagePreparationDependencies(
   docker: DockerRuntime = createDockerRuntime(),
 ): ProjectImagePreparationDependencies {
   return {
-    async ensureDocker() {
+    async ensureDocker(signal) {
       try {
         const result = await docker.run(['info', '--format', '{{.ServerVersion}}'], {
           timeoutMs: 10_000,
+          signal,
         });
         if (result.exitCode !== 0) throw new Error('Docker Engine unavailable');
       } catch {
@@ -73,6 +76,7 @@ export async function ensureProjectImage(
     dockerfilePath: string;
     storageRoot: string;
     state: ProjectImageStateStore;
+    signal?: AbortSignal;
   },
   dependencies: ProjectImagePreparationDependencies = createProjectImagePreparationDependencies(),
 ): Promise<PreparedProjectImage> {
@@ -84,11 +88,13 @@ export async function ensureProjectImage(
   };
   const existing = input.state.get(key);
   if (existing?.status === 'ready' && existing.imageId) {
-    if (await dependencies.inspect({ ...key, imageId: existing.imageId })) {
+    if (await dependencies.inspect({ ...key, imageId: existing.imageId, signal: input.signal })) {
       return { imageId: existing.imageId, buildDefinition, reused: true };
     }
   }
-  await dependencies.ensureDocker();
+  input.signal?.throwIfAborted();
+  await dependencies.ensureDocker(input.signal);
+  input.signal?.throwIfAborted();
   input.state.begin(key);
   let source: ProjectImageSource | undefined;
   try {
@@ -98,7 +104,9 @@ export async function ensureProjectImage(
       targetCommit: input.targetCommit,
       dockerfilePath: input.dockerfilePath,
       storageRoot: input.storageRoot,
+      signal: input.signal,
     });
+    input.signal?.throwIfAborted();
     if (
       source.targetCommit !== input.targetCommit ||
       (source.buildDefinition ?? source.dockerfilePath) !== buildDefinition
@@ -109,11 +117,13 @@ export async function ensureProjectImage(
       projectId: input.projectId,
       instanceId: input.instanceId,
       source,
+      signal: input.signal,
     });
+    input.signal?.throwIfAborted();
     if (
       built.projectId !== input.projectId ||
       built.targetCommit !== input.targetCommit ||
-      !(await dependencies.inspect({ ...key, imageId: built.imageId }))
+      !(await dependencies.inspect({ ...key, imageId: built.imageId, signal: input.signal }))
     ) {
       throw new ProjectImagePreparationError('IMAGE_MISMATCH');
     }
@@ -122,6 +132,7 @@ export async function ensureProjectImage(
   } catch (error) {
     const code = error instanceof ProjectImagePreparationError ? error.code : 'BUILD_FAILED';
     input.state.fail(key, code);
+    input.signal?.throwIfAborted();
     throw new ProjectImagePreparationError(code);
   } finally {
     await source?.cleanup();
@@ -129,17 +140,18 @@ export async function ensureProjectImage(
 }
 
 export async function inspectProjectImage(
-  input: ProjectImageKey & { imageId: string },
+  input: ProjectImageKey & { imageId: string; signal?: AbortSignal },
   docker: DockerRuntime = createDockerRuntime(),
 ): Promise<boolean> {
   if (!/^sha256:[0-9a-f]{64}$/.test(input.imageId)) return false;
   const result = await docker.run(
     ['image', 'inspect', '--format', '{{json .Config.Labels}}', input.imageId],
-    { timeoutMs: 10_000 },
+    { timeoutMs: 10_000, signal: input.signal },
   );
   if (result.exitCode !== 0) {
     const health = await docker.run(['info', '--format', '{{.ServerVersion}}'], {
       timeoutMs: 10_000,
+      signal: input.signal,
     });
     if (health.exitCode !== 0) throw new ProjectImagePreparationError('DOCKER_UNAVAILABLE');
     return false;

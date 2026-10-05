@@ -28,6 +28,7 @@ export async function prepareBuiltInProjectImageSource(input: {
   projectId: string;
   targetCommit: string;
   storageRoot: string;
+  signal?: AbortSignal;
 }): Promise<ProjectImageSource> {
   const source = await prepareProjectCommitTree(input);
   try {
@@ -59,10 +60,14 @@ export async function prepareProjectImageSource(input: {
   targetCommit: string;
   dockerfilePath: string;
   storageRoot: string;
+  signal?: AbortSignal;
 }): Promise<ProjectImageSource> {
+  input.signal?.throwIfAborted();
   assertRelativeSourcePath(input.dockerfilePath);
   const tree = await checkedCommitTree(input);
+  input.signal?.throwIfAborted();
   const targetCommit = await input.repository.resolveCommit(input.targetCommit);
+  input.signal?.throwIfAborted();
   const dockerfile = tree.find((entry) => entry.path === input.dockerfilePath);
   if (!dockerfile || !isRegularTreeEntry(dockerfile)) {
     throw new Error('固定提交中不存在普通 Dockerfile');
@@ -80,8 +85,11 @@ export async function prepareProjectCommitTree(input: {
   targetCommit: string;
   storageRoot: string;
   sourceKind?: 'image-sources' | 'run-sources';
+  signal?: AbortSignal;
 }): Promise<ProjectCommitTree> {
+  input.signal?.throwIfAborted();
   const targetCommit = await input.repository.resolveCommit(input.targetCommit);
+  input.signal?.throwIfAborted();
   const tree = await checkedCommitTree(input);
 
   const root = resolve(input.storageRoot);
@@ -99,6 +107,7 @@ export async function prepareProjectCommitTree(input: {
   try {
     await mkdir(directory);
     await input.repository.archiveCommit(targetCommit, archive);
+    input.signal?.throwIfAborted();
     const archiveInfo = await lstat(archive);
     if (!archiveInfo.isFile() || archiveInfo.size > MAX_ARCHIVE_BYTES) {
       throw new Error('镜像构建源码归档超出限制');
@@ -106,9 +115,11 @@ export async function prepareProjectCommitTree(input: {
     await execFileAsync('tar', ['-xf', archive, '-C', directory], {
       windowsHide: true,
       maxBuffer: 64 * 1024,
+      signal: input.signal,
     });
     await rm(archive);
     for (const entry of tree) {
+      input.signal?.throwIfAborted();
       const path = resolve(directory, entry.path);
       assertWithin(directory, path);
       const info = await lstat(path).catch(() => {
@@ -139,12 +150,15 @@ async function checkedCommitTree(input: {
   repository: GitRepository;
   projectId: string;
   targetCommit: string;
+  signal?: AbortSignal;
 }): Promise<GitTreeEntry[]> {
   if (!PROJECT_ID.test(input.projectId) || !COMMIT_SHA.test(input.targetCommit)) {
     throw new Error('项目或镜像目标提交无效');
   }
   const targetCommit = await input.repository.resolveCommit(input.targetCommit);
+  input.signal?.throwIfAborted();
   const tree = await input.repository.listTree(targetCommit);
+  input.signal?.throwIfAborted();
   for (const entry of tree) assertBuildTreeEntry(entry);
   return tree;
 }

@@ -15,6 +15,7 @@ import {
 } from './image-preparation.js';
 import { readInstanceId } from './instance-id.js';
 import { readFile, rm } from 'node:fs/promises';
+import { projectImageTag } from './image-builder.js';
 
 export function createRemoteProjectRunCommandSessionFactory(input: {
   database: Database.Database;
@@ -72,7 +73,10 @@ export function createRemoteProjectRunCommandSessionFactory(input: {
     dependencies.build = async (build) => {
       const remote = `/tmp/luowang/${readInstanceId(input.database)}/${input.task.projectId}/command-image-${context.runId}`;
       const localIid = `${input.storageRoot}/remote-command-iid-${context.runId}`;
-      await adapter.uploadTree(build.source.directory, remote);
+      await adapter.uploadTree(build.source.directory, remote, {
+        signal: build.signal,
+        timeoutMs: 10 * 60_000,
+      });
       try {
         const iid = `${remote}/.luowang-iid`;
         const result = await adapter.execute(
@@ -96,14 +100,18 @@ export function createRemoteProjectRunCommandSessionFactory(input: {
           { timeoutMs: 30 * 60_000, signal: context.signal },
         );
         if (result.code !== 0) throw new Error('远程镜像构建失败');
-        await adapter.download(iid, localIid);
+        await adapter.download(iid, localIid, { signal: build.signal, timeoutMs: 60_000 });
         const imageId = (await readFile(localIid, 'utf8')).trim();
         if (!/^sha256:[0-9a-f]{64}$/.test(imageId)) throw new Error('远程镜像 ID 无效');
         return {
           projectId: build.projectId,
           targetCommit: build.source.targetCommit,
           imageId,
-          tag: `luowang-project-${build.projectId}:${build.source.targetCommit}`,
+          tag: projectImageTag(
+            build.projectId,
+            build.source.targetCommit,
+            build.source.buildDefinition ?? build.source.dockerfilePath,
+          ),
         };
       } finally {
         await rm(localIid, { force: true });
@@ -119,6 +127,7 @@ export function createRemoteProjectRunCommandSessionFactory(input: {
         dockerfilePath: input.task.executionDockerfile,
         storageRoot: input.storageRoot,
         state,
+        signal: context.signal,
       },
       dependencies,
     ).catch(async (error) => {
@@ -132,10 +141,14 @@ export function createRemoteProjectRunCommandSessionFactory(input: {
       targetCommit: context.targetCommit,
       scenarioPatch: context.scenarioPatch,
       storageRoot: input.storageRoot,
+      signal: context.signal,
     });
     const remote = `/tmp/luowang/${readInstanceId(input.database)}/${input.task.projectId}/command-${context.runId}`;
     try {
-      await adapter.uploadTree(source.directory, remote);
+      await adapter.uploadTree(source.directory, remote, {
+        signal: context.signal,
+        timeoutMs: 10 * 60_000,
+      });
       const session = await startProjectCommandSession(
         {
           signal: context.signal,

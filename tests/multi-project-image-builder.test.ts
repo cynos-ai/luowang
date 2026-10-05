@@ -5,7 +5,11 @@ import { join, resolve } from 'node:path';
 
 import { describe, it } from 'vitest';
 
-import { buildProjectImage, type DockerCommand } from '../src/server/projects/image-builder.js';
+import {
+  buildProjectImage,
+  projectImageTag,
+  type DockerCommand,
+} from '../src/server/projects/image-builder.js';
 import type { ProjectImageSource } from '../src/server/projects/image-source.js';
 
 const PROJECT = '00000000-0000-4000-8000-000000000001';
@@ -25,7 +29,10 @@ describe('project image builder', () => {
             args[args.indexOf('--file') + 1],
             join(source.directory, 'Dockerfile.luowang'),
           );
-          assert.equal(args[args.indexOf('--tag') + 1], `luowang-project-${PROJECT}:${COMMIT}`);
+          assert.equal(
+            args[args.indexOf('--tag') + 1],
+            projectImageTag(PROJECT, COMMIT, 'Dockerfile.luowang'),
+          );
           assert.ok(args.includes(`luowang.project-id=${PROJECT}`));
           assert.deepEqual(
             args.slice(
@@ -49,8 +56,12 @@ describe('project image builder', () => {
         projectId: PROJECT,
         targetCommit: COMMIT,
         imageId: `sha256:${'b'.repeat(64)}`,
-        tag: `luowang-project-${PROJECT}:${COMMIT}`,
+        tag: projectImageTag(PROJECT, COMMIT, 'Dockerfile.luowang'),
       });
+      assert.notEqual(
+        projectImageTag(PROJECT, COMMIT, 'Dockerfile.luowang'),
+        projectImageTag(PROJECT, COMMIT, '@builtin/node'),
+      );
       await assert.rejects(() => readFile(join(root, 'image-id.txt')), /ENOENT/);
       await assert.rejects(
         () =>

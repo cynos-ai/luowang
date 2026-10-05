@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import type { DockerRuntime } from './execution-container.js';
 import type { ExecutionAdapter } from './execution-adapter.js';
 import { ControlledCommandError } from '../runs/command-runner.js';
+import { isManagedFilePath } from './managed-file-path.js';
 
 const MAX_FILE = 256 * 1024;
 const MAX_TOTAL = 1024 * 1024;
@@ -100,7 +101,10 @@ export async function injectManagedFiles(input: {
         ? `/tmp/luowang-managed/${input.containerId}/${index}`
         : local;
       if (dockerSource !== local) {
-        await input.executionAdapter!.upload(local, dockerSource);
+        await input.executionAdapter!.upload(local, dockerSource, {
+          signal: input.signal,
+          timeoutMs: 60_000,
+        });
         input.signal?.throwIfAborted();
       }
       const copied = await input.docker.run(
@@ -139,6 +143,11 @@ async function injectIntoStoppedContainer(
   const remote = input.executionAdapter?.locationId.startsWith('server:');
   const remoteRoot = `/tmp/luowang-managed/${input.containerId}`;
   const remoteInspection = `${remoteRoot}/inspection`;
+  if (remote)
+    await input.executionAdapter!.uploadTree(inspection, remoteInspection, {
+      signal: input.signal,
+      timeoutMs: 60_000,
+    });
   const copiedOut = await input.docker.run(
     ['cp', `${input.containerId}:${destinationRoot}/.`, remote ? remoteInspection : inspection],
     { timeoutMs: 120_000, signal: input.signal },
@@ -146,7 +155,10 @@ async function injectIntoStoppedContainer(
   if (copiedOut.exitCode !== 0)
     throw new ControlledCommandError('COMMAND_FAILED', '无法核对容器内的配置文件目标');
   if (remote) {
-    await input.executionAdapter!.downloadTree(remoteInspection, inspection);
+    await input.executionAdapter!.downloadTree(remoteInspection, inspection, {
+      signal: input.signal,
+      timeoutMs: 120_000,
+    });
     input.signal?.throwIfAborted();
   }
   for (const file of files) {
@@ -158,7 +170,10 @@ async function injectIntoStoppedContainer(
   }
   const dockerSource = remote ? `${remoteRoot}/payload` : payload;
   if (remote) {
-    await input.executionAdapter!.uploadTree(payload, dockerSource);
+    await input.executionAdapter!.uploadTree(payload, dockerSource, {
+      signal: input.signal,
+      timeoutMs: 120_000,
+    });
     input.signal?.throwIfAborted();
   }
   const copiedIn = await input.docker.run(
@@ -270,20 +285,6 @@ function collectScalars(value: unknown, result: string[]): void {
     Object.values(value).forEach((item) => collectScalars(item, result));
 }
 function validatePath(path: string): void {
-  if (
-    !path ||
-    path.length > 255 ||
-    path.includes('\\') ||
-    path.startsWith('/') ||
-    path
-      .split('/')
-      .some(
-        (part) =>
-          !/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(part) ||
-          part === '.' ||
-          part === '..' ||
-          part.toLowerCase() === '.git',
-      )
-  )
+  if (!isManagedFilePath(path))
     throw new ControlledCommandError('COMMAND_INVALID', '受控配置文件路径无效');
 }

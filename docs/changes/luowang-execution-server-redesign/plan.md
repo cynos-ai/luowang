@@ -118,14 +118,15 @@
 - 容器化控制端：每个 Run 使用专用网络并通过受控应用容器 IP 访问；原生本机发布到 `127.0.0.1`，远程发布到远端 `127.0.0.1` 并经 SSH 隧道访问。未使用 `0.0.0.0` 扩大宿主机暴露范围，也未依赖 `host.docker.internal` 与网关猜测。
 - 受控文件：无选中文件时不访问 service 源码；有文件时只写入明确的 service 源码根，执行路径不进入镜像 build context；已覆盖大小、路径、链接、冲突、版本及跨 chunk 脱敏。
 - 运行时收口：命名数据卷保持默认可写、源码挂载强制只读；能力检查使用本 Run 动态地址；Docker 查询失败保留 unknown 和容量占用；应用准备、受控文件注入和健康检查贯穿取消信号；Compose 构建缓存只使用稳定构建输入，可跨不同 Run 复用。
+- 准备流程收口：进程内仍存活的手动镜像准备不会被后台恢复提前释放；镜像构建、源码物化、远程命令及 SFTP 传输接受取消和超时；受控文件保存与注入共用隐藏文件路径规则，远程注入先创建暂存目录；子目录 Compose 按原文件目录解析相对路径。镜像 tag 还包含构建定义摘要，避免同提交不同 Dockerfile 相互替换引用。
 - 浏览器：Run 专属 origin proxy 限制 HTTP、redirect、CONNECT 和 WebSocket，真实 Chromium 已证明外部重定向不会请求目标 origin 之外的地址。
 - 页面：接入与项目设置已使用共享 `SelectBox`、`NumberInput`、`HelpLabel`、Message 和确认组件；加入运行模式、单容器/Compose、服务器修订/检查、受控文件 service/revision 和 Run 实际执行信息。
 
 ### 本轮证据
 
 - 最终工作树 quality 镜像构建通过，镜像内 Docker Compose 为 `v2.39.2`，Playwright Chromium 预检通过。
-- quality 容器完整测试：112 个文件通过、2 个显式 Docker fixture 跳过；537 项通过、4 项跳过。
-- 将默认跳过的真实 Docker fixture 单独启用：4 项通过，覆盖原生/容器化控制端的单容器和 Compose、应用+可写数据卷+Runner、DNS、两个源码卷、受控文件注入、指定 service 执行、不同 Run 镜像缓存复用及全量清理。
+- quality 容器完整测试：113 个文件通过、2 个显式 Docker fixture 跳过；542 项通过、4 项跳过。
+- 将默认跳过的真实 Docker fixture 单独启用：6 项通过，覆盖固定提交镜像与场景 patch、不同构建定义的镜像引用、原生/容器化控制端的单容器和 Compose、应用+可写数据卷+Runner、DNS、两个源码卷、受控文件注入、指定 service 执行、不同 Run 镜像缓存复用及全量清理。
 - 真实 Chromium origin proxy 测试通过；foreign redirect 在 Run origin 返回 403，未请求外部 origin。
 - runtime 镜像构建和独立容器启动通过，`/health` 返回数据库与服务正常；项目接入页在 768、1024、1440 CSS 宽度下无横向溢出。项目设置的完整三视口人工检查仍待具有项目数据的候选实例复核。
 - 宿主机 `npm test` 因现有 `better-sqlite3` 原生二进制与宿主 Node ABI 不匹配而未运行；同一最终工作树已在仓库固定的 Node 24.14.1 quality 容器完整通过。这是宿主原生依赖问题，不是前端数据库或本需求运行时失败。

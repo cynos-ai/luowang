@@ -12,6 +12,7 @@ import { Client, type ConnectConfig } from 'ssh2';
 const execFileAsync = promisify(execFile);
 const MAX_OUTPUT = 4 * 1024 * 1024;
 export type ExecutionResult = { stdout: string; stderr: string; code: number };
+export type ExecutionTransferOptions = { signal?: AbortSignal; timeoutMs?: number };
 export interface ExecutionAdapter {
   readonly locationId: string;
   execute(
@@ -19,10 +20,22 @@ export interface ExecutionAdapter {
     args: readonly string[],
     options?: { cwd?: string; signal?: AbortSignal; timeoutMs?: number },
   ): Promise<ExecutionResult>;
-  upload(localPath: string, remotePath: string): Promise<void>;
-  download(remotePath: string, localPath: string): Promise<void>;
-  uploadTree(localDirectory: string, remoteDirectory: string): Promise<void>;
-  downloadTree(remoteDirectory: string, localDirectory: string): Promise<void>;
+  upload(localPath: string, remotePath: string, options?: ExecutionTransferOptions): Promise<void>;
+  download(
+    remotePath: string,
+    localPath: string,
+    options?: ExecutionTransferOptions,
+  ): Promise<void>;
+  uploadTree(
+    localDirectory: string,
+    remoteDirectory: string,
+    options?: ExecutionTransferOptions,
+  ): Promise<void>;
+  downloadTree(
+    remoteDirectory: string,
+    localDirectory: string,
+    options?: ExecutionTransferOptions,
+  ): Promise<void>;
   removeTree(remoteDirectory: string): Promise<void>;
   openTunnel?(
     remoteHost: string,
@@ -53,33 +66,41 @@ export function createLocalExecutionAdapter(locationId: string): ExecutionAdapte
         };
       }
     },
-    async upload(localPath, remotePath) {
-      await mkdir(dirname(remotePath), { recursive: true });
-      await new Promise<void>((resolve, reject) => {
-        const read = createReadStream(localPath);
-        const write = createWriteStream(remotePath, { flags: 'wx' });
-        read.on('error', reject);
-        write.on('error', reject);
-        write.on('finish', resolve);
-        read.pipe(write);
+    async upload(localPath, remotePath, options) {
+      await controlledTransfer(options, async () => {
+        await mkdir(dirname(remotePath), { recursive: true });
+        await new Promise<void>((resolve, reject) => {
+          const read = createReadStream(localPath);
+          const write = createWriteStream(remotePath, { flags: 'wx' });
+          read.on('error', reject);
+          write.on('error', reject);
+          write.on('finish', resolve);
+          read.pipe(write);
+        });
       });
     },
-    async download(remotePath, localPath) {
-      await mkdir(dirname(localPath), { recursive: true });
-      await new Promise<void>((resolve, reject) => {
-        const read = createReadStream(remotePath);
-        const write = createWriteStream(localPath, { flags: 'wx' });
-        read.on('error', reject);
-        write.on('error', reject);
-        write.on('finish', resolve);
-        read.pipe(write);
+    async download(remotePath, localPath, options) {
+      await controlledTransfer(options, async () => {
+        await mkdir(dirname(localPath), { recursive: true });
+        await new Promise<void>((resolve, reject) => {
+          const read = createReadStream(remotePath);
+          const write = createWriteStream(localPath, { flags: 'wx' });
+          read.on('error', reject);
+          write.on('error', reject);
+          write.on('finish', resolve);
+          read.pipe(write);
+        });
       });
     },
-    async uploadTree(localDirectory, remoteDirectory) {
-      await cp(localDirectory, remoteDirectory, { recursive: true, errorOnExist: true });
+    async uploadTree(localDirectory, remoteDirectory, options) {
+      await controlledTransfer(options, () =>
+        cp(localDirectory, remoteDirectory, { recursive: true, errorOnExist: true }),
+      );
     },
-    async downloadTree(remoteDirectory, localDirectory) {
-      await cp(remoteDirectory, localDirectory, { recursive: true, errorOnExist: true });
+    async downloadTree(remoteDirectory, localDirectory, options) {
+      await controlledTransfer(options, () =>
+        cp(remoteDirectory, localDirectory, { recursive: true, errorOnExist: true }),
+      );
     },
     async removeTree() {},
     async close() {},
@@ -215,78 +236,112 @@ export async function createSshExecutionAdapter(input: {
         options.signal?.addEventListener('abort', onAbort, { once: true });
       });
     },
-    async upload(localPath, remotePath) {
-      const channel = await sftp();
-      await mkdirRemote(channel, posix.dirname(remotePath));
-      await new Promise<void>((resolve, reject) =>
-        channel.fastPut(localPath, remotePath, (error) => (error ? reject(error) : resolve())),
-      );
-      channel.end();
-    },
-    async download(remotePath, localPath) {
-      await mkdir(dirname(localPath), { recursive: true });
-      const channel = await sftp();
-      await new Promise<void>((resolve, reject) =>
-        channel.fastGet(remotePath, localPath, (error) => (error ? reject(error) : resolve())),
-      );
-      channel.end();
-    },
-    async uploadTree(localDirectory, remoteDirectory) {
-      const channel = await sftp();
-      await mkdirRemote(channel, remoteDirectory);
-      const walk = async (local: string, remote: string): Promise<void> => {
-        for (const entry of await readdir(local, { withFileTypes: true })) {
-          const source = `${local}/${entry.name}`;
-          const target = posix.join(remote, entry.name);
-          if (entry.isSymbolicLink()) throw new Error('远程传输拒绝符号链接');
-          if (entry.isDirectory()) {
-            await mkdirRemote(channel, target);
-            await walk(source, target);
-          } else if (entry.isFile()) {
-            const info = await stat(source);
-            if (info.size > 512 * 1024 * 1024) throw new Error('远程传输文件超过限制');
+    async upload(localPath, remotePath, options) {
+      await controlledTransfer(
+        options,
+        async () => {
+          const channel = await sftp();
+          try {
+            await mkdirRemote(channel, posix.dirname(remotePath));
             await new Promise<void>((resolve, reject) =>
-              channel.fastPut(source, target, { mode: info.mode & 0o777 }, (error) =>
+              channel.fastPut(localPath, remotePath, (error) =>
                 error ? reject(error) : resolve(),
               ),
             );
-          } else throw new Error('远程传输拒绝特殊文件');
-        }
-      };
-      try {
-        await walk(localDirectory, remoteDirectory);
-      } finally {
-        channel.end();
-      }
+          } finally {
+            channel.end();
+          }
+        },
+        () => client.end(),
+      );
     },
-    async downloadTree(remoteDirectory, localDirectory) {
-      const channel = await sftp();
-      let total = 0;
-      const walk = async (remote: string, local: string): Promise<void> => {
-        await mkdir(local, { recursive: true });
-        const entries = await new Promise<import('ssh2').FileEntry[]>((resolve, reject) =>
-          channel.readdir(remote, (error, list) => (error ? reject(error) : resolve(list))),
-        );
-        for (const entry of entries) {
-          const kind = entry.attrs.mode & 0o170000;
-          const source = posix.join(remote, entry.filename);
-          const target = `${local}/${entry.filename}`;
-          if (kind === 0o120000) throw new Error('远程下载拒绝符号链接');
-          if (kind === 0o040000) await walk(source, target);
-          else if (kind === 0o100000) {
-            total += entry.attrs.size;
-            if (total > 512 * 1024 * 1024) throw new Error('远程下载目录超过限制');
+    async download(remotePath, localPath, options) {
+      await controlledTransfer(
+        options,
+        async () => {
+          await mkdir(dirname(localPath), { recursive: true });
+          const channel = await sftp();
+          try {
             await new Promise<void>((resolve, reject) =>
-              channel.fastGet(source, target, (error) => (error ? reject(error) : resolve())),
+              channel.fastGet(remotePath, localPath, (error) =>
+                error ? reject(error) : resolve(),
+              ),
             );
-          } else throw new Error('远程下载拒绝特殊文件');
-        }
-      };
-      try {
-        await walk(remoteDirectory, localDirectory);
-      } finally {
-        channel.end();
-      }
+          } finally {
+            channel.end();
+          }
+        },
+        () => client.end(),
+      );
+    },
+    async uploadTree(localDirectory, remoteDirectory, options) {
+      await controlledTransfer(
+        options,
+        async () => {
+          const channel = await sftp();
+          await mkdirRemote(channel, remoteDirectory);
+          const walk = async (local: string, remote: string): Promise<void> => {
+            for (const entry of await readdir(local, { withFileTypes: true })) {
+              const source = `${local}/${entry.name}`;
+              const target = posix.join(remote, entry.name);
+              if (entry.isSymbolicLink()) throw new Error('远程传输拒绝符号链接');
+              if (entry.isDirectory()) {
+                await mkdirRemote(channel, target);
+                await walk(source, target);
+              } else if (entry.isFile()) {
+                const info = await stat(source);
+                if (info.size > 512 * 1024 * 1024) throw new Error('远程传输文件超过限制');
+                await new Promise<void>((resolve, reject) =>
+                  channel.fastPut(source, target, { mode: info.mode & 0o777 }, (error) =>
+                    error ? reject(error) : resolve(),
+                  ),
+                );
+              } else throw new Error('远程传输拒绝特殊文件');
+            }
+          };
+          try {
+            await walk(localDirectory, remoteDirectory);
+          } finally {
+            channel.end();
+          }
+        },
+        () => client.end(),
+      );
+    },
+    async downloadTree(remoteDirectory, localDirectory, options) {
+      await controlledTransfer(
+        options,
+        async () => {
+          const channel = await sftp();
+          let total = 0;
+          const walk = async (remote: string, local: string): Promise<void> => {
+            await mkdir(local, { recursive: true });
+            const entries = await new Promise<import('ssh2').FileEntry[]>((resolve, reject) =>
+              channel.readdir(remote, (error, list) => (error ? reject(error) : resolve(list))),
+            );
+            for (const entry of entries) {
+              const kind = entry.attrs.mode & 0o170000;
+              const source = posix.join(remote, entry.filename);
+              const target = `${local}/${entry.filename}`;
+              if (kind === 0o120000) throw new Error('远程下载拒绝符号链接');
+              if (kind === 0o040000) await walk(source, target);
+              else if (kind === 0o100000) {
+                total += entry.attrs.size;
+                if (total > 512 * 1024 * 1024) throw new Error('远程下载目录超过限制');
+                await new Promise<void>((resolve, reject) =>
+                  channel.fastGet(source, target, (error) => (error ? reject(error) : resolve())),
+                );
+              } else throw new Error('远程下载拒绝特殊文件');
+            }
+          };
+          try {
+            await walk(remoteDirectory, localDirectory);
+          } finally {
+            channel.end();
+          }
+        },
+        () => client.end(),
+      );
     },
     async removeTree(remoteDirectory) {
       const channel = await sftp();
@@ -323,6 +378,42 @@ export async function createSshExecutionAdapter(input: {
       client.end();
     },
   };
+}
+
+async function controlledTransfer<T>(
+  options: ExecutionTransferOptions | undefined,
+  operation: () => Promise<T>,
+  interrupt: () => void = () => undefined,
+): Promise<T> {
+  options?.signal?.throwIfAborted();
+  return new Promise<T>((resolve, reject) => {
+    let settled = false;
+    const cleanup = () => {
+      clearTimeout(timer);
+      options?.signal?.removeEventListener('abort', onAbort);
+    };
+    const finish = (action: typeof resolve | typeof reject, value: T | unknown) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      action(value as T);
+    };
+    const stop = (error: unknown) => {
+      interrupt();
+      finish(reject, error);
+    };
+    const onAbort = () => stop(options?.signal?.reason ?? new Error('操作已取消'));
+    const timer = setTimeout(
+      () => stop(new Error('文件传输超时，结果未知')),
+      options?.timeoutMs ?? 5 * 60_000,
+    );
+    timer.unref();
+    options?.signal?.addEventListener('abort', onAbort, { once: true });
+    operation().then(
+      (value) => finish(resolve, value),
+      (error) => finish(reject, error),
+    );
+  });
 }
 
 export async function readSshHostFingerprint(input: {

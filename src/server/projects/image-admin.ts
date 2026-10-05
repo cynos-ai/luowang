@@ -26,6 +26,8 @@ import { createDockerRuntimeFromAdapter } from './execution-container.js';
 import { createLocationImageStateStore } from './execution-image-cache.js';
 import { createExecutionResourceLedger } from './resource-ledger.js';
 import { locationHasCapacity } from '../automation/project-queue-coordinator.js';
+import { registerActiveExecutionResource } from './active-execution-resources.js';
+import { projectImageTag } from './image-builder.js';
 
 export class ProjectImageAdminError extends Error {
   constructor(
@@ -181,6 +183,7 @@ export function createProjectImageAdminService(input: {
             },
           });
         })();
+        const unregisterActive = registerActiveExecutionResource(resource.resourceId);
         const adapter = await (async () => {
           try {
             return location.kind === 'local'
@@ -201,14 +204,19 @@ export function createProjectImageAdminService(input: {
             );
             throw error;
           }
-        })();
+        })().catch((error) => {
+          unregisterActive();
+          throw error;
+        });
         try {
           const docker = createDockerRuntimeFromAdapter(adapter);
           const dependencies = createProjectImagePreparationDependencies(docker);
           if (location.kind === 'ssh') {
             dependencies.build = async (build) => {
               const remote = `/tmp/luowang/${instanceId}/${projectId}/prepare-${attemptId}`;
-              await adapter.uploadTree(build.source.directory, remote);
+              await adapter.uploadTree(build.source.directory, remote, {
+                timeoutMs: 10 * 60_000,
+              });
               try {
                 const iid = `${remote}/.luowang-iid`;
                 const result = await adapter.execute(
@@ -233,7 +241,7 @@ export function createProjectImageAdminService(input: {
                 );
                 if (result.code !== 0) throw new ProjectImagePreparationError('BUILD_FAILED');
                 const localIid = `${input.storageRoot}/remote-prepare-${attemptId}.iid`;
-                await adapter.download(iid, localIid);
+                await adapter.download(iid, localIid, { timeoutMs: 60_000 });
                 try {
                   const imageId = (await readFile(localIid, 'utf8')).trim();
                   if (!/^sha256:[0-9a-f]{64}$/.test(imageId)) {
@@ -243,7 +251,11 @@ export function createProjectImageAdminService(input: {
                     projectId: build.projectId,
                     targetCommit: build.source.targetCommit,
                     imageId,
-                    tag: `luowang-project-${build.projectId}:${build.source.targetCommit}`,
+                    tag: projectImageTag(
+                      build.projectId,
+                      build.source.targetCommit,
+                      build.source.buildDefinition ?? build.source.dockerfilePath,
+                    ),
                   };
                 } finally {
                   await rm(localIid, { force: true });
@@ -301,6 +313,7 @@ export function createProjectImageAdminService(input: {
           }
           throw error;
         } finally {
+          unregisterActive();
           await adapter.close().catch(() => undefined);
         }
       } catch (error) {

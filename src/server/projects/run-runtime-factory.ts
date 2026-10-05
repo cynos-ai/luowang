@@ -29,6 +29,7 @@ import { readInstanceId } from './instance-id.js';
 import { normalizeComposeDefinition } from './compose-contract.js';
 import { createExecutionResourceLedger } from './resource-ledger.js';
 import { createHash } from 'node:crypto';
+import { projectImageTag } from './image-builder.js';
 
 export function createProjectRunRuntimeEnvironmentFactory(input: {
   database: Database.Database;
@@ -96,7 +97,10 @@ export function createProjectRunRuntimeEnvironmentFactory(input: {
     if (input.task.executionLocationId.startsWith('server:'))
       imageDependencies.build = async (build) => {
         const remote = `/tmp/luowang/${readInstanceId(input.database)}/${input.task.projectId}/image-${context.targetCommit}`;
-        await adapter.uploadTree(build.source.directory, remote);
+        await adapter.uploadTree(build.source.directory, remote, {
+          signal: build.signal,
+          timeoutMs: 10 * 60_000,
+        });
         try {
           const dockerfile = `${remote}/${build.source.dockerfilePath}`;
           const iid = `${remote}/.luowang-iid`;
@@ -118,11 +122,11 @@ export function createProjectRunRuntimeEnvironmentFactory(input: {
               `luowang.build-definition=${build.source.buildDefinition ?? build.source.dockerfilePath}`,
               remote,
             ],
-            { timeoutMs: 30 * 60_000 },
+            { timeoutMs: 30 * 60_000, signal: build.signal },
           );
           if (result.code !== 0) throw new Error('远程镜像构建失败');
           const local = `${input.storageRoot}/remote-iid-${context.runId}`;
-          await adapter.download(iid, local);
+          await adapter.download(iid, local, { signal: build.signal, timeoutMs: 60_000 });
           const imageId = (await import('node:fs/promises'))
             .readFile(local, 'utf8')
             .then((value) => value.trim());
@@ -133,7 +137,11 @@ export function createProjectRunRuntimeEnvironmentFactory(input: {
             projectId: build.projectId,
             targetCommit: build.source.targetCommit,
             imageId: resolved,
-            tag: `luowang-project-${build.projectId}:${build.source.targetCommit}`,
+            tag: projectImageTag(
+              build.projectId,
+              build.source.targetCommit,
+              build.source.buildDefinition ?? build.source.dockerfilePath,
+            ),
           };
         } finally {
           await adapter.removeTree(remote).catch(() => undefined);
@@ -171,6 +179,7 @@ export function createProjectRunRuntimeEnvironmentFactory(input: {
               executionLocationRevision: input.task.executionLocationRevision,
               platform,
             }),
+            signal: context.signal,
           },
           imageDependencies,
         );
@@ -181,8 +190,13 @@ export function createProjectRunRuntimeEnvironmentFactory(input: {
           targetCommit: context.targetCommit,
           scenarioPatch: context.scenarioPatch,
           storageRoot: input.storageRoot,
+          signal: context.signal,
         });
-        if (remoteSource) await adapter.uploadTree(source.directory, remoteSource);
+        if (remoteSource)
+          await adapter.uploadTree(source.directory, remoteSource, {
+            signal: context.signal,
+            timeoutMs: 10 * 60_000,
+          });
         const files = input.task.managedFiles.map((reference) => {
           const row = input.database
             .prepare(
@@ -239,10 +253,14 @@ export function createProjectRunRuntimeEnvironmentFactory(input: {
                 targetCommit: context.targetCommit,
                 storageRoot: input.storageRoot,
                 sourceKind: 'image-sources',
+                signal: context.signal,
               });
               if (input.task.executionLocationId.startsWith('server:')) {
                 remoteBuildSource = `/tmp/luowang/${readInstanceId(input.database)}/${input.task.projectId}/build-${context.runId}`;
-                await adapter.uploadTree(composeBuildSource.directory, remoteBuildSource);
+                await adapter.uploadTree(composeBuildSource.directory, remoteBuildSource, {
+                  signal: context.signal,
+                  timeoutMs: 10 * 60_000,
+                });
               }
               const buildSource = remoteBuildSource ?? composeBuildSource.directory;
               const composeSource = await context.repository.readTextFileAtCommit(
@@ -260,6 +278,7 @@ export function createProjectRunRuntimeEnvironmentFactory(input: {
                 commandService: input.task.runtime.commandService,
                 servicePort: input.task.runtime.servicePort!,
                 publishHost,
+                composeFile: input.task.runtime.composeFile,
               });
               runtimeDefinitionHash = definition.definitionHash;
               const cachedImageIds: Record<string, string> = {};
@@ -302,7 +321,10 @@ export function createProjectRunRuntimeEnvironmentFactory(input: {
                       ).writeFile(local, content, { flag: 'wx', mode: 0o600 });
                       const remote = `${remoteBuildSource}/.luowang-compose.yml`;
                       try {
-                        await adapter.upload(local, remote);
+                        await adapter.upload(local, remote, {
+                          signal: context.signal,
+                          timeoutMs: 60_000,
+                        });
                       } catch (error) {
                         await (await import('node:fs/promises')).rm(local, { force: true });
                         throw error;

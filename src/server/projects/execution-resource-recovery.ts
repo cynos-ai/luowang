@@ -9,6 +9,7 @@ import { createDockerRuntimeFromAdapter } from './execution-container.js';
 import { createExecutionResourceLedger } from './resource-ledger.js';
 import { readInstanceId } from './instance-id.js';
 import { containerControlIdentity } from './application-runtime.js';
+import { isExecutionResourceActive } from './active-execution-resources.js';
 
 export async function reconcileExecutionResourceLedger(
   database: Database.Database,
@@ -30,6 +31,7 @@ export async function reconcileExecutionResourceLedger(
   let released = 0;
   let unknown = 0;
   for (const resource of ledger.unresolved()) {
+    if (isExecutionResourceActive(resource.resourceId)) continue;
     if (
       !options.includeRunning &&
       resource.queueId !== null &&

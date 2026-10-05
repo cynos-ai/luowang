@@ -58,6 +58,7 @@ export function normalizeComposeDefinition(input: {
   commandService: string;
   servicePort: number;
   publishHost?: string;
+  composeFile?: string;
 }): ControlledComposeDefinition {
   if (Buffer.byteLength(input.source, 'utf8') > 1024 * 1024 || /\$\{/.test(input.source))
     throw new ConfigurationError('Compose 文件过大或包含未受控变量插值');
@@ -72,6 +73,7 @@ export function normalizeComposeDefinition(input: {
   if ('include' in document || 'extends' in document)
     throw new ConfigurationError('Compose include/extends 不受支持');
   if (!record(document.services)) throw new ConfigurationError('Compose services 缺失');
+  const composeDirectory = composeBaseDirectory(input.composeFile ?? 'compose.yml');
   const enabled = new Set(input.enabledServices);
   if (!enabled.has(input.applicationService) || !enabled.has(input.commandService))
     throw new ConfigurationError('应用和测试服务必须包含在启用服务中');
@@ -88,9 +90,10 @@ export function normalizeComposeDefinition(input: {
         throw new ConfigurationError(`Compose 不支持危险字段：services.${name}.${field}`);
     rejectUnknown(source, SERVICE_FIELDS, `Compose 服务 ${name}`);
     const normalized = structuredClone(source);
-    if (normalized.build !== undefined) normalized.build = normalizeBuild(normalized.build);
+    if (normalized.build !== undefined)
+      normalized.build = normalizeBuild(normalized.build, composeDirectory);
     if (normalized.volumes !== undefined)
-      normalized.volumes = normalizeMounts(normalized.volumes, name);
+      normalized.volumes = normalizeMounts(normalized.volumes, name, composeDirectory);
     if (normalized.ports !== undefined)
       normalized.ports = normalizePorts(
         normalized.ports,
@@ -151,7 +154,7 @@ export function normalizeComposeDefinition(input: {
   };
 }
 
-function normalizeBuild(value: unknown): Record<string, unknown> {
+function normalizeBuild(value: unknown, composeDirectory: string): Record<string, unknown> {
   const build: Record<string, unknown> | null =
     typeof value === 'string' ? { context: value } : record(value) ? { ...value } : null;
   if (
@@ -159,13 +162,13 @@ function normalizeBuild(value: unknown): Record<string, unknown> {
     Object.keys(build).some((key) => !['context', 'dockerfile', 'target', 'args'].includes(key))
   )
     throw new ConfigurationError('Compose build 配置不受支持');
-  build.context = safeRelativePath(build.context, true);
+  build.context = resolveFromComposeDirectory(build.context, composeDirectory);
   if (build.dockerfile !== undefined) build.dockerfile = safeRelativePath(build.dockerfile, false);
   if (build.args !== undefined) throw new ConfigurationError('Compose build args 首版不受支持');
   return build;
 }
 
-function normalizeMounts(value: unknown, service: string): unknown[] {
+function normalizeMounts(value: unknown, service: string, composeDirectory: string): unknown[] {
   if (!Array.isArray(value)) throw new ConfigurationError(`Compose ${service} volumes 无效`);
   return value.map((item) => {
     if (typeof item !== 'string') throw new ConfigurationError('Compose 长格式挂载首版不受支持');
@@ -180,12 +183,33 @@ function normalizeMounts(value: unknown, service: string): unknown[] {
     if (relativeSource) {
       if (parts[2] !== undefined && parts[2] !== 'ro')
         throw new ConfigurationError('Compose 源码挂载必须只读');
-      return `${safeRelativePath(source, true)}:${target}:ro`;
+      const resolved = resolveFromComposeDirectory(source, composeDirectory);
+      const hostPath = resolved === '.' ? '.' : `./${resolved}`;
+      return `${hostPath}:${target}:ro`;
     }
     if (!/^[A-Za-z0-9][A-Za-z0-9_.-]{0,62}$/.test(source) || !['ro', 'rw'].includes(mode))
       throw new ConfigurationError('Compose 卷挂载无效');
     return `${source}:${target}:${mode}`;
   });
+}
+
+function composeBaseDirectory(composeFile: string): string {
+  const normalized = safeRelativePath(composeFile, false);
+  return posix.dirname(normalized);
+}
+
+function resolveFromComposeDirectory(value: unknown, composeDirectory: string): string {
+  if (
+    typeof value !== 'string' ||
+    value.includes('\\') ||
+    value.startsWith('/') ||
+    /^[A-Za-z]:/.test(value)
+  )
+    throw new ConfigurationError('Compose 路径必须位于项目内');
+  const normalized = posix.normalize(posix.join(composeDirectory, value));
+  if (normalized === '..' || normalized.startsWith('../'))
+    throw new ConfigurationError('Compose 路径越界');
+  return normalized;
 }
 
 function normalizePorts(
