@@ -21,6 +21,7 @@ type ServerDraft = {
   password: string;
   privateKey: string;
   privateKeyPassphrase: string;
+  capacity: number;
 };
 
 const emptyServer: ServerDraft = {
@@ -32,6 +33,7 @@ const emptyServer: ServerDraft = {
   password: '',
   privateKey: '',
   privateKeyPassphrase: '',
+  capacity: 1,
 };
 
 export function ConnectionResourcesSettings({ kind }: { kind: 'github' | 'servers' }) {
@@ -83,6 +85,7 @@ export function ConnectionResourcesSettings({ kind }: { kind: 'github' | 'server
       password: '',
       privateKey: '',
       privateKeyPassphrase: '',
+      capacity: item.capacity,
     });
   }
 
@@ -202,7 +205,7 @@ export function ConnectionResourcesSettings({ kind }: { kind: 'github' | 'server
         {kind === 'servers' && (
           <ResourcePanel
             title="执行服务器"
-            description="先保存并绑定项目；远程执行将在安全执行链路完成后启用。"
+            description="确认主机指纹并通过 Docker、Compose 检查后，项目才会在这台服务器执行。"
           >
             <form
               className="form-grid resource-editor"
@@ -224,6 +227,7 @@ export function ConnectionResourcesSettings({ kind }: { kind: 'github' | 'server
                           port: Number(server.port),
                           username: server.username,
                           authType: server.authType,
+                          capacity: server.capacity,
                           ...(server.password ? { password: server.password } : {}),
                           ...(server.privateKey ? { privateKey: server.privateKey } : {}),
                           ...(server.privateKeyPassphrase
@@ -269,6 +273,16 @@ export function ConnectionResourcesSettings({ kind }: { kind: 'github' | 'server
                   required
                   value={server.username}
                   onChange={(e) => setServer({ ...server, username: e.target.value })}
+                />
+              </Field>
+              <Field label="并发项目数">
+                <NumberInput
+                  ariaLabel="并发项目数"
+                  min={1}
+                  max={64}
+                  step={1}
+                  value={server.capacity}
+                  onChange={(capacity) => setServer({ ...server, capacity })}
                 />
               </Field>
               <Field label="认证方式">
@@ -333,8 +347,70 @@ export function ConnectionResourcesSettings({ kind }: { kind: 'github' | 'server
                 <ResourceRow
                   key={item.id}
                   title={item.name}
-                  detail={`${item.username}@${item.host}:${item.port} · ${item.authType === 'private-key' ? 'SSH 私钥' : '密码'}`}
+                  detail={`${item.username}@${item.host}:${item.port} · 容量 ${item.capacity} · ${item.healthStatus === 'ready' ? '已验证' : item.healthStatus === 'changed' ? '主机指纹已变化' : '待验证'}`}
                 >
+                  <button
+                    className="button button-secondary"
+                    type="button"
+                    disabled={Boolean(busy)}
+                    onClick={() =>
+                      void perform(
+                        '读取主机指纹',
+                        async () => {
+                          const result = await requestJson<{
+                            fingerprint: string;
+                            confirmed: boolean;
+                          }>(
+                            `/api/connection-resources/servers/${encodeURIComponent(item.id)}/fingerprint`,
+                            { method: 'POST' },
+                          );
+                          if (result.confirmed) {
+                            notify.info?.('主机指纹与已确认值一致');
+                            return;
+                          }
+                          if (
+                            !(await confirm({
+                              title: item.hostFingerprint
+                                ? '主机指纹已变化'
+                                : '确认 SSH 主机指纹？',
+                              message: `${item.name} · ${result.fingerprint}\n请与服务器管理员提供的指纹核对。`,
+                              confirmLabel: '指纹一致，确认',
+                              danger: Boolean(item.hostFingerprint),
+                            }))
+                          )
+                            return;
+                          await requestJson(
+                            `/api/connection-resources/servers/${encodeURIComponent(item.id)}/fingerprint`,
+                            {
+                              method: 'PUT',
+                              body: JSON.stringify({ fingerprint: result.fingerprint }),
+                            },
+                          );
+                        },
+                        () => {},
+                      )
+                    }
+                  >
+                    核对指纹
+                  </button>
+                  <button
+                    className="button button-secondary"
+                    type="button"
+                    disabled={Boolean(busy) || !item.hostFingerprint}
+                    onClick={() =>
+                      void perform(
+                        '检查执行服务器',
+                        () =>
+                          requestJson(
+                            `/api/connection-resources/servers/${encodeURIComponent(item.id)}/check`,
+                            { method: 'POST' },
+                          ),
+                        () => {},
+                      )
+                    }
+                  >
+                    检查
+                  </button>
                   <button
                     className="button button-secondary"
                     type="button"

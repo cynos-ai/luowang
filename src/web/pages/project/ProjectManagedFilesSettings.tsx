@@ -22,12 +22,14 @@ export function ProjectManagedFilesSettings({
   const [editingId, setEditingId] = useState<string | null>(null);
   const [path, setPath] = useState('');
   const [content, setContent] = useState('');
+  const [serviceName, setServiceName] = useState('');
   const [busy, setBusy] = useState(false);
 
   function clear() {
     setEditingId(null);
     setPath('');
     setContent('');
+    setServiceName('');
   }
 
   async function save(event: FormEvent) {
@@ -40,7 +42,11 @@ export function ProjectManagedFilesSettings({
           : `/api/projects/${projectId}/files`,
         {
           method: editingId ? 'PUT' : 'POST',
-          body: JSON.stringify({ path, ...(editingId && !content ? {} : { content }) }),
+          body: JSON.stringify({
+            path,
+            serviceName: serviceName || null,
+            ...(editingId && !content ? {} : { content }),
+          }),
         },
       );
       clear();
@@ -57,7 +63,7 @@ export function ProjectManagedFilesSettings({
     <section className="settings-panel resource-panel">
       <header>
         <h2>受控文件</h2>
-        <p>保存不进入 Git 的项目文件。内容加密保存且不会回显；当前版本尚未注入测试运行。</p>
+        <p>文件在镜像构建后注入本次运行，不进入 Git 或镜像层。</p>
       </header>
       <form className="managed-file-editor" onSubmit={(event) => void save(event)}>
         <Field label="项目内相对路径" hint="例如 .env.test、config/beta.yml、certs/test.pem">
@@ -66,6 +72,16 @@ export function ProjectManagedFilesSettings({
             value={path}
             disabled={disabled || busy}
             onChange={(event) => setPath(event.target.value)}
+          />
+        </Field>
+        <Field
+          label="目标 Compose 服务（可选）"
+          hint="单容器留空；Compose 填写需要该文件的服务名。"
+        >
+          <input
+            value={serviceName}
+            disabled={disabled || busy}
+            onChange={(event) => setServiceName(event.target.value)}
           />
         </Field>
         <Field label="文件内容">
@@ -95,7 +111,11 @@ export function ProjectManagedFilesSettings({
           <article className="resource-row" key={file.id}>
             <div>
               <strong>{file.path}</strong>
-              <span>{file.configured ? '内容已安全保存' : '内容缺失'}</span>
+              <span>
+                {file.configured
+                  ? `内容已安全保存 · 版本 ${file.revision}${file.serviceName ? ` · ${file.serviceName}` : ''}`
+                  : '内容缺失'}
+              </span>
             </div>
             <div className="row-actions">
               <button
@@ -106,6 +126,7 @@ export function ProjectManagedFilesSettings({
                   setEditingId(file.id);
                   setPath(file.path);
                   setContent('');
+                  setServiceName(file.serviceName ?? '');
                 }}
               >
                 编辑

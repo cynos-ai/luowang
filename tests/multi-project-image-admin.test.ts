@@ -12,13 +12,15 @@ import { migrateLegacyRunOwnership } from '../src/server/db/migrations/0011-proj
 import { migrateLegacyConfigurationOwnership } from '../src/server/db/migrations/0012-project-configuration-ownership.js';
 import { migrateProjectQueueContext } from '../src/server/db/migrations/0014-project-queue-context.js';
 import { migrateProjectImageState } from '../src/server/db/migrations/0015-project-image-state.js';
+import { migrateConnectionResources } from '../src/server/db/migrations/0021-connection-resources.js';
+import { migrateExecutionRuntime } from '../src/server/db/migrations/0022-execution-runtime.js';
 import { registerProjectAdminRoutes } from '../src/server/projects/admin-routes.js';
 import { createProjectConfigurationStore } from '../src/server/projects/configuration.js';
 import { createDeploymentConfigurationStore } from '../src/server/projects/deployment-configuration.js';
 import { createProjectImageAdminService } from '../src/server/projects/image-admin.js';
 import { ProjectImagePreparationError } from '../src/server/projects/image-preparation.js';
 import { BUILTIN_IMAGE_DEFINITION } from '../src/server/projects/image-source.js';
-import { createProjectImageStateStore } from '../src/server/projects/image-state.js';
+import { createLocationImageStateStore } from '../src/server/projects/execution-image-cache.js';
 import { createProjectReadinessService } from '../src/server/projects/readiness.js';
 import { createProjectStore } from '../src/server/projects/store.js';
 import { createScopedSecretStore } from '../src/server/security/scoped-secret-store.js';
@@ -39,6 +41,8 @@ it('prepares only the authenticated project image at the resolved fixed commit',
     migrateLegacyConfigurationOwnership(database, null);
     migrateProjectQueueContext(database);
     migrateProjectImageState(database);
+    migrateConnectionResources(database);
+    migrateExecutionRuntime(database);
     const projects = createProjectStore(database);
     const a = projects.createVerified({
       displayName: 'A',
@@ -207,7 +211,17 @@ it('prepares only the authenticated project image at the resolved fixed commit',
     assert.equal(first.json().image.reused, false);
     assert.deepEqual(branches.slice(-2), ['scenario-testing', 'main']);
     assert.equal(
-      createProjectImageStateStore(database).get({
+      createLocationImageStateStore(database, {
+        executionLocationId: `local:${
+          (
+            database.prepare("SELECT value FROM system_metadata WHERE key='instance_id'").get() as {
+              value: string;
+            }
+          ).value
+        }`,
+        executionLocationRevision: 1,
+        platform: `${process.platform}/${process.arch}`,
+      }).get({
         projectId: a.projectId,
         targetCommit: COMMIT,
         dockerfilePath: BUILTIN_IMAGE_DEFINITION,
@@ -222,7 +236,17 @@ it('prepares only the authenticated project image at the resolved fixed commit',
     assert.equal(fetches, 3);
     assert.equal(projects.get(a.projectId)?.status, 'paused');
     assert.equal(
-      createProjectImageStateStore(database).get({
+      createLocationImageStateStore(database, {
+        executionLocationId: `local:${
+          (
+            database.prepare("SELECT value FROM system_metadata WHERE key='instance_id'").get() as {
+              value: string;
+            }
+          ).value
+        }`,
+        executionLocationRevision: 1,
+        platform: `${process.platform}/${process.arch}`,
+      }).get({
         projectId: b.projectId,
         targetCommit: COMMIT,
         dockerfilePath: BUILTIN_IMAGE_DEFINITION,

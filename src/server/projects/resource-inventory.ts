@@ -38,15 +38,25 @@ export async function inspectProjectResources(
     }>
   ).map((row) => row.project_id);
   const owned = new Set(projects);
-  const referenced = new Set(
-    (
-      database
+  const runtimeCache = database
+    .prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='execution_image_cache'")
+    .get();
+  const referencedRows = runtimeCache
+    ? (database
         .prepare(
-          'SELECT image_id FROM project_execution_images WHERE image_id IS NOT NULL UNION SELECT image_id FROM project_run_images',
+          `SELECT image_id FROM project_execution_images WHERE image_id IS NOT NULL
+           UNION SELECT image_id FROM project_run_images
+           UNION SELECT image_id FROM execution_image_cache
+             WHERE image_id IS NOT NULL AND execution_location_id = ?`,
         )
-        .all() as Array<{ image_id: string }>
-    ).map((row) => row.image_id),
-  );
+        .all(`local:${instanceId}`) as Array<{ image_id: string }>)
+    : (database
+        .prepare(
+          `SELECT image_id FROM project_execution_images WHERE image_id IS NOT NULL
+           UNION SELECT image_id FROM project_run_images`,
+        )
+        .all() as Array<{ image_id: string }>);
+  const referenced = new Set(referencedRows.map((row) => row.image_id));
   const containers: ProjectResourceInventory['containers'] = [];
   const containerIds = await command(docker, [
     'ps',
@@ -63,12 +73,25 @@ export async function inspectProjectResources(
     ) as { Name?: string; Config?: { Labels?: Record<string, string> } };
     const labels = details.Config?.Labels;
     const projectId = labels?.['luowang.project-id'] ?? '';
-    const runId = labels?.['luowang.run-id'] ?? '';
+    const legacyRunId = labels?.['luowang.run-id'] ?? '';
+    const runId = legacyRunId || labels?.['luowang.attempt-id'] || '';
+    const runtimeOwned =
+      !legacyRunId &&
+      Boolean(runtimeCache) &&
+      Boolean(
+        database
+          .prepare(
+            `SELECT 1 FROM execution_resource_ledger
+             WHERE project_id = ? AND attempt_id = ?
+               AND execution_location_id = ? AND state <> 'released'`,
+          )
+          .get(projectId, runId, `local:${instanceId}`),
+      );
     if (
       labels?.['luowang.instance-id'] !== instanceId ||
       !owned.has(projectId) ||
       !RUN_ID.test(runId) ||
-      details.Name !== `/luowang-run-${runId.toLowerCase()}`
+      (legacyRunId ? details.Name !== `/luowang-run-${runId.toLowerCase()}` : !runtimeOwned)
     ) {
       throw new Error('Docker 容器归属核验失败，不能生成清理预览');
     }
@@ -99,9 +122,11 @@ export async function inspectProjectResources(
       throw new Error('Docker 镜像归属核验失败，不能生成清理预览');
     }
     const tag = `luowang-project-${projectId}:${labels['luowang.target-commit']}`;
+    const composePrefix = `luowang-compose-${projectId.slice(0, 8)}:`;
     const disposition = referenced.has(imageId)
       ? 'referenced'
-      : details.RepoTags?.includes(tag)
+      : details.RepoTags?.includes(tag) ||
+          details.RepoTags?.some((candidate) => candidate.startsWith(composePrefix))
         ? 'restart-candidate'
         : 'manual-review';
     images.push({

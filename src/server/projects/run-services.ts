@@ -14,11 +14,14 @@ import { createProjectRuntimeSecretStore } from './runtime-access.js';
 import { createProjectOssAdapter } from '../storage/oss.js';
 import type { ScopedSecretStore } from '../security/scoped-secret-store.js';
 import { createProjectRunCommandSessionFactory } from './command-session.js';
-import { createProjectImageStateStore } from './image-state.js';
+import { createLocationImageStateStore } from './execution-image-cache.js';
 import { createProjectRunImageStore } from './run-image.js';
 import { readInstanceId } from './instance-id.js';
 import type { ProjectTaskRuntime } from './task-runtime.js';
 import { checkEnvironmentAccess } from '../runs/capabilities.js';
+import { createProjectRunRuntimeEnvironmentFactory } from './run-runtime-factory.js';
+import { createRemoteProjectRunCommandSessionFactory } from './remote-command-session.js';
+import { createAttachedProjectCommandSession, type DockerRuntime } from './execution-container.js';
 
 /** Assemble every Run dependency from one claimed task; never consult a selected project. */
 export function createProjectRunServices(options: {
@@ -60,6 +63,31 @@ export function createProjectRunServices(options: {
       ? createHttpTestDataCleanupAdapter(task.testDataCleanupUrl, secretStore)
       : undefined,
   });
+  const managedCommandTargets = new Map<
+    string,
+    { docker: DockerRuntime; containerId: string; sourceRoot: string; workingDirectory: string }
+  >();
+  const fallbackCommandSessionFactory = task.executionLocationId.startsWith('server:')
+    ? createRemoteProjectRunCommandSessionFactory({ database, task, secrets, storageRoot })
+    : createProjectRunCommandSessionFactory({
+        projectId,
+        instanceId: readInstanceId(database),
+        dockerfilePath: task.executionDockerfile,
+        storageRoot,
+        imageState: createLocationImageStateStore(database, {
+          executionLocationId: task.executionLocationId,
+          executionLocationRevision: task.executionLocationRevision,
+          platform: `${process.platform}/${process.arch}`,
+        }),
+        logger: options.logger,
+        recordImage: ({ runId, targetCommit, imageId }) =>
+          runImages.record({
+            runId,
+            targetCommit,
+            dockerfilePath: task.executionDockerfile,
+            imageId,
+          }),
+      });
   const runs = createRunOrchestrator({
     capabilityConfiguration: { projectId, revision: task.configRevision },
     checkEnvironment: (signal) =>
@@ -75,20 +103,32 @@ export function createProjectRunServices(options: {
     runStore,
     recoveryStore,
     logger: options.logger,
-    commandSessionFactory: createProjectRunCommandSessionFactory({
-      projectId,
-      instanceId: readInstanceId(database),
-      dockerfilePath: task.executionDockerfile,
+    commandSessionFactory: async (context) => {
+      const target = managedCommandTargets.get(context.runId);
+      return target
+        ? createAttachedProjectCommandSession(
+            {
+              projectId,
+              runId: context.runId,
+              targetCommit: context.targetCommit,
+              repositoryDirectory: context.repository.directory,
+              containerId: target.containerId,
+              sourceRoot: target.sourceRoot,
+              workingDirectory: target.workingDirectory,
+            },
+            target.docker,
+          )
+        : fallbackCommandSessionFactory(context);
+    },
+    runtimeEnvironmentFactory: createProjectRunRuntimeEnvironmentFactory({
+      database,
+      task,
+      secrets,
       storageRoot,
-      imageState: createProjectImageStateStore(database),
-      logger: options.logger,
-      recordImage: ({ runId, targetCommit, imageId }) =>
-        runImages.record({
-          runId,
-          targetCommit,
-          dockerfilePath: task.executionDockerfile,
-          imageId,
-        }),
+      setManagedCommandTarget: (runId, target) => {
+        if (target) managedCommandTargets.set(runId, target);
+        else managedCommandTargets.delete(runId);
+      },
     }),
   });
   return {

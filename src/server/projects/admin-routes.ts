@@ -22,6 +22,7 @@ import {
   createConnectionResourceService,
   type ConnectionResourceService,
 } from './connection-resources.js';
+import { createSshExecutionAdapter, readSshHostFingerprint } from './execution-adapter.js';
 
 type ProjectSecretKey = 'gitToken' | 'testUsername' | 'testPassword' | 'testDataCleanupToken';
 const PROJECT_SECRET_KEYS = new Set<ProjectSecretKey>([
@@ -94,6 +95,67 @@ export async function registerProjectAdminRoutes(
       async (request) => {
         connectionResources.deleteGithubCredential(request.params.id);
         return { deleted: true };
+      },
+    );
+    routes.post<{ Params: { id: string } }>(
+      '/api/connection-resources/servers/:id/fingerprint',
+      async (request) => {
+        const server = connectionResources.executionServerConnection(request.params.id);
+        const fingerprint = await readSshHostFingerprint({
+          host: server.host,
+          port: server.port,
+          username: server.username,
+        });
+        return { fingerprint, confirmed: fingerprint === server.hostFingerprint };
+      },
+    );
+    routes.put<{ Params: { id: string } }>(
+      '/api/connection-resources/servers/:id/fingerprint',
+      async (request) => ({
+        server: connectionResources.confirmExecutionServerFingerprint(
+          request.params.id,
+          readRecord(request.body).fingerprint,
+        ),
+      }),
+    );
+    routes.post<{ Params: { id: string } }>(
+      '/api/connection-resources/servers/:id/check',
+      async (request) => {
+        const server = connectionResources.executionServerConnection(request.params.id);
+        if (!server.hostFingerprint) throw new ConfigurationError('请先核对并确认 SSH 主机指纹');
+        const adapter = await createSshExecutionAdapter({
+          locationId: `server:${server.id}`,
+          host: server.host,
+          port: server.port,
+          username: server.username,
+          password: server.password,
+          privateKey: server.privateKey,
+          passphrase: server.privateKeyPassphrase,
+          pinnedFingerprint: server.hostFingerprint,
+        });
+        try {
+          const [docker, compose, platform, disk] = await Promise.all([
+            adapter.execute('docker', ['version', '--format', '{{.Server.Version}}']),
+            adapter.execute('docker', ['compose', 'version', '--short']),
+            adapter.execute('docker', ['info', '--format', '{{.OSType}}/{{.Architecture}}']),
+            adapter.execute('docker', ['system', 'df', '--format', '{{json .}}']),
+          ]);
+          if ([docker, compose, platform, disk].some((result) => result.code !== 0))
+            throw new ConfigurationError('远程 Docker 或 Compose 检查失败');
+          return {
+            server: connectionResources.recordExecutionServerCheck(server.id, {
+              fingerprint: server.hostFingerprint,
+              capabilities: {
+                dockerVersion: docker.stdout.trim(),
+                composeVersion: compose.stdout.trim(),
+                platform: platform.stdout.trim(),
+                disk: disk.stdout.slice(0, 8192),
+              },
+            }),
+          };
+        } finally {
+          await adapter.close();
+        }
       },
     );
     routes.post('/api/connection-resources/servers', async (request, reply) =>
@@ -226,7 +288,11 @@ export async function registerProjectAdminRoutes(
         const project = requireProject(options.projects, request.params.projectId);
         const file = connectionResources.createProjectFile(
           project.projectId,
-          readRecord(request.body) as { path: unknown; content: unknown },
+          readRecord(request.body) as {
+            path: unknown;
+            content: unknown;
+            serviceName?: unknown;
+          },
         );
         return reply.status(201).send({ file });
       },

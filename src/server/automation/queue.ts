@@ -31,6 +31,9 @@ export interface TestRequestRecord {
   configRevision: number | null;
   githubRepositoryId: string | null;
   configSnapshotJson: string | null;
+  executionLocationId: string | null;
+  executionLocationRevision: number | null;
+  managedFilesSnapshotJson: string | null;
   requestId: string;
   trigger: RunTrigger;
   triggerSources: RunTrigger[];
@@ -198,6 +201,7 @@ class SqliteTestRequestQueue implements TestRequestQueue {
     const requestId = normalizeRequestId(this.requestId());
     const transaction = this.database.transaction(() => {
       const context = this.projectId === null ? null : this.requireProjectContext();
+      const runtimeContext = context !== null && context.executionLocationId !== undefined;
       const tail = this.database
         .prepare(
           `SELECT * FROM test_request_queue
@@ -246,12 +250,12 @@ class SqliteTestRequestQueue implements TestRequestQueue {
       const result = this.database
         .prepare(
           `INSERT INTO test_request_queue
-           (request_id, ${context === null ? '' : 'project_id, config_revision, github_repository_id, config_snapshot_json, '}trigger, request, target_ref, request_kind, source_ref,
+           (request_id, ${context === null ? '' : `project_id, config_revision, github_repository_id, config_snapshot_json, ${runtimeContext ? 'execution_location_id, execution_location_revision, managed_files_snapshot_json, ' : ''}`}trigger, request, target_ref, request_kind, source_ref,
             prepared_merge_commit, prepared_merge_mode, resolved_target_commit,
             trigger_sources_json, request_ids_json, status, run_id, claimed_at,
             waiting_archive_at, completed_at, error_message, archive_status, progressed,
             created_at, updated_at, initialization)
-           VALUES (?, ${context === null ? '' : '?, ?, ?, ?, '}?, ?, NULL, ?, ?, NULL, NULL, NULL, ?, ?, 'queued', NULL, NULL, NULL, NULL,
+           VALUES (?, ${context === null ? '' : `?, ?, ?, ?, ${runtimeContext ? '?, ?, ?, ' : ''}`}?, ?, NULL, ?, ?, NULL, NULL, NULL, ?, ?, 'queued', NULL, NULL, NULL, NULL,
                    NULL, NULL, NULL, ?, ?, ?)`,
         )
         .run(
@@ -263,6 +267,13 @@ class SqliteTestRequestQueue implements TestRequestQueue {
                 context.configRevision,
                 context.githubRepositoryId,
                 context.snapshotJson,
+                ...(runtimeContext
+                  ? [
+                      context.executionLocationId,
+                      context.executionLocationRevision,
+                      context.managedFilesSnapshotJson,
+                    ]
+                  : []),
               ]),
           normalized.trigger,
           normalized.request,
@@ -615,11 +626,22 @@ class SqliteTestRequestQueue implements TestRequestQueue {
     configRevision: number;
     githubRepositoryId: string;
     snapshotJson: string;
+    executionLocationId?: string;
+    executionLocationRevision?: number;
+    managedFilesSnapshotJson?: string;
   } {
+    const runtimeSchema = Boolean(
+      this.database
+        .prepare(
+          "SELECT 1 FROM sqlite_master WHERE type='table' AND name='execution_resource_ledger'",
+        )
+        .get(),
+    );
     const row = this.database
       .prepare(
-        `SELECT p.status, p.config_revision, p.github_repository_id, c.value AS snapshot_json
+        `SELECT p.status, p.config_revision, p.github_repository_id, c.value AS snapshot_json${runtimeSchema ? ', s.server_id, s.revision AS server_revision' : ''}
          FROM projects p LEFT JOIN project_config c ON c.project_id = p.project_id
+         ${runtimeSchema ? 'LEFT JOIN project_resource_bindings b ON b.project_id = p.project_id LEFT JOIN execution_servers s ON s.server_id = b.execution_server_id' : ''}
          WHERE p.project_id = ?`,
       )
       .get(this.projectId) as
@@ -628,6 +650,8 @@ class SqliteTestRequestQueue implements TestRequestQueue {
           config_revision: number;
           github_repository_id: string;
           snapshot_json: string | null;
+          server_id: string | null;
+          server_revision: number | null;
         }
       | undefined;
     if (row?.status !== 'active') {
@@ -636,10 +660,25 @@ class SqliteTestRequestQueue implements TestRequestQueue {
     if (!row.snapshot_json) {
       throw new TestRequestQueueError('QUEUE_REQUEST_INVALID', '项目配置尚未完成');
     }
-    return {
+    const base = {
       configRevision: row.config_revision,
       githubRepositoryId: row.github_repository_id,
       snapshotJson: row.snapshot_json,
+    };
+    if (!runtimeSchema) return base;
+    const instance = this.database
+      .prepare("SELECT value FROM system_metadata WHERE key = 'instance_id'")
+      .get() as { value: string };
+    const files = this.database
+      .prepare(
+        'SELECT file_id AS id, revision, path, service_name AS serviceName FROM project_managed_files WHERE project_id = ? ORDER BY path',
+      )
+      .all(this.projectId);
+    return {
+      ...base,
+      executionLocationId: row.server_id ? `server:${row.server_id}` : `local:${instance.value}`,
+      executionLocationRevision: row.server_revision ?? 1,
+      managedFilesSnapshotJson: JSON.stringify(files),
     };
   }
 
@@ -659,6 +698,9 @@ interface QueueRow {
   config_revision?: number | null;
   github_repository_id?: string | null;
   config_snapshot_json?: string | null;
+  execution_location_id?: string | null;
+  execution_location_revision?: number | null;
+  managed_files_snapshot_json?: string | null;
   request_id: string;
   trigger: string;
   request: string;
@@ -818,6 +860,9 @@ function toRecord(row: QueueRow): TestRequestRecord {
     configRevision: row.config_revision ?? null,
     githubRepositoryId: row.github_repository_id ?? null,
     configSnapshotJson: row.config_snapshot_json ?? null,
+    executionLocationId: row.execution_location_id ?? null,
+    executionLocationRevision: row.execution_location_revision ?? null,
+    managedFilesSnapshotJson: row.managed_files_snapshot_json ?? null,
     requestId: row.request_id,
     trigger: row.trigger as RunTrigger,
     triggerSources: uniqueTriggers(

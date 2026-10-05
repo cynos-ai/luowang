@@ -6,7 +6,7 @@ import { useResource } from '../../app/resource';
 import { AsyncRegion } from '../../components/AsyncRegion';
 import { AppMessageFeedback } from '../../components/AppMessageProvider';
 import { ConfirmDialog } from '../../components/ConfirmDialog';
-import { Field, NumberInput, SelectBox } from '../../components/FormControls';
+import { Field, HelpLabel, NumberInput, SelectBox } from '../../components/FormControls';
 import { PageHeading } from '../../components/PageHeading';
 import { StatusLabel } from '../../components/StatusLabel';
 import type {
@@ -16,6 +16,14 @@ import type {
   ConnectionResourcesResponse,
   ProjectResourceBindings,
 } from '../../project-types';
+
+const languageOptions = [
+  { value: 'zh-CN', label: '简体中文' },
+  { value: 'zh-TW', label: '繁體中文' },
+  { value: 'en-US', label: 'English' },
+  { value: 'ja-JP', label: '日本語' },
+  { value: 'ko-KR', label: '한국어' },
+];
 import type { ProjectSettingSection } from '../../app/route';
 import { ProjectManagedFilesSettings } from './ProjectManagedFilesSettings';
 
@@ -345,24 +353,34 @@ function SettingsSection({
               }
             />
           </Field>
-          <Field label="场景维护模式">
-            <select
+          <Field label="场景维护">
+            <SelectBox
+              ariaLabel="场景维护"
               value={configuration.scenarioMode}
               disabled={disabled}
-              onChange={(event) =>
+              options={[
+                { value: 'autonomous', label: '自动维护' },
+                { value: 'add-only', label: '仅自动新增' },
+                { value: 'review-all', label: '全部人工审核' },
+              ]}
+              onChange={(scenarioMode) =>
                 onConfiguration({
                   ...configuration,
-                  scenarioMode: event.target.value as ProjectConfiguration['scenarioMode'],
+                  scenarioMode: scenarioMode as ProjectConfiguration['scenarioMode'],
                 })
               }
-            >
-              <option value="autonomous">自动维护</option>
-              <option value="add-only">仅自动新增</option>
-              <option value="review-all">全部人工审核</option>
-            </select>
+            />
           </Field>
-          <Field label="固定包含标签" hint="多个标签用逗号分隔。">
+          <Field
+            label={
+              <HelpLabel
+                label="新场景必加标签（可选）"
+                help="罗网创建或更新测试场景时，会确保包含这些标签，便于分类和筛选。多个标签用逗号分隔，例如：核心流程, 冒烟。"
+              />
+            }
+          >
             <input
+              placeholder="例如：核心流程, 冒烟"
               value={configuration.scenarioLabels.join(', ')}
               disabled={disabled}
               onChange={(event) =>
@@ -376,13 +394,20 @@ function SettingsSection({
               }
             />
           </Field>
-          <Field label="生成语言">
-            <input
+          <Field label="语言">
+            <SelectBox
+              ariaLabel="语言"
               value={configuration.language}
               disabled={disabled}
-              onChange={(event) =>
-                onConfiguration({ ...configuration, language: event.target.value })
+              options={
+                languageOptions.some((option) => option.value === configuration.language)
+                  ? languageOptions
+                  : [
+                      ...languageOptions,
+                      { value: configuration.language, label: configuration.language },
+                    ]
               }
+              onChange={(language) => onConfiguration({ ...configuration, language })}
             />
           </Field>
           <SaveButton disabled={disabled}>保存测试策略</SaveButton>
@@ -464,9 +489,19 @@ function SettingsSection({
             }
           />
         </Field>
-        {data.detail.resources.executionServerId && (
-          <p className="muted-copy">服务器已绑定；远程执行尚未启用。</p>
-        )}
+        {data.detail.resources.executionServerId &&
+          (() => {
+            const server = data.resources.executionServers.find(
+              (item) => item.id === data.detail.resources.executionServerId,
+            );
+            return (
+              <p className="muted-copy">
+                {server?.remoteExecutionEnabled
+                  ? `已验证 · 容量 ${server.capacity}`
+                  : '待完成主机指纹与 Docker/Compose 检查'}
+              </p>
+            );
+          })()}
         <form
           className="form-grid"
           onSubmit={(event) => {
@@ -474,6 +509,43 @@ function SettingsSection({
             onSaveConfiguration(sectionValue('execution', configuration));
           }}
         >
+          <Field label="运行模式">
+            <SelectBox
+              ariaLabel="运行模式"
+              disabled={disabled}
+              value={configuration.runtimeMode}
+              options={[
+                { value: 'managed', label: '罗网启动项目' },
+                { value: 'external', label: '已有测试环境' },
+                { value: 'repository-only', label: '仅仓库测试' },
+              ]}
+              onChange={(runtimeMode) =>
+                onConfiguration({
+                  ...configuration,
+                  runtimeMode: runtimeMode as ProjectConfiguration['runtimeMode'],
+                })
+              }
+            />
+          </Field>
+          {configuration.runtimeMode === 'managed' && (
+            <Field label="启动方式">
+              <SelectBox
+                ariaLabel="启动方式"
+                disabled={disabled}
+                value={configuration.startType}
+                options={[
+                  { value: 'single-container', label: '单容器' },
+                  { value: 'compose', label: 'Docker Compose' },
+                ]}
+                onChange={(startType) =>
+                  onConfiguration({
+                    ...configuration,
+                    startType: startType as ProjectConfiguration['startType'],
+                  })
+                }
+              />
+            </Field>
+          )}
           <Field label="执行 Dockerfile" hint="留空使用罗网内置执行镜像。">
             <input
               value={configuration.executionDockerfile}
@@ -483,6 +555,147 @@ function SettingsSection({
               }
             />
           </Field>
+          {configuration.runtimeMode === 'managed' &&
+            configuration.startType === 'single-container' && (
+              <>
+                <Field label="准备命令（每行一个参数）">
+                  <textarea
+                    value={configuration.runtime.prepareCommand.join('\n')}
+                    disabled={disabled}
+                    onChange={(event) =>
+                      onConfiguration({
+                        ...configuration,
+                        runtime: {
+                          ...configuration.runtime,
+                          prepareCommand: event.target.value.split('\n').filter(Boolean),
+                        },
+                      })
+                    }
+                  />
+                </Field>
+                <Field label="启动命令（每行一个参数）">
+                  <textarea
+                    value={configuration.runtime.startCommand.join('\n')}
+                    disabled={disabled}
+                    onChange={(event) =>
+                      onConfiguration({
+                        ...configuration,
+                        runtime: {
+                          ...configuration.runtime,
+                          startCommand: event.target.value.split('\n').filter(Boolean),
+                        },
+                      })
+                    }
+                  />
+                </Field>
+                <Field label="服务端口">
+                  <NumberInput
+                    ariaLabel="服务端口"
+                    min={1}
+                    max={65535}
+                    step={1}
+                    value={configuration.runtime.servicePort ?? 3000}
+                    disabled={disabled}
+                    onChange={(servicePort) =>
+                      onConfiguration({
+                        ...configuration,
+                        runtime: { ...configuration.runtime, servicePort },
+                      })
+                    }
+                  />
+                </Field>
+              </>
+            )}
+          {configuration.runtimeMode === 'managed' && configuration.startType === 'compose' && (
+            <>
+              <Field label="Compose 文件">
+                <input
+                  value={configuration.runtime.composeFile}
+                  disabled={disabled}
+                  onChange={(event) =>
+                    onConfiguration({
+                      ...configuration,
+                      runtime: { ...configuration.runtime, composeFile: event.target.value },
+                    })
+                  }
+                />
+              </Field>
+              <Field label="启用服务（逗号分隔）">
+                <input
+                  value={configuration.runtime.composeServices.join(', ')}
+                  disabled={disabled}
+                  onChange={(event) =>
+                    onConfiguration({
+                      ...configuration,
+                      runtime: {
+                        ...configuration.runtime,
+                        composeServices: event.target.value
+                          .split(',')
+                          .map((item) => item.trim())
+                          .filter(Boolean),
+                      },
+                    })
+                  }
+                />
+              </Field>
+              <Field label="应用服务">
+                <input
+                  value={configuration.runtime.applicationService}
+                  disabled={disabled}
+                  onChange={(event) =>
+                    onConfiguration({
+                      ...configuration,
+                      runtime: { ...configuration.runtime, applicationService: event.target.value },
+                    })
+                  }
+                />
+              </Field>
+              <Field label="测试命令服务">
+                <input
+                  value={configuration.runtime.commandService}
+                  disabled={disabled}
+                  onChange={(event) =>
+                    onConfiguration({
+                      ...configuration,
+                      runtime: { ...configuration.runtime, commandService: event.target.value },
+                    })
+                  }
+                />
+              </Field>
+            </>
+          )}
+          {configuration.runtimeMode === 'managed' && (
+            <>
+              <Field label="健康检查路径">
+                <input
+                  value={configuration.runtime.healthPath}
+                  disabled={disabled}
+                  onChange={(event) =>
+                    onConfiguration({
+                      ...configuration,
+                      runtime: { ...configuration.runtime, healthPath: event.target.value },
+                    })
+                  }
+                />
+              </Field>
+              <Field label="健康检查超时（秒）">
+                <NumberInput
+                  ariaLabel="健康检查超时"
+                  min={5}
+                  max={600}
+                  step={5}
+                  value={configuration.runtime.healthTimeoutSeconds}
+                  disabled={disabled}
+                  onChange={(healthTimeoutSeconds) =>
+                    onConfiguration({
+                      ...configuration,
+                      runtime: { ...configuration.runtime, healthTimeoutSeconds },
+                    })
+                  }
+                />
+              </Field>
+            </>
+          )}
           <AppLink
             className="text-link"
             to={{ name: 'project-readiness', projectId: data.detail.project.projectId }}
@@ -690,7 +903,12 @@ function sectionValue(
         testDataCleanupUrl: config.testDataCleanupUrl,
       };
     case 'execution':
-      return { executionDockerfile: config.executionDockerfile };
+      return {
+        executionDockerfile: config.executionDockerfile,
+        runtimeMode: config.runtimeMode,
+        startType: config.startType,
+        runtime: config.runtime,
+      };
     case 'automation':
       return {
         pollIntervalSeconds: config.pollIntervalSeconds,

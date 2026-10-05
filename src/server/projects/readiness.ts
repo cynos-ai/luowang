@@ -29,7 +29,7 @@ export interface ProjectReadinessDependencies {
     project: ProjectRecord,
     token: string,
   ): Promise<VerifiedGitHubRepositoryIdentity>;
-  checkDeployment(project: ProjectRecord): Promise<ReadinessCheck>;
+  checkDeployment(project: ProjectRecord, config: ProjectConfiguration): Promise<ReadinessCheck>;
   checkEnvironment(project: ProjectRecord, config: ProjectConfiguration): Promise<ReadinessCheck>;
   checkImage(project: ProjectRecord, config: ProjectConfiguration): Promise<ReadinessCheck>;
 }
@@ -109,14 +109,22 @@ export function createProjectReadinessService(input: {
       message: credentialsReady ? '测试与清理凭据配置一致' : '测试账号或清理地址与凭据未成对配置',
     });
     checks.push(
-      await safeExternalCheck('deployment', () => input.dependencies.checkDeployment(project)),
+      await safeExternalCheck('deployment', () =>
+        input.dependencies.checkDeployment(project, config),
+      ),
     );
     checks.push(
-      config.baseUrl
+      config.runtimeMode === 'external' && config.baseUrl
         ? await safeExternalCheck('environment', () =>
             input.dependencies.checkEnvironment(project, config),
           )
-        : { id: 'environment', status: 'not_configured', message: '请配置非生产测试环境 URL' },
+        : config.runtimeMode === 'external'
+          ? { id: 'environment', status: 'not_configured', message: '请配置非生产测试环境 URL' }
+          : config.runtimeMode === 'repository-only'
+            ? { id: 'environment', status: 'ok', message: '仅仓库测试不需要应用地址' }
+            : managedRuntimeReady(config)
+              ? { id: 'environment', status: 'ok', message: '应用将在 Run 中启动并生成临时地址' }
+              : { id: 'environment', status: 'not_configured', message: '请完成项目启动配置' },
     );
     checks.push(
       checks.find((item) => item.id === 'repository')?.status === 'ok'
@@ -174,6 +182,15 @@ export function createProjectReadinessService(input: {
       })();
     },
   };
+}
+
+function managedRuntimeReady(config: ProjectConfiguration): boolean {
+  return config.startType === 'single-container'
+    ? config.runtime.startCommand.length > 0 && config.runtime.servicePort !== null
+    : config.runtime.composeServices.length > 0 &&
+        Boolean(config.runtime.applicationService) &&
+        Boolean(config.runtime.commandService) &&
+        config.runtime.servicePort !== null;
 }
 
 async function safeExternalCheck(
@@ -309,13 +326,40 @@ function readinessInputFingerprint(database: Database.Database, projectId: strin
        WHERE key LIKE 'deployment:%' OR key LIKE ? ORDER BY key`,
     )
     .all(`project:${projectId}:%`);
-  const images = database
-    .prepare(
-      `SELECT target_commit, dockerfile_path, status, image_id, failure_code
-       FROM project_execution_images WHERE project_id = ? ORDER BY target_commit, dockerfile_path`,
-    )
-    .all(projectId);
+  const executionSchema = database
+    .prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='execution_image_cache'")
+    .get();
+  const images = executionSchema
+    ? database
+        .prepare(
+          `SELECT execution_location_id, execution_location_revision, target_commit,
+                  build_definition_hash, platform, status, image_id, failure_code
+           FROM execution_image_cache WHERE project_id = ?
+           ORDER BY execution_location_id, execution_location_revision, target_commit,
+                    build_definition_hash, platform`,
+        )
+        .all(projectId)
+    : database
+        .prepare(
+          `SELECT target_commit, dockerfile_path, status, image_id, failure_code
+           FROM project_execution_images WHERE project_id = ? ORDER BY target_commit, dockerfile_path`,
+        )
+        .all(projectId);
+  const binding = executionSchema
+    ? database
+        .prepare(`SELECT execution_server_id FROM project_resource_bindings WHERE project_id = ?`)
+        .get(projectId)
+    : null;
+  const server = executionSchema
+    ? database
+        .prepare(
+          `SELECT server_id, revision, capacity, health_status, host_fingerprint
+           FROM execution_servers
+           WHERE server_id = (SELECT execution_server_id FROM project_resource_bindings WHERE project_id = ?)`,
+        )
+        .get(projectId)
+    : null;
   return createHash('sha256')
-    .update(JSON.stringify([project, config, deployment, secretRows, images]))
+    .update(JSON.stringify([project, config, deployment, secretRows, binding, server, images]))
     .digest('hex');
 }

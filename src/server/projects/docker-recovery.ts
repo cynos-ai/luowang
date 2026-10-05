@@ -31,6 +31,8 @@ export async function recoverProjectDockerResources(
     '--quiet',
     '--filter',
     `label=luowang.instance-id=${instanceId}`,
+    '--filter',
+    'name=luowang-run-',
   ]);
   let removedContainers = 0;
   for (const containerId of new Set(containers.trim().split(/\s+/).filter(Boolean))) {
@@ -58,15 +60,7 @@ export async function recoverProjectDockerResources(
 
   // The state table and every pinned Run record are conservative references. Docker itself
   // refuses removal of an image still used by any container or another tag (no --force).
-  const referenced = new Set(
-    (
-      database
-        .prepare(
-          'SELECT image_id FROM project_execution_images WHERE image_id IS NOT NULL UNION SELECT image_id FROM project_run_images',
-        )
-        .all() as { image_id: string }[]
-    ).map((row) => row.image_id),
-  );
+  const referenced = referencedImageIds(database, instanceId);
   const images = await command(docker, [
     'image',
     'ls',
@@ -96,8 +90,12 @@ export async function recoverProjectDockerResources(
     }
     // Inherited Docker labels are not proof that a derived image belongs to LuoWang.
     // Only an exact tag created by our builder is eligible; dangling images stay untouched.
-    const tag = `luowang-project-${labels['luowang.project-id']}:${labels['luowang.target-commit']}`;
-    if (!details.RepoTags?.includes(tag)) {
+    const legacyTag = `luowang-project-${labels['luowang.project-id']}:${labels['luowang.target-commit']}`;
+    const composePrefix = `luowang-compose-${labels['luowang.project-id'].slice(0, 8)}:`;
+    if (
+      !details.RepoTags?.includes(legacyTag) &&
+      !details.RepoTags?.some((tag) => tag.startsWith(composePrefix))
+    ) {
       retainedImages += 1;
       continue;
     }
@@ -106,6 +104,28 @@ export async function recoverProjectDockerResources(
     else retainedImages += 1;
   }
   return { removedContainers, removedImages, retainedImages };
+}
+
+function referencedImageIds(database: Database.Database, instanceId: string): Set<string> {
+  const runtimeCache = database
+    .prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='execution_image_cache'")
+    .get();
+  const rows = runtimeCache
+    ? (database
+        .prepare(
+          `SELECT image_id FROM project_execution_images WHERE image_id IS NOT NULL
+           UNION SELECT image_id FROM project_run_images
+           UNION SELECT image_id FROM execution_image_cache
+             WHERE image_id IS NOT NULL AND execution_location_id = ?`,
+        )
+        .all(`local:${instanceId}`) as { image_id: string }[])
+    : (database
+        .prepare(
+          `SELECT image_id FROM project_execution_images WHERE image_id IS NOT NULL
+           UNION SELECT image_id FROM project_run_images`,
+        )
+        .all() as { image_id: string }[]);
+  return new Set(rows.map((row) => row.image_id));
 }
 
 async function command(docker: DockerRuntime, args: string[]): Promise<string> {

@@ -453,6 +453,7 @@ function mergeRun(runtimeRuns: RunSummary[], storedRuns: StoredRun[]): Operation
       initialization: summary.initialization ?? stored?.initialization,
       scenarioPrUrl: summary.scenarioPrUrl ?? stored?.scenarioPrUrl,
       archive: stored ? toArchiveView(stored) : null,
+      execution: null,
       scenarioResults,
       confirmedBugs,
       issues: stored?.issues.map(toIssueLink) ?? [],

@@ -6,6 +6,7 @@ export { DataTable } from './DataTable';
 export {
   ComboBox,
   Field,
+  HelpLabel,
   ModelCapabilities,
   NumberInput,
   SectionCard,

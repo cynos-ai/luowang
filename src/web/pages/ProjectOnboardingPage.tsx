@@ -6,7 +6,7 @@ import { useNavigation } from '../app/navigation';
 import { useResource } from '../app/resource';
 import { AsyncRegion } from '../components/AsyncRegion';
 import { AppMessageFeedback, useAppMessage } from '../components/AppMessageProvider';
-import { Field, SelectBox } from '../components/FormControls';
+import { Field, HelpLabel, NumberInput, SelectBox } from '../components/FormControls';
 import { PageHeading } from '../components/PageHeading';
 import { StatusLabel } from '../components/StatusLabel';
 import type {
@@ -195,7 +195,7 @@ export function ProjectOnboardingPage({
       <div className="page-body onboarding-layout">
         <AppMessageFeedback success={message} error={actionError} />
         <ol className="onboarding-steps" aria-label="项目接入步骤">
-          {['连接仓库', '配置测试', '配置环境', '准备并启用'].map((title, index) => (
+          {['连接仓库', '配置测试', '配置运行', '准备并启用'].map((title, index) => (
             <Step
               key={title}
               number={String(index + 1).padStart(2, '0')}
@@ -600,23 +600,163 @@ function EnvironmentStep({
     >
       <div className="section-number">03</div>
       <div>
-        <h2 id="environment-title">配置环境</h2>
+        <h2 id="environment-title">配置运行</h2>
         <div className="form-grid compact-form">
-          <Field
-            label={
-              <HelpLabel
-                label="测试环境地址"
-                help="被测系统的非生产网址，罗网会从这个地址开始浏览器测试。"
-              />
-            }
-          >
-            <input
-              type="url"
-              placeholder="https://staging.example.com"
-              value={configuration.baseUrl}
-              onChange={(event) => onChange({ ...configuration, baseUrl: event.target.value })}
+          <Field label="运行模式">
+            <SelectBox
+              ariaLabel="运行模式"
+              value={configuration.runtimeMode}
+              options={[
+                { value: 'managed', label: '罗网启动项目' },
+                { value: 'external', label: '已有测试环境' },
+                { value: 'repository-only', label: '仅仓库测试' },
+              ]}
+              onChange={(runtimeMode) =>
+                onChange({
+                  ...configuration,
+                  runtimeMode: runtimeMode as ProjectConfiguration['runtimeMode'],
+                })
+              }
             />
           </Field>
+          {configuration.runtimeMode === 'managed' && (
+            <Field label="启动方式">
+              <SelectBox
+                ariaLabel="启动方式"
+                value={configuration.startType}
+                options={[
+                  { value: 'single-container', label: '单容器' },
+                  { value: 'compose', label: 'Docker Compose' },
+                ]}
+                onChange={(startType) =>
+                  onChange({
+                    ...configuration,
+                    startType: startType as ProjectConfiguration['startType'],
+                  })
+                }
+              />
+            </Field>
+          )}
+          {configuration.runtimeMode === 'managed' &&
+            configuration.startType === 'single-container' && (
+              <>
+                <Field label="启动命令（每行一个参数）">
+                  <textarea
+                    value={configuration.runtime.startCommand.join('\n')}
+                    onChange={(event) =>
+                      onChange({
+                        ...configuration,
+                        runtime: {
+                          ...configuration.runtime,
+                          startCommand: event.target.value.split('\n').filter(Boolean),
+                        },
+                      })
+                    }
+                  />
+                </Field>
+                <Field label="服务端口">
+                  <NumberInput
+                    ariaLabel="服务端口"
+                    min={1}
+                    max={65535}
+                    step={1}
+                    value={configuration.runtime.servicePort ?? 3000}
+                    onChange={(servicePort) =>
+                      onChange({
+                        ...configuration,
+                        runtime: { ...configuration.runtime, servicePort },
+                      })
+                    }
+                  />
+                </Field>
+              </>
+            )}
+          {configuration.runtimeMode === 'managed' && configuration.startType === 'compose' && (
+            <>
+              <Field label="Compose 文件">
+                <input
+                  value={configuration.runtime.composeFile}
+                  onChange={(event) =>
+                    onChange({
+                      ...configuration,
+                      runtime: { ...configuration.runtime, composeFile: event.target.value },
+                    })
+                  }
+                />
+              </Field>
+              <Field label="启用服务（逗号分隔）">
+                <input
+                  value={configuration.runtime.composeServices.join(', ')}
+                  onChange={(event) =>
+                    onChange({
+                      ...configuration,
+                      runtime: {
+                        ...configuration.runtime,
+                        composeServices: event.target.value
+                          .split(',')
+                          .map((item) => item.trim())
+                          .filter(Boolean),
+                      },
+                    })
+                  }
+                />
+              </Field>
+              <Field label="应用服务">
+                <input
+                  value={configuration.runtime.applicationService}
+                  onChange={(event) =>
+                    onChange({
+                      ...configuration,
+                      runtime: { ...configuration.runtime, applicationService: event.target.value },
+                    })
+                  }
+                />
+              </Field>
+              <Field label="测试命令服务">
+                <input
+                  value={configuration.runtime.commandService}
+                  onChange={(event) =>
+                    onChange({
+                      ...configuration,
+                      runtime: { ...configuration.runtime, commandService: event.target.value },
+                    })
+                  }
+                />
+              </Field>
+              <Field label="服务端口">
+                <NumberInput
+                  ariaLabel="Compose 服务端口"
+                  min={1}
+                  max={65535}
+                  step={1}
+                  value={configuration.runtime.servicePort ?? 3000}
+                  onChange={(servicePort) =>
+                    onChange({
+                      ...configuration,
+                      runtime: { ...configuration.runtime, servicePort },
+                    })
+                  }
+                />
+              </Field>
+            </>
+          )}
+          {configuration.runtimeMode === 'external' && (
+            <Field
+              label={
+                <HelpLabel
+                  label="测试环境地址"
+                  help="被测系统的非生产网址，罗网会从这个地址开始浏览器测试。"
+                />
+              }
+            >
+              <input
+                type="url"
+                placeholder="https://staging.example.com"
+                value={configuration.baseUrl}
+                onChange={(event) => onChange({ ...configuration, baseUrl: event.target.value })}
+              />
+            </Field>
+          )}
           <Field
             label={
               <HelpLabel
@@ -634,7 +774,7 @@ function EnvironmentStep({
             />
           </Field>
           <button className="button" type="button" disabled={busy} onClick={onSaveConfiguration}>
-            保存环境配置
+            保存运行配置
           </button>
         </div>
         <div className="secret-grid">
@@ -756,15 +896,4 @@ function readinessLabel(status: ConsoleReadinessSnapshot['status']): string {
 
 function formatDate(value: string): string {
   return new Date(value).toLocaleString('zh-CN');
-}
-
-function HelpLabel({ label, help }: { label: string; help: string }) {
-  return (
-    <span className="field-label-with-help">
-      {label}
-      <span className="field-help" tabIndex={0} role="img" aria-label={help} title={help}>
-        ?
-      </span>
-    </span>
-  );
 }

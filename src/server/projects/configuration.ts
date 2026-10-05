@@ -12,6 +12,22 @@ export type ProjectConfiguration = Omit<RepositoryConfig, 'repository'> & {
   testDataCleanupUrl: string;
   /** Empty uses LuoWang's built-in executor image. */
   executionDockerfile: string;
+  runtimeMode: 'managed' | 'external' | 'repository-only';
+  startType: 'single-container' | 'compose';
+  runtime: ProjectRuntimeDefinition;
+};
+
+export type ProjectRuntimeDefinition = {
+  workingDirectory: string;
+  prepareCommand: string[];
+  startCommand: string[];
+  servicePort: number | null;
+  healthPath: string;
+  healthTimeoutSeconds: number;
+  composeFile: string;
+  composeServices: string[];
+  applicationService: string;
+  commandService: string;
 };
 
 const ALLOWED_FIELDS = new Set([
@@ -27,6 +43,9 @@ const ALLOWED_FIELDS = new Set([
   'externalDatabase',
   'testDataCleanupUrl',
   'executionDockerfile',
+  'runtimeMode',
+  'startType',
+  'runtime',
 ]);
 const TASK_SEMANTIC_FIELDS = [
   'language',
@@ -38,6 +57,9 @@ const TASK_SEMANTIC_FIELDS = [
   'externalDatabase',
   'testDataCleanupUrl',
   'executionDockerfile',
+  'runtimeMode',
+  'startType',
+  'runtime',
 ] as const;
 
 export interface ProjectConfigurationStore {
@@ -79,7 +101,21 @@ export function createProjectConfigurationStore(
         : 'zh-CN';
     const executionDockerfile = normalizeExecutionDockerfile(source.executionDockerfile);
     const testDataCleanupUrl = normalizeTestDataCleanupUrl(source.testDataCleanupUrl);
-    return { repository, config: { ...rest, language, executionDockerfile, testDataCleanupUrl } };
+    const runtimeMode = normalizeRuntimeMode(source.runtimeMode, row ? 'external' : 'managed');
+    const startType = normalizeStartType(source.startType);
+    const runtime = normalizeRuntimeDefinition(source.runtime);
+    return {
+      repository,
+      config: {
+        ...rest,
+        language,
+        executionDockerfile,
+        testDataCleanupUrl,
+        runtimeMode,
+        startType,
+        runtime,
+      },
+    };
   }
 
   return {
@@ -104,6 +140,9 @@ export function createProjectConfigurationStore(
           language: languagePatch,
           executionDockerfile: executionDockerfilePatch,
           testDataCleanupUrl: cleanupUrlPatch,
+          runtimeMode: runtimeModePatch,
+          startType: startTypePatch,
+          runtime: runtimePatch,
           ...repositoryPatch
         } = patch;
         const merged = mergeRepositoryConfiguration(
@@ -124,7 +163,25 @@ export function createProjectConfigurationStore(
         const testDataCleanupUrl = normalizeTestDataCleanupUrl(
           cleanupUrlPatch === undefined ? current.config.testDataCleanupUrl : cleanupUrlPatch,
         );
-        const config = { ...rest, language, executionDockerfile, testDataCleanupUrl };
+        const runtimeMode = normalizeRuntimeMode(
+          runtimeModePatch === undefined ? current.config.runtimeMode : runtimeModePatch,
+          current.config.runtimeMode,
+        );
+        const startType = normalizeStartType(
+          startTypePatch === undefined ? current.config.startType : startTypePatch,
+        );
+        const runtime = normalizeRuntimeDefinition(
+          runtimePatch === undefined ? current.config.runtime : runtimePatch,
+        );
+        const config = {
+          ...rest,
+          language,
+          executionDockerfile,
+          testDataCleanupUrl,
+          runtimeMode,
+          startType,
+          runtime,
+        };
         const semanticChange = TASK_SEMANTIC_FIELDS.some(
           (key) => JSON.stringify(config[key]) !== JSON.stringify(current.config[key]),
         );
@@ -157,6 +214,120 @@ export function createProjectConfigurationStore(
       })();
     },
   };
+}
+
+export function normalizeRuntimeMode(
+  value: unknown,
+  fallback: ProjectConfiguration['runtimeMode'] = 'managed',
+): ProjectConfiguration['runtimeMode'] {
+  if (value === undefined) return fallback;
+  if (value !== 'managed' && value !== 'external' && value !== 'repository-only')
+    throw new ConfigurationError('项目运行模式无效');
+  return value;
+}
+
+export function normalizeStartType(value: unknown): ProjectConfiguration['startType'] {
+  if (value === undefined) return 'single-container';
+  if (value !== 'single-container' && value !== 'compose')
+    throw new ConfigurationError('项目启动方式无效');
+  return value;
+}
+
+export function normalizeRuntimeDefinition(value: unknown): ProjectRuntimeDefinition {
+  const source =
+    value && typeof value === 'object' && !Array.isArray(value)
+      ? (value as Record<string, unknown>)
+      : {};
+  const path = (input: unknown, fallback: string) => {
+    const result = input === undefined ? fallback : input;
+    if (
+      typeof result !== 'string' ||
+      result.length > 255 ||
+      result.includes('\\') ||
+      result.startsWith('/') ||
+      result.split('/').some((part) => part === '..')
+    )
+      throw new ConfigurationError('运行路径无效');
+    return result;
+  };
+  const command = (input: unknown) => {
+    if (input === undefined) return [];
+    if (
+      !Array.isArray(input) ||
+      input.length > 64 ||
+      input.some(
+        (item) =>
+          typeof item !== 'string' ||
+          item.length === 0 ||
+          item.length > 4096 ||
+          item.includes('\0'),
+      )
+    )
+      throw new ConfigurationError('运行命令必须是参数数组');
+    return input as string[];
+  };
+  const services = source.composeServices === undefined ? [] : source.composeServices;
+  if (
+    !Array.isArray(services) ||
+    services.length > 32 ||
+    services.some(
+      (item) => typeof item !== 'string' || !/^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,62}$/.test(item),
+    )
+  )
+    throw new ConfigurationError('Compose 服务列表无效');
+  if (new Set(services).size !== services.length)
+    throw new ConfigurationError('Compose 服务列表不能重复');
+  const servicePort =
+    source.servicePort === undefined || source.servicePort === null ? null : source.servicePort;
+  if (
+    servicePort !== null &&
+    (!Number.isInteger(servicePort) ||
+      (servicePort as number) < 1 ||
+      (servicePort as number) > 65535)
+  )
+    throw new ConfigurationError('服务端口无效');
+  const timeout = source.healthTimeoutSeconds ?? 60;
+  if (!Number.isInteger(timeout) || (timeout as number) < 5 || (timeout as number) > 600)
+    throw new ConfigurationError('健康检查超时无效');
+  const applicationService = serviceName(source.applicationService);
+  const commandService = serviceName(source.commandService);
+  if (
+    (applicationService && !services.includes(applicationService)) ||
+    (commandService && !services.includes(commandService))
+  ) {
+    throw new ConfigurationError('应用和测试服务必须包含在 Compose 服务列表中');
+  }
+  return {
+    workingDirectory: path(source.workingDirectory, '.'),
+    prepareCommand: command(source.prepareCommand),
+    startCommand: command(source.startCommand),
+    servicePort: servicePort as number | null,
+    healthPath: httpPath(source.healthPath),
+    healthTimeoutSeconds: timeout as number,
+    composeFile: path(source.composeFile, 'compose.yml'),
+    composeServices: services as string[],
+    applicationService,
+    commandService,
+  };
+}
+
+function httpPath(value: unknown): string {
+  const path = value ?? '/';
+  if (
+    typeof path !== 'string' ||
+    !path.startsWith('/') ||
+    path.startsWith('//') ||
+    path.length > 512 ||
+    /[?#\\\s]/.test(path)
+  )
+    throw new ConfigurationError('健康检查路径无效');
+  return path;
+}
+function serviceName(value: unknown): string {
+  if (value === undefined || value === '') return '';
+  if (typeof value !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9_.-]{0,62}$/.test(value))
+    throw new ConfigurationError('Compose 服务名无效');
+  return value;
 }
 
 export function normalizeExecutionDockerfile(value: unknown): string {

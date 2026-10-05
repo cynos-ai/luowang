@@ -79,6 +79,7 @@ export function createProjectBackgroundScheduler(input: {
   const indexers = new Map<string, Pick<RepositoryIndexer, 'sync'>>();
   let timer: NodeJS.Timeout | undefined;
   let activeTick: Promise<void> | null = null;
+  let lastResourceRecoveryAt = 0;
 
   async function processProject(projectId: string, at: Date): Promise<void> {
     const state = createProjectAutomationStateStore(input.database, projectId);
@@ -175,6 +176,17 @@ export function createProjectBackgroundScheduler(input: {
             'project background archive retry failed',
           ),
         );
+      if (input.dispatcher.reconcileResources && at.getTime() - lastResourceRecoveryAt >= 60_000) {
+        lastResourceRecoveryAt = at.getTime();
+        void input.dispatcher
+          .reconcileResources()
+          .catch((error: unknown) =>
+            input.logger?.warn(
+              { errorName: error instanceof Error ? error.name : 'UnknownError' },
+              'execution resource reconciliation failed',
+            ),
+          );
+      }
       void input.dispatcher
         .drain()
         .catch((error: unknown) =>

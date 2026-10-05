@@ -23,7 +23,17 @@ describe('offline multi-project upgrade command', () => {
       runMigrations(database);
       await runUpgradeCli(['backup', join(root, 'legacy')], environment);
       await runUpgradeCli(['upgrade-empty', join(root, 'legacy')], environment);
-      database.exec(`DROP TABLE active_run_snapshots;
+      database.exec(`DROP TRIGGER test_request_queue_runtime_context_insert;
+        DROP TRIGGER test_request_queue_runtime_context_update;
+        DROP TABLE run_execution_context;
+        DROP TABLE execution_location_checks;
+        DROP TABLE execution_resource_ledger;
+        DROP TABLE execution_image_cache;
+        ALTER TABLE test_request_queue DROP COLUMN execution_location_id;
+        ALTER TABLE test_request_queue DROP COLUMN execution_location_revision;
+        ALTER TABLE test_request_queue DROP COLUMN managed_files_snapshot_json;
+        DELETE FROM schema_migrations WHERE version = '0022_execution_runtime';
+        DROP TABLE active_run_snapshots;
         DROP TABLE project_managed_files;
         DROP TABLE project_resource_bindings;
         DROP TABLE execution_servers;

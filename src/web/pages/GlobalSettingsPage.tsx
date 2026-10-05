@@ -17,6 +17,7 @@ import { useAppMessage } from '../components/AppMessageProvider';
 import {
   ComboBox,
   Field,
+  HelpLabel,
   ModelCapabilities,
   NumberInput,
   SelectBox,
@@ -1065,22 +1066,6 @@ function SettingsSubsection({ title, text }: { title: string; text: string }) {
       <h3>{title}</h3>
       <p>{text}</p>
     </div>
-  );
-}
-function HelpLabel({ label, help }: { label: string; help: string }) {
-  return (
-    <span className="field-label-with-help">
-      {label}
-      <span
-        className="field-help"
-        tabIndex={0}
-        role="img"
-        aria-label={`${label}说明：${help}`}
-        title={help}
-      >
-        ?
-      </span>
-    </span>
   );
 }
 function SectionTitle({ title, text }: { title: string; text?: string }) {

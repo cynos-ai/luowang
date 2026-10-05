@@ -28,6 +28,23 @@ export function Field({
   );
 }
 
+export function HelpLabel({ label, help }: { label: string; help: string }) {
+  return (
+    <span className="field-label-with-help">
+      {label}
+      <span
+        className="field-help"
+        tabIndex={0}
+        role="img"
+        aria-label={`${label}说明：${help}`}
+        title={help}
+      >
+        ?
+      </span>
+    </span>
+  );
+}
+
 export function NumberInput({
   value,
   min,

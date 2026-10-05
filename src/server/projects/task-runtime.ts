@@ -4,7 +4,15 @@ import type { ConfigurationStore } from '../configuration.js';
 import { mergeRepositoryConfiguration, normalizeRepository } from '../configuration.js';
 import type { TestRequestRecord } from '../automation/queue.js';
 import type { HarnessConfig } from '../../shared/types.js';
-import { normalizeExecutionDockerfile, normalizeTestDataCleanupUrl } from './configuration.js';
+import {
+  normalizeExecutionDockerfile,
+  normalizeRuntimeDefinition,
+  normalizeRuntimeMode,
+  normalizeStartType,
+  normalizeTestDataCleanupUrl,
+  type ProjectRuntimeDefinition,
+  type ProjectConfiguration,
+} from './configuration.js';
 import type { ProjectStore } from './store.js';
 
 const SNAPSHOT_FIELDS = new Set([
@@ -20,13 +28,23 @@ const SNAPSHOT_FIELDS = new Set([
   'baseUrl',
   'externalDatabase',
   'testDataCleanupUrl',
+  'runtimeMode',
+  'startType',
+  'runtime',
 ]);
 
 export interface ProjectTaskRuntime {
+  queueId: number;
   projectId: string;
   configRevision: number;
   executionDockerfile: string;
   testDataCleanupUrl: string;
+  executionLocationId: string;
+  executionLocationRevision: number;
+  managedFiles: Array<{ id: string; revision: number; path: string; serviceName: string | null }>;
+  runtimeMode: ProjectConfiguration['runtimeMode'];
+  startType: ProjectConfiguration['startType'];
+  runtime: ProjectRuntimeDefinition;
   configuration: ConfigurationStore;
 }
 
@@ -34,8 +52,19 @@ export interface ProjectTaskRuntime {
 export function createProjectTaskRuntime(
   task: Pick<
     TestRequestRecord,
-    'projectId' | 'configRevision' | 'githubRepositoryId' | 'configSnapshotJson' | 'status'
-  >,
+    | 'queueId'
+    | 'projectId'
+    | 'configRevision'
+    | 'githubRepositoryId'
+    | 'configSnapshotJson'
+    | 'status'
+  > &
+    Partial<
+      Pick<
+        TestRequestRecord,
+        'executionLocationId' | 'executionLocationRevision' | 'managedFilesSnapshotJson'
+      >
+    >,
   projects: ProjectStore,
   deployment: ConfigurationStore,
   paths: { repoRoot: string; reportRoot: string },
@@ -75,16 +104,49 @@ export function createProjectTaskRuntime(
   }
   const executionDockerfile = normalizeExecutionDockerfile(snapshot.executionDockerfile);
   const testDataCleanupUrl = normalizeTestDataCleanupUrl(snapshot.testDataCleanupUrl);
+  const runtimeMode = normalizeRuntimeMode(snapshot.runtimeMode, 'external');
+  const startType = normalizeStartType(snapshot.startType);
+  const runtime = normalizeRuntimeDefinition(snapshot.runtime);
+  const executionLocationId = task.executionLocationId ?? 'local:legacy';
+  const executionLocationRevision = task.executionLocationRevision ?? 1;
+  if (!Number.isSafeInteger(executionLocationRevision) || executionLocationRevision < 1)
+    throw new Error('任务执行位置快照无效');
+  let managedFiles: ProjectTaskRuntime['managedFiles'];
+  try {
+    managedFiles = JSON.parse(
+      task.managedFilesSnapshotJson ?? '[]',
+    ) as ProjectTaskRuntime['managedFiles'];
+  } catch {
+    throw new Error('任务受控文件快照无法解析');
+  }
+  if (
+    !Array.isArray(managedFiles) ||
+    managedFiles.some(
+      (file) =>
+        !file ||
+        typeof file.id !== 'string' ||
+        !Number.isSafeInteger(file.revision) ||
+        typeof file.path !== 'string' ||
+        (file.serviceName !== null && typeof file.serviceName !== 'string'),
+    )
+  )
+    throw new Error('任务受控文件快照无效');
   const repositoryUrl = `https://github.com/${project.repositoryOwner}/${project.repositoryName}`;
   const {
     language: _language,
     executionDockerfile: _dockerfile,
     testDataCleanupUrl: _cleanupUrl,
+    runtimeMode: _runtimeMode,
+    startType: _startType,
+    runtime: _runtime,
     ...repositoryFields
   } = snapshot;
   void _language;
   void _dockerfile;
   void _cleanupUrl;
+  void _runtimeMode;
+  void _startType;
+  void _runtime;
   const repository = mergeRepositoryConfiguration(
     normalizeRepository({ repository: repositoryUrl }),
     repositoryFields,
@@ -103,10 +165,17 @@ export function createProjectTaskRuntime(
     throw new Error('任务运行时配置只读');
   };
   return {
+    queueId: task.queueId,
     projectId: project.projectId,
     configRevision: task.configRevision!,
     executionDockerfile,
     testDataCleanupUrl,
+    executionLocationId,
+    executionLocationRevision,
+    managedFiles,
+    runtimeMode,
+    startType,
+    runtime,
     configuration: {
       getHarness: () => structuredClone(harness),
       getRepository: () => structuredClone(repository),

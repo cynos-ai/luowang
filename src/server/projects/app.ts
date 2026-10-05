@@ -66,6 +66,7 @@ import { inspectProjectResources, type ProjectResourceInventory } from './resour
 import { registerProjectRunRoutes } from './run-routes.js';
 import { assertProjectSchema } from './schema-mode.js';
 import { CONNECTION_RESOURCES_VERSION } from '../db/migrations/0021-connection-resources.js';
+import { EXECUTION_RUNTIME_VERSION } from '../db/migrations/0022-execution-runtime.js';
 import { createConnectionResourceService } from './connection-resources.js';
 import { createProjectStore } from './store.js';
 import {
@@ -104,6 +105,13 @@ export async function createProjectApp(options: ProjectAppOptions) {
     throw new Error(
       '多项目数据库需要离线升级：db:multi-project upgrade-connections <new-backup-dir>',
     );
+  }
+  if (
+    !database
+      .prepare('SELECT 1 FROM schema_migrations WHERE version = ?')
+      .get(EXECUTION_RUNTIME_VERSION)
+  ) {
+    throw new Error('多项目数据库需要离线升级：db:multi-project upgrade-runtime <new-backup-dir>');
   }
   const auth =
     options.auth ?? (await createAuthService(database, options.config.initialAdminPassword));

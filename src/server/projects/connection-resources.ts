@@ -23,7 +23,14 @@ export type ExecutionServer = {
   authType: 'password' | 'private-key';
   credentialConfigured: boolean;
   passphraseConfigured: boolean;
-  remoteExecutionEnabled: false;
+  revision: number;
+  capacity: number;
+  hostFingerprint: string | null;
+  fingerprintConfirmedAt: string | null;
+  healthStatus: 'unverified' | 'ready' | 'unavailable' | 'changed';
+  capabilities: Record<string, unknown> | null;
+  checkedAt: string | null;
+  remoteExecutionEnabled: boolean;
   createdAt: string;
   updatedAt: string;
 };
@@ -39,7 +46,9 @@ export type ProjectManagedFile = {
   configured: boolean;
   createdAt: string;
   updatedAt: string;
-  runtimeInjectionEnabled: false;
+  revision: number;
+  serviceName: string | null;
+  runtimeInjectionEnabled: boolean;
 };
 
 export interface ConnectionResourceService {
@@ -51,17 +60,25 @@ export interface ConnectionResourceService {
   createExecutionServer(input: Record<string, unknown>): ExecutionServer;
   updateExecutionServer(id: string, input: Record<string, unknown>): ExecutionServer;
   deleteExecutionServer(id: string): void;
+  confirmExecutionServerFingerprint(id: string, fingerprint: unknown): ExecutionServer;
+  recordExecutionServerCheck(
+    id: string,
+    input: { fingerprint: unknown; capabilities: unknown },
+  ): ExecutionServer;
+  executionServerConnection(
+    id: string,
+  ): ExecutionServer & { password?: string; privateKey?: string; privateKeyPassphrase?: string };
   bindings(projectId: string): ProjectResourceBindings;
   bindProject(projectId: string, patch: Partial<ProjectResourceBindings>): ProjectResourceBindings;
   listProjectFiles(projectId: string): ProjectManagedFile[];
   createProjectFile(
     projectId: string,
-    input: { path: unknown; content: unknown },
+    input: { path: unknown; content: unknown; serviceName?: unknown },
   ): ProjectManagedFile;
   updateProjectFile(
     projectId: string,
     fileId: string,
-    input: { path?: unknown; content?: unknown },
+    input: { path?: unknown; content?: unknown; serviceName?: unknown },
   ): ProjectManagedFile;
   deleteProjectFile(projectId: string, fileId: string): void;
 }
@@ -103,6 +120,22 @@ export function createConnectionResourceService(input: {
       .get(resourceId) as { count: number };
     if (pending.count > 0) {
       throw new ConfigurationError(`该连接资源被 ${pending.count} 个待处理请求使用，暂时不能修改`);
+    }
+    if (
+      kind === 'server' &&
+      input.database
+        .prepare(
+          "SELECT 1 FROM sqlite_master WHERE type='table' AND name='execution_resource_ledger'",
+        )
+        .get()
+    ) {
+      const unresolved = input.database
+        .prepare(
+          "SELECT count(*) AS count FROM execution_resource_ledger WHERE execution_location_id = ? AND state <> 'released'",
+        )
+        .get(`server:${resourceId}`) as { count: number };
+      if (unresolved.count > 0)
+        throw new ConfigurationError(`该服务器仍有 ${unresolved.count} 项执行资源尚未核清`);
     }
   }
 
@@ -230,8 +263,8 @@ export function createConnectionResourceService(input: {
           input.database
             .prepare(
               `INSERT INTO execution_servers
-                 (server_id, name, host, port, username, auth_type, created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+                 (server_id, name, host, port, username, auth_type, capacity, created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             )
             .run(
               serverId,
@@ -240,6 +273,7 @@ export function createConnectionResourceService(input: {
               normalized.port,
               normalized.username,
               normalized.authType,
+              normalized.capacity,
               timestamp,
               timestamp,
             );
@@ -261,7 +295,8 @@ export function createConnectionResourceService(input: {
           input.database
             .prepare(
               `UPDATE execution_servers SET name = ?, host = ?, port = ?, username = ?,
-                 auth_type = ?, updated_at = ? WHERE server_id = ?`,
+                 auth_type = ?, capacity = ?, revision = revision + 1, health_status = 'unverified',
+                 capabilities_json = NULL, checked_at = NULL, updated_at = ? WHERE server_id = ?`,
             )
             .run(
               normalized.name,
@@ -269,6 +304,7 @@ export function createConnectionResourceService(input: {
               normalized.port,
               normalized.username,
               normalized.authType,
+              normalized.capacity,
               timestamp,
               serverId,
             );
@@ -286,6 +322,48 @@ export function createConnectionResourceService(input: {
         throw normalizeUniqueError(error, '服务器名称已存在');
       }
       return requireExecutionServer(serverId);
+    },
+
+    confirmExecutionServerFingerprint(serverId, value) {
+      requireExecutionServer(serverId);
+      assertResourceMutable('server', serverId);
+      const fingerprint = sshFingerprint(value);
+      input.database
+        .prepare(
+          `UPDATE execution_servers SET host_fingerprint = ?, fingerprint_confirmed_at = ?,
+        health_status = 'unverified', revision = revision + 1, updated_at = ? WHERE server_id = ?`,
+        )
+        .run(fingerprint, now(), now(), serverId);
+      return requireExecutionServer(serverId);
+    },
+
+    recordExecutionServerCheck(serverId, value) {
+      const current = requireExecutionServer(serverId);
+      const fingerprint = sshFingerprint(value.fingerprint);
+      const capabilities = executionCapabilities(value.capabilities);
+      const status = !current.hostFingerprint
+        ? 'unverified'
+        : current.hostFingerprint === fingerprint
+          ? 'ready'
+          : 'changed';
+      const timestamp = now();
+      input.database
+        .prepare(
+          `UPDATE execution_servers SET health_status = ?, capabilities_json = ?, checked_at = ?, updated_at = ? WHERE server_id = ?`,
+        )
+        .run(status, JSON.stringify(capabilities), timestamp, timestamp, serverId);
+      return requireExecutionServer(serverId);
+    },
+
+    executionServerConnection(serverId) {
+      const server = requireExecutionServer(serverId);
+      const store = input.secrets.resource('execution-server', serverId);
+      return {
+        ...server,
+        password: store.get('password'),
+        privateKey: store.get('privateKey'),
+        privateKeyPassphrase: store.get('privateKeyPassphrase'),
+      };
     },
 
     deleteExecutionServer(serverId) {
@@ -354,15 +432,17 @@ export function createConnectionResourceService(input: {
       const fileId = id();
       const path = managedFilePath(value.path);
       const content = managedFileContent(value.content);
+      const serviceName = managedFileService(value.serviceName);
+      assertManagedFileService(input.database, projectId, serviceName);
       const timestamp = now();
       try {
         input.database.transaction(() => {
           input.database
             .prepare(
               `INSERT INTO project_managed_files
-                 (file_id, project_id, path, created_at, updated_at) VALUES (?, ?, ?, ?, ?)`,
+                 (file_id, project_id, path, service_name, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`,
             )
-            .run(fileId, projectId, path, timestamp, timestamp);
+            .run(fileId, projectId, path, serviceName, timestamp, timestamp);
           input.secrets.resource('project-file', fileId).set('content', content);
         })();
       } catch (error) {
@@ -374,18 +454,27 @@ export function createConnectionResourceService(input: {
     updateProjectFile(projectId, fileId, value) {
       const current = requireProjectFile(projectId, fileId);
       assertProjectIdle(input.database, projectId);
-      if (value.path === undefined && value.content === undefined) {
+      if (
+        value.path === undefined &&
+        value.content === undefined &&
+        value.serviceName === undefined
+      ) {
         throw new ConfigurationError('没有需要更新的配置文件内容');
       }
       const path = value.path === undefined ? current.path : managedFilePath(value.path);
+      const serviceName =
+        value.serviceName === undefined
+          ? current.serviceName
+          : managedFileService(value.serviceName);
+      assertManagedFileService(input.database, projectId, serviceName);
       const timestamp = now();
       try {
         input.database.transaction(() => {
           input.database
             .prepare(
-              'UPDATE project_managed_files SET path = ?, updated_at = ? WHERE project_id = ? AND file_id = ?',
+              'UPDATE project_managed_files SET path = ?, service_name = ?, revision = revision + 1, updated_at = ? WHERE project_id = ? AND file_id = ?',
             )
-            .run(path, timestamp, projectId, fileId);
+            .run(path, serviceName, timestamp, projectId, fileId);
           if (value.content !== undefined) {
             input.secrets
               .resource('project-file', fileId)
@@ -424,6 +513,13 @@ type ExecutionServerRow = {
   port: number;
   username: string;
   auth_type: 'password' | 'private-key';
+  revision: number;
+  capacity: number;
+  host_fingerprint: string | null;
+  fingerprint_confirmed_at: string | null;
+  health_status: ExecutionServer['healthStatus'];
+  capabilities_json: string | null;
+  checked_at: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -435,6 +531,8 @@ type ProjectFileRow = {
   file_id: string;
   project_id: string;
   path: string;
+  revision: number;
+  service_name: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -460,7 +558,16 @@ function executionServer(row: ExecutionServerRow, secrets: ScopedSecretStore): E
     authType: row.auth_type,
     credentialConfigured: store.has(row.auth_type === 'password' ? 'password' : 'privateKey'),
     passphraseConfigured: store.has('privateKeyPassphrase'),
-    remoteExecutionEnabled: false,
+    revision: row.revision,
+    capacity: row.capacity,
+    hostFingerprint: row.host_fingerprint,
+    fingerprintConfirmedAt: row.fingerprint_confirmed_at,
+    healthStatus: row.health_status,
+    capabilities: row.capabilities_json
+      ? (JSON.parse(row.capabilities_json) as Record<string, unknown>)
+      : null,
+    checkedAt: row.checked_at,
+    remoteExecutionEnabled: row.health_status === 'ready' && Boolean(row.host_fingerprint),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -471,9 +578,11 @@ function projectFile(row: ProjectFileRow, secrets: ScopedSecretStore): ProjectMa
     id: row.file_id,
     path: row.path,
     configured: secrets.resource('project-file', row.file_id).has('content'),
+    revision: row.revision,
+    serviceName: row.service_name,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
-    runtimeInjectionEnabled: false,
+    runtimeInjectionEnabled: true,
   };
 }
 
@@ -487,6 +596,7 @@ function normalizeServer(value: Record<string, unknown>, current: ExecutionServe
     'password',
     'privateKey',
     'privateKeyPassphrase',
+    'capacity',
   ]);
   if (Object.keys(value).some((key) => !allowed.has(key))) {
     throw new ConfigurationError('服务器配置包含未知字段');
@@ -509,7 +619,62 @@ function normalizeServer(value: Record<string, unknown>, current: ExecutionServe
     privateKey: optionalSecret(value.privateKey, 'SSH 私钥'),
     privateKeyPassphrase: optionalSecret(value.privateKeyPassphrase, '私钥口令'),
     authChanged: Boolean(current && current.authType !== authType),
+    capacity: serverCapacity(value.capacity === undefined ? current?.capacity : value.capacity),
   };
+}
+
+function serverCapacity(value: unknown): number {
+  const capacity = value ?? 1;
+  if (!Number.isInteger(capacity) || (capacity as number) < 1 || (capacity as number) > 64)
+    throw new ConfigurationError('服务器容量必须是 1–64 的整数');
+  return capacity as number;
+}
+
+function sshFingerprint(value: unknown): string {
+  if (typeof value !== 'string' || !/^SHA256:[A-Za-z0-9+/]{20,100}={0,2}$/.test(value))
+    throw new ConfigurationError('SSH 主机指纹无效');
+  return value;
+}
+
+function executionCapabilities(value: unknown): Record<string, unknown> {
+  if (!value || typeof value !== 'object' || Array.isArray(value))
+    throw new ConfigurationError('服务器能力检查结果无效');
+  const encoded = JSON.stringify(value);
+  if (encoded.length > 32_768) throw new ConfigurationError('服务器能力检查结果过大');
+  return value as Record<string, unknown>;
+}
+
+function managedFileService(value: unknown): string | null {
+  if (value === undefined || value === null || value === '') return null;
+  if (typeof value !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9_.-]{0,62}$/.test(value))
+    throw new ConfigurationError('配置文件目标服务无效');
+  return value;
+}
+
+function assertManagedFileService(
+  database: Database.Database,
+  projectId: string,
+  serviceName: string | null,
+): void {
+  if (serviceName === null) return;
+  const row = database
+    .prepare('SELECT value FROM project_config WHERE project_id = ?')
+    .get(projectId) as { value: string } | undefined;
+  try {
+    const config = JSON.parse(row?.value ?? '{}') as {
+      startType?: unknown;
+      runtime?: { composeServices?: unknown };
+    };
+    if (
+      config.startType !== 'compose' ||
+      !Array.isArray(config.runtime?.composeServices) ||
+      !config.runtime.composeServices.includes(serviceName)
+    ) {
+      throw new Error();
+    }
+  } catch {
+    throw new ConfigurationError('配置文件目标服务不在项目启用的 Compose 服务中');
+  }
 }
 
 function writeServerSecrets(
@@ -638,6 +803,23 @@ function assertProjectIdle(database: Database.Database, projectId: string): void
     .get(projectId) as { count: number };
   if (pending.count > 0) {
     throw new ConfigurationError(`项目仍有 ${pending.count} 个待处理请求，不能切换连接资源`);
+  }
+  if (
+    database
+      .prepare(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='execution_resource_ledger'",
+      )
+      .get()
+  ) {
+    const unresolved = database
+      .prepare(
+        "SELECT count(*) AS count FROM execution_resource_ledger WHERE project_id = ? AND state <> 'released'",
+      )
+      .get(projectId) as { count: number };
+    if (unresolved.count > 0)
+      throw new ConfigurationError(
+        `项目仍有 ${unresolved.count} 项执行资源尚未核清，不能切换连接资源`,
+      );
   }
 }
 

@@ -15,6 +15,20 @@ export type ProjectConfiguration = Omit<RepositoryConfig, 'repository'> & {
   language: string;
   testDataCleanupUrl: string;
   executionDockerfile: string;
+  runtimeMode: 'managed' | 'external' | 'repository-only';
+  startType: 'single-container' | 'compose';
+  runtime: {
+    workingDirectory: string;
+    prepareCommand: string[];
+    startCommand: string[];
+    servicePort: number | null;
+    healthPath: string;
+    healthTimeoutSeconds: number;
+    composeFile: string;
+    composeServices: string[];
+    applicationService: string;
+    commandService: string;
+  };
 };
 
 export type ProjectSecret = 'gitToken' | 'testUsername' | 'testPassword' | 'testDataCleanupToken';
@@ -44,7 +58,14 @@ export type ExecutionServer = {
   authType: 'password' | 'private-key';
   credentialConfigured: boolean;
   passphraseConfigured: boolean;
-  remoteExecutionEnabled: false;
+  revision: number;
+  capacity: number;
+  hostFingerprint: string | null;
+  fingerprintConfirmedAt: string | null;
+  healthStatus: 'unverified' | 'ready' | 'unavailable' | 'changed';
+  capabilities: Record<string, unknown> | null;
+  checkedAt: string | null;
+  remoteExecutionEnabled: boolean;
   createdAt: string;
   updatedAt: string;
 };
@@ -65,5 +86,7 @@ export type ProjectManagedFile = {
   configured: boolean;
   createdAt: string;
   updatedAt: string;
-  runtimeInjectionEnabled: false;
+  revision: number;
+  serviceName: string | null;
+  runtimeInjectionEnabled: boolean;
 };

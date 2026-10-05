@@ -3,6 +3,7 @@ ARG NPM_REGISTRY=https://registry.npmmirror.com
 ARG PLAYWRIGHT_DOWNLOAD_HOST=https://registry.npmmirror.com/-/binary/playwright
 ARG DEBIAN_MIRROR=http://mirrors.aliyun.com/debian
 ARG DEBIAN_SECURITY_MIRROR=http://mirrors.aliyun.com/debian-security
+ARG COMPOSE_VERSION=2.39.2
 
 FROM ${NODE_IMAGE} AS dependencies
 
@@ -26,6 +27,31 @@ COPY scripts/patch-playwright-screenshot-guard.mjs ./scripts/patch-playwright-sc
 RUN npm ci --registry=${NPM_REGISTRY} \
   && node scripts/patch-playwright-request-headers.mjs
 
+FROM dependencies AS docker-client
+
+ARG DEBIAN_MIRROR
+ARG DEBIAN_SECURITY_MIRROR
+ARG TARGETARCH
+ARG COMPOSE_VERSION
+
+USER root
+
+RUN apt-get update \
+  && apt-get install --no-install-recommends -y docker.io \
+  && rm -rf /var/lib/apt/lists/* \
+  && case "${TARGETARCH}" in \
+      amd64) compose_arch=x86_64; compose_sha=a55a8cd4ef103aac282812554e531aac8df7e914a287ee81e14d695556a22902 ;; \
+      arm64) compose_arch=aarch64; compose_sha=54488fffb60782f3c8787a48b95ed15f49f5a3a85f4105304bd46db5edd9db61 ;; \
+      *) echo "Unsupported Compose architecture: ${TARGETARCH}" >&2; exit 1 ;; \
+    esac \
+  && mkdir -p /usr/local/lib/docker/cli-plugins \
+  && node -e "fetch(process.argv[1]).then(r => { if (!r.ok) throw new Error('download failed: ' + r.status); return r.arrayBuffer(); }).then(b => require('node:fs').writeFileSync(process.argv[2], Buffer.from(b)))" \
+    "https://github.com/docker/compose/releases/download/v${COMPOSE_VERSION}/docker-compose-linux-${compose_arch}" \
+    /usr/local/lib/docker/cli-plugins/docker-compose \
+  && echo "${compose_sha}  /usr/local/lib/docker/cli-plugins/docker-compose" | sha256sum -c - \
+  && chmod 0755 /usr/local/lib/docker/cli-plugins/docker-compose \
+  && docker compose version
+
 FROM dependencies AS browsers
 
 ARG PLAYWRIGHT_DOWNLOAD_HOST
@@ -38,12 +64,15 @@ RUN PLAYWRIGHT_DOWNLOAD_HOST="${PLAYWRIGHT_DOWNLOAD_HOST}" \
 
 FROM browsers AS quality
 
+COPY --from=docker-client /usr/bin/docker /usr/bin/docker
+COPY --from=docker-client /usr/local/lib/docker/cli-plugins/docker-compose /usr/local/lib/docker/cli-plugins/docker-compose
 COPY --chown=node:node . .
 RUN chown node:node /app
 
 USER node
 
-RUN npm run verify:browser
+RUN docker compose version \
+  && npm run verify:browser
 
 CMD ["npm", "run", "test:e2e"]
 
@@ -76,6 +105,8 @@ RUN sed -i \
   && rm -rf /var/lib/apt/lists/* \
   && mkdir -p /data \
   && chown node:node /data
+
+COPY --from=docker-client /usr/local/lib/docker/cli-plugins/docker-compose /usr/local/lib/docker/cli-plugins/docker-compose
 
 COPY --from=build --chown=node:node /app/package.json /app/package-lock.json ./
 COPY --from=build --chown=node:node /app/node_modules ./node_modules

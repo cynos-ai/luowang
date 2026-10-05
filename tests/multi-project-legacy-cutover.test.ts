@@ -360,6 +360,7 @@ describe('offline legacy project cutover', () => {
     const database = new Database(databasePath);
     try {
       runMigrations(database);
+      ensureSystemMetadata(database, { appVersion: '0.6.0' });
       database
         .prepare('INSERT INTO app_config (key, value, updated_at) VALUES (?, ?, ?)')
         .run('repository', '{"repository":"https://github.com/example/old"}', '2026-01-01');
@@ -442,6 +443,7 @@ describe('offline legacy project cutover', () => {
     const database = new Database(databasePath);
     try {
       runMigrations(database);
+      ensureSystemMetadata(database, { appVersion: '0.6.0' });
       database
         .prepare('INSERT INTO app_config (key, value, updated_at) VALUES (?, ?, ?)')
         .run('repository', '{"repository":"https://github.com/example/old"}', '2026-01-01');

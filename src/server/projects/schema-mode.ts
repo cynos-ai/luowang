@@ -1,5 +1,6 @@
 import { RUN_TELEMETRY_VERSION } from '../db/migrations/0020-run-telemetry.js';
 import { CONNECTION_RESOURCES_VERSION } from '../db/migrations/0021-connection-resources.js';
+import { EXECUTION_RUNTIME_VERSION } from '../db/migrations/0022-execution-runtime.js';
 import type Database from 'better-sqlite3';
 import { RUN_STOP_VERSION } from '../db/migrations/0018-run-stop.js';
 import { RUN_FOLLOWUP_VERSION } from '../db/migrations/0019-run-followup.js';
@@ -64,7 +65,9 @@ export function assertProjectSchema(database: Database.Database): void {
         (versions.has(RUN_STOP_VERSION) ? 1 : 0) +
         (versions.has(RUN_FOLLOWUP_VERSION) ? 1 : 0) +
         (versions.has(RUN_TELEMETRY_VERSION) ? 1 : 0) +
-        (versions.has(CONNECTION_RESOURCES_VERSION) ? 1 : 0) ||
+        (versions.has(CONNECTION_RESOURCES_VERSION) ? 1 : 0) +
+        (versions.has(EXECUTION_RUNTIME_VERSION) ? 1 : 0) ||
+    (versions.has(EXECUTION_RUNTIME_VERSION) && !versions.has(CONNECTION_RESOURCES_VERSION)) ||
     (versions.has(CONNECTION_RESOURCES_VERSION) && !versions.has(RUN_TELEMETRY_VERSION)) ||
     (versions.has(RUN_TELEMETRY_VERSION) && !versions.has(RUN_FOLLOWUP_VERSION)) ||
     (versions.has(RUN_FOLLOWUP_VERSION) && !versions.has(RUN_STOP_VERSION)) ||

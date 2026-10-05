@@ -23,6 +23,7 @@ import { migrateProjectImageState } from '../src/server/db/migrations/0015-proje
 import { migrateProjectRunImage } from '../src/server/db/migrations/0016-project-run-image.js';
 import { migrateProjectReportIndexIdentity } from '../src/server/db/migrations/0017-project-report-index-identity.js';
 import { migrateConnectionResources } from '../src/server/db/migrations/0021-connection-resources.js';
+import { migrateExecutionRuntime } from '../src/server/db/migrations/0022-execution-runtime.js';
 import { createProjectApp } from '../src/server/projects/app.js';
 import { createProjectTestRequestQueue } from '../src/server/automation/queue.js';
 import { createProjectRunStore } from '../src/server/runs/store.js';
@@ -57,6 +58,7 @@ it('uses only new-schema administration routes, scoped Secrets, and the existing
   migrateProjectRunImage(database.sqlite);
   migrateProjectReportIndexIdentity(database.sqlite);
   migrateConnectionResources(database.sqlite);
+  migrateExecutionRuntime(database.sqlite);
   database.sqlite
     .prepare(
       `INSERT INTO system_metadata (key, value, created_at, updated_at)
