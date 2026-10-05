@@ -504,10 +504,6 @@ class DefaultRunOrchestrator implements RunOrchestrator {
         await this.finishScenarioReviewRun(state, workspace, context, closure);
         return;
       }
-      let runnerCleanup: { uploaded: boolean; uploadFailed: boolean } = {
-        uploaded: false,
-        uploadFailed: false,
-      };
       try {
         if (context.initialization) {
           await this.runRunner(
@@ -530,7 +526,7 @@ class DefaultRunOrchestrator implements RunOrchestrator {
         }
       } finally {
         try {
-          runnerCleanup = await this.finishRunner(state, workspace, context, evidenceStore);
+          await this.finishRunner(state, workspace, context, evidenceStore);
         } catch (error) {
           this.addBlockingReason(context, `Runner 收尾失败：${safeMessage(error)}`);
           await this.appendExecutionNotes(workspace, [
@@ -554,9 +550,6 @@ class DefaultRunOrchestrator implements RunOrchestrator {
         await this.appendExecutionNotes(workspace, [
           'Reviewer 未读取截图 evidence，无法完成独立视觉审核。',
         ]);
-      }
-      if (runnerCleanup.uploaded && !runnerCleanup.uploadFailed) {
-        await this.cleanupRetainedEvidence(workspace, context, evidenceStore);
       }
       const patchBeforeFinalMain = await readOptionalScenarioPatch(workspace);
       await this.runMainB(state, workspace, context);
@@ -1584,25 +1577,6 @@ class DefaultRunOrchestrator implements RunOrchestrator {
       );
     }
     return `${message}\n\n${detail}`;
-  }
-
-  private async cleanupRetainedEvidence(
-    workspace: RunWorkspace,
-    context: RunContext,
-    evidenceStore: RunEvidenceStore | undefined,
-  ): Promise<void> {
-    if (!evidenceStore || this.options.configuration.getHarness().local.retentionDays !== 0) {
-      return;
-    }
-    try {
-      await evidenceStore.cleanupLocal();
-      await this.appendExecutionNotes(workspace, ['已按 retentionDays=0 清理本地 evidence。']);
-    } catch (error) {
-      this.addBlockingReason(context, `本地 evidence 清理失败：${safeMessage(error)}`);
-      await this.appendExecutionNotes(workspace, [
-        `本地 evidence 清理失败，保留本地文件：${safeMessage(error)}`,
-      ]);
-    }
   }
 
   private async appendExecutionNotes(

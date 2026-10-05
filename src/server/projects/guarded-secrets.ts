@@ -4,6 +4,8 @@ import {
   type BoundSecretStore,
   type DeploymentSecretKey,
   type ProjectSecretKey,
+  type ResourceSecretKey,
+  type ResourceSecretScope,
   type ScopedSecretStore,
 } from '../security/scoped-secret-store.js';
 
@@ -50,10 +52,13 @@ export function createGuardedScopedSecretStore(
         },
       };
     },
+    resource(scope: ResourceSecretScope, resourceId: string): BoundSecretStore<ResourceSecretKey> {
+      return scoped.resource(scope, resourceId);
+    },
   };
 }
 
-function readMethods<K extends DeploymentSecretKey | ProjectSecretKey>(store: BoundSecretStore<K>) {
+function readMethods<K extends string>(store: BoundSecretStore<K>) {
   return {
     isAvailable: () => store.isAvailable(),
     get: (key: K) => store.get(key),

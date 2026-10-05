@@ -162,7 +162,7 @@ describe('Closure 6 local production Pi path', () => {
     assert.ok(![...context.evidence.objects.keys()].some((key) => key.includes('source-reads')));
     assert.deepEqual(
       context.model.sessions.map((session) => session.thinking),
-      ['low', 'off', 'low', 'off'],
+      ['off', 'off', 'off', 'off'],
     );
     assert.ok(context.model.requestCount > context.model.sessions.length);
     const commandKey = `${result.runId}/command-1.json`;

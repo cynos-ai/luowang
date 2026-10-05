@@ -84,6 +84,10 @@ describe('multi-project configuration write guards', () => {
       secrets.deployment().set('ossAccessKeyId', 'rotated-oss');
       deployment.updateHarness({ local: { retentionDays: 3 } });
       assert.equal(deployment.getHarness().local.retentionDays, 3);
+      assert.throws(
+        () => deployment.updateHarness({ local: { retentionDays: 0 } }),
+        /supported range/,
+      );
       assert.throws(() => deployment.updateHarness({ language: 'en-US' }), /不属于部署配置/);
       assert.throws(() => deployment.updateHarness({ local: { repoDir: '/other' } }), /存储根目录/);
       queueA.fail(pendingA.queueId, 'synthetic');

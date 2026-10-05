@@ -19,6 +19,7 @@ import { awaitsCutoverActivation } from '../projects/cutover-activation.js';
 import { createProjectQueueCoordinator } from './project-queue-coordinator.js';
 import { createProjectRunRecoveryStore } from './recovery.js';
 import {
+  configureProjectQueueConcurrency,
   createProjectTestRequestQueue,
   createTestRequestQueue,
   type TestRequestInput,
@@ -37,6 +38,7 @@ export interface ProjectAutomationDispatcher {
   retryArchive(projectId: string, runId: string): Promise<TestRequestRecord>;
   stopRequest(projectId: string, queueId: number): Promise<TestRequestRecord>;
   readonly maxConcurrentProjects: number;
+  setMaxConcurrentProjects?(limit: number): void;
   enqueue(projectId: string, input: TestRequestInput): TestRequestRecord;
   drain(): Promise<void>;
   recover(): Promise<void>;
@@ -58,7 +60,7 @@ export function createProjectAutomationDispatcher(options: {
   maxConcurrentProjects?: number;
   createServices?: (task: ProjectTaskRuntime) => ProjectDispatchServices;
 }): ProjectAutomationDispatcher {
-  const maxConcurrentProjects = options.maxConcurrentProjects ?? 2;
+  let maxConcurrentProjects = options.maxConcurrentProjects ?? 2;
   const coordinator = createProjectQueueCoordinator(options.database, maxConcurrentProjects);
   const createServices =
     options.createServices ??
@@ -461,7 +463,14 @@ export function createProjectAutomationDispatcher(options: {
       pump();
       return result;
     },
-    maxConcurrentProjects,
+    get maxConcurrentProjects() {
+      return maxConcurrentProjects;
+    },
+    setMaxConcurrentProjects(limit) {
+      configureProjectQueueConcurrency(options.database, limit);
+      maxConcurrentProjects = limit;
+      pump();
+    },
     enqueue(projectId, input) {
       return queueFor(projectId).enqueue(input);
     },

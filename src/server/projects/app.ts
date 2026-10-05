@@ -31,9 +31,14 @@ import {
   type DeploymentSecretKey,
 } from '../security/scoped-secret-store.js';
 import { SecretStoreError } from '../security/secret-store.js';
+import {
+  deleteProviderApiKey,
+  providerSecretMetadata,
+  setProviderApiKey,
+} from '../security/provider-secrets.js';
 import { createOssAdapter, OssError, type OssAdapter, type OssObject } from '../storage/oss.js';
 import { createPlaywrightMcpAdapter } from '../browser/playwright-mcp.js';
-import { createProviderAdapter } from '../runs/provider.js';
+import { createProviderAdapter, ProviderError } from '../runs/provider.js';
 import { registerProjectAdminRoutes, type ProjectAdminRouteOptions } from './admin-routes.js';
 import { createProjectConfigurationStore } from './configuration.js';
 import { registerProjectConsoleRoutes } from './console-routes.js';
@@ -60,8 +65,14 @@ import {
 import { inspectProjectResources, type ProjectResourceInventory } from './resource-inventory.js';
 import { registerProjectRunRoutes } from './run-routes.js';
 import { assertProjectSchema } from './schema-mode.js';
-import { RUN_TELEMETRY_VERSION } from '../db/migrations/0020-run-telemetry.js';
+import { CONNECTION_RESOURCES_VERSION } from '../db/migrations/0021-connection-resources.js';
+import { createConnectionResourceService } from './connection-resources.js';
 import { createProjectStore } from './store.js';
+import {
+  createSharedDependencyMonitor,
+  type SharedDependencyCheckId,
+  type SharedDependencyMonitor,
+} from './shared-dependency-monitor.js';
 
 export interface ProjectAppOptions {
   config: AppConfig;
@@ -77,6 +88,7 @@ export interface ProjectAppOptions {
   verifyRepository?: ProjectAdminRouteOptions['verifyRepository'];
   readEvidence?: (projectId: string, key: string) => Promise<OssObject>;
   connectivity?: ConnectivityRegistry;
+  sharedDependencyMonitor?: SharedDependencyMonitor;
   inspectResources?: () => Promise<ProjectResourceInventory>;
 }
 
@@ -87,16 +99,17 @@ export async function createProjectApp(options: ProjectAppOptions) {
   if (
     !database
       .prepare('SELECT 1 FROM schema_migrations WHERE version = ?')
-      .get(RUN_TELEMETRY_VERSION)
+      .get(CONNECTION_RESOURCES_VERSION)
   ) {
     throw new Error(
-      '多项目数据库需要离线升级：db:multi-project upgrade-reliability <new-backup-dir>',
+      '多项目数据库需要离线升级：db:multi-project upgrade-connections <new-backup-dir>',
     );
   }
   const auth =
     options.auth ?? (await createAuthService(database, options.config.initialAdminPassword));
   const scoped = options.secrets ?? createScopedSecretStore(database, options.config.masterKey);
   const guarded = createGuardedScopedSecretStore(database, scoped);
+  const connectionResources = createConnectionResourceService({ database, secrets: guarded });
   const deployment = createDeploymentConfigurationStore(database, options.config);
   const deploymentSecrets = guarded.deployment();
   const deploymentRuntimeSecrets = createDeploymentRuntimeSecretStore(guarded);
@@ -111,6 +124,18 @@ export async function createProjectApp(options: ProjectAppOptions) {
       createPlaywrightMcpAdapter(deployment),
       createOssAdapter(deployment, deploymentRuntimeSecrets),
     );
+  const sharedDependencies =
+    options.sharedDependencyMonitor ??
+    createSharedDependencyMonitor({
+      connectivity,
+      logger: options.logger,
+      lastCheckedAt: (checkId) =>
+        (
+          database
+            .prepare('SELECT checked_at FROM connectivity_check_results WHERE check_id = ?')
+            .get(checkId) as { checked_at: string } | undefined
+        )?.checked_at ?? null,
+    });
   const projects = createProjectStore(database);
   const configuration = createProjectConfigurationStore(database);
   const profile = createAdminProfileStore(database);
@@ -139,10 +164,14 @@ export async function createProjectApp(options: ProjectAppOptions) {
       repoRoot: options.config.repoDir,
       storageRoot: options.config.dataDir,
     });
+  const runtimeMaxConcurrentProjects = readRuntimeMaxConcurrentProjects(
+    database,
+    options.config.maxConcurrentProjects,
+  );
   const dispatcher =
     options.dispatcher ??
     createProjectAutomationDispatcher({
-      maxConcurrentProjects: options.config.maxConcurrentProjects,
+      maxConcurrentProjects: runtimeMaxConcurrentProjects,
       database,
       deployment,
       projects,
@@ -177,7 +206,14 @@ export async function createProjectApp(options: ProjectAppOptions) {
   await app.register(fastifyCookie);
   const staticRoot = options.config.webRoot;
   if (existsSync(staticRoot)) {
-    await app.register(fastifyStatic, { root: staticRoot, prefix: '/', index: 'index.html' });
+    await app.register(fastifyStatic, {
+      root: staticRoot,
+      prefix: '/',
+      index: 'index.html',
+      setHeaders(reply, path) {
+        if (path.endsWith('index.html')) reply.header('cache-control', 'no-store');
+      },
+    });
   }
   app.setErrorHandler((error, request, reply) => {
     const failure = error as Error & { statusCode?: number };
@@ -186,42 +222,49 @@ export async function createProjectApp(options: ProjectAppOptions) {
         ? error.statusCode
         : error instanceof SecretStoreError
           ? 503
-          : error instanceof OssError
-            ? error.code === 'OSS_OBJECT_NOT_FOUND'
-              ? 404
-              : error.code === 'OSS_NOT_CONFIGURED' || error.code === 'OSS_CONFIGURATION_INVALID'
-                ? 503
-                : error.code === 'OSS_REQUEST_FAILED'
-                  ? 502
-                  : 400
-            : error instanceof TestRequestQueueError
-              ? error.code === 'QUEUE_NOT_FOUND'
+          : error instanceof ProviderError
+            ? error.code === 'AUTHENTICATION_FAILED'
+              ? 502
+              : 400
+            : error instanceof OssError
+              ? error.code === 'OSS_OBJECT_NOT_FOUND'
                 ? 404
-                : error.code === 'QUEUE_STATE_INVALID'
-                  ? 409
-                  : 400
-              : error instanceof TypeError ||
-                  error instanceof AuthError ||
-                  error instanceof ConfigurationError
-                ? 400
-                : typeof failure.statusCode === 'number'
-                  ? failure.statusCode
-                  : 500;
+                : error.code === 'OSS_NOT_CONFIGURED' || error.code === 'OSS_CONFIGURATION_INVALID'
+                  ? 503
+                  : error.code === 'OSS_REQUEST_FAILED'
+                    ? 502
+                    : 400
+              : error instanceof TestRequestQueueError
+                ? error.code === 'QUEUE_NOT_FOUND'
+                  ? 404
+                  : error.code === 'QUEUE_STATE_INVALID'
+                    ? 409
+                    : 400
+                : error instanceof TypeError ||
+                    error instanceof AuthError ||
+                    error instanceof ConfigurationError
+                  ? 400
+                  : typeof failure.statusCode === 'number'
+                    ? failure.statusCode
+                    : 500;
     const code =
       error instanceof AppError
         ? error.code
         : error instanceof SecretStoreError
           ? 'SECRET_STORE_UNAVAILABLE'
-          : error instanceof OssError
+          : error instanceof ProviderError
             ? error.code
-            : error instanceof TestRequestQueueError
+            : error instanceof OssError
               ? error.code
-              : error instanceof AuthError
+              : error instanceof TestRequestQueueError
                 ? error.code
-                : status === 400
-                  ? 'INVALID_REQUEST'
-                  : 'INTERNAL_ERROR';
-    const message = status >= 500 ? '内部错误' : failure.message;
+                : error instanceof AuthError
+                  ? error.code
+                  : status === 400
+                    ? 'INVALID_REQUEST'
+                    : 'INTERNAL_ERROR';
+    const message =
+      status >= 500 && !(error instanceof ProviderError) ? '内部错误' : failure.message;
     return reply.status(status).send(toErrorResponse(code, message, request.id));
   });
 
@@ -294,9 +337,56 @@ export async function createProjectApp(options: ProjectAppOptions) {
       throw new AppError('ACCOUNT_INPUT_INVALID', '账号资料字段无效', 400);
     return { profile: profile.updateDisplayName(body.displayName) };
   });
+  app.get('/api/system-settings', async (request) => {
+    requireAuth(request, auth);
+    return {
+      runtime: { maxConcurrentProjects: dispatcher.maxConcurrentProjects },
+      startup: {
+        host: options.config.host,
+        port: options.config.port,
+        dataDir: options.config.dataDir,
+        databasePath: options.config.databasePath,
+        repoDir: options.config.repoDir,
+        reportDir: options.config.reportDir,
+        logLevel: options.config.logLevel,
+      },
+    };
+  });
+  app.put('/api/system-settings', async (request) => {
+    requireAuth(request, auth);
+    const body = readBody(request);
+    if (
+      Object.keys(body).length !== 1 ||
+      !Number.isInteger(body.maxConcurrentProjects) ||
+      (body.maxConcurrentProjects as number) < 1 ||
+      (body.maxConcurrentProjects as number) > 8
+    ) {
+      throw new AppError('SYSTEM_SETTINGS_INVALID', '最大并发项目数必须是 1–8 的整数', 400);
+    }
+    const limit = body.maxConcurrentProjects as number;
+    const now = new Date().toISOString();
+    database
+      .prepare(
+        `INSERT INTO system_metadata (key, value, created_at, updated_at)
+         VALUES ('runtime_max_concurrent_projects', ?, ?, ?)
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
+      )
+      .run(String(limit), now, now);
+    dispatcher.setMaxConcurrentProjects?.(limit);
+    return { runtime: { maxConcurrentProjects: limit } };
+  });
   app.get('/api/deployment', async (request) => {
     requireAuth(request, auth);
-    return { configuration: deployment.getHarness(), secrets: guarded.deployment().metadata() };
+    const configuration = deployment.getHarness();
+    const deploymentStore = guarded.deployment();
+    return {
+      configuration,
+      secrets: deploymentStore.metadata(),
+      providerSecrets: providerSecretMetadata(
+        deploymentStore,
+        configuration.modelProviders.map((source) => source.id),
+      ),
+    };
   });
   app.get('/api/provider/providers', async (request) => {
     requireAuth(request, auth);
@@ -311,10 +401,90 @@ export async function createProjectApp(options: ProjectAppOptions) {
       deployment.getHarness().provider;
     return { provider: selected, models: await provider.listModels(selected) };
   });
+  app.post<{ Params: { sourceId: string } }>(
+    '/api/provider/sources/:sourceId/verify',
+    async (request) => {
+      requireAuth(request, auth);
+      const sourceId = providerSourceId(request.params.sourceId);
+      if (!provider.verifySource)
+        throw new AppError('PROVIDER_VERIFY_UNAVAILABLE', '模型来源验证不可用', 503);
+      const models = await provider.verifySource(sourceId);
+      const current = deployment.getHarness();
+      const verifiedAt = new Date().toISOString();
+      const configuration = deployment.updateHarness({
+        modelProviders: current.modelProviders.map((source) =>
+          source.id === sourceId ? { ...source, verifiedAt, models } : source,
+        ),
+      });
+      connectivity.invalidate?.(['provider-model']);
+      sharedDependencies.trigger(['provider-model']);
+      invalidateAllProjectReadiness(database, ['deployment']);
+      return { sourceId, verifiedAt, models, configuration };
+    },
+  );
+  app.put<{ Params: { sourceId: string } }>(
+    '/api/provider/sources/:sourceId/secret',
+    async (request) => {
+      requireAuth(request, auth);
+      const sourceId = providerSourceId(request.params.sourceId);
+      const body = readBody(request);
+      if (Object.keys(body).length !== 1 || typeof body.value !== 'string' || !body.value) {
+        throw new AppError('SECRET_INPUT_INVALID', '凭据值无效', 400);
+      }
+      const current = deployment.getHarness();
+      if (!current.modelProviders.some((source) => source.id === sourceId)) {
+        throw new AppError('PROVIDER_SOURCE_NOT_FOUND', '模型来源不存在', 404);
+      }
+      setProviderApiKey(guarded.deployment(), sourceId, body.value);
+      const configuration = deployment.updateHarness({
+        modelProviders: current.modelProviders.map((source) =>
+          source.id === sourceId ? { ...source, verifiedAt: null, models: [] } : source,
+        ),
+      });
+      connectivity.invalidate?.(['provider-model']);
+      sharedDependencies.trigger(['provider-model']);
+      invalidateAllProjectReadiness(database, ['deployment']);
+      return {
+        sourceId,
+        metadata: { configured: true, masked: '••••••••' },
+        configuration,
+      };
+    },
+  );
+  app.delete<{ Params: { sourceId: string } }>(
+    '/api/provider/sources/:sourceId/secret',
+    async (request) => {
+      requireAuth(request, auth);
+      const sourceId = providerSourceId(request.params.sourceId);
+      deleteProviderApiKey(guarded.deployment(), sourceId);
+      const current = deployment.getHarness();
+      const configuration = deployment.updateHarness({
+        modelProviders: current.modelProviders.map((source) =>
+          source.id === sourceId ? { ...source, verifiedAt: null, models: [] } : source,
+        ),
+      });
+      connectivity.invalidate?.(['provider-model']);
+      sharedDependencies.trigger(['provider-model']);
+      invalidateAllProjectReadiness(database, ['deployment']);
+      return {
+        sourceId,
+        metadata: { configured: false, masked: null },
+        configuration,
+      };
+    },
+  );
   app.put('/api/deployment', async (request) => {
     requireAuth(request, auth);
-    const configuration = deployment.updateHarness(readBody(request));
-    connectivity.invalidate?.(['provider-model', 'playwright-mcp', 'oss']);
+    const before = deployment.getHarness();
+    const patch = readBody(request);
+    const configuration = deployment.updateHarness(patch);
+    const retainedSources = new Set(configuration.modelProviders.map((source) => source.id));
+    for (const source of before.modelProviders) {
+      if (!retainedSources.has(source.id)) deleteProviderApiKey(guarded.deployment(), source.id);
+    }
+    const affectedChecks = deploymentChecksForPatch(patch);
+    connectivity.invalidate?.(affectedChecks);
+    sharedDependencies.trigger(affectedChecks);
     invalidateAllProjectReadiness(database, ['deployment']);
     return { configuration };
   });
@@ -326,7 +496,9 @@ export async function createProjectApp(options: ProjectAppOptions) {
       throw new AppError('SECRET_INPUT_INVALID', '凭据值无效', 400);
     }
     guarded.deployment().set(key, body.value);
-    connectivity.invalidate?.([key === 'providerApiKey' ? 'provider-model' : 'oss']);
+    const checkId = key === 'providerApiKey' ? 'provider-model' : 'oss';
+    connectivity.invalidate?.([checkId]);
+    sharedDependencies.trigger([checkId]);
     invalidateAllProjectReadiness(database, ['deployment']);
     return { key, metadata: guarded.deployment().metadata()[key] };
   });
@@ -334,7 +506,9 @@ export async function createProjectApp(options: ProjectAppOptions) {
     requireAuth(request, auth);
     const key = deploymentSecretKey(request.params.key);
     guarded.deployment().delete(key);
-    connectivity.invalidate?.([key === 'providerApiKey' ? 'provider-model' : 'oss']);
+    const checkId = key === 'providerApiKey' ? 'provider-model' : 'oss';
+    connectivity.invalidate?.([checkId]);
+    sharedDependencies.trigger([checkId]);
     invalidateAllProjectReadiness(database, ['deployment']);
     return { key, metadata: guarded.deployment().metadata()[key] };
   });
@@ -374,6 +548,7 @@ export async function createProjectApp(options: ProjectAppOptions) {
     secrets: scoped,
     readiness,
     images,
+    connectionResources,
     allowedOrigin: options.config.allowedOrigin,
     verifyRepository: options.verifyRepository,
   });
@@ -413,14 +588,42 @@ export async function createProjectApp(options: ProjectAppOptions) {
     return reply.status(404).send(toErrorResponse('NOT_FOUND', 'Resource not found', request.id));
   });
   app.addHook('onClose', async () => {
+    await sharedDependencies.stop();
     await background.stop();
     options.database.close();
   });
   if (options.backgroundTasks ?? options.config.environment !== 'test') {
     await background.recover();
     background.start();
+    sharedDependencies.start();
   }
   return app;
+}
+
+function readRuntimeMaxConcurrentProjects(
+  database: import('better-sqlite3').Database,
+  fallback: number,
+): number {
+  const row = database
+    .prepare("SELECT value FROM system_metadata WHERE key = 'runtime_max_concurrent_projects'")
+    .get() as { value: string } | undefined;
+  if (!row) return fallback;
+  const value = Number(row.value);
+  return Number.isInteger(value) && value >= 1 && value <= 8 ? value : fallback;
+}
+
+function deploymentChecksForPatch(patch: Record<string, unknown>): SharedDependencyCheckId[] {
+  const checks = new Set<SharedDependencyCheckId>();
+  if (
+    ['provider', 'providerBaseUrl', 'modelProviders', 'agents'].some((key) =>
+      Object.hasOwn(patch, key),
+    )
+  ) {
+    checks.add('provider-model');
+  }
+  if (Object.hasOwn(patch, 'mcp')) checks.add('playwright-mcp');
+  if (Object.hasOwn(patch, 'oss')) checks.add('oss');
+  return [...checks];
 }
 
 function readBody(request: FastifyRequest): Record<string, unknown> {
@@ -470,4 +673,11 @@ function deploymentSecretKey(key: string): DeploymentSecretKey {
     throw new AppError('SECRET_KEY_INVALID', '部署凭据类型无效', 400);
   }
   return key;
+}
+
+function providerSourceId(value: string): string {
+  if (!/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/.test(value)) {
+    throw new AppError('PROVIDER_SOURCE_ID_INVALID', '模型来源 ID 无效', 400);
+  }
+  return value;
 }

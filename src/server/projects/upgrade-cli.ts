@@ -8,6 +8,10 @@ import Database from 'better-sqlite3';
 import { loadConfig } from '../config.js';
 import { migrateProjectReportIndexIdentity } from '../db/migrations/0017-project-report-index-identity.js';
 import { migrateRunTelemetry, RUN_TELEMETRY_VERSION } from '../db/migrations/0020-run-telemetry.js';
+import {
+  CONNECTION_RESOURCES_VERSION,
+  migrateConnectionResources,
+} from '../db/migrations/0021-connection-resources.js';
 import { GitHubClient } from '../repository/github.js';
 import { createSecretStore } from '../security/secret-store.js';
 import { createLegacyBackup, verifyLegacyBackup } from './legacy-backup.js';
@@ -30,15 +34,22 @@ export async function runUpgradeCli(
       'upgrade-project',
       'upgrade-index',
       'upgrade-reliability',
+      'upgrade-connections',
       'verify',
     ].includes(command ?? '') ||
-    (['backup', 'upgrade-empty', 'upgrade-index', 'upgrade-reliability'].includes(command ?? '') &&
+    ([
+      'backup',
+      'upgrade-empty',
+      'upgrade-index',
+      'upgrade-reliability',
+      'upgrade-connections',
+    ].includes(command ?? '') &&
       args.length !== 2) ||
     (command === 'upgrade-project' && (args.length < 2 || args.length > 3)) ||
     (['inspect', 'verify'].includes(command ?? '') && args.length !== 1)
   ) {
     throw new Error(
-      '用法: db:multi-project inspect | backup <new-dir> | upgrade-empty <backup-dir> | upgrade-project <backup-dir> [reviewed-history-fingerprint] | upgrade-index <new-backup-dir> | upgrade-reliability <new-backup-dir> | verify',
+      '用法: db:multi-project inspect | backup <new-dir> | upgrade-empty <backup-dir> | upgrade-project <backup-dir> [reviewed-history-fingerprint] | upgrade-index <new-backup-dir> | upgrade-reliability <new-backup-dir> | upgrade-connections <new-backup-dir> | verify',
     );
   }
   const config = loadConfig(environment);
@@ -49,9 +60,14 @@ export async function runUpgradeCli(
   database.pragma('foreign_keys = ON');
   database.pragma('busy_timeout = 5000');
   try {
-    if (command === 'upgrade-index' || command === 'upgrade-reliability') {
+    if (
+      command === 'upgrade-index' ||
+      command === 'upgrade-reliability' ||
+      command === 'upgrade-connections'
+    ) {
       const reliability = command === 'upgrade-reliability';
-      if (reliability) assertProjectSchema(database);
+      const connections = command === 'upgrade-connections';
+      if (reliability || connections) assertProjectSchema(database);
       const marker = database
         .prepare(
           "SELECT key FROM system_metadata WHERE key IN ('v061_legacy_cutover_project_id', 'v061_empty_cutover')",
@@ -61,7 +77,13 @@ export async function runUpgradeCli(
       if (
         database
           .prepare('SELECT 1 FROM schema_migrations WHERE version = ?')
-          .get(reliability ? RUN_TELEMETRY_VERSION : '0017_project_report_index_identity')
+          .get(
+            connections
+              ? CONNECTION_RESOURCES_VERSION
+              : reliability
+                ? RUN_TELEMETRY_VERSION
+                : '0017_project_report_index_identity',
+          )
       ) {
         assertProjectSchema(database);
         return { status: 'already_complete' };
@@ -71,7 +93,11 @@ export async function runUpgradeCli(
       await mkdir(backupPath);
       const databaseBackupPath = join(
         backupPath,
-        reliability ? 'luowang-before-reliability-0020.db' : 'luowang-before-index-0017.db',
+        connections
+          ? 'luowang-before-connections-0021.db'
+          : reliability
+            ? 'luowang-before-reliability-0020.db'
+            : 'luowang-before-index-0017.db',
       );
       await database.backup(databaseBackupPath);
       const backup = new Database(databaseBackupPath, { readonly: true, fileMustExist: true });
@@ -83,19 +109,23 @@ export async function runUpgradeCli(
       } finally {
         backup.close();
       }
-      const before = (
-        database.prepare('SELECT COUNT(*) AS count FROM indexed_reports').get() as { count: number }
-      ).count;
-      if (reliability) migrateRunTelemetry(database);
+      const before = upgradeCounts(database);
+      if (connections) migrateConnectionResources(database);
+      else if (reliability) migrateRunTelemetry(database);
       else migrateProjectReportIndexIdentity(database);
-      const after = (
-        database.prepare('SELECT COUNT(*) AS count FROM indexed_reports').get() as { count: number }
-      ).count;
-      if (before !== after || (database.pragma('foreign_key_check') as unknown[]).length > 0) {
+      const after = upgradeCounts(database);
+      if (
+        before.projects !== after.projects ||
+        before.runs !== after.runs ||
+        before.reports !== after.reports ||
+        (database.pragma('foreign_key_check') as unknown[]).length > 0
+      ) {
         throw new Error('索引升级后数量或外键核验失败，请从备份恢复');
       }
       assertProjectSchema(database);
-      return { status: 'complete', backupDir: backupPath, reports: after };
+      return connections
+        ? { status: 'complete', backupDir: backupPath, ...after }
+        : { status: 'complete', backupDir: backupPath, reports: after.reports };
     }
     if (command === 'verify') {
       assertProjectSchema(database);
@@ -176,6 +206,20 @@ export async function runUpgradeCli(
   } finally {
     database.close();
   }
+}
+
+function upgradeCounts(database: Database.Database): {
+  projects: number;
+  runs: number;
+  reports: number;
+} {
+  const count = (table: string) =>
+    (database.prepare(`SELECT COUNT(*) AS count FROM ${table}`).get() as { count: number }).count;
+  return {
+    projects: count('projects'),
+    runs: count('run_store_runs'),
+    reports: count('indexed_reports'),
+  };
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

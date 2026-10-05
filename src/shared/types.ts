@@ -21,14 +21,26 @@ export interface ErrorResponse {
 export type ThinkingLevel = 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max';
 
 export interface AgentConfig {
+  providerSourceId?: string;
   model: string;
   thinking: ThinkingLevel;
 }
 
+export interface ModelProviderSource {
+  id: string;
+  name: string;
+  provider: string;
+  baseUrl: string;
+  verifiedAt: string | null;
+  models: ProviderModelInfo[];
+}
+
 export interface HarnessConfig {
   language: string;
+  /** Legacy primary source fields retained for configuration compatibility. */
   provider: string;
   providerBaseUrl: string;
+  modelProviders: ModelProviderSource[];
   agents: {
     main: AgentConfig;
     runner: AgentConfig;

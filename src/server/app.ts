@@ -229,6 +229,9 @@ export async function createApp(options: AppOptions) {
       root: staticRoot,
       prefix: '/',
       index: 'index.html',
+      setHeaders(reply, path) {
+        if (path.endsWith('index.html')) reply.header('cache-control', 'no-store');
+      },
     });
   }
 

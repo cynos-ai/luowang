@@ -110,8 +110,6 @@ const AUTOMATIC_TRIGGERS: readonly RunTrigger[] = ['git', 'schedule'];
 const projectLimits = new WeakMap<Database.Database, number>();
 export function configureProjectQueueConcurrency(database: Database.Database, limit: number): void {
   if (!Number.isInteger(limit) || limit < 1 || limit > 8) throw new Error('项目并发上限无效');
-  const previous = projectLimits.get(database);
-  if (previous !== undefined && previous !== limit) throw new Error('项目并发上限只能在启动时配置');
   projectLimits.set(database, limit);
 }
 

@@ -13,6 +13,7 @@ import { migrateLegacyRunOwnership } from '../src/server/db/migrations/0011-proj
 import { migrateLegacyConfigurationOwnership } from '../src/server/db/migrations/0012-project-configuration-ownership.js';
 import { migrateProjectQueueContext } from '../src/server/db/migrations/0014-project-queue-context.js';
 import { migrateProjectImageState } from '../src/server/db/migrations/0015-project-image-state.js';
+import { migrateConnectionResources } from '../src/server/db/migrations/0021-connection-resources.js';
 import { registerProjectAdminRoutes } from '../src/server/projects/admin-routes.js';
 import { createProjectConfigurationStore } from '../src/server/projects/configuration.js';
 import { createDeploymentConfigurationStore } from '../src/server/projects/deployment-configuration.js';
@@ -371,6 +372,7 @@ function setupDatabase(): Database.Database {
   migrateLegacyConfigurationOwnership(database, null);
   migrateProjectQueueContext(database);
   migrateProjectImageState(database);
+  migrateConnectionResources(database);
   return database;
 }
 

@@ -3,6 +3,8 @@ import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } fro
 import type { AuthStatusResponse } from '../../shared/types';
 import { requestJson, toUserMessage } from '../api';
 import { AppShell } from '../components/AppShell';
+import { useAppDialog } from '../components/AppDialogProvider';
+import { useAppMessage } from '../components/AppMessageProvider';
 import { LoginPanel } from '../components/LoginPanel';
 import { PageHeading } from '../components/PageHeading';
 import { AccountSettingsPage } from '../pages/AccountSettingsPage';
@@ -20,7 +22,7 @@ import { ProjectScenariosPage } from '../pages/project/ProjectScenariosPage';
 import { ProjectSettingsPage } from '../pages/project/ProjectSettingsPage';
 import { ProjectTestPage } from '../pages/project/ProjectTestPage';
 import type { ProjectReference } from '../project-types';
-import { NavigationProvider, type NavigableRoute } from './navigation';
+import { NavigationProvider, type NavigableRoute, type NavigationBlocker } from './navigation';
 import {
   appPath,
   legacyHashRedirect,
@@ -30,6 +32,8 @@ import {
 } from './route';
 
 export default function AppRouter() {
+  const { confirm } = useAppDialog();
+  const notify = useAppMessage();
   const [route, setRoute] = useState<AppRoute>(initialRoute);
   const [auth, setAuth] = useState<AuthStatusResponse | null>(null);
   const [projects, setProjects] = useState<ProjectReference[]>([]);
@@ -38,11 +42,15 @@ export default function AppRouter() {
   const [error, setError] = useState('');
   const returnRoute = useRef<AppRoute | null>(null);
   const routeRef = useRef(route);
-  const blockerRef = useRef<(() => boolean) | null>(null);
+  const blockerRef = useRef<NavigationBlocker | null>(null);
   routeRef.current = route;
 
-  const mayNavigate = useCallback(() => blockerRef.current?.() ?? true, []);
-  const registerBlocker = useCallback((blocker: () => boolean) => {
+  const mayNavigate = useCallback(async () => {
+    const blocked = blockerRef.current?.() ?? null;
+    if (blocked === false) return false;
+    return blocked ? confirm(blocked) : true;
+  }, [confirm]);
+  const registerBlocker = useCallback((blocker: NavigationBlocker) => {
     blockerRef.current = blocker;
     return () => {
       if (blockerRef.current === blocker) blockerRef.current = null;
@@ -50,15 +58,17 @@ export default function AppRouter() {
   }, []);
   const navigate = useCallback(
     (target: NavigableRoute | string, options: { replace?: boolean } = {}) => {
-      if (!mayNavigate()) return;
-      const requested = typeof target === 'string' ? target : appPath(target);
-      const pathname = legacySettingsRedirect(requested) ?? requested;
-      if (options.replace) window.history.replaceState(null, '', pathname);
-      else window.history.pushState(null, '', pathname);
-      const next = parseAppPath(pathname);
-      routeRef.current = next;
-      setRoute(next);
-      window.scrollTo({ top: 0 });
+      void mayNavigate().then((allowed) => {
+        if (!allowed) return;
+        const requested = typeof target === 'string' ? target : appPath(target);
+        const pathname = legacySettingsRedirect(requested) ?? requested;
+        if (options.replace) window.history.replaceState(null, '', pathname);
+        else window.history.pushState(null, '', pathname);
+        const next = parseAppPath(pathname);
+        routeRef.current = next;
+        setRoute(next);
+        window.scrollTo({ top: 0 });
+      });
     },
     [mayNavigate],
   );
@@ -89,15 +99,17 @@ export default function AppRouter() {
         setError(toUserMessage(cause, '暂时无法连接罗网'));
       });
     const onPopState = () => {
-      if (!mayNavigate()) {
-        window.history.pushState(null, '', routePath(routeRef.current));
-        return;
-      }
-      const legacySettings = legacySettingsRedirect(window.location.pathname);
-      if (legacySettings) window.history.replaceState(null, '', legacySettings);
-      const next = parseAppPath(legacySettings ?? window.location.pathname);
-      routeRef.current = next;
-      setRoute(next);
+      const requested = window.location.pathname;
+      window.history.pushState(null, '', routePath(routeRef.current));
+      void mayNavigate().then((allowed) => {
+        if (!allowed) return;
+        const legacySettings = legacySettingsRedirect(requested);
+        const pathname = legacySettings ?? requested;
+        window.history.pushState(null, '', pathname);
+        const next = parseAppPath(pathname);
+        routeRef.current = next;
+        setRoute(next);
+      });
     };
     const onUnauthorized = () => {
       setAuth({ configured: true, authenticated: false });
@@ -141,6 +153,7 @@ export default function AppRouter() {
       setPassword('');
       setAuth(status);
       await loadProjects();
+      notify.success('登录成功');
       const destination = returnRoute.current;
       returnRoute.current = null;
       const target =
@@ -158,10 +171,13 @@ export default function AppRouter() {
   }
 
   async function logout() {
-    if (!mayNavigate()) return;
+    if (!(await mayNavigate())) return;
     blockerRef.current = null;
     try {
       await requestJson('/api/auth/logout', { method: 'POST' });
+      notify.success('已退出登录');
+    } catch (cause) {
+      notify.error(toUserMessage(cause, '退出登录失败'));
     } finally {
       setAuth({ configured: true, authenticated: false });
       setProjects([]);
@@ -239,7 +255,8 @@ function RoutePage({
   }
   if (route.name === 'workspace') return <WorkspacePage />;
   if (route.name === 'system') return <SystemStatusPage />;
-  if (route.name === 'global-settings') return <GlobalSettingsPage section={route.section} />;
+  if (route.name === 'global-settings')
+    return <GlobalSettingsPage section={route.section} onPasswordChanged={onPasswordChanged} />;
   if (route.name === 'account') {
     return <AccountSettingsPage onPasswordChanged={onPasswordChanged} />;
   }
@@ -343,7 +360,7 @@ function pageCopy(route: Exclude<AppRoute, { name: 'not-found' }>): {
     case 'login':
       return { title: '管理员登录', scope: '认证', description: '登录控制台。' };
     case 'workspace':
-      return { title: '工作台', scope: '全局', description: '当前执行、队列和需要处理的事项。' };
+      return { title: '总览', scope: '全局', description: '当前执行、队列和需要处理的事项。' };
     case 'projects':
       return { title: '项目', scope: '全局', description: '查看和管理已接入项目。' };
     case 'project-new':

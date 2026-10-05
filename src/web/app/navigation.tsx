@@ -2,12 +2,14 @@ import { createContext, useContext, useEffect, type MouseEvent, type ReactNode }
 
 import type { AppRoute } from './route';
 import { appPath } from './route';
+import type { ConfirmOptions } from '../components/AppDialogProvider';
 
 export type NavigableRoute = Exclude<AppRoute, { name: 'not-found' }>;
+export type NavigationBlocker = () => ConfirmOptions | false | null;
 
 type NavigationContextValue = {
   navigate: (target: NavigableRoute | string, options?: { replace?: boolean }) => void;
-  registerBlocker: (blocker: () => boolean) => () => void;
+  registerBlocker: (blocker: NavigationBlocker) => () => void;
 };
 
 const NavigationContext = createContext<NavigationContextValue | null>(null);
@@ -69,7 +71,7 @@ export function useNavigation(): NavigationContextValue {
   return value;
 }
 
-export function useNavigationBlocker(blocker: (() => boolean) | null): void {
+export function useNavigationBlocker(blocker: NavigationBlocker | null): void {
   const { registerBlocker } = useNavigation();
   useEffect(() => {
     if (!blocker) return;

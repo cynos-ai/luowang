@@ -83,7 +83,7 @@ try {
   await page.keyboard.press('Tab');
   await page.keyboard.press('Tab');
   await page.keyboard.press('Tab');
-  assert.equal(await page.evaluate(() => document.activeElement?.textContent?.trim()), '工作台');
+  assert.equal(await page.evaluate(() => document.activeElement?.textContent?.trim()), '总览');
   await page.keyboard.press('Tab');
   assert.equal(await page.evaluate(() => document.activeElement?.textContent?.trim()), '项目');
   await page.keyboard.press('Enter');
@@ -91,7 +91,7 @@ try {
 
   const projectRoot = `/projects/${project.projectId}`;
   const stableRoutes: Array<[string, string]> = [
-    ['/workspace', '工作台'],
+    ['/workspace', '总览'],
     ['/projects', '项目'],
     ['/projects/new', '接入项目'],
     ['/system', '系统状态'],

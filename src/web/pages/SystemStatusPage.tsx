@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 
 import type {
   SystemCheckResponse,
@@ -10,10 +10,12 @@ import { requestJson, toUserMessage } from '../api';
 import { AppLink } from '../app/navigation';
 import { useResource } from '../app/resource';
 import { AsyncRegion } from '../components/AsyncRegion';
+import { useAppMessage } from '../components/AppMessageProvider';
 import { PageHeading } from '../components/PageHeading';
 import { StatusLabel } from '../components/StatusLabel';
 
 export function SystemStatusPage() {
+  const notify = useAppMessage();
   const loadStatus = useCallback(
     (signal: AbortSignal) => requestJson<SystemStatusResponse>('/api/system/status', { signal }),
     [],
@@ -29,6 +31,10 @@ export function SystemStatusPage() {
   const resources = useResource('system-resources', loadResources, (cause) =>
     toUserMessage(cause, '执行资源盘点失败'),
   );
+  useEffect(() => {
+    const timer = window.setInterval(status.reload, 30_000);
+    return () => window.clearInterval(timer);
+  }, [status.reload]);
   const [checking, setChecking] = useState('');
   const [freshChecks, setFreshChecks] = useState<Record<string, SystemDependencyStatus>>({});
   const [checkNotes, setCheckNotes] = useState<Record<string, string>>({});
@@ -50,11 +56,18 @@ export function SystemStatusPage() {
             ? response.result.message
             : '',
       }));
+      if (response.result.status === 'ok') {
+        notify.success(`${response.check.label}检查完成`);
+      } else {
+        notify.warning(`${response.check.label}检查完成：${response.result.message}`);
+      }
     } catch (cause) {
+      const error = toUserMessage(cause, '共享依赖检查失败');
       setCheckErrors((current) => ({
         ...current,
-        [id]: toUserMessage(cause, '共享依赖检查失败'),
+        [id]: error,
       }));
+      notify.error(error);
     } finally {
       setChecking('');
     }
@@ -96,7 +109,7 @@ export function SystemStatusPage() {
               <section className="content-block">
                 <div className="content-block-heading">
                   <h2>共享依赖</h2>
-                  <p>状态来自最近快照；只有点击检查才会执行外部连接。</p>
+                  <p>配置变更后自动检查，并每 30 分钟刷新；也可手动立即检查。</p>
                 </div>
                 <div className="dependency-list">
                   {status.value.dependencies.map((row) => {
@@ -152,10 +165,6 @@ export function SystemStatusPage() {
                 <div className="content-block-heading">
                   <h2>恢复信息</h2>
                 </div>
-                <p>
-                  并行项目：{status.value.executionCapacity.occupied}/
-                  {status.value.executionCapacity.limit}（启动配置）
-                </p>
                 <p>
                   {status.value.recovery.available
                     ? '恢复说明可用：multi-project-recovery。'
