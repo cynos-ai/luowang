@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { createReadStream, createWriteStream } from 'node:fs';
-import { cp, mkdir } from 'node:fs/promises';
+import { cp, mkdir, rm } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { readdir, stat } from 'node:fs/promises';
 import { posix } from 'node:path';
@@ -18,7 +18,12 @@ export interface ExecutionAdapter {
   execute(
     program: 'docker',
     args: readonly string[],
-    options?: { cwd?: string; signal?: AbortSignal; timeoutMs?: number },
+    options?: {
+      cwd?: string;
+      signal?: AbortSignal;
+      timeoutMs?: number;
+      isolateEnvironment?: boolean;
+    },
   ): Promise<ExecutionResult>;
   upload(localPath: string, remotePath: string, options?: ExecutionTransferOptions): Promise<void>;
   download(
@@ -36,6 +41,7 @@ export interface ExecutionAdapter {
     localDirectory: string,
     options?: ExecutionTransferOptions,
   ): Promise<void>;
+  removeFile?(remotePath: string): Promise<void>;
   removeTree(remoteDirectory: string): Promise<void>;
   openTunnel?(
     remoteHost: string,
@@ -55,6 +61,14 @@ export function createLocalExecutionAdapter(locationId: string): ExecutionAdapte
           timeout: options.timeoutMs ?? 120_000,
           maxBuffer: MAX_OUTPUT,
           encoding: 'utf8',
+          env: options.isolateEnvironment
+            ? {
+                PATH: process.env.PATH,
+                SystemRoot: process.env.SystemRoot,
+                DOCKER_CONFIG: process.env.DOCKER_CONFIG,
+                DOCKER_HOST: process.env.DOCKER_HOST,
+              }
+            : process.env,
         });
         return { stdout: result.stdout, stderr: result.stderr, code: 0 };
       } catch (error) {
@@ -101,6 +115,9 @@ export function createLocalExecutionAdapter(locationId: string): ExecutionAdapte
       await controlledTransfer(options, () =>
         cp(remoteDirectory, localDirectory, { recursive: true, errorOnExist: true }),
       );
+    },
+    async removeFile(remotePath) {
+      await rm(remotePath, { force: true });
     },
     async removeTree() {},
     async close() {},
@@ -182,10 +199,22 @@ export async function createSshExecutionAdapter(input: {
         args.some((arg) => typeof arg !== 'string' || arg.includes('\0') || arg.length > 16_384)
       )
         return Promise.reject(new Error('远程执行参数无效'));
-      const command = ['docker', ...args].map(posixQuote).join(' ');
+      if (options.cwd && (!options.cwd.startsWith('/') || options.cwd.includes('\0')))
+        return Promise.reject(new Error('远程工作目录无效'));
+      const dockerCommand = ['docker', ...args].map(posixQuote).join(' ');
+      const effectiveCommand = options.isolateEnvironment
+        ? `env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin ${dockerCommand}`
+        : dockerCommand;
+      const command = options.cwd
+        ? `cd ${posixQuote(options.cwd)} && ${effectiveCommand}`
+        : effectiveCommand;
       return new Promise<ExecutionResult>((resolve, reject) => {
         let settled = false;
-        const onAbort = () => fail(options.signal?.reason ?? new Error('操作已取消'));
+        let activeStream: import('ssh2').ClientChannel | undefined;
+        const onAbort = () => {
+          activeStream?.close();
+          fail(options.signal?.reason ?? new Error('操作已取消'));
+        };
         const cleanup = () => {
           clearTimeout(timer);
           options.signal?.removeEventListener('abort', onAbort);
@@ -200,19 +229,19 @@ export async function createSshExecutionAdapter(input: {
           if (settled) return;
           settled = true;
           cleanup();
-          client.end();
           reject(error);
         };
-        const timer = setTimeout(
-          () => fail(new Error('远程命令超时，执行结果未知')),
-          options.timeoutMs ?? 120_000,
-        );
+        const timer = setTimeout(() => {
+          activeStream?.close();
+          fail(new Error('远程命令超时，执行结果未知'));
+        }, options.timeoutMs ?? 120_000);
         timer.unref();
         client.exec(command, (error, stream) => {
           if (error) {
             fail(error);
             return;
           }
+          activeStream = stream;
           let stdout = '';
           let stderr = '';
           const append = (target: string, chunk: Buffer) => {
@@ -342,6 +371,16 @@ export async function createSshExecutionAdapter(input: {
         },
         () => client.end(),
       );
+    },
+    async removeFile(remotePath) {
+      const channel = await sftp();
+      try {
+        await new Promise<void>((resolve, reject) =>
+          channel.unlink(remotePath, (error) => (error ? reject(error) : resolve())),
+        );
+      } finally {
+        channel.end();
+      }
     },
     async removeTree(remoteDirectory) {
       const channel = await sftp();

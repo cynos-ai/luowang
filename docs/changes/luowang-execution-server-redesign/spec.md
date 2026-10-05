@@ -1,7 +1,7 @@
 # 项目执行服务器与应用启动 Spec
 
 - 日期：2026-10-05
-- 状态：建议规格，供负责人审阅；“各服务器运行各自 Docker、首版包含 Compose”已由本轮对话明确，其余为基于现状的推荐设计，尚未实施。
+- 状态：实施中；2026-10-06 已明确采用受信任自部署边界，复用现有执行链并放宽普通项目兼容性。
 - [Intent](intent.md) · [Plan 与评审结论](plan.md)
 
 ## 1 范围和规则衔接
@@ -41,18 +41,20 @@
 ## 4 Compose 首版契约
 
 - 单应用与 Compose 共用资源登记、服务器容量、取证和恢复；一套 Compose 服务栈占一个项目执行名额，同时对各服务设置资源约束，不能把“1 个项目”等同“1 个容器”。
-- 从固定提交读取 Compose 及引用的 Dockerfile/构建上下文，校验并生成受控运行定义。显式指定文件及唯一 Compose project name；不依赖 cwd 自动发现、宿主机环境插值或宿主机 `.env`。
+- 从固定提交读取 Compose 及引用的 Dockerfile/构建上下文。由所选执行服务器的 `docker compose config` 解析合并、profiles、`env_file`、build args 和变量，再生成受控运行定义；解析过程不继承任意服务器业务环境，只使用 Docker 连接所需环境和固定项目目录中的明确配置。解析结果可能包含 Secret，不写日志、报告或持久配置。
 - 支持多个 service、本地受控 build context 或固定外部镜像、内部服务发现、depends_on、healthcheck、Run 专属网络与命名卷。服务发现使用原 service 名；测试命令只能进入固定的测试 service。
 - 外部镜像 tag 首次准备时解析并固定实际 digest；重启恢复不重新解析移动 tag。可复用构建镜像按服务器、平台、固定提交和构建定义摘要核验。
-- 拒绝 privileged、Docker socket/设备挂载、host network/PID/IPC、越界或绝对宿主路径、external 网络/卷、外部构建上下文、跨根 include/extends、未受控配置/Secret 来源等。未支持的字段明确报错，不静默丢弃。
-- 显式 container_name、固定网络/卷 name 和固定宿主端口不得原样执行。受控定义统一生成本 Run 名称和入口映射，页面检查结果展示转换；必要但无法安全转换的定义阻塞并给出具体字段。
+- 普通 Compose 字段默认沿用原生解析结果。继续拒绝 privileged、Docker socket/设备挂载、host network/PID/IPC、越界或绝对宿主路径、external 网络/卷和外部构建上下文；这些限制用于避免越过 Run 归属和误清理，不扩展为恶意模型沙箱。
+- 显式 container_name、固定网络/卷 name 和固定宿主端口不得原样执行。受控定义统一生成本 Run 名称和入口映射；固定应用端口转换为动态宿主端口，其他服务不对宿主机发布端口。
 - 相对源码 bind mount 必须映射到本 Run 的受控副本，校验所有父路径及链接；默认只读，确需写入的工作目录使用本 Run 可写副本或卷。只允许已登记资源，不能直接接受模型提交 Compose 文件或宿主挂载参数。
 - 所有服务/网络/卷带实例与任务归属，启动前记录确定性名称及预期标签。清理先逐项核对实际归属；不能对用户原始项目目录直接执行 `compose down -v` 或按名称前缀批量删除。
-- Compose profiles/多文件合并等只执行显式保存且经解析校验的集合。首版不承诺任意现有 Compose 无修改即兼容；不支持的能力不能被误记为 Docker 故障。
+- Compose profiles、`env_file`、build args、depends_on 和常见服务字段由原生 Compose 解析。多文件集合仍需项目显式保存；不支持的能力不能被误记为 Docker 故障。
 
 ## 5 执行接口与源码、镜像
 
-复用 image-source、run-source、image-preparation、execution-container、command-session 的职责，增加面向 build/create/start/exec/inspect/logs/remove、文件传输及访问通道的受控接口。本地和 SSH adapter 使用同一所有权契约；模型不获得通用远程 Shell、SFTP 或 Docker 工具。
+复用 image-source、run-source、image-preparation、execution-container、command-session 的职责，增加面向 build/create/start/exec/inspect/logs/remove、文件传输及访问通道的受控接口。本地和 SSH adapter 使用同一所有权契约；模型不获得宿主机 Shell、SFTP 或 Docker 工具。
+
+Runner 可以在本 Run 固定的命令容器或 Compose command service 内通过 `/bin/sh -lc` 执行项目脚本、管道和项目镜像已有工具，不维护可执行文件白名单。罗网继续固定容器、工作目录、Run 环境变量、超时、取消和输出上限。命令取消或通道断开后必须停止该命令服务或核对进程已退出，不能把客户端断开当成容器内进程已经结束。
 
 可复用构建输入是固定产品提交与构建定义。场景 patch 继续经原 allowlist 校验，仅覆盖 Run 源码；受控文件在镜像构建完成后注入。禁止把带 patch/Secret 的运行目录拿去构建通用缓存镜像。
 
@@ -66,7 +68,7 @@
 - 远程：应用在容器内监听可被入口转发访问的地址；执行主机仅发布到自身回环的临时端口。SSH 转发的本地监听端必须与 Harness HTTP/MCP 浏览器位于相同网络命名空间，并只绑定回环。
 - 本机：针对原生进程部署与 Compose 部署各提供可验证路径。控制端在容器内时可使用仅供本 Run 的桥接网络与受控转发；不能把 daemon 宿主机 127.0.0.1 当作浏览器的 127.0.0.1，也不能以开放 0.0.0.0 公网端口解决连通性。
 - Compose 服务间地址与控制端浏览器入口地址分别记录。动态 origin 会影响 Cookie、WebSocket、回调地址和 OAuth；支持的单入口 HTTP/WebSocket 路径需实测，依赖固定公网回调的应用可继续使用 external 模式。
-- 受控 HTTP 保留同源限制，浏览器增加当前 Run 的目标范围校验和必要的显式外部依赖范围；转发只能连接已登记入口，不能提供任意目标代理。能力限制必须真实生效，不能只写在 Prompt 中。
+- 受控 HTTP 保留 Run 入口限制。浏览器允许当前 Run 入口以及项目显式配置的外部来源，以覆盖 CDN、第三方登录和多服务应用；转发仍只能连接已登记入口。访问范围必须真实生效，不能只写在 Prompt 中。
 - 隧道断开后停止依赖该通道的新操作，记录基础设施缺口，保留已确认业务结果；不改用旧项目 URL，也不把网络故障自动判为产品 Bug。
 
 ## 7 凭据、受控文件与 SSH
@@ -113,8 +115,8 @@
 | AC-ES-01 | 本机和远程均在指定 daemon 执行，无静默回退；服务器/修订随任务固定，历史不重写 |
 | AC-ES-02 | 三种模式迁移与就绪正确；repository-only 无 URL 可执行，requiresBrowser 缺能力仍 blocked |
 | AC-ES-03 | 单容器完整启动、健康、浏览器与 HTTP、应用仍存活时的业务清理和最终资源回收通过 |
-| AC-ES-04 | 本机和远程 Compose 多服务、依赖、内部 DNS、临时卷、固定测试 service 完整流程通过 |
-| AC-ES-05 | Compose 危险配置、未受控插值/挂载/外部资源拒绝；不同 Run 的名称、端口、网络、卷不冲突 |
+| AC-ES-04 | 本机和远程 Compose 多服务、依赖、profiles、env_file、build args、内部 DNS、临时卷、固定测试 service 完整流程通过 |
+| AC-ES-05 | Compose 由目标端原生解析；危险宿主配置拒绝，固定端口转换；不同 Run 的名称、端口、网络、卷不冲突 |
 | AC-ES-06 | 镜像不跨服务器误复用，产品构建与场景 patch/Secret 注入分离，固定 digest/配置可追溯 |
 | AC-ES-07 | 首次未知/变化 SSH 指纹拒绝，凭据最小暴露，参数/路径注入、伪造归属与跨项目操作拒绝 |
 | AC-ES-08 | 文件只注入选定服务；越界、链接、冲突、超限拒绝，镜像/日志/证据/Git 无合成 Secret 泄露 |
@@ -123,6 +125,6 @@
 | AC-ES-11 | 创建回执丢失、构建/健康失败、取消、SSH 断线、控制端重启均能核对未知资源，不误删/重复执行 |
 | AC-ES-12 | 资源未知时真实占用和告警保留，有空闲名额的其他服务器可执行；清理失败不改已成立结果 |
 | AC-ES-13 | 旧数据副本迁移/回退、项目/Run/证据归属、旧 external 行为以及 768/1024/1440px UI 验证通过 |
-| AC-ES-14 | 同一候选完成 quality/local、runtime MCP 及真实本机+远程（含 Compose）联合验收，证据分层记录 |
+| AC-ES-14 | 同一候选完成 quality/local、runtime MCP 及一台真实远程服务器上的单容器+Compose+容器内 Shell 联合验收，证据分层记录 |
 
-当前 AC-ES-01–14 均未实现/未验收；本次设置提交和历史 live 不作本需求通过证明。
+实现进度和已完成检查以 Plan 为准；真实远程完整流程尚未验收，不能据本机检查宣称整体完成。

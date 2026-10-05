@@ -1,5 +1,13 @@
 # 项目执行服务器与应用启动 Plan
 
+## 2026-10-06 兼容性收口
+
+- 采用受信任自部署边界：继续复用现有服务器、资源台账、取消和恢复链，不建设恶意租户沙箱。
+- Compose 改由所选执行端的 `docker compose config` 原生解析，再由罗网转换动态端口、归属标签和 Run 资源名称，并拒绝会越过宿主边界的配置。
+- Runner 项目命令只在本 Run 的固定命令容器/service 内以 Shell 执行；宿主机执行器保持原边界。
+- 增量兼容 profiles、`env_file`、build args、固定端口转换及常见 Compose 字段；解析结果不进入日志。
+- 完成质量检查后，以一台真实远程服务器验收单容器与 Compose 的构建、启动、HTTP/浏览器、Shell、停止和清理；双服务器故障矩阵后置。
+
 - 日期：2026-10-05
 - 状态：实施中；Phase 0–3 的工程实现与本机确定性验证完成，Phase 4–5 的远程真实资源和联合验收仍受外部资源阻塞。
 - [Intent](intent.md) · [建议 Spec](spec.md)
@@ -119,28 +127,29 @@
 - 受控文件：无选中文件时不访问 service 源码；有文件时只写入明确的 service 源码根，执行路径不进入镜像 build context；已覆盖大小、路径、链接、冲突、版本及跨 chunk 脱敏。
 - 运行时收口：命名数据卷保持默认可写、源码挂载强制只读；能力检查使用本 Run 动态地址；Docker 查询失败保留 unknown 和容量占用；应用准备、受控文件注入和健康检查贯穿取消信号；Compose 构建缓存只使用稳定构建输入，可跨不同 Run 复用。
 - 准备流程收口：进程内仍存活的手动镜像准备不会被后台恢复提前释放；镜像构建、源码物化、远程命令及 SFTP 传输接受取消和超时；受控文件保存与注入共用隐藏文件路径规则，远程注入先创建暂存目录；子目录 Compose 按原文件目录解析相对路径。镜像 tag 还包含构建定义摘要，避免同提交不同 Dockerfile 相互替换引用。
+- 受信任部署兼容性：Compose 先由所选执行端的原生 `docker compose config` 解析 `.env`、`env_file`、profiles、build args 和常见字段，再转换动态端口、Run 名称和归属；任意服务器业务环境不会传入解析进程，解析失败也不回显可能含 Secret 的输出。可能被 `env_file` 使用的受控文件可在解析窗口临时出现，解析后先从本机/远端构建副本删除再开始 build；隐式 `.env` 仍只来自固定提交，避免运行 Secret 静默变成 build arg。Runner 项目命令改为只在固定 command service 内执行 `/bin/sh -lc`，支持项目脚本、管道和镜像内工具；宿主机执行器仍未开放。连接中断或取消时停止该 Run 的命令服务，不能仅凭客户端断开认定进程退出。
 - 浏览器：Run 专属 origin proxy 限制 HTTP、redirect、CONNECT 和 WebSocket，真实 Chromium 已证明外部重定向不会请求目标 origin 之外的地址。
 - 页面：接入与项目设置已使用共享 `SelectBox`、`NumberInput`、`HelpLabel`、Message 和确认组件；加入运行模式、单容器/Compose、服务器修订/检查、受控文件 service/revision 和 Run 实际执行信息。
 
 ### 本轮证据
 
 - 最终工作树 quality 镜像构建通过，镜像内 Docker Compose 为 `v2.39.2`，Playwright Chromium 预检通过。
-- quality 容器完整测试：113 个文件通过、2 个显式 Docker fixture 跳过；542 项通过、4 项跳过。
-- 将默认跳过的真实 Docker fixture 单独启用：6 项通过，覆盖固定提交镜像与场景 patch、不同构建定义的镜像引用、原生/容器化控制端的单容器和 Compose、应用+可写数据卷+Runner、DNS、两个源码卷、受控文件注入、指定 service 执行、不同 Run 镜像缓存复用及全量清理。
+- quality 容器完整测试：113 个文件通过、2 个显式 Docker fixture 文件跳过；546 项通过、5 项跳过。
+- 本轮将相关真实 Docker fixture 单独启用：原生 Compose 解析（含 `.env`、`env_file`、profile 和固定端口转换）及应用+可写数据卷+Runner 的多服务完整流程 2 项通过；命令 service 内的复合 Shell 命令、DNS、源码卷、受控文件注入、启动和全量清理均真实执行。前轮其余镜像与网络 fixture 证明继续保留，未冒充本轮重跑。
 - 真实 Chromium origin proxy 测试通过；foreign redirect 在 Run origin 返回 403，未请求外部 origin。
 - runtime 镜像构建和独立容器启动通过，`/health` 返回数据库与服务正常；项目接入页在 768、1024、1440 CSS 宽度下无横向溢出。项目设置的完整三视口人工检查仍待具有项目数据的候选实例复核。
 - 宿主机 `npm test` 因现有 `better-sqlite3` 原生二进制与宿主 Node ABI 不匹配而未运行；同一最终工作树已在仓库固定的 Node 24.14.1 quality 容器完整通过。这是宿主原生依赖问题，不是前端数据库或本需求运行时失败。
 
 ### 仍阻塞
 
-- 没有两台真实远程服务器、各自主机指纹和受控凭据，因此远程单容器、远程 Compose、两服务器并行、断线及重启恢复不能记为 passed。
+- 当前没有可用于本轮验收的一台真实远程服务器、主机指纹和受控凭据，因此远程单容器、远程 Compose、断线及重启恢复不能记为 passed。一台服务器足以开始完整流程；双服务器并行故障矩阵后置。
 - 没有本轮授权的真实模型预算、完整目标资源和 Secret Store 引用，因此真实四 Session 完整 Run、报告归档及清理不能记为 passed。
 - 以上阻塞不影响本机零模型 Docker 合约和现有功能回归验证；发布、合并和 tag 均不属于本轮授权。
 
 ## 5 风险和范围控制
 
 1. **默认行为迁移**：只对新项目默认 managed；升级已有项目不改变执行环境或触发远程操作。
-2. **Compose 兼容范围**：支持常见多服务结构，但必须先解析和校验。禁止“忽略不支持项继续运行”，也不增加通用部署平台来兼容全部 Compose。
+2. **Compose 兼容范围**：常见多服务结构交给目标端原生 Compose 解析；罗网只转换运行归属并拒绝会越过宿主边界的配置，不再维护普通字段白名单，也不扩展为通用部署平台。
 3. **主机失联与全局上限**：持久 unknown 解决恢复可靠性，不消除实际算力占用。首版推荐保守语义，取舍在 Spec 第 8 节明确。
 4. **Secret 与构建**：运行期注入不支持需要秘密进入镜像层的构建；如需 BuildKit build secret，另行确定专用契约，不把运行文件顺手加入 build context。
 5. **外部依赖清理**：删除 Compose 临时卷不等于已清理外部数据库/第三方 API；继续使用原按 Run 清理契约和告警。

@@ -5,7 +5,6 @@ import { promisify } from 'node:util';
 
 import {
   ControlledCommandError,
-  parseControlledCommand,
   type CommandRunResult,
   type ControlledCommandRunner,
 } from '../runs/command-runner.js';
@@ -88,22 +87,30 @@ export async function createAttachedProjectCommandSession(
         resolve(options.cwd) !== resolve(input.repositoryDirectory)
       )
         throw new ControlledCommandError('COMMAND_NOT_ALLOWED', '命令与项目 Run 上下文不符');
-      const args = parseControlledCommand(command);
+      const args = containerShellCommand(command);
       options.signal?.throwIfAborted();
-      const result = await docker.run(
-        [
-          'exec',
-          '--workdir',
-          input.workingDirectory,
-          '--env',
-          `LUOWANG_RUN_ID=${input.runId}`,
-          '--env',
-          `LUOWANG_TARGET_COMMIT=${input.targetCommit}`,
-          input.containerId,
-          ...args,
-        ],
-        { timeoutMs: 120_000, signal: options.signal },
-      );
+      let result: DockerRuntimeResult;
+      try {
+        result = await docker.run(
+          [
+            'exec',
+            '--workdir',
+            input.workingDirectory,
+            '--env',
+            `LUOWANG_RUN_ID=${input.runId}`,
+            '--env',
+            `LUOWANG_TARGET_COMMIT=${input.targetCommit}`,
+            input.containerId,
+            ...args,
+          ],
+          { timeoutMs: 120_000, signal: options.signal },
+        );
+      } catch (error) {
+        // Closing an SSH/Docker client does not prove the exec process exited.
+        // Stop the owned command service so the Run owner can perform final cleanup.
+        await docker.run(['kill', input.containerId], { timeoutMs: 30_000 }).catch(() => undefined);
+        throw error;
+      }
       return {
         stdout: result.stdout,
         stderr: result.stderr,
@@ -375,7 +382,7 @@ class BoundProjectCommandSession implements ProjectCommandSession {
     ) {
       throw new ControlledCommandError('COMMAND_NOT_ALLOWED', '命令与项目 Run 上下文不符');
     }
-    const args = parseControlledCommand(command);
+    const args = containerShellCommand(command);
     if (options.signal?.aborted) {
       throw new ControlledCommandError('COMMAND_FAILED', '受控命令已被取消');
     }
@@ -430,6 +437,17 @@ class BoundProjectCommandSession implements ProjectCommandSession {
       this.closing = undefined;
     }
   }
+}
+
+function containerShellCommand(command: string): string[] {
+  if (
+    typeof command !== 'string' ||
+    command.trim() === '' ||
+    command.length > 16_384 ||
+    command.includes('\0')
+  )
+    throw new ControlledCommandError('COMMAND_INVALID', '项目命令无效');
+  return ['/bin/sh', '-lc', command];
 }
 
 async function requireDockerSuccess(

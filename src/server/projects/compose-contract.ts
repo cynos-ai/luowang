@@ -1,23 +1,9 @@
 import { createHash } from 'node:crypto';
-import { posix } from 'node:path';
+import { posix, resolve as resolvePath } from 'node:path';
 import { parse } from 'yaml';
 import { ConfigurationError } from '../configuration.js';
+import type { ExecutionAdapter } from './execution-adapter.js';
 
-const SERVICE_FIELDS = new Set([
-  'image',
-  'build',
-  'command',
-  'entrypoint',
-  'working_dir',
-  'environment',
-  'depends_on',
-  'healthcheck',
-  'ports',
-  'expose',
-  'networks',
-  'volumes',
-]);
-const ROOT_FIELDS = new Set(['name', 'services', 'networks', 'volumes']);
 const UNSAFE_SERVICE_FIELDS = [
   'privileged',
   'devices',
@@ -48,6 +34,46 @@ export type ControlledComposeDefinition = {
   networkNames: string[];
 };
 
+/** Resolve interpolation, env_file, profiles and merge semantics with the selected daemon's Compose. */
+export async function resolveNativeComposeConfig(input: {
+  adapter: ExecutionAdapter;
+  sourceDirectory: string;
+  composeFile: string;
+  signal?: AbortSignal;
+}): Promise<string> {
+  const remote = input.adapter.locationId.startsWith('server:');
+  const file = remote
+    ? posix.join(input.sourceDirectory, input.composeFile)
+    : resolvePath(input.sourceDirectory, input.composeFile);
+  const projectDirectory = remote ? posix.dirname(file) : resolvePath(file, '..');
+  const result = await input.adapter.execute(
+    'docker',
+    [
+      'compose',
+      '--project-directory',
+      projectDirectory,
+      '--file',
+      file,
+      '--profile',
+      '*',
+      'config',
+      '--format',
+      'json',
+      '--no-path-resolution',
+    ],
+    {
+      cwd: projectDirectory,
+      signal: input.signal,
+      timeoutMs: 60_000,
+      isolateEnvironment: true,
+    },
+  );
+  if (result.code !== 0) throw new ConfigurationError('Compose 配置无法由目标服务器解析');
+  if (Buffer.byteLength(result.stdout, 'utf8') > 4 * 1024 * 1024)
+    throw new ConfigurationError('Compose 解析结果过大');
+  return result.stdout;
+}
+
 export function normalizeComposeDefinition(input: {
   source: string;
   instanceId: string;
@@ -60,8 +86,9 @@ export function normalizeComposeDefinition(input: {
   publishHost?: string;
   composeFile?: string;
 }): ControlledComposeDefinition {
-  if (Buffer.byteLength(input.source, 'utf8') > 1024 * 1024 || /\$\{/.test(input.source))
-    throw new ConfigurationError('Compose 文件过大或包含未受控变量插值');
+  if (Buffer.byteLength(input.source, 'utf8') > 4 * 1024 * 1024)
+    throw new ConfigurationError('Compose 文件过大');
+  if (/\$\{/.test(input.source)) throw new ConfigurationError('Compose 仍包含未解析变量');
   let document: unknown;
   try {
     document = parse(input.source, { maxAliasCount: 0 });
@@ -69,9 +96,6 @@ export function normalizeComposeDefinition(input: {
     throw new ConfigurationError('Compose 文件无法解析');
   }
   if (!record(document)) throw new ConfigurationError('Compose 根配置无效');
-  rejectUnknown(document, ROOT_FIELDS, 'Compose 根配置');
-  if ('include' in document || 'extends' in document)
-    throw new ConfigurationError('Compose include/extends 不受支持');
   if (!record(document.services)) throw new ConfigurationError('Compose services 缺失');
   const composeDirectory = composeBaseDirectory(input.composeFile ?? 'compose.yml');
   const enabled = new Set(input.enabledServices);
@@ -80,6 +104,7 @@ export function normalizeComposeDefinition(input: {
   const prefix = `lw-${input.projectId.slice(0, 8)}-${input.attemptId}`.toLowerCase();
   const services: Record<string, Record<string, unknown>> = {};
   const buildInputs: Record<string, Record<string, unknown>> = {};
+  let hasBuildArgs = false;
   for (const name of enabled) {
     if (!/^[A-Za-z0-9][A-Za-z0-9_.-]{0,62}$/.test(name))
       throw new ConfigurationError('Compose 服务名无效');
@@ -88,13 +113,16 @@ export function normalizeComposeDefinition(input: {
     for (const field of UNSAFE_SERVICE_FIELDS)
       if (field in source)
         throw new ConfigurationError(`Compose 不支持危险字段：services.${name}.${field}`);
-    rejectUnknown(source, SERVICE_FIELDS, `Compose 服务 ${name}`);
     const normalized = structuredClone(source);
+    // Native Compose has already resolved env_file into environment. Keeping the path would
+    // re-read it relative to the generated override file and could change subdirectory semantics.
+    if (normalized.env_file !== undefined && normalized.environment !== undefined)
+      delete normalized.env_file;
     if (normalized.build !== undefined)
       normalized.build = normalizeBuild(normalized.build, composeDirectory);
     if (normalized.volumes !== undefined)
       normalized.volumes = normalizeMounts(normalized.volumes, name, composeDirectory);
-    if (normalized.ports !== undefined)
+    if (normalized.ports !== undefined && name === input.applicationService)
       normalized.ports = normalizePorts(
         normalized.ports,
         name,
@@ -102,10 +130,18 @@ export function normalizeComposeDefinition(input: {
         input.servicePort,
         input.publishHost ?? '127.0.0.1',
       );
+    else if (normalized.ports !== undefined) delete normalized.ports;
     else if (name === input.applicationService)
       normalized.ports = [`${input.publishHost ?? '127.0.0.1'}::${input.servicePort}`];
+    const buildForHash = record(normalized.build) ? { ...normalized.build } : normalized.build;
+    if (record(buildForHash) && buildForHash.args !== undefined) {
+      hasBuildArgs = true;
+      buildForHash.args = record(buildForHash.args)
+        ? Object.keys(buildForHash.args).sort()
+        : ['configured'];
+    }
     buildInputs[name] = {
-      build: normalized.build ?? null,
+      build: buildForHash ?? null,
       image: normalized.image ?? null,
     };
     normalized.labels = {
@@ -139,7 +175,12 @@ export function normalizeComposeDefinition(input: {
       }
     }
   }
-  const canonical = JSON.stringify(buildInputs);
+  // Build args may contain credentials. Never persist a reusable plain hash of their values.
+  // Runs using args build independently while non-secret definitions retain cross-Run reuse.
+  const canonical = JSON.stringify({
+    buildInputs,
+    buildArgsScope: hasBuildArgs ? input.attemptId : null,
+  });
   return {
     projectName: prefix,
     definitionHash: createHash('sha256').update(canonical).digest('hex'),
@@ -157,21 +198,17 @@ export function normalizeComposeDefinition(input: {
 function normalizeBuild(value: unknown, composeDirectory: string): Record<string, unknown> {
   const build: Record<string, unknown> | null =
     typeof value === 'string' ? { context: value } : record(value) ? { ...value } : null;
-  if (
-    !build ||
-    Object.keys(build).some((key) => !['context', 'dockerfile', 'target', 'args'].includes(key))
-  )
-    throw new ConfigurationError('Compose build 配置不受支持');
+  if (!build) throw new ConfigurationError('Compose build 配置不受支持');
   build.context = resolveFromComposeDirectory(build.context, composeDirectory);
   if (build.dockerfile !== undefined) build.dockerfile = safeRelativePath(build.dockerfile, false);
-  if (build.args !== undefined) throw new ConfigurationError('Compose build args 首版不受支持');
   return build;
 }
 
 function normalizeMounts(value: unknown, service: string, composeDirectory: string): unknown[] {
   if (!Array.isArray(value)) throw new ConfigurationError(`Compose ${service} volumes 无效`);
   return value.map((item) => {
-    if (typeof item !== 'string') throw new ConfigurationError('Compose 长格式挂载首版不受支持');
+    if (record(item)) return normalizeLongMount(item, composeDirectory);
+    if (typeof item !== 'string') throw new ConfigurationError('Compose 挂载格式无效');
     const parts = item.split(':');
     if (parts.length < 2 || parts.length > 3) throw new ConfigurationError('Compose 挂载格式无效');
     const source = parts[0];
@@ -191,6 +228,22 @@ function normalizeMounts(value: unknown, service: string, composeDirectory: stri
       throw new ConfigurationError('Compose 卷挂载无效');
     return `${source}:${target}:${mode}`;
   });
+}
+
+function normalizeLongMount(item: Record<string, unknown>, composeDirectory: string): string {
+  const type = item.type;
+  const source = item.source;
+  const target = item.target;
+  if (typeof source !== 'string' || typeof target !== 'string' || !target.startsWith('/'))
+    throw new ConfigurationError('Compose 挂载格式无效');
+  if (type === 'bind') {
+    const resolved = resolveFromComposeDirectory(source, composeDirectory);
+    const hostPath = resolved === '.' ? '.' : `./${resolved}`;
+    return `${hostPath}:${target}:ro`;
+  }
+  if (type === 'volume' && /^[A-Za-z0-9][A-Za-z0-9_.-]{0,62}$/.test(source))
+    return `${source}:${target}:${item.read_only === true ? 'ro' : 'rw'}`;
+  throw new ConfigurationError('Compose 挂载类型不受支持');
 }
 
 function composeBaseDirectory(composeFile: string): string {
@@ -219,13 +272,13 @@ function normalizePorts(
   servicePort: number,
   publishHost: string,
 ): string[] {
-  if (service !== applicationService) throw new ConfigurationError('只有应用服务可以声明端口');
-  if (!Array.isArray(value) || value.length !== 1)
-    throw new ConfigurationError('应用服务必须只声明一个受控端口');
-  const raw = String(value[0]);
-  const container = Number(raw.split(':').at(-1)?.split('/')[0]);
-  if (container !== servicePort || /^\d+:/.test(raw))
-    throw new ConfigurationError('Compose 禁止固定宿主端口');
+  if (service !== applicationService || !Array.isArray(value))
+    throw new ConfigurationError('应用服务端口配置无效');
+  const matches = value.some((item) => {
+    if (record(item)) return Number(item.target) === servicePort;
+    return Number(String(item).split(':').at(-1)?.split('/')[0]) === servicePort;
+  });
+  if (!matches) throw new ConfigurationError('Compose 未声明配置的应用服务端口');
   return [`${publishHost}::${servicePort}`];
 }
 
@@ -240,14 +293,15 @@ function normalizeTopResources(
   for (const [name, definition] of Object.entries(value)) {
     if (!record(definition) || definition.external === true)
       throw new ConfigurationError('Compose external 网络或卷不受支持');
-    if (Object.keys(definition).some((key) => !['driver', 'labels'].includes(key)))
-      throw new ConfigurationError('Compose 网络或卷字段不受支持');
     if (
-      definition.driver !== undefined &&
-      definition.driver !== (kind === 'network' ? 'bridge' : 'local')
+      kind === 'volume' &&
+      (definition.driver_opts !== undefined ||
+        (definition.driver !== undefined && definition.driver !== 'local'))
     )
-      throw new ConfigurationError('Compose 网络或卷驱动不受支持');
-    result[name] = { ...definition, external: false, name: `${prefix}-${name}` };
+      throw new ConfigurationError('Compose 卷不能映射宿主机路径或使用外部驱动');
+    const normalized = { ...definition };
+    delete normalized.name;
+    result[name] = { ...normalized, external: false, name: `${prefix}-${name}` };
   }
   return result;
 }
@@ -282,8 +336,4 @@ function safeRelativePath(value: unknown, allowDot: boolean): string {
 }
 function record(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
-}
-function rejectUnknown(value: Record<string, unknown>, allowed: Set<string>, label: string): void {
-  const key = Object.keys(value).find((item) => !allowed.has(item));
-  if (key) throw new ConfigurationError(`${label}包含不支持的字段：${key}`);
 }

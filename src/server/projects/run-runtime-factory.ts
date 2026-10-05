@@ -1,4 +1,6 @@
 import type Database from 'better-sqlite3';
+import { mkdir, rm, writeFile } from 'node:fs/promises';
+import { dirname, isAbsolute, relative, resolve, sep } from 'node:path';
 import type { RunRuntimeEnvironmentFactory } from '../runs/orchestrator.js';
 import type { ScopedSecretStore } from '../security/scoped-secret-store.js';
 import type { ProjectTaskRuntime } from './task-runtime.js';
@@ -26,7 +28,7 @@ import {
 } from './application-runtime.js';
 import { injectManagedFiles, managedFileSensitiveValues } from './managed-file-runtime.js';
 import { readInstanceId } from './instance-id.js';
-import { normalizeComposeDefinition } from './compose-contract.js';
+import { normalizeComposeDefinition, resolveNativeComposeConfig } from './compose-contract.js';
 import { createExecutionResourceLedger } from './resource-ledger.js';
 import { createHash } from 'node:crypto';
 import { projectImageTag } from './image-builder.js';
@@ -255,21 +257,43 @@ export function createProjectRunRuntimeEnvironmentFactory(input: {
                 sourceKind: 'image-sources',
                 signal: context.signal,
               });
-              if (input.task.executionLocationId.startsWith('server:')) {
-                remoteBuildSource = `/tmp/luowang/${readInstanceId(input.database)}/${input.task.projectId}/build-${context.runId}`;
-                await adapter.uploadTree(composeBuildSource.directory, remoteBuildSource, {
+              const stagedFiles = await stageComposeManagedFiles(
+                composeBuildSource.directory,
+                // Managed env_file inputs may be read during native Compose resolution. The
+                // implicit project .env remains fixed-commit input so a runtime Secret cannot
+                // silently become a build argument.
+                files.filter((file) => file.path !== '.env'),
+              );
+              let composeSource: string;
+              try {
+                if (input.task.executionLocationId.startsWith('server:')) {
+                  remoteBuildSource = `/tmp/luowang/${readInstanceId(input.database)}/${input.task.projectId}/build-${context.runId}`;
+                  await adapter.uploadTree(composeBuildSource.directory, remoteBuildSource, {
+                    signal: context.signal,
+                    timeoutMs: 10 * 60_000,
+                  });
+                }
+                const parseSource = remoteBuildSource ?? composeBuildSource.directory;
+                composeSource = await resolveNativeComposeConfig({
+                  adapter,
+                  sourceDirectory: parseSource,
+                  composeFile: input.task.runtime.composeFile,
                   signal: context.signal,
-                  timeoutMs: 10 * 60_000,
                 });
+              } finally {
+                await stagedFiles.cleanup(
+                  remoteBuildSource
+                    ? async (path) => {
+                        if (!adapter.removeFile) throw new Error('远程受控文件清理不可用');
+                        await adapter.removeFile(`${remoteBuildSource}/${path}`);
+                      }
+                    : undefined,
+                );
               }
               const buildSource = remoteBuildSource ?? composeBuildSource.directory;
-              const composeSource = await context.repository.readTextFileAtCommit(
-                context.targetCommit,
-                input.task.runtime.composeFile,
-              );
               const publishHost = remoteSource ? '127.0.0.1' : localDockerHostAddress();
               const definition = normalizeComposeDefinition({
-                source: composeSource.content,
+                source: composeSource,
                 instanceId: readInstanceId(input.database),
                 projectId: input.task.projectId,
                 attemptId: context.runId,
@@ -507,5 +531,41 @@ export function createProjectRunRuntimeEnvironmentFactory(input: {
       await adapter.close();
       throw error;
     }
+  };
+}
+
+async function stageComposeManagedFiles(
+  sourceDirectory: string,
+  files: Array<{ path: string; content: string }>,
+): Promise<{ cleanup(removeRemote?: (path: string) => Promise<void> | undefined): Promise<void> }> {
+  const staged: Array<{ path: string; local: string }> = [];
+  try {
+    for (const file of files) {
+      const local = resolve(sourceDirectory, ...file.path.split('/'));
+      const remainder = relative(sourceDirectory, local);
+      if (remainder === '..' || remainder.startsWith(`..${sep}`) || isAbsolute(remainder))
+        throw new Error('Compose 受控文件路径越界');
+      await mkdir(dirname(local), { recursive: true });
+      await writeFile(local, file.content, { flag: 'wx', mode: 0o600 });
+      staged.push({ path: file.path, local });
+    }
+  } catch (error) {
+    await Promise.allSettled(staged.map((file) => rm(file.local, { force: true })));
+    throw error;
+  }
+  return {
+    async cleanup(removeRemote) {
+      let failure: unknown;
+      for (const file of staged) {
+        try {
+          if (removeRemote) await removeRemote(file.path);
+        } catch (error) {
+          failure ??= error;
+        } finally {
+          await rm(file.local, { force: true });
+        }
+      }
+      if (failure) throw failure;
+    },
   };
 }

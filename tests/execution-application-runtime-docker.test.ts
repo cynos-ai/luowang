@@ -10,7 +10,11 @@ import {
   startComposeApplication,
   startSingleContainerApplication,
 } from '../src/server/projects/application-runtime.js';
-import { normalizeComposeDefinition } from '../src/server/projects/compose-contract.js';
+import {
+  normalizeComposeDefinition,
+  resolveNativeComposeConfig,
+} from '../src/server/projects/compose-contract.js';
+import { createLocalExecutionAdapter } from '../src/server/projects/execution-adapter.js';
 import {
   createAttachedProjectCommandSession,
   createDockerRuntime,
@@ -18,6 +22,45 @@ import {
 import { injectManagedFiles } from '../src/server/projects/managed-file-runtime.js';
 
 const dockerIt = process.env.LUOWANG_DOCKER_SMOKE === '1' ? it : it.skip;
+
+dockerIt('resolves normal Compose features on the selected execution server', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'luowang-compose-config-'));
+  try {
+    await writeFile(join(root, '.env'), 'IMAGE_TAG=3.20\n');
+    await writeFile(join(root, 'runtime.env'), 'VISIBLE=fixture\n');
+    await writeFile(
+      join(root, 'compose.yml'),
+      [
+        'services:',
+        '  app:',
+        '    image: alpine:${IMAGE_TAG}',
+        '    profiles: [test]',
+        '    env_file: [runtime.env]',
+        '    ports: ["8080:3000"]',
+      ].join('\n'),
+    );
+    const source = await resolveNativeComposeConfig({
+      adapter: createLocalExecutionAdapter('local:fixture'),
+      sourceDirectory: root,
+      composeFile: 'compose.yml',
+    });
+    const definition = normalizeComposeDefinition({
+      source,
+      instanceId: '11111111-1111-4111-8111-111111111111',
+      projectId: '22222222-2222-4222-8222-222222222222',
+      attemptId: '01K00000000000000000000001',
+      enabledServices: ['app'],
+      applicationService: 'app',
+      commandService: 'app',
+      servicePort: 3000,
+    });
+    assert.equal(definition.services.app.image, 'alpine:3.20');
+    assert.deepEqual(definition.services.app.ports, ['127.0.0.1::3000']);
+    assert.deepEqual(definition.services.app.environment, { VISIBLE: 'fixture' });
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
 
 dockerIt(
   'builds Compose from the fixed product tree and executes tests in the selected service',
@@ -89,30 +132,37 @@ dockerIt(
       );
 
       const publishHost = localDockerHostAddress();
+      const composeSource = [
+        'services:',
+        '  app:',
+        '    build:',
+        '      context: .',
+        '      dockerfile: Dockerfile.app',
+        '    depends_on: [database]',
+        '    ports: ["8080"]',
+        '    volumes: [".:/runtime-source:ro"]',
+        '  database:',
+        '    build:',
+        '      context: .',
+        '      dockerfile: Dockerfile.database',
+        '    volumes: ["database-data:/data"]',
+        '  runner:',
+        '    build:',
+        '      context: .',
+        '      dockerfile: Dockerfile.runner',
+        '    depends_on: [app]',
+        '    volumes: [".:/workspace:ro"]',
+        'volumes:',
+        '  database-data: {}',
+      ].join('\n');
+      await writeFile(join(buildSource, 'compose.yml'), composeSource);
+      const resolvedCompose = await resolveNativeComposeConfig({
+        adapter: createLocalExecutionAdapter('local:fixture'),
+        sourceDirectory: buildSource,
+        composeFile: 'compose.yml',
+      });
       const definition = normalizeComposeDefinition({
-        source: [
-          'services:',
-          '  app:',
-          '    build:',
-          '      context: .',
-          '      dockerfile: Dockerfile.app',
-          '    depends_on: [database]',
-          '    ports: ["8080"]',
-          '    volumes: [".:/runtime-source:ro"]',
-          '  database:',
-          '    build:',
-          '      context: .',
-          '      dockerfile: Dockerfile.database',
-          '    volumes: ["database-data:/data"]',
-          '  runner:',
-          '    build:',
-          '      context: .',
-          '      dockerfile: Dockerfile.runner',
-          '    depends_on: [app]',
-          '    volumes: [".:/workspace:ro"]',
-          'volumes:',
-          '  database-data: {}',
-        ].join('\n'),
+        source: resolvedCompose,
         instanceId: projectId,
         projectId,
         attemptId: runId,
@@ -197,7 +247,7 @@ dockerIt(
         },
         docker,
       );
-      const result = await session.run('node read-fixture.js', {
+      const result = await session.run('test -f read-fixture.js && node read-fixture.js', {
         cwd: commandSource,
         runId,
         targetCommit,

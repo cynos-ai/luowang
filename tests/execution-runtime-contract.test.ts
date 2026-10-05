@@ -1,6 +1,14 @@
 import { strict as assert } from 'node:assert';
 import { describe, it } from 'vitest';
-import { normalizeComposeDefinition } from '../src/server/projects/compose-contract.js';
+import {
+  normalizeComposeDefinition,
+  resolveNativeComposeConfig,
+} from '../src/server/projects/compose-contract.js';
+import type { ExecutionAdapter } from '../src/server/projects/execution-adapter.js';
+import {
+  createAttachedProjectCommandSession,
+  type DockerRuntime,
+} from '../src/server/projects/execution-container.js';
 import { StreamingSecretRedactor } from '../src/server/projects/managed-file-runtime.js';
 import { normalizeRuntimeDefinition } from '../src/server/projects/configuration.js';
 
@@ -55,19 +63,80 @@ describe('execution runtime safety contracts', () => {
     });
     assert.notEqual(first.definitionHash, changed.definitionHash);
   });
-  it('rejects privileged, host namespaces, fixed ports, interpolation and escaping build roots', () => {
+  it('rejects privileged, host namespaces, unresolved interpolation and escaping build roots', () => {
     for (const source of [
       'services:\n  app:\n    image: alpine\n    privileged: true',
       'services:\n  app:\n    image: alpine\n    network_mode: host',
-      'services:\n  app:\n    image: alpine\n    ports: ["8080:3000"]',
       'services:\n  app:\n    image: ${IMAGE}',
       'services:\n  app:\n    build: ../outside',
       'services:\n  app:\n    image: alpine\n    volumes: [".:/app:rw"]',
+      'services:\n  app:\n    image: alpine\nvolumes:\n  data:\n    driver_opts:\n      device: /etc',
     ])
       assert.throws(
         () => normalizeComposeDefinition({ ...identity, enabledServices: ['app'], source }),
         /Compose|路径|端口|插值|危险/,
       );
+  });
+  it('accepts common resolved Compose fields and replaces a fixed host port', () => {
+    const result = normalizeComposeDefinition({
+      ...identity,
+      enabledServices: ['app'],
+      source: `services:\n  app:\n    build:\n      context: .\n      args:\n        NODE_ENV: test\n    profiles: [test]\n    restart: unless-stopped\n    ports:\n      - target: 3000\n        published: "8080"\n        protocol: tcp\n`,
+    });
+    assert.deepEqual(result.services.app.ports, ['127.0.0.1::3000']);
+    assert.deepEqual((result.services.app.build as { args: unknown }).args, { NODE_ENV: 'test' });
+    assert.deepEqual(result.services.app.profiles, ['test']);
+    const nextRun = normalizeComposeDefinition({
+      ...identity,
+      attemptId: '01K00000000000000000000002',
+      enabledServices: ['app'],
+      source: `services:\n  app:\n    build:\n      context: .\n      args:\n        NODE_ENV: test\n    ports: ["3000"]\n`,
+    });
+    assert.notEqual(result.definitionHash, nextRun.definitionHash);
+  });
+  it('uses the selected execution adapter for native Compose resolution without exposing output', async () => {
+    let captured: readonly string[] = [];
+    const adapter: ExecutionAdapter = {
+      locationId: 'server:fixture',
+      async execute(_program, args) {
+        captured = args;
+        return { stdout: '{"services":{"app":{"image":"alpine"}}}', stderr: '', code: 0 };
+      },
+      async upload() {},
+      async download() {},
+      async uploadTree() {},
+      async downloadTree() {},
+      async removeTree() {},
+      async close() {},
+    };
+    const resolved = await resolveNativeComposeConfig({
+      adapter,
+      sourceDirectory: '/tmp/run-source',
+      composeFile: 'deploy/compose.yml',
+    });
+    assert.match(resolved, /services/);
+    assert.deepEqual(captured.slice(-6), [
+      '--profile',
+      '*',
+      'config',
+      '--format',
+      'json',
+      '--no-path-resolution',
+    ]);
+    const failing = {
+      ...adapter,
+      async execute() {
+        return { stdout: '', stderr: 'TOKEN=synthetic-secret', code: 1 };
+      },
+    } satisfies ExecutionAdapter;
+    await assert.rejects(
+      resolveNativeComposeConfig({
+        adapter: failing,
+        sourceDirectory: '/tmp/run-source',
+        composeFile: 'compose.yml',
+      }),
+      (error: Error) => !error.message.includes('synthetic-secret'),
+    );
   });
   it('resolves Compose paths from the configured file directory', () => {
     const result = normalizeComposeDefinition({
@@ -109,5 +178,82 @@ describe('execution runtime safety contracts', () => {
       ['npm', 'start'],
     );
     assert.throws(() => normalizeRuntimeDefinition({ startCommand: 'npm start' }), /参数数组/);
+  });
+  it('runs normal shell commands only inside the owned command service', async () => {
+    const calls: string[][] = [];
+    const docker: DockerRuntime = {
+      async run(args) {
+        calls.push(args);
+        if (args[0] === 'inspect')
+          return {
+            stdout: JSON.stringify({
+              'luowang.project-id': identity.projectId,
+              'luowang.run-id': identity.attemptId,
+            }),
+            stderr: '',
+            exitCode: 0,
+          };
+        return { stdout: 'ok', stderr: '', exitCode: 0 };
+      },
+    };
+    const session = await createAttachedProjectCommandSession(
+      {
+        projectId: identity.projectId,
+        runId: identity.attemptId,
+        targetCommit: 'a'.repeat(40),
+        repositoryDirectory: '/tmp/project',
+        containerId: 'b'.repeat(64),
+        sourceRoot: '/luowang-source',
+        workingDirectory: '/luowang-source',
+      },
+      docker,
+    );
+    const result = await session.run('npm test && npm run lint', {
+      cwd: '/tmp/project',
+      runId: identity.attemptId,
+      targetCommit: 'a'.repeat(40),
+    });
+    assert.equal(result.stdout, 'ok');
+    assert.deepEqual(calls.at(-1)?.slice(-3), ['/bin/sh', '-lc', 'npm test && npm run lint']);
+  });
+  it('stops the owned command service when a container shell result is uncertain', async () => {
+    const calls: string[][] = [];
+    const docker: DockerRuntime = {
+      async run(args) {
+        calls.push(args);
+        if (args[0] === 'inspect')
+          return {
+            stdout: JSON.stringify({
+              'luowang.project-id': identity.projectId,
+              'luowang.run-id': identity.attemptId,
+            }),
+            stderr: '',
+            exitCode: 0,
+          };
+        if (args[0] === 'exec') throw new Error('connection closed');
+        return { stdout: '', stderr: '', exitCode: 0 };
+      },
+    };
+    const session = await createAttachedProjectCommandSession(
+      {
+        projectId: identity.projectId,
+        runId: identity.attemptId,
+        targetCommit: 'a'.repeat(40),
+        repositoryDirectory: '/tmp/project',
+        containerId: 'b'.repeat(64),
+        sourceRoot: '/luowang-source',
+        workingDirectory: '/luowang-source',
+      },
+      docker,
+    );
+    await assert.rejects(
+      session.run('sleep 300', {
+        cwd: '/tmp/project',
+        runId: identity.attemptId,
+        targetCommit: 'a'.repeat(40),
+      }),
+      /connection closed/,
+    );
+    assert.equal(calls.at(-1)?.[0], 'kill');
   });
 });
