@@ -9,6 +9,7 @@ import {
 
 export type ProjectConfiguration = Omit<RepositoryConfig, 'repository'> & {
   language: string;
+  browserAllowedOrigins: string[];
   testDataCleanupUrl: string;
   /** Empty uses LuoWang's built-in executor image. */
   executionDockerfile: string;
@@ -32,6 +33,7 @@ export type ProjectRuntimeDefinition = {
 
 const ALLOWED_FIELDS = new Set([
   'language',
+  'browserAllowedOrigins',
   'scenarioBranch',
   'scenarioMode',
   'scenarioLabels',
@@ -49,6 +51,7 @@ const ALLOWED_FIELDS = new Set([
 ]);
 const TASK_SEMANTIC_FIELDS = [
   'language',
+  'browserAllowedOrigins',
   'scenarioBranch',
   'scenarioMode',
   'scenarioLabels',
@@ -99,6 +102,7 @@ export function createProjectConfigurationStore(
       typeof source.language === 'string' && source.language.length <= 4096
         ? source.language
         : 'zh-CN';
+    const browserAllowedOrigins = normalizeBrowserAllowedOrigins(source.browserAllowedOrigins);
     const executionDockerfile = normalizeExecutionDockerfile(source.executionDockerfile);
     const testDataCleanupUrl = normalizeTestDataCleanupUrl(source.testDataCleanupUrl);
     const runtimeMode = normalizeRuntimeMode(source.runtimeMode, row ? 'external' : 'managed');
@@ -109,6 +113,7 @@ export function createProjectConfigurationStore(
       config: {
         ...rest,
         language,
+        browserAllowedOrigins,
         executionDockerfile,
         testDataCleanupUrl,
         runtimeMode,
@@ -138,6 +143,7 @@ export function createProjectConfigurationStore(
         const current = read(projectId);
         const {
           language: languagePatch,
+          browserAllowedOrigins: browserAllowedOriginsPatch,
           executionDockerfile: executionDockerfilePatch,
           testDataCleanupUrl: cleanupUrlPatch,
           runtimeMode: runtimeModePatch,
@@ -153,6 +159,11 @@ export function createProjectConfigurationStore(
         if (typeof language !== 'string' || language.length > 4096) {
           throw new ConfigurationError('language must be a string');
         }
+        const browserAllowedOrigins = normalizeBrowserAllowedOrigins(
+          browserAllowedOriginsPatch === undefined
+            ? current.config.browserAllowedOrigins
+            : browserAllowedOriginsPatch,
+        );
         const { repository: ignored, ...rest } = merged;
         void ignored;
         const executionDockerfile = normalizeExecutionDockerfile(
@@ -176,6 +187,7 @@ export function createProjectConfigurationStore(
         const config = {
           ...rest,
           language,
+          browserAllowedOrigins,
           executionDockerfile,
           testDataCleanupUrl,
           runtimeMode,
@@ -214,6 +226,34 @@ export function createProjectConfigurationStore(
       })();
     },
   };
+}
+
+export function normalizeBrowserAllowedOrigins(value: unknown): string[] {
+  if (value === undefined) return [];
+  if (!Array.isArray(value) || value.length > 16)
+    throw new ConfigurationError('浏览器额外来源无效');
+  const origins = value.map((item) => {
+    if (typeof item !== 'string' || item.length > 2048)
+      throw new ConfigurationError('浏览器额外来源无效');
+    let parsed: URL;
+    try {
+      parsed = new URL(item);
+    } catch {
+      throw new ConfigurationError('浏览器额外来源无效');
+    }
+    if (
+      !['http:', 'https:'].includes(parsed.protocol) ||
+      parsed.username ||
+      parsed.password ||
+      parsed.pathname !== '/' ||
+      parsed.search ||
+      parsed.hash ||
+      (item !== parsed.origin && item !== `${parsed.origin}/`)
+    )
+      throw new ConfigurationError('浏览器额外来源必须是完整的 HTTP(S) origin');
+    return parsed.origin;
+  });
+  return [...new Set(origins)];
 }
 
 export function normalizeRuntimeMode(

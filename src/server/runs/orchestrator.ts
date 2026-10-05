@@ -115,6 +115,7 @@ const SENSITIVE_PATH =
   /(^|\/)(?:\.env(?:\.|$)|.*(?:secret|credential|password|token|private[-_]?key|key\.txt).*)/i;
 
 export interface RunOrchestratorOptions {
+  browserAllowedOrigins?: readonly string[];
   capabilityConfiguration?: RunCapabilities['configuration'];
   checkEnvironment?: (baseUrl: string, signal?: AbortSignal) => Promise<EnvironmentObservation>;
   configuration: ConfigurationStore;
@@ -1334,7 +1335,11 @@ class DefaultRunOrchestrator implements RunOrchestrator {
     ];
     const browserExtension =
       context.browserRequired && this.options.browser?.isEnabled()
-        ? this.options.browser.extension(workspace.evidenceDirectory, context.runtimeBaseUrl)
+        ? this.options.browser.extension(
+            workspace.evidenceDirectory,
+            context.runtimeBaseUrl,
+            this.options.browserAllowedOrigins,
+          )
         : undefined;
     if (browserExtension) evidenceStore?.allowBrowserRecords?.();
     const commandSession = this.options.commandSessionFactory

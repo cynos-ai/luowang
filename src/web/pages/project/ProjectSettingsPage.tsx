@@ -444,6 +444,21 @@ function SettingsSection({
               }
             />
           </Field>
+          <Field label="浏览器额外来源" hint="每行一个完整 origin，例如 https://cdn.example.com。">
+            <textarea
+              value={configuration.browserAllowedOrigins.join('\n')}
+              disabled={disabled}
+              onChange={(event) =>
+                onConfiguration({
+                  ...configuration,
+                  browserAllowedOrigins: event.target.value
+                    .split(/[\n,]/)
+                    .map((item) => item.trim())
+                    .filter(Boolean),
+                })
+              }
+            />
+          </Field>
           <Field label="外部数据库说明">
             <textarea
               value={configuration.externalDatabase}
@@ -901,6 +916,7 @@ function sectionValue(
         baseUrl: config.baseUrl,
         externalDatabase: config.externalDatabase,
         testDataCleanupUrl: config.testDataCleanupUrl,
+        browserAllowedOrigins: config.browserAllowedOrigins,
       };
     case 'execution':
       return {

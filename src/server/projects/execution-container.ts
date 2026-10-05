@@ -108,7 +108,7 @@ export async function createAttachedProjectCommandSession(
       } catch (error) {
         // Closing an SSH/Docker client does not prove the exec process exited.
         // Stop the owned command service so the Run owner can perform final cleanup.
-        await docker.run(['kill', input.containerId], { timeoutMs: 30_000 }).catch(() => undefined);
+        await stopOwnedCommandContainer(docker, input.containerId);
         throw error;
       }
       return {
@@ -120,6 +120,18 @@ export async function createAttachedProjectCommandSession(
     },
     async close() {},
   };
+}
+
+async function stopOwnedCommandContainer(
+  docker: DockerRuntime,
+  containerId: string,
+): Promise<void> {
+  await docker.run(['kill', containerId], { timeoutMs: 30_000 }).catch(() => undefined);
+  const inspected = await docker
+    .run(['inspect', '--format', '{{.State.Running}}', containerId], { timeoutMs: 10_000 })
+    .catch(() => null);
+  if (!inspected || inspected.exitCode !== 0 || inspected.stdout.trim() !== 'false')
+    throw new ControlledCommandError('COMMAND_FAILED', '项目测试服务停止状态未知');
 }
 
 export function createDockerRuntime(): DockerRuntime {

@@ -51,6 +51,7 @@ it('assembles two project Runs with fixed repository, cleanup, evidence and hist
     config.update(a.projectId, {
       language: 'en-US',
       baseUrl: 'https://a.example',
+      browserAllowedOrigins: ['https://cdn.a.example'],
       testDataCleanupUrl: 'https://a.example/cleanup',
     });
     config.update(b.projectId, {
@@ -71,6 +72,7 @@ it('assembles two project Runs with fixed repository, cleanup, evidence and hist
     const paths = { repoRoot: join(root, 'repos'), reportRoot: join(root, 'reports') };
     const secrets = createScopedSecretStore(database, 'synthetic-master-key');
     const runtimeA = createProjectTaskRuntime(claimedA, projects, deployment, paths);
+    assert.deepEqual(runtimeA.browserAllowedOrigins, ['https://cdn.a.example']);
     const servicesA = createProjectRunServices({
       database,
       task: runtimeA,

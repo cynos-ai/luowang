@@ -1,6 +1,6 @@
 import type Database from 'better-sqlite3';
 import { mkdir, rm, writeFile } from 'node:fs/promises';
-import { dirname, isAbsolute, relative, resolve, sep } from 'node:path';
+import { dirname, isAbsolute, posix, relative, resolve, sep } from 'node:path';
 import type { RunRuntimeEnvironmentFactory } from '../runs/orchestrator.js';
 import type { ScopedSecretStore } from '../security/scoped-secret-store.js';
 import type { ProjectTaskRuntime } from './task-runtime.js';
@@ -343,7 +343,7 @@ export function createProjectRunRuntimeEnvironmentFactory(input: {
                       await (
                         await import('node:fs/promises')
                       ).writeFile(local, content, { flag: 'wx', mode: 0o600 });
-                      const remote = `${remoteBuildSource}/.luowang-compose.yml`;
+                      const remote = `${posix.dirname(remoteBuildSource!)}/.luowang-${definition.projectName}.compose.yml`;
                       try {
                         await adapter.upload(local, remote, {
                           signal: context.signal,
@@ -356,7 +356,12 @@ export function createProjectRunRuntimeEnvironmentFactory(input: {
                       return {
                         path: remote,
                         remove: async () => {
-                          await (await import('node:fs/promises')).rm(local, { force: true });
+                          try {
+                            if (!adapter.removeFile) throw new Error('远程 Compose 配置清理不可用');
+                            await adapter.removeFile(remote);
+                          } finally {
+                            await (await import('node:fs/promises')).rm(local, { force: true });
+                          }
                         },
                       };
                     }

@@ -191,6 +191,16 @@ describe('Phase 4 browser and evidence boundaries', () => {
     assert.ok(definition.args.includes('--snapshot-mode=full'));
     assert.ok(definition.args.includes('--codegen=none'));
     assert.ok(definition.args.includes('--output-dir=C:/runs/evidence'));
+    const scopedDefinition = adapter.serverDefinition(
+      'C:/runs/evidence',
+      'https://run.example/app',
+      ['https://cdn.example', 'https://login.example'],
+    );
+    assert.ok(
+      scopedDefinition.args.includes(
+        '--allowed-origins=https://run.example;https://cdn.example;https://login.example',
+      ),
+    );
     // Cookie read/restore is the only approved storage surface.
     assert.ok(definition.args.includes('--caps=storage'));
     assert.deepEqual(

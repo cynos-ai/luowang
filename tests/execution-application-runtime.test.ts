@@ -1,7 +1,7 @@
 import { strict as assert } from 'node:assert';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 
 import { it } from 'vitest';
 
@@ -21,6 +21,9 @@ it('cancels an in-progress Compose build before create or start', async () => {
     async run(args, options) {
       calls.push(args);
       if (args[0] === 'compose' && args.includes('build')) {
+        assert.equal(args[args.indexOf('--project-directory') + 1], root);
+        assert.notEqual(args[args.indexOf('--file') + 1], join(root, '.luowang-compose.yml'));
+        assert.equal(dirname(args[args.indexOf('--file') + 1] ?? ''), dirname(root));
         markBuildStarted();
         return new Promise((_, reject) => {
           options.signal?.addEventListener(

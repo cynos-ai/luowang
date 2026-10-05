@@ -4,13 +4,19 @@ import {
   normalizeComposeDefinition,
   resolveNativeComposeConfig,
 } from '../src/server/projects/compose-contract.js';
-import type { ExecutionAdapter } from '../src/server/projects/execution-adapter.js';
+import {
+  classifyLocalExecutionFailure,
+  type ExecutionAdapter,
+} from '../src/server/projects/execution-adapter.js';
 import {
   createAttachedProjectCommandSession,
   type DockerRuntime,
 } from '../src/server/projects/execution-container.js';
 import { StreamingSecretRedactor } from '../src/server/projects/managed-file-runtime.js';
-import { normalizeRuntimeDefinition } from '../src/server/projects/configuration.js';
+import {
+  normalizeBrowserAllowedOrigins,
+  normalizeRuntimeDefinition,
+} from '../src/server/projects/configuration.js';
 
 const identity = {
   instanceId: '11111111-1111-4111-8111-111111111111',
@@ -23,6 +29,27 @@ const identity = {
 };
 
 describe('execution runtime safety contracts', () => {
+  it('distinguishes a completed non-zero Docker exit from an uncertain local execution', () => {
+    assert.deepEqual(
+      classifyLocalExecutionFailure(
+        Object.assign(new Error('command failed'), { code: 7, stdout: '', stderr: 'failed' }),
+        false,
+      ),
+      { code: 7, stdout: '', stderr: 'failed' },
+    );
+    assert.throws(
+      () =>
+        classifyLocalExecutionFailure(
+          Object.assign(new Error('timed out'), { code: 'ETIMEDOUT', killed: true }),
+          false,
+        ),
+      /timed out/,
+    );
+    assert.throws(
+      () => classifyLocalExecutionFailure(Object.assign(new Error('aborted'), { code: 1 }), true),
+      /aborted/,
+    );
+  });
   it('normalizes a two-service Compose definition and replaces global names and host ports', () => {
     const result = normalizeComposeDefinition({
       ...identity,
@@ -179,12 +206,28 @@ describe('execution runtime safety contracts', () => {
     );
     assert.throws(() => normalizeRuntimeDefinition({ startCommand: 'npm start' }), /参数数组/);
   });
+  it('normalizes browser origins without accepting paths or credentials', () => {
+    assert.deepEqual(
+      normalizeBrowserAllowedOrigins([
+        'https://cdn.example/',
+        'https://cdn.example',
+        'http://login.example:8080',
+      ]),
+      ['https://cdn.example', 'http://login.example:8080'],
+    );
+    for (const value of [
+      ['file:///tmp/asset'],
+      ['https://user:pass@cdn.example'],
+      ['https://cdn.example/path'],
+    ])
+      assert.throws(() => normalizeBrowserAllowedOrigins(value), /额外来源/);
+  });
   it('runs normal shell commands only inside the owned command service', async () => {
     const calls: string[][] = [];
     const docker: DockerRuntime = {
       async run(args) {
         calls.push(args);
-        if (args[0] === 'inspect')
+        if (args[0] === 'inspect' && args.includes('{{json .Config.Labels}}'))
           return {
             stdout: JSON.stringify({
               'luowang.project-id': identity.projectId,
@@ -193,6 +236,8 @@ describe('execution runtime safety contracts', () => {
             stderr: '',
             exitCode: 0,
           };
+        if (args[0] === 'inspect' && args.includes('{{.State.Running}}'))
+          return { stdout: 'false\n', stderr: '', exitCode: 0 };
         return { stdout: 'ok', stderr: '', exitCode: 0 };
       },
     };
@@ -221,7 +266,7 @@ describe('execution runtime safety contracts', () => {
     const docker: DockerRuntime = {
       async run(args) {
         calls.push(args);
-        if (args[0] === 'inspect')
+        if (args[0] === 'inspect' && args.includes('{{json .Config.Labels}}'))
           return {
             stdout: JSON.stringify({
               'luowang.project-id': identity.projectId,
@@ -230,6 +275,8 @@ describe('execution runtime safety contracts', () => {
             stderr: '',
             exitCode: 0,
           };
+        if (args[0] === 'inspect' && args.includes('{{.State.Running}}'))
+          return { stdout: 'false\n', stderr: '', exitCode: 0 };
         if (args[0] === 'exec') throw new Error('connection closed');
         return { stdout: '', stderr: '', exitCode: 0 };
       },
@@ -254,6 +301,49 @@ describe('execution runtime safety contracts', () => {
       }),
       /connection closed/,
     );
-    assert.equal(calls.at(-1)?.[0], 'kill');
+    assert.deepEqual(
+      calls.slice(-2).map((args) => args[0]),
+      ['kill', 'inspect'],
+    );
+  });
+  it('does not stop the command service for a normal non-zero command exit', async () => {
+    const calls: string[][] = [];
+    const docker: DockerRuntime = {
+      async run(args) {
+        calls.push(args);
+        if (args[0] === 'inspect')
+          return {
+            stdout: JSON.stringify({
+              'luowang.project-id': identity.projectId,
+              'luowang.run-id': identity.attemptId,
+            }),
+            stderr: '',
+            exitCode: 0,
+          };
+        return { stdout: '', stderr: 'failed', exitCode: 7 };
+      },
+    };
+    const session = await createAttachedProjectCommandSession(
+      {
+        projectId: identity.projectId,
+        runId: identity.attemptId,
+        targetCommit: 'a'.repeat(40),
+        repositoryDirectory: '/tmp/project',
+        containerId: 'b'.repeat(64),
+        sourceRoot: '/luowang-source',
+        workingDirectory: '/luowang-source',
+      },
+      docker,
+    );
+    const result = await session.run('npm test', {
+      cwd: '/tmp/project',
+      runId: identity.attemptId,
+      targetCommit: 'a'.repeat(40),
+    });
+    assert.equal(result.exitCode, 7);
+    assert.equal(
+      calls.some((args) => args[0] === 'kill'),
+      false,
+    );
   });
 });

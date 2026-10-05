@@ -105,8 +105,13 @@ export interface BrowserMcpAdapter {
   serverDefinition(
     evidenceDirectory: string,
     targetBaseUrl?: string | null,
+    additionalOrigins?: readonly string[],
   ): PlaywrightMcpServerDefinition;
-  extension(evidenceDirectory: string, targetBaseUrl?: string | null): InlineExtension;
+  extension(
+    evidenceDirectory: string,
+    targetBaseUrl?: string | null,
+    additionalOrigins?: readonly string[],
+  ): InlineExtension;
   checkConnectivity(): Promise<ConnectivityResult>;
 }
 
@@ -130,6 +135,7 @@ class DefaultPlaywrightMcpAdapter implements BrowserMcpAdapter {
   serverDefinition(
     evidenceDirectory: string,
     targetBaseUrl?: string | null,
+    additionalOrigins: readonly string[] = [],
   ): PlaywrightMcpServerDefinition {
     const mcp = this.configuration.getHarness().mcp;
     // Resolve from the Harness module, never the target or evidence cwd.
@@ -150,7 +156,13 @@ class DefaultPlaywrightMcpAdapter implements BrowserMcpAdapter {
         // Cookie read/restore for session-revocation evidence. The adapter
         // hides every other storage tool through excludeTools below.
         '--caps=storage',
-        ...(targetBaseUrl ? [`--allowed-origins=${new URL(targetBaseUrl).origin}`] : []),
+        ...(targetBaseUrl
+          ? [
+              `--allowed-origins=${[new URL(targetBaseUrl).origin, ...additionalOrigins]
+                .filter((origin, index, all) => all.indexOf(origin) === index)
+                .join(';')}`,
+            ]
+          : []),
       ],
       env: safeBrowserEnvironment(),
       // Playwright MCP resolves explicit screenshot filenames relative to its
@@ -164,13 +176,19 @@ class DefaultPlaywrightMcpAdapter implements BrowserMcpAdapter {
     };
   }
 
-  extension(evidenceDirectory: string, targetBaseUrl?: string | null): InlineExtension {
-    const definition = this.serverDefinition(evidenceDirectory, targetBaseUrl);
+  extension(
+    evidenceDirectory: string,
+    targetBaseUrl?: string | null,
+    additionalOrigins: readonly string[] = [],
+  ): InlineExtension {
+    const definition = this.serverDefinition(evidenceDirectory, targetBaseUrl, additionalOrigins);
     return {
       name: `luowang-playwright-mcp-${PLAYWRIGHT_MCP_VERSION}`,
       hidden: true,
       factory: async (pi) => {
-        const originProxy = targetBaseUrl ? await createRunOriginProxy(targetBaseUrl) : null;
+        const originProxy = targetBaseUrl
+          ? await createRunOriginProxy(targetBaseUrl, additionalOrigins)
+          : null;
         if (originProxy) {
           definition.args.push(
             `--proxy-server=http://127.0.0.1:${originProxy.port}`,
@@ -300,18 +318,27 @@ class DefaultPlaywrightMcpAdapter implements BrowserMcpAdapter {
   }
 }
 
-export async function createRunOriginProxy(targetBaseUrl: string): Promise<{
+export async function createRunOriginProxy(
+  targetBaseUrl: string,
+  additionalOrigins: readonly string[] = [],
+): Promise<{
   port: number;
   close(): Promise<void>;
 }> {
-  const allowed = new URL(targetBaseUrl);
-  if (!['http:', 'https:'].includes(allowed.protocol) || allowed.username || allowed.password)
+  const primary = new URL(targetBaseUrl);
+  const allowed = [primary, ...additionalOrigins.map((origin) => new URL(origin))];
+  if (
+    allowed.some(
+      (origin) =>
+        !['http:', 'https:'].includes(origin.protocol) || origin.username || origin.password,
+    )
+  )
     throw new Error('浏览器目标 origin 无效');
   const connections = new Set<Duplex>();
   const server = createServer((request, response) => {
     let target: URL;
     try {
-      target = new URL(request.url ?? '', allowed.origin);
+      target = new URL(request.url ?? '', primary.origin);
       assertAllowedProxyTarget(target, allowed);
     } catch {
       response.writeHead(403, { 'content-type': 'text/plain; charset=utf-8' });
@@ -353,13 +380,14 @@ export async function createRunOriginProxy(targetBaseUrl: string): Promise<{
   });
   server.on('connect', (request, clientSocket, head) => {
     const authority = request.url ?? '';
-    if (authority !== allowed.host) {
+    const connectTarget = allowed.find((origin) => origin.host === authority);
+    if (!connectTarget) {
       clientSocket.end('HTTP/1.1 403 Forbidden\r\n\r\n');
       return;
     }
     const upstream = connectSocket(
-      Number(allowed.port || (allowed.protocol === 'https:' ? 443 : 80)),
-      allowed.hostname,
+      Number(connectTarget.port || (connectTarget.protocol === 'https:' ? 443 : 80)),
+      connectTarget.hostname,
       () => {
         clientSocket.write('HTTP/1.1 200 Connection Established\r\n\r\n');
         if (head.length) upstream.write(head);
@@ -372,7 +400,7 @@ export async function createRunOriginProxy(targetBaseUrl: string): Promise<{
   server.on('upgrade', (request, clientSocket, head) => {
     let target: URL;
     try {
-      target = new URL(request.url ?? '', allowed.origin);
+      target = new URL(request.url ?? '', primary.origin);
       assertAllowedProxyTarget(target, allowed);
     } catch {
       clientSocket.end('HTTP/1.1 403 Forbidden\r\n\r\n');
@@ -427,8 +455,12 @@ export async function createRunOriginProxy(targetBaseUrl: string): Promise<{
   };
 }
 
-function assertAllowedProxyTarget(target: URL, allowed: URL): void {
-  if (normalizeWebSocketUrl(target).origin !== allowed.origin || target.username || target.password)
+function assertAllowedProxyTarget(target: URL, allowed: readonly URL[]): void {
+  if (
+    !allowed.some((origin) => normalizeWebSocketUrl(target).origin === origin.origin) ||
+    target.username ||
+    target.password
+  )
     throw new Error('Run browser origin blocked');
 }
 

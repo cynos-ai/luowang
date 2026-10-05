@@ -128,7 +128,7 @@ dockerIt(
       );
       await writeFile(
         join(buildSource, 'Dockerfile.runner'),
-        `${base}WORKDIR /app\nCMD ["sleep", "infinity"]\n`,
+        `${base}WORKDIR /app\nCOPY . .\nCMD ["sleep", "infinity"]\n`,
       );
 
       const publishHost = localDockerHostAddress();
@@ -172,6 +172,9 @@ dockerIt(
         servicePort: 8080,
         publishHost,
       });
+      definition.services.runner.environment = {
+        LUOWANG_SECRET_CANARY: 'compose-runtime-secret-canary',
+      };
       owner = await startComposeApplication({
         docker,
         definition,
@@ -247,11 +250,14 @@ dockerIt(
         },
         docker,
       );
-      const result = await session.run('test -f read-fixture.js && node read-fixture.js', {
-        cwd: commandSource,
-        runId,
-        targetCommit,
-      });
+      const result = await session.run(
+        `test -z "$(find /app -maxdepth 1 -name '.luowang-*.compose.yml' -print -quit)" && test -z "$(grep -R 'compose-runtime-secret-canary' /app 2>/dev/null)" && test -f read-fixture.js && node read-fixture.js`,
+        {
+          cwd: commandSource,
+          runId,
+          targetCommit,
+        },
+      );
       assert.equal(result.exitCode, 0);
       assert.equal(result.stdout, 'FIXTURE_VALUE=managed\n');
       await session.close();

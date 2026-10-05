@@ -13,6 +13,7 @@ export type ProjectReference = {
 
 export type ProjectConfiguration = Omit<RepositoryConfig, 'repository'> & {
   language: string;
+  browserAllowedOrigins: string[];
   testDataCleanupUrl: string;
   executionDockerfile: string;
   runtimeMode: 'managed' | 'external' | 'repository-only';

@@ -757,6 +757,30 @@ function EnvironmentStep({
               />
             </Field>
           )}
+          {configuration.runtimeMode !== 'repository-only' && (
+            <Field
+              label={
+                <HelpLabel
+                  label="浏览器额外来源（可选）"
+                  help="需要由页面直接访问的 CDN、登录站点或其他服务来源。每行填写一个完整 origin，例如 https://cdn.example.com。"
+                />
+              }
+            >
+              <textarea
+                placeholder={'https://cdn.example.com\nhttps://login.example.com'}
+                value={configuration.browserAllowedOrigins.join('\n')}
+                onChange={(event) =>
+                  onChange({
+                    ...configuration,
+                    browserAllowedOrigins: event.target.value
+                      .split(/[\n,]/)
+                      .map((item) => item.trim())
+                      .filter(Boolean),
+                  })
+                }
+              />
+            </Field>
+          )}
           <Field
             label={
               <HelpLabel

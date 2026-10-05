@@ -72,12 +72,7 @@ export function createLocalExecutionAdapter(locationId: string): ExecutionAdapte
         });
         return { stdout: result.stdout, stderr: result.stderr, code: 0 };
       } catch (error) {
-        const failure = error as Error & { stdout?: string; stderr?: string; code?: number };
-        return {
-          stdout: failure.stdout ?? '',
-          stderr: failure.stderr ?? failure.message,
-          code: typeof failure.code === 'number' ? failure.code : 1,
-        };
+        return classifyLocalExecutionFailure(error, options.signal?.aborted ?? false);
       }
     },
     async upload(localPath, remotePath, options) {
@@ -121,6 +116,24 @@ export function createLocalExecutionAdapter(locationId: string): ExecutionAdapte
     },
     async removeTree() {},
     async close() {},
+  };
+}
+
+export function classifyLocalExecutionFailure(error: unknown, aborted: boolean): ExecutionResult {
+  const failure = error as Error & {
+    stdout?: string;
+    stderr?: string;
+    code?: number | string;
+    killed?: boolean;
+    signal?: string;
+  };
+  // A numeric exit code is a completed Docker command. Abort, timeout,
+  // output overflow and transport failures leave the daemon-side result unknown.
+  if (aborted || typeof failure.code !== 'number' || failure.killed || failure.signal) throw error;
+  return {
+    stdout: failure.stdout ?? '',
+    stderr: failure.stderr ?? failure.message,
+    code: failure.code,
   };
 }
 

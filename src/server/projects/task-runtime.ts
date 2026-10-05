@@ -6,6 +6,7 @@ import type { TestRequestRecord } from '../automation/queue.js';
 import type { HarnessConfig } from '../../shared/types.js';
 import {
   normalizeExecutionDockerfile,
+  normalizeBrowserAllowedOrigins,
   normalizeRuntimeDefinition,
   normalizeRuntimeMode,
   normalizeStartType,
@@ -17,6 +18,7 @@ import type { ProjectStore } from './store.js';
 
 const SNAPSHOT_FIELDS = new Set([
   'language',
+  'browserAllowedOrigins',
   'executionDockerfile',
   'scenarioBranch',
   'scenarioMode',
@@ -39,6 +41,7 @@ export interface ProjectTaskRuntime {
   configRevision: number;
   executionDockerfile: string;
   testDataCleanupUrl: string;
+  browserAllowedOrigins: string[];
   executionLocationId: string;
   executionLocationRevision: number;
   managedFiles: Array<{ id: string; revision: number; path: string; serviceName: string | null }>;
@@ -103,6 +106,7 @@ export function createProjectTaskRuntime(
     throw new Error('任务语言配置无效');
   }
   const executionDockerfile = normalizeExecutionDockerfile(snapshot.executionDockerfile);
+  const browserAllowedOrigins = normalizeBrowserAllowedOrigins(snapshot.browserAllowedOrigins);
   const testDataCleanupUrl = normalizeTestDataCleanupUrl(snapshot.testDataCleanupUrl);
   const runtimeMode = normalizeRuntimeMode(snapshot.runtimeMode, 'external');
   const startType = normalizeStartType(snapshot.startType);
@@ -134,6 +138,7 @@ export function createProjectTaskRuntime(
   const repositoryUrl = `https://github.com/${project.repositoryOwner}/${project.repositoryName}`;
   const {
     language: _language,
+    browserAllowedOrigins: _browserAllowedOrigins,
     executionDockerfile: _dockerfile,
     testDataCleanupUrl: _cleanupUrl,
     runtimeMode: _runtimeMode,
@@ -142,6 +147,7 @@ export function createProjectTaskRuntime(
     ...repositoryFields
   } = snapshot;
   void _language;
+  void _browserAllowedOrigins;
   void _dockerfile;
   void _cleanupUrl;
   void _runtimeMode;
@@ -169,6 +175,7 @@ export function createProjectTaskRuntime(
     projectId: project.projectId,
     configRevision: task.configRevision!,
     executionDockerfile,
+    browserAllowedOrigins,
     testDataCleanupUrl,
     executionLocationId,
     executionLocationRevision,

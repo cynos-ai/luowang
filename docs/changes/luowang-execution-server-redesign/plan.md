@@ -127,16 +127,16 @@
 - 受控文件：无选中文件时不访问 service 源码；有文件时只写入明确的 service 源码根，执行路径不进入镜像 build context；已覆盖大小、路径、链接、冲突、版本及跨 chunk 脱敏。
 - 运行时收口：命名数据卷保持默认可写、源码挂载强制只读；能力检查使用本 Run 动态地址；Docker 查询失败保留 unknown 和容量占用；应用准备、受控文件注入和健康检查贯穿取消信号；Compose 构建缓存只使用稳定构建输入，可跨不同 Run 复用。
 - 准备流程收口：进程内仍存活的手动镜像准备不会被后台恢复提前释放；镜像构建、源码物化、远程命令及 SFTP 传输接受取消和超时；受控文件保存与注入共用隐藏文件路径规则，远程注入先创建暂存目录；子目录 Compose 按原文件目录解析相对路径。镜像 tag 还包含构建定义摘要，避免同提交不同 Dockerfile 相互替换引用。
-- 受信任部署兼容性：Compose 先由所选执行端的原生 `docker compose config` 解析 `.env`、`env_file`、profiles、build args 和常见字段，再转换动态端口、Run 名称和归属；任意服务器业务环境不会传入解析进程，解析失败也不回显可能含 Secret 的输出。可能被 `env_file` 使用的受控文件可在解析窗口临时出现，解析后先从本机/远端构建副本删除再开始 build；隐式 `.env` 仍只来自固定提交，避免运行 Secret 静默变成 build arg。Runner 项目命令改为只在固定 command service 内执行 `/bin/sh -lc`，支持项目脚本、管道和镜像内工具；宿主机执行器仍未开放。连接中断或取消时停止该 Run 的命令服务，不能仅凭客户端断开认定进程退出。
-- 浏览器：Run 专属 origin proxy 限制 HTTP、redirect、CONNECT 和 WebSocket，真实 Chromium 已证明外部重定向不会请求目标 origin 之外的地址。
+- 受信任部署兼容性：Compose 先由所选执行端的原生 `docker compose config` 解析 `.env`、`env_file`、profiles、build args 和常见字段，再转换动态端口、Run 名称和归属；任意服务器业务环境不会传入解析进程，解析失败也不回显可能含 Secret 的输出。可能被 `env_file` 使用的受控文件可在解析窗口临时出现，解析后先从本机/远端构建副本删除再开始 build；隐式 `.env` 仍只来自固定提交，避免运行 Secret 静默变成 build arg。展开后的运行定义写在构建上下文之外，并用显式 `--project-directory` 保持原相对路径语义，普通 `COPY . .` 不会把该定义带入镜像。Runner 项目命令改为只在固定 command service 内执行 `/bin/sh -lc`，支持项目脚本、管道和镜像内工具；宿主机执行器仍未开放。本地执行器只把真实数字退出码视为命令完成；取消、超时、输出超限或通道错误会停止该 Run 的命令服务并通过 inspect 核验已停止。
+- 浏览器：Run 专属 origin proxy 限制 HTTP、redirect、CONNECT 和 WebSocket；项目可显式配置最多 16 个额外 HTTP(S) origin，配置随队列快照固定并同时进入 Playwright 与代理允许列表。真实 Chromium 已证明登记来源可访问、未登记来源和外部重定向仍被阻止。
 - 页面：接入与项目设置已使用共享 `SelectBox`、`NumberInput`、`HelpLabel`、Message 和确认组件；加入运行模式、单容器/Compose、服务器修订/检查、受控文件 service/revision 和 Run 实际执行信息。
 
 ### 本轮证据
 
 - 最终工作树 quality 镜像构建通过，镜像内 Docker Compose 为 `v2.39.2`，Playwright Chromium 预检通过。
-- quality 容器完整测试：113 个文件通过、2 个显式 Docker fixture 文件跳过；546 项通过、5 项跳过。
-- 本轮将相关真实 Docker fixture 单独启用：原生 Compose 解析（含 `.env`、`env_file`、profile 和固定端口转换）及应用+可写数据卷+Runner 的多服务完整流程 2 项通过；命令 service 内的复合 Shell 命令、DNS、源码卷、受控文件注入、启动和全量清理均真实执行。前轮其余镜像与网络 fixture 证明继续保留，未冒充本轮重跑。
-- 真实 Chromium origin proxy 测试通过；foreign redirect 在 Run origin 返回 403，未请求外部 origin。
+- quality 容器完整测试：113 个文件通过、2 个显式 Docker fixture 文件跳过；550 项通过、5 项跳过。
+- 本轮将相关真实 Docker fixture 单独启用：原生 Compose 解析及应用+可写数据卷+Runner 的多服务完整流程通过；Runner 镜像使用 `COPY . .` 后确认不含生成的 `.luowang-*.compose.yml`。命令 service 内的复合 Shell 命令、DNS、源码卷、受控文件注入、启动和全量清理均真实执行。完整 fixture 文件中的既有单容器“容器化控制端”用例仍因健康检查不可达失败，本轮未把该项记为通过；它不经过本次修改的 Compose 运行定义路径。
+- 真实 Chromium origin proxy 测试通过；已登记的额外 origin 可访问，未登记 origin 与 foreign redirect 返回 403 且没有命中目标服务。
 - runtime 镜像构建和独立容器启动通过，`/health` 返回数据库与服务正常；项目接入页在 768、1024、1440 CSS 宽度下无横向溢出。项目设置的完整三视口人工检查仍待具有项目数据的候选实例复核。
 - 宿主机 `npm test` 因现有 `better-sqlite3` 原生二进制与宿主 Node ABI 不匹配而未运行；同一最终工作树已在仓库固定的 Node 24.14.1 quality 容器完整通过。这是宿主原生依赖问题，不是前端数据库或本需求运行时失败。
 

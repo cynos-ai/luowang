@@ -89,6 +89,7 @@ export function createProjectRunServices(options: {
           }),
       });
   const runs = createRunOrchestrator({
+    browserAllowedOrigins: task.browserAllowedOrigins,
     capabilityConfiguration: { projectId, revision: task.configRevision },
     checkEnvironment: (baseUrl, signal) => checkEnvironmentAccess(baseUrl, fetch, signal),
     configuration: task.configuration,

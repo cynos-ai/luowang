@@ -101,6 +101,47 @@ it('keeps a real browser on the Run origin when the application redirects elsewh
   }
 });
 
+it('allows configured additional origins while continuing to block unlisted origins', async () => {
+  const primary = createServer((_request, response) => response.end('primary'));
+  const additional = createServer((_request, response) => response.end('additional'));
+  const blocked = createServer((_request, response) => response.end('blocked'));
+  await Promise.all([listen(primary), listen(additional), listen(blocked)]);
+  const proxy = await createRunOriginProxy(`http://127.0.0.1:${portOf(primary)}`, [
+    `http://127.0.0.1:${portOf(additional)}`,
+  ]);
+  const browser = await chromium.launch({
+    headless: true,
+    proxy: { server: `http://127.0.0.1:${proxy.port}`, bypass: '<-loopback>' },
+  });
+  try {
+    assert.equal(
+      (await proxyGet(proxy.port, `http://127.0.0.1:${portOf(additional)}/asset`)).body,
+      'additional',
+    );
+    assert.equal(
+      (await proxyGet(proxy.port, `http://127.0.0.1:${portOf(blocked)}/asset`)).status,
+      403,
+    );
+    const page = await browser.newPage();
+    assert.equal(
+      await page
+        .goto(`http://127.0.0.1:${portOf(additional)}/asset`)
+        .then((response) => response?.status()),
+      200,
+    );
+    assert.equal(
+      await page
+        .goto(`http://127.0.0.1:${portOf(blocked)}/asset`)
+        .then((response) => response?.status()),
+      403,
+    );
+  } finally {
+    await browser.close();
+    await proxy.close();
+    await Promise.all([close(primary), close(additional), close(blocked)]);
+  }
+});
+
 function listen(server: ReturnType<typeof createServer>): Promise<void> {
   return new Promise((resolve, reject) => {
     server.once('error', reject);

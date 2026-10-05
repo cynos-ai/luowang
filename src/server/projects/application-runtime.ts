@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { writeFile, rm } from 'node:fs/promises';
-import { join, posix, resolve } from 'node:path';
+import { dirname, join, posix, resolve } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { stringify } from 'yaml';
 import type { DockerRuntime } from './execution-container.js';
@@ -254,7 +254,18 @@ export async function startComposeApplication(input: {
     managedFileRoot: string | null,
   ) => Promise<void>;
 }): Promise<ManagedApplicationRuntime> {
-  const localFile = join(input.buildSourceDirectory, '.luowang-compose.yml');
+  const localFile = join(
+    dirname(input.buildSourceDirectory),
+    `.luowang-${input.definition.projectName}.compose.yml`,
+  );
+  const composePrefix = [
+    'compose',
+    '--project-name',
+    input.definition.projectName,
+    '--project-directory',
+    input.buildSourceDirectory,
+    '--file',
+  ];
   const controlled = {
     name: input.definition.projectName,
     services: structuredClone(input.definition.services),
@@ -364,31 +375,14 @@ export async function startComposeApplication(input: {
     if (Object.values(controlled.services).some((service) => service.build))
       await success(
         input.docker,
-        [
-          'compose',
-          '--project-name',
-          input.definition.projectName,
-          '--file',
-          file,
-          'build',
-          '--pull=false',
-        ],
+        [...composePrefix, file, 'build', '--pull=false'],
         30 * 60_000,
         input.signal,
       );
     input.signal?.throwIfAborted();
     await success(
       input.docker,
-      [
-        'compose',
-        '--project-name',
-        input.definition.projectName,
-        '--file',
-        file,
-        'create',
-        '--no-build',
-        ...Object.keys(controlled.services),
-      ],
+      [...composePrefix, file, 'create', '--no-build', ...Object.keys(controlled.services)],
       5 * 60_000,
       input.signal,
     );
@@ -439,17 +433,7 @@ export async function startComposeApplication(input: {
       const id = (
         await success(
           input.docker,
-          [
-            'compose',
-            '--project-name',
-            input.definition.projectName,
-            '--file',
-            file,
-            'ps',
-            '--all',
-            '--quiet',
-            service,
-          ],
+          [...composePrefix, file, 'ps', '--all', '--quiet', service],
           10_000,
           input.signal,
         )
@@ -492,15 +476,7 @@ export async function startComposeApplication(input: {
     input.signal?.throwIfAborted();
     await success(
       input.docker,
-      [
-        'compose',
-        '--project-name',
-        input.definition.projectName,
-        '--file',
-        file,
-        'start',
-        ...Object.keys(controlled.services),
-      ],
+      [...composePrefix, file, 'start', ...Object.keys(controlled.services)],
       5 * 60_000,
       input.signal,
     );
@@ -509,10 +485,7 @@ export async function startComposeApplication(input: {
       const port = await success(
         input.docker,
         [
-          'compose',
-          '--project-name',
-          input.definition.projectName,
-          '--file',
+          ...composePrefix,
           file,
           'port',
           input.definition.applicationService,
@@ -552,16 +525,7 @@ export async function startComposeApplication(input: {
     const commandId = (
       await success(
         input.docker,
-        [
-          'compose',
-          '--project-name',
-          input.definition.projectName,
-          '--file',
-          file,
-          'ps',
-          '--quiet',
-          input.definition.commandService,
-        ],
+        [...composePrefix, file, 'ps', '--quiet', input.definition.commandService],
         10_000,
         input.signal,
       )
@@ -589,7 +553,12 @@ export async function startComposeApplication(input: {
         closed = true;
         try {
           await endpoint!.close();
-          await composeDown(input.docker, input.definition.projectName, file);
+          await composeDown(
+            input.docker,
+            input.definition.projectName,
+            input.buildSourceDirectory,
+            file,
+          );
         } finally {
           await definitionFile.remove();
         }
@@ -600,7 +569,12 @@ export async function startComposeApplication(input: {
     else if (controlNetwork)
       await disconnectNetwork(input.docker, controlNetwork).catch(() => undefined);
     if (started)
-      await composeDown(input.docker, input.definition.projectName, file).catch(() => undefined);
+      await composeDown(
+        input.docker,
+        input.definition.projectName,
+        input.buildSourceDirectory,
+        file,
+      ).catch(() => undefined);
     await definitionFile.remove();
     throw error;
   }
@@ -729,9 +703,25 @@ async function removeNetworkConfirmed(docker: DockerRuntime, name: string): Prom
   const remaining = await docker.run(['network', 'inspect', name], { timeoutMs: 10_000 });
   if (remaining.exitCode === 0) throw new Error('应用网络清理状态未知');
 }
-async function composeDown(docker: DockerRuntime, project: string, file: string): Promise<void> {
+async function composeDown(
+  docker: DockerRuntime,
+  project: string,
+  projectDirectory: string,
+  file: string,
+): Promise<void> {
   const result = await docker.run(
-    ['compose', '--project-name', project, '--file', file, 'down', '--volumes', '--remove-orphans'],
+    [
+      'compose',
+      '--project-name',
+      project,
+      '--project-directory',
+      projectDirectory,
+      '--file',
+      file,
+      'down',
+      '--volumes',
+      '--remove-orphans',
+    ],
     { timeoutMs: 120_000 },
   );
   if (result.exitCode !== 0) throw new Error('Compose 资源清理失败或状态未知');
