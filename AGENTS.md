@@ -17,6 +17,8 @@
 
 ## 仓库与分支
 
+- 执行服务器、应用启动和 Compose 的下一步方案位于 `docs/changes/luowang-execution-server-redesign/`。当前为评审建议，尚未实施，不覆盖现行运行规则；各服务器使用自己的 Docker，首版包含 Compose。实施前读取该目录并确认 Spec 状态，不把已保存的服务器/受控文件当作远程执行或注入已启用。
+
 - 项目并行开发位于 `docs/changes/luowang-project-concurrency/`：跨项目有界并行、同项目串行，准备阶段计入容量；实现与验收进度见 Plan，发布前不视为已上线。其 Spec 覆盖旧多项目全局单槽约束。
 
 - v0.6.0 代码深读的实现与验收遵循 `docs/changes/luowang-code-understanding/`。它扩展 Main 的内置角色资源、固定版本读取回执与计划引用；不启用 Pi Skills，不新增角色 Session。当前多项目开发以 `docs/changes/luowang-multi-project/` 的 Spec 覆盖单仓库基线，不能将合成测试视为真实联合验收。
