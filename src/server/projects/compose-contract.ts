@@ -75,8 +75,9 @@ export function normalizeComposeDefinition(input: {
   const enabled = new Set(input.enabledServices);
   if (!enabled.has(input.applicationService) || !enabled.has(input.commandService))
     throw new ConfigurationError('应用和测试服务必须包含在启用服务中');
-  const prefix = `lw-${input.projectId.slice(0, 8)}-${input.attemptId.slice(0, 8)}`.toLowerCase();
+  const prefix = `lw-${input.projectId.slice(0, 8)}-${input.attemptId}`.toLowerCase();
   const services: Record<string, Record<string, unknown>> = {};
+  const buildInputs: Record<string, Record<string, unknown>> = {};
   for (const name of enabled) {
     if (!/^[A-Za-z0-9][A-Za-z0-9_.-]{0,62}$/.test(name))
       throw new ConfigurationError('Compose 服务名无效');
@@ -100,6 +101,10 @@ export function normalizeComposeDefinition(input: {
       );
     else if (name === input.applicationService)
       normalized.ports = [`${input.publishHost ?? '127.0.0.1'}::${input.servicePort}`];
+    buildInputs[name] = {
+      build: normalized.build ?? null,
+      image: normalized.image ?? null,
+    };
     normalized.labels = {
       'luowang.instance-id': input.instanceId,
       'luowang.project-id': input.projectId,
@@ -131,14 +136,7 @@ export function normalizeComposeDefinition(input: {
       }
     }
   }
-  const canonical = JSON.stringify({
-    services,
-    networks,
-    volumes,
-    applicationService: input.applicationService,
-    commandService: input.commandService,
-    servicePort: input.servicePort,
-  });
+  const canonical = JSON.stringify(buildInputs);
   return {
     projectName: prefix,
     definitionHash: createHash('sha256').update(canonical).digest('hex'),
@@ -175,10 +173,13 @@ function normalizeMounts(value: unknown, service: string): unknown[] {
     if (parts.length < 2 || parts.length > 3) throw new ConfigurationError('Compose 挂载格式无效');
     const source = parts[0];
     const target = parts[1];
-    const mode = parts[2] ?? 'ro';
+    const relativeSource = source.startsWith('.') || source.includes('/') || source.includes('\\');
+    const mode = parts[2] ?? (relativeSource ? 'ro' : 'rw');
     if (!target.startsWith('/') || target.includes('..'))
       throw new ConfigurationError('Compose 容器挂载路径无效');
-    if (source.startsWith('.') || source.includes('/') || source.includes('\\')) {
+    if (relativeSource) {
+      if (parts[2] !== undefined && parts[2] !== 'ro')
+        throw new ConfigurationError('Compose 源码挂载必须只读');
       return `${safeRelativePath(source, true)}:${target}:ro`;
     }
     if (!/^[A-Za-z0-9][A-Za-z0-9_.-]{0,62}$/.test(source) || !['ro', 'rw'].includes(mode))

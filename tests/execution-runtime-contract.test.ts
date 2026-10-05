@@ -25,7 +25,35 @@ describe('execution runtime safety contracts', () => {
     assert.deepEqual(result.services.app.networks, ['default']);
     assert.match(result.networkNames[0], /^lw-/);
     assert.match(result.volumeNames[0], /^lw-/);
+    assert.deepEqual(result.services.db.volumes, ['data:/var/lib/postgresql/data:rw']);
     assert.equal(result.definitionHash.length, 64);
+  });
+  it('keeps build hashes stable across Runs while isolating runtime resources', () => {
+    const source = `services:\n  app:\n    build: .\n    ports: ["3000"]\n    volumes: [".:/app"]\n`;
+    const first = normalizeComposeDefinition({
+      ...identity,
+      enabledServices: ['app'],
+      source,
+    });
+    const second = normalizeComposeDefinition({
+      ...identity,
+      attemptId: '01K00000000000000000000002',
+      enabledServices: ['app'],
+      source,
+    });
+    assert.equal(first.definitionHash, second.definitionHash);
+    assert.notEqual(first.projectName, second.projectName);
+    assert.notDeepEqual(first.networkNames, second.networkNames);
+    assert.deepEqual(first.services.app.volumes, ['.:/app:ro']);
+    const changed = normalizeComposeDefinition({
+      ...identity,
+      enabledServices: ['app'],
+      source: source.replace(
+        'build: .',
+        'build:\n      context: .\n      dockerfile: Dockerfile.alt',
+      ),
+    });
+    assert.notEqual(first.definitionHash, changed.definitionHash);
   });
   it('rejects privileged, host namespaces, fixed ports, interpolation and escaping build roots', () => {
     for (const source of [
@@ -34,6 +62,7 @@ describe('execution runtime safety contracts', () => {
       'services:\n  app:\n    image: alpine\n    ports: ["8080:3000"]',
       'services:\n  app:\n    image: ${IMAGE}',
       'services:\n  app:\n    build: ../outside',
+      'services:\n  app:\n    image: alpine\n    volumes: [".:/app:rw"]',
     ])
       assert.throws(
         () => normalizeComposeDefinition({ ...identity, enabledServices: ['app'], source }),

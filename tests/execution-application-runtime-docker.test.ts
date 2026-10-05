@@ -67,7 +67,11 @@ dockerIt(
       );
       await writeFile(
         join(buildSource, 'database.js'),
-        "require('node:http').createServer((_req, res) => res.end('db-ok')).listen(7777, '0.0.0.0');\n",
+        [
+          "const fs = require('node:fs');",
+          "fs.writeFileSync('/data/ready', 'db-ok');",
+          "require('node:http').createServer((_req, res) => res.end(fs.readFileSync('/data/ready', 'utf8'))).listen(7777, '0.0.0.0');",
+        ].join('\n'),
       );
       const base =
         'FROM docker.m.daocloud.io/library/node:24.14.1-bookworm-slim@sha256:b506e7321f176aae77317f99d67a24b272c1f09f1d10f1761f2773447d8da26c\n';
@@ -209,9 +213,44 @@ dockerIt(
       const cachedImageIds = owner.imageIds;
       await owner.close();
       owner = undefined;
+      const secondDefinition = normalizeComposeDefinition({
+        source: [
+          'services:',
+          '  app:',
+          '    build:',
+          '      context: .',
+          '      dockerfile: Dockerfile.app',
+          '    depends_on: [database]',
+          '    ports: ["8080"]',
+          '    volumes: [".:/runtime-source:ro"]',
+          '  database:',
+          '    build:',
+          '      context: .',
+          '      dockerfile: Dockerfile.database',
+          '    volumes: ["database-data:/data"]',
+          '  runner:',
+          '    build:',
+          '      context: .',
+          '      dockerfile: Dockerfile.runner',
+          '    depends_on: [app]',
+          '    volumes: [".:/workspace:ro"]',
+          'volumes:',
+          '  database-data: {}',
+        ].join('\n'),
+        instanceId: projectId,
+        projectId,
+        attemptId: '01K00000000000000000000005',
+        enabledServices: ['app', 'database', 'runner'],
+        applicationService: 'app',
+        commandService: 'runner',
+        servicePort: 8080,
+        publishHost,
+      });
+      assert.equal(secondDefinition.definitionHash, definition.definitionHash);
+      assert.notEqual(secondDefinition.projectName, definition.projectName);
       owner = await startComposeApplication({
         docker,
-        definition,
+        definition: secondDefinition,
         buildSourceDirectory: buildSource,
         commandSourceDirectory: commandSource,
         targetCommit,

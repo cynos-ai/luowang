@@ -22,6 +22,7 @@ export async function injectManagedFiles(input: {
   serviceName?: string | null;
   destinationRoot?: string;
   files: ManagedFileRuntimeInput[];
+  signal?: AbortSignal;
 }): Promise<void> {
   const selected = input.files.filter(
     (file) => file.serviceName === null || file.serviceName === (input.serviceName ?? null),
@@ -43,10 +44,12 @@ export async function injectManagedFiles(input: {
   }
   const staging = await mkdtemp(join(tmpdir(), 'luowang-managed-'));
   try {
+    input.signal?.throwIfAborted();
     const state = await input.docker.run(
       ['inspect', '--format', '{{.State.Running}}', input.containerId],
-      { timeoutMs: 10_000 },
+      { timeoutMs: 10_000, signal: input.signal },
     );
+    input.signal?.throwIfAborted();
     if (state.exitCode !== 0)
       throw new ControlledCommandError('COMMAND_FAILED', '无法核对配置文件容器状态');
     if (state.stdout.trim() === 'false') {
@@ -54,6 +57,7 @@ export async function injectManagedFiles(input: {
       return;
     }
     for (const [index, file] of selected.entries()) {
+      input.signal?.throwIfAborted();
       const destination = `${destinationRoot.replace(/\/$/, '')}/${file.path}`;
       const exists = await input.docker.run(
         [
@@ -65,7 +69,7 @@ export async function injectManagedFiles(input: {
           'luowang',
           destination,
         ],
-        { timeoutMs: 10_000 },
+        { timeoutMs: 10_000, signal: input.signal },
       );
       if (exists.exitCode === 0)
         throw new ControlledCommandError(
@@ -85,20 +89,25 @@ export async function injectManagedFiles(input: {
           destinationRoot,
           parent.slice(destinationRoot.replace(/\/$/, '').length + 1),
         ],
-        { timeoutMs: 10_000 },
+        { timeoutMs: 10_000, signal: input.signal },
       );
       if (parentCheck.exitCode !== 0)
         throw new ControlledCommandError('COMMAND_NOT_ALLOWED', '受控配置文件父路径无效');
       const local = join(staging, String(index));
       await writeFile(local, file.content, { mode: 0o600, flag: 'wx' });
+      input.signal?.throwIfAborted();
       const dockerSource = input.executionAdapter?.locationId.startsWith('server:')
         ? `/tmp/luowang-managed/${input.containerId}/${index}`
         : local;
-      if (dockerSource !== local) await input.executionAdapter!.upload(local, dockerSource);
+      if (dockerSource !== local) {
+        await input.executionAdapter!.upload(local, dockerSource);
+        input.signal?.throwIfAborted();
+      }
       const copied = await input.docker.run(
         ['cp', dockerSource, `${input.containerId}:${destination}`],
-        { timeoutMs: 30_000 },
+        { timeoutMs: 30_000, signal: input.signal },
       );
+      input.signal?.throwIfAborted();
       if (copied.exitCode !== 0)
         throw new ControlledCommandError('COMMAND_FAILED', '受控配置文件注入失败');
     }
@@ -116,6 +125,7 @@ async function injectIntoStoppedContainer(
     docker: DockerRuntime;
     executionAdapter?: ExecutionAdapter;
     containerId: string;
+    signal?: AbortSignal;
   },
   files: ManagedFileRuntimeInput[],
   staging: string,
@@ -125,28 +135,37 @@ async function injectIntoStoppedContainer(
   const payload = join(staging, 'payload');
   await mkdir(inspection, { recursive: true });
   await mkdir(payload, { recursive: true });
+  input.signal?.throwIfAborted();
   const remote = input.executionAdapter?.locationId.startsWith('server:');
   const remoteRoot = `/tmp/luowang-managed/${input.containerId}`;
   const remoteInspection = `${remoteRoot}/inspection`;
   const copiedOut = await input.docker.run(
     ['cp', `${input.containerId}:${destinationRoot}/.`, remote ? remoteInspection : inspection],
-    { timeoutMs: 120_000 },
+    { timeoutMs: 120_000, signal: input.signal },
   );
   if (copiedOut.exitCode !== 0)
     throw new ControlledCommandError('COMMAND_FAILED', '无法核对容器内的配置文件目标');
-  if (remote) await input.executionAdapter!.downloadTree(remoteInspection, inspection);
+  if (remote) {
+    await input.executionAdapter!.downloadTree(remoteInspection, inspection);
+    input.signal?.throwIfAborted();
+  }
   for (const file of files) {
+    input.signal?.throwIfAborted();
     await assertSafeDestination(inspection, file.path);
     const target = join(payload, ...file.path.split('/'));
     await mkdir(join(target, '..'), { recursive: true });
     await writeFile(target, file.content, { mode: 0o600, flag: 'wx' });
   }
   const dockerSource = remote ? `${remoteRoot}/payload` : payload;
-  if (remote) await input.executionAdapter!.uploadTree(payload, dockerSource);
+  if (remote) {
+    await input.executionAdapter!.uploadTree(payload, dockerSource);
+    input.signal?.throwIfAborted();
+  }
   const copiedIn = await input.docker.run(
     ['cp', `${dockerSource}/.`, `${input.containerId}:${destinationRoot}`],
-    { timeoutMs: 30_000 },
+    { timeoutMs: 30_000, signal: input.signal },
   );
+  input.signal?.throwIfAborted();
   if (copiedIn.exitCode !== 0)
     throw new ControlledCommandError('COMMAND_FAILED', '受控配置文件注入失败');
   if (remote) await input.executionAdapter!.removeTree(remoteRoot).catch(() => undefined);

@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { writeFile, rm } from 'node:fs/promises';
 import { join, posix, resolve } from 'node:path';
+import { setTimeout as delay } from 'node:timers/promises';
 import { stringify } from 'yaml';
 import type { DockerRuntime } from './execution-container.js';
 import type { ProjectRuntimeDefinition } from './configuration.js';
@@ -63,6 +64,7 @@ export async function startSingleContainerApplication(input: {
         accessNetwork,
       ],
       30_000,
+      input.signal,
     );
   let created: Awaited<ReturnType<typeof success>>;
   try {
@@ -91,6 +93,7 @@ export async function startSingleContainerApplication(input: {
         'infinity',
       ],
       30_000,
+      input.signal,
     );
   } catch (error) {
     if (accessNetwork)
@@ -104,11 +107,19 @@ export async function startSingleContainerApplication(input: {
       input.docker,
       ['cp', `${input.sourceDirectory}/.`, `${containerId}:/luowang-source`],
       120_000,
+      input.signal,
     );
+    input.signal?.throwIfAborted();
     await input.beforeStart?.(containerId);
-    await success(input.docker, ['start', containerId], 30_000);
+    input.signal?.throwIfAborted();
+    await success(input.docker, ['start', containerId], 30_000, input.signal);
     if (accessNetwork && controlId) {
-      await success(input.docker, ['network', 'connect', accessNetwork, controlId], 30_000);
+      await success(
+        input.docker,
+        ['network', 'connect', accessNetwork, controlId],
+        30_000,
+        input.signal,
+      );
       controlConnected = true;
     }
     if (input.runtime.prepareCommand.length)
@@ -122,7 +133,9 @@ export async function startSingleContainerApplication(input: {
           ...input.runtime.prepareCommand,
         ],
         15 * 60_000,
+        input.signal,
       );
+    input.signal?.throwIfAborted();
     await success(
       input.docker,
       [
@@ -134,6 +147,7 @@ export async function startSingleContainerApplication(input: {
         ...input.runtime.startCommand,
       ],
       30_000,
+      input.signal,
     );
     let hostPort: number | null = null;
     if (!accessNetwork || input.resolveBaseUrl) {
@@ -141,6 +155,7 @@ export async function startSingleContainerApplication(input: {
         input.docker,
         ['port', containerId, `${input.runtime.servicePort}/tcp`],
         10_000,
+        input.signal,
       );
       hostPort = Number(/:(\d+)\s*$/.exec(port.stdout)?.[1]);
       if (!Number.isInteger(hostPort)) throw new Error('无法解析临时入口端口');
@@ -153,6 +168,7 @@ export async function startSingleContainerApplication(input: {
               input.docker,
               containerId,
               accessNetwork,
+              input.signal,
             )}:${input.runtime.servicePort}`,
             async close() {
               if (controlConnected)
@@ -167,6 +183,7 @@ export async function startSingleContainerApplication(input: {
             baseUrl: `http://${publishHost}:${hostPort}`,
             async close() {},
           };
+    input.signal?.throwIfAborted();
     const baseUrl = endpoint.baseUrl;
     await waitForHealth(
       `${baseUrl}${input.runtime.healthPath}`,
@@ -295,12 +312,17 @@ export async function startComposeApplication(input: {
       const cachedImageId = input.cachedImageIds?.[serviceName];
       if (
         cachedImageId &&
-        (await composeImageMatches(input.docker, cachedImageId, {
-          'luowang.instance-id': ownership['luowang.instance-id'],
-          'luowang.project-id': ownership['luowang.project-id'],
-          'luowang.target-commit': input.targetCommit,
-          'luowang.build-definition': `${input.definition.definitionHash}:${serviceName}`,
-        }))
+        (await composeImageMatches(
+          input.docker,
+          cachedImageId,
+          {
+            'luowang.instance-id': ownership['luowang.instance-id'],
+            'luowang.project-id': ownership['luowang.project-id'],
+            'luowang.target-commit': input.targetCommit,
+            'luowang.build-definition': `${input.definition.definitionHash}:${serviceName}`,
+          },
+          input.signal,
+        ))
       ) {
         service.image = cachedImageId;
         delete service.build;
@@ -314,11 +336,12 @@ export async function startComposeApplication(input: {
       !/^sha256:[0-9a-f]{64}$/.test(String(service.image))
     ) {
       if (service.build) continue;
-      await success(input.docker, ['pull', String(service.image)], 10 * 60_000);
+      await success(input.docker, ['pull', String(service.image)], 10 * 60_000, input.signal);
       const digest = await success(
         input.docker,
         ['image', 'inspect', '--format', '{{index .RepoDigests 0}}', String(service.image)],
         10_000,
+        input.signal,
       );
       if (!/@sha256:[0-9a-f]{64}$/.test(digest.stdout.trim()))
         throw new ControlledCommandError('COMMAND_FAILED', 'Compose 外部镜像无法固定 digest');
@@ -329,6 +352,7 @@ export async function startComposeApplication(input: {
     ? await input.writeDefinition(stringify(controlled))
     : (await writeFile(localFile, stringify(controlled), { flag: 'wx', mode: 0o600 }),
       { path: localFile, remove: () => rm(localFile, { force: true }) });
+  input.signal?.throwIfAborted();
   const file = definitionFile.path;
   let started = false;
   let controlNetwork: { name: string; containerId: string } | null = null;
@@ -350,7 +374,9 @@ export async function startComposeApplication(input: {
           '--pull=false',
         ],
         30 * 60_000,
+        input.signal,
       );
+    input.signal?.throwIfAborted();
     await success(
       input.docker,
       [
@@ -364,6 +390,7 @@ export async function startComposeApplication(input: {
         ...Object.keys(controlled.services),
       ],
       5 * 60_000,
+      input.signal,
     );
     started = true;
     const controlId = input.resolveBaseUrl ? null : containerControlIdentity();
@@ -374,7 +401,12 @@ export async function startComposeApplication(input: {
       const networkName = String(controlled.networks[networkKey]?.name ?? '');
       if (!networkName)
         throw new ControlledCommandError('COMMAND_FAILED', 'Compose 应用网络身份无效');
-      await success(input.docker, ['network', 'connect', networkName, controlId], 30_000);
+      await success(
+        input.docker,
+        ['network', 'connect', networkName, controlId],
+        30_000,
+        input.signal,
+      );
       controlNetwork = { name: networkName, containerId: controlId };
     }
     for (const sourceVolume of sourceVolumes) {
@@ -391,6 +423,7 @@ export async function startComposeApplication(input: {
         sourceDirectory: sourceVolume.sourceDirectory,
         image,
         labels: service.labels as Record<string, string>,
+        signal: input.signal,
         beforeRemove:
           sourceVolume.source === '.' && input.prepareSourceVolume
             ? (helperContainerId) =>
@@ -418,12 +451,13 @@ export async function startComposeApplication(input: {
             service,
           ],
           10_000,
+          input.signal,
         )
       ).stdout.trim();
       if (!/^[0-9a-f]{12,64}$/.test(id)) throw new Error(`Compose 服务未创建：${service}`);
       containerIds[service] = id;
       const imageId = (
-        await success(input.docker, ['inspect', '--format', '{{.Image}}', id], 10_000)
+        await success(input.docker, ['inspect', '--format', '{{.Image}}', id], 10_000, input.signal)
       ).stdout.trim();
       if (!/^sha256:[0-9a-f]{64}$/.test(imageId))
         throw new Error(`Compose 服务镜像身份无效：${service}`);
@@ -436,6 +470,7 @@ export async function startComposeApplication(input: {
           input.docker,
           ['cp', `${input.commandSourceDirectory}/.`, `${id}:/luowang-source`],
           120_000,
+          input.signal,
         );
       }
       const roots = sourceVolumes.filter(
@@ -449,9 +484,12 @@ export async function startComposeApplication(input: {
       if (roots.length === 0) {
         const managedFileRoot =
           service === input.definition.commandService ? '/luowang-source' : null;
+        input.signal?.throwIfAborted();
         await input.afterStart?.(service, id, managedFileRoot);
+        input.signal?.throwIfAborted();
       }
     }
+    input.signal?.throwIfAborted();
     await success(
       input.docker,
       [
@@ -464,6 +502,7 @@ export async function startComposeApplication(input: {
         ...Object.keys(controlled.services),
       ],
       5 * 60_000,
+      input.signal,
     );
     let hostPort: number | null = null;
     if (input.resolveBaseUrl || !controlNetwork) {
@@ -480,6 +519,7 @@ export async function startComposeApplication(input: {
           String(input.definition.servicePort),
         ],
         10_000,
+        input.signal,
       );
       hostPort = Number(/:(\d+)\s*$/.exec(port.stdout)?.[1]);
       if (!Number.isInteger(hostPort)) throw new Error('无法解析 Compose 临时入口端口');
@@ -492,6 +532,7 @@ export async function startComposeApplication(input: {
               input.docker,
               containerIds[input.definition.applicationService],
               controlNetwork.name,
+              input.signal,
             )}:${input.definition.servicePort}`,
             async close() {
               await disconnectNetwork(input.docker, controlNetwork!);
@@ -501,6 +542,7 @@ export async function startComposeApplication(input: {
             baseUrl: `http://${input.publishHost ?? localDockerHostAddress()}:${hostPort}`,
             async close() {},
           };
+    input.signal?.throwIfAborted();
     const baseUrl = endpoint.baseUrl;
     await waitForHealth(
       `${baseUrl}${input.runtime.healthPath}`,
@@ -521,6 +563,7 @@ export async function startComposeApplication(input: {
           input.definition.commandService,
         ],
         10_000,
+        input.signal,
       )
     ).stdout.trim();
     let closed = false;
@@ -567,11 +610,12 @@ async function composeImageMatches(
   docker: DockerRuntime,
   imageId: string,
   expectedLabels: Record<string, string>,
+  signal?: AbortSignal,
 ): Promise<boolean> {
   if (!/^sha256:[0-9a-f]{64}$/.test(imageId)) return false;
   const result = await docker.run(
     ['image', 'inspect', '--format', '{{json .Config.Labels}}', imageId],
-    { timeoutMs: 10_000 },
+    { timeoutMs: 10_000, signal },
   );
   if (result.exitCode !== 0) return false;
   try {
@@ -588,6 +632,7 @@ async function populateSourceVolume(input: {
   sourceDirectory: string;
   image: string;
   labels: Record<string, string>;
+  signal?: AbortSignal;
   beforeRemove?: (helperContainerId: string) => Promise<void>;
 }): Promise<void> {
   const createArgs = ['create'];
@@ -600,7 +645,7 @@ async function populateSourceVolume(input: {
     'true',
     input.image,
   );
-  const helper = (await success(input.docker, createArgs, 30_000)).stdout.trim();
+  const helper = (await success(input.docker, createArgs, 30_000, input.signal)).stdout.trim();
   if (!/^[0-9a-f]{12,64}$/.test(helper))
     throw new ControlledCommandError('COMMAND_FAILED', 'Compose 源码卷临时容器身份无效');
   try {
@@ -608,8 +653,11 @@ async function populateSourceVolume(input: {
       input.docker,
       ['cp', `${input.sourceDirectory}/.`, `${helper}:/luowang-volume`],
       120_000,
+      input.signal,
     );
+    input.signal?.throwIfAborted();
     await input.beforeRemove?.(helper);
+    input.signal?.throwIfAborted();
   } finally {
     await removeConfirmed(input.docker, helper);
   }
@@ -639,18 +687,30 @@ async function waitForHealth(
   while (Date.now() < deadline) {
     signal?.throwIfAborted();
     try {
-      const response = await fetch(url, { redirect: 'manual', signal: AbortSignal.timeout(3000) });
+      const timeoutSignal = AbortSignal.timeout(3000);
+      const response = await fetch(url, {
+        redirect: 'manual',
+        signal: signal ? AbortSignal.any([signal, timeoutSignal]) : timeoutSignal,
+      });
       if (response.status < 500) return;
       last = `HTTP ${response.status}`;
     } catch (error) {
+      signal?.throwIfAborted();
       last = error instanceof Error ? error.name : 'network';
     }
-    await new Promise((resolve) => setTimeout(resolve, 1000));
+    await delay(1000, undefined, signal ? { signal } : undefined);
   }
   throw new ControlledCommandError('COMMAND_FAILED', `应用健康检查超时：${last}`);
 }
-async function success(docker: DockerRuntime, args: string[], timeoutMs: number) {
-  const result = await docker.run(args, { timeoutMs });
+async function success(
+  docker: DockerRuntime,
+  args: string[],
+  timeoutMs: number,
+  signal?: AbortSignal,
+) {
+  signal?.throwIfAborted();
+  const result = await docker.run(args, { timeoutMs, signal });
+  signal?.throwIfAborted();
   if (result.exitCode !== 0)
     throw new ControlledCommandError('COMMAND_FAILED', `Docker ${args[0]} 操作失败`);
   return result;
@@ -693,11 +753,13 @@ async function containerNetworkAddress(
   docker: DockerRuntime,
   containerId: string,
   networkName: string,
+  signal?: AbortSignal,
 ): Promise<string> {
   const result = await success(
     docker,
     ['inspect', '--format', '{{json .NetworkSettings.Networks}}', containerId],
     10_000,
+    signal,
   );
   const networks = JSON.parse(result.stdout) as Record<string, { IPAddress?: string }>;
   const address = networks[networkName]?.IPAddress;

@@ -90,8 +90,7 @@ export function createProjectRunServices(options: {
       });
   const runs = createRunOrchestrator({
     capabilityConfiguration: { projectId, revision: task.configRevision },
-    checkEnvironment: (signal) =>
-      checkEnvironmentAccess(task.configuration.getRepository().baseUrl, fetch, signal),
+    checkEnvironment: (baseUrl, signal) => checkEnvironmentAccess(baseUrl, fetch, signal),
     configuration: task.configuration,
     repository,
     indexer,

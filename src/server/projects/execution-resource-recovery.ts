@@ -13,7 +13,10 @@ import { containerControlIdentity } from './application-runtime.js';
 export async function reconcileExecutionResourceLedger(
   database: Database.Database,
   secrets: ScopedSecretStore,
-  options: { includeRunning?: boolean } = {},
+  options: {
+    includeRunning?: boolean;
+    adapterFactory?: (locationId: string, revision: number) => Promise<ExecutionAdapter>;
+  } = {},
 ): Promise<{ released: number; unknown: number }> {
   if (
     !database
@@ -38,12 +41,17 @@ export async function reconcileExecutionResourceLedger(
     }
     let adapter: ExecutionAdapter | undefined;
     try {
-      adapter = await adapterFor(
-        database,
-        secrets,
-        resource.executionLocationId,
-        resource.executionLocationRevision,
-      );
+      adapter = options.adapterFactory
+        ? await options.adapterFactory(
+            resource.executionLocationId,
+            resource.executionLocationRevision,
+          )
+        : await adapterFor(
+            database,
+            secrets,
+            resource.executionLocationId,
+            resource.executionLocationRevision,
+          );
       const docker = createDockerRuntimeFromAdapter(adapter);
       const filters = [
         '--filter',
@@ -51,12 +59,11 @@ export async function reconcileExecutionResourceLedger(
         '--filter',
         `label=luowang.project-id=${resource.projectId}`,
       ];
-      const containers = (
-        await docker.run(['ps', '--all', '--quiet', ...filters], { timeoutMs: 20_000 })
-      ).stdout
-        .trim()
-        .split(/\s+/)
-        .filter(Boolean);
+      const containerList = await docker.run(['ps', '--all', '--quiet', ...filters], {
+        timeoutMs: 20_000,
+      });
+      if (containerList.exitCode !== 0) throw new Error('容器资源查询失败');
+      const containers = containerList.stdout.trim().split(/\s+/).filter(Boolean);
       for (const id of containers) {
         if (!(await ownedByAttempt(docker, 'container', id, resource.attemptId))) continue;
         const result = await docker.run(['rm', '--force', id], { timeoutMs: 30_000 });
@@ -64,6 +71,7 @@ export async function reconcileExecutionResourceLedger(
       }
       for (const kind of ['network', 'volume'] as const) {
         const listed = await docker.run([kind, 'ls', '--quiet', ...filters], { timeoutMs: 20_000 });
+        if (listed.exitCode !== 0) throw new Error(`${kind} 资源查询失败`);
         for (const id of listed.stdout.trim().split(/\s+/).filter(Boolean)) {
           if (!(await ownedByAttempt(docker, kind, id, resource.attemptId))) continue;
           if (kind === 'network' && resource.executionLocationId.startsWith('local:')) {

@@ -261,15 +261,7 @@ export function createProjectRunRuntimeEnvironmentFactory(input: {
                 servicePort: input.task.runtime.servicePort!,
                 publishHost,
               });
-              runtimeDefinitionHash = createHash('sha256')
-                .update(
-                  JSON.stringify({
-                    services: definition.services,
-                    networks: definition.networks,
-                    volumes: definition.volumes,
-                  }),
-                )
-                .digest('hex');
+              runtimeDefinitionHash = definition.definitionHash;
               const cachedImageIds: Record<string, string> = {};
               const composeCache = createExecutionImageCache(input.database);
               for (const serviceName of input.task.runtime.composeServices) {
@@ -336,6 +328,7 @@ export function createProjectRunRuntimeEnvironmentFactory(input: {
                     serviceName: service,
                     destinationRoot,
                     files: selected,
+                    signal: context.signal,
                   });
                 },
                 afterStart: async (service, containerId, managedFileRoot) => {
@@ -355,6 +348,7 @@ export function createProjectRunRuntimeEnvironmentFactory(input: {
                     serviceName: service,
                     destinationRoot: managedFileRoot ?? undefined,
                     files: selected,
+                    signal: context.signal,
                   });
                 },
               });
@@ -382,6 +376,7 @@ export function createProjectRunRuntimeEnvironmentFactory(input: {
                   executionAdapter: adapter,
                   containerId,
                   files,
+                  signal: context.signal,
                 }),
             });
       if (input.task.startType === 'compose') {

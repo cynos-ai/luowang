@@ -116,7 +116,7 @@ const SENSITIVE_PATH =
 
 export interface RunOrchestratorOptions {
   capabilityConfiguration?: RunCapabilities['configuration'];
-  checkEnvironment?: (signal?: AbortSignal) => Promise<EnvironmentObservation>;
+  checkEnvironment?: (baseUrl: string, signal?: AbortSignal) => Promise<EnvironmentObservation>;
   configuration: ConfigurationStore;
   repository: RepositoryService;
   indexer?: RepositoryIndexer;
