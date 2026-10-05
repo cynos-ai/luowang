@@ -60,10 +60,43 @@ const deploymentConfiguration = {
   language: 'zh-CN',
   provider: 'openai-compatible',
   providerBaseUrl: 'https://provider.example.test/v1',
+  modelProviders: [
+    {
+      id: 'fixture-source',
+      name: 'OpenAI compatible',
+      provider: 'openai-compatible',
+      baseUrl: 'https://provider.example.test/v1',
+      verifiedAt: '2026-09-27T08:00:00.000Z',
+      models: [
+        {
+          provider: 'openai-compatible',
+          id: 'deepseek-v4-flash',
+          name: 'DeepSeek Flash',
+          input: ['text'],
+          reasoning: true,
+          thinkingLevels: ['off', 'low'],
+          available: true,
+        },
+        {
+          provider: 'openai-compatible',
+          id: 'deepseek-v4-flash-vision-exp',
+          name: 'DeepSeek Vision',
+          input: ['text', 'image'],
+          reasoning: true,
+          thinkingLevels: ['off', 'low'],
+          available: true,
+        },
+      ],
+    },
+  ],
   agents: {
-    main: { model: 'deepseek-v4-flash', thinking: 'medium' },
-    runner: { model: 'deepseek-v4-flash', thinking: 'low' },
-    reviewer: { model: 'deepseek-v4-flash-vision-exp', thinking: 'high' },
+    main: { providerSourceId: 'fixture-source', model: 'deepseek-v4-flash', thinking: 'medium' },
+    runner: { providerSourceId: 'fixture-source', model: 'deepseek-v4-flash', thinking: 'low' },
+    reviewer: {
+      providerSourceId: 'fixture-source',
+      model: 'deepseek-v4-flash-vision-exp',
+      thinking: 'high',
+    },
   },
   local: { repoDir: '/data/repositories', reportDir: '/data/reports', retentionDays: 30 },
   mcp: { enabled: true, browser: 'chromium', headless: true, timeoutMs: 30000 },
@@ -81,6 +114,9 @@ const deploymentSecrets = {
   ossAccessKeyId: { configured: false, masked: null },
   ossAccessKeySecret: { configured: false, masked: null },
 };
+const deploymentProviderSecrets = {
+  'fixture-source': { configured: true, masked: '••••••••' },
+};
 let adminDisplayName = '管理员';
 let created = false;
 let ready = false;
@@ -97,8 +133,8 @@ let holdWorkspace = false;
 let holdConfiguration = false;
 let globalSettingsUnlocked = false;
 let resourceInventoryFailure = false;
-let catalogFailure = false;
-let delayOpenAiCatalog = false;
+const catalogFailure = false;
+const delayOpenAiCatalog = false;
 let systemCheckFailure = false;
 let releaseWorkspace: () => void = () => undefined;
 let releaseConfiguration: () => void = () => undefined;
@@ -295,7 +331,11 @@ try {
     }
     if (pathname === '/api/deployment' && method === 'GET') {
       return route.fulfill({
-        json: { configuration: deploymentConfiguration, secrets: deploymentSecrets },
+        json: {
+          configuration: deploymentConfiguration,
+          secrets: deploymentSecrets,
+          providerSecrets: deploymentProviderSecrets,
+        },
       });
     }
     if (pathname === '/api/deployment' && method === 'PUT') {
@@ -308,6 +348,7 @@ try {
       if (patch.provider !== undefined) deploymentConfiguration.provider = patch.provider;
       if (patch.providerBaseUrl !== undefined)
         deploymentConfiguration.providerBaseUrl = patch.providerBaseUrl;
+      if (patch.modelProviders) deploymentConfiguration.modelProviders = patch.modelProviders;
       return route.fulfill({ json: { configuration: deploymentConfiguration } });
     }
     const deploymentSecretMatch = pathname.match(
@@ -324,6 +365,22 @@ try {
     if (pathname === '/api/account' && method === 'GET') {
       return route.fulfill({ json: { profile: { displayName: adminDisplayName } } });
     }
+    if (pathname === '/api/system-settings' && method === 'GET') {
+      return route.fulfill({
+        json: {
+          runtime: { maxConcurrentProjects: 2 },
+          startup: {
+            host: '127.0.0.1',
+            port: 3000,
+            dataDir: '/data',
+            databasePath: '/data/luowang.db',
+            repoDir: '/data/repos',
+            reportDir: '/data/reports',
+            logLevel: 'info',
+          },
+        },
+      });
+    }
     if (pathname === '/api/account' && method === 'PUT') {
       adminDisplayName = request.postDataJSON().displayName;
       return route.fulfill({ json: { profile: { displayName: adminDisplayName } } });
@@ -335,10 +392,28 @@ try {
     if (pathname === '/api/projects' && method === 'GET') {
       return route.fulfill({ json: { projects: created ? [...projects, newProject] : projects } });
     }
+    if (pathname === '/api/connection-resources' && method === 'GET') {
+      return route.fulfill({
+        json: {
+          githubCredentials: [
+            {
+              id: '44444444-4444-4444-8444-444444444444',
+              name: '合成共享 Token',
+              configured: true,
+              createdAt: fixture.now,
+              updatedAt: fixture.now,
+            },
+          ],
+          executionServers: [],
+        },
+      });
+    }
     if (pathname === '/api/projects' && method === 'POST') {
       const body = request.postDataJSON();
       assert.equal(body.displayName, newProject.displayName);
       assert.equal(body.repositoryUrl, 'https://github.com/cynos-ai/synthetic-onboarding');
+      assert.equal(body.githubCredentialId, '44444444-4444-4444-8444-444444444444');
+      assert.equal(body.gitToken, undefined);
       created = true;
       return route.fulfill({ status: 201, json: { project: newProject } });
     }
@@ -724,7 +799,7 @@ try {
   await page.goto(`${origin}/workspace`);
   parallelPreparing = true;
   await page.reload();
-  await page.getByText('2/2 个项目正在处理').waitFor();
+  await page.locator('.active-run-block .run-focus').nth(1).waitFor();
   assert.equal(await page.locator('.active-run-block .run-focus').count(), 2);
   assert.equal(
     await page.locator('.active-run-block a').nth(1).getAttribute('href'),
@@ -765,26 +840,28 @@ try {
   await page.goto(`${origin}/projects/new`);
   await page.getByLabel('项目名称').fill(newProject.displayName);
   await page.getByLabel('GitHub 仓库地址').fill('https://github.com/cynos-ai/synthetic-onboarding');
-  await page.getByLabel('GitHub Token（私有仓库必填）').fill('synthetic-secret-token');
-  await page.getByRole('button', { name: '核验并创建暂停项目' }).click();
+  await page.getByRole('combobox', { name: 'GitHub Token', exact: true }).click();
+  await page.getByRole('option', { name: '合成共享 Token', exact: true }).click();
+  await page.getByRole('button', { name: '验证仓库并继续' }).click();
   await page.getByRole('heading', { name: '配置测试' }).waitFor();
   assert.equal(new URL(page.url()).searchParams.get('projectId'), newProject.projectId);
   assert.equal((await page.locator('body').innerText()).includes('synthetic-secret-token'), false);
 
-  await page.getByLabel('生成语言').fill('en-US');
+  await page.getByRole('combobox', { name: '语言', exact: true }).click();
+  await page.getByRole('option', { name: 'English', exact: true }).click();
   await page.getByRole('button', { name: '保存测试配置' }).click();
   await page.getByText('保存测试配置完成').waitFor();
-  await page.getByLabel('非生产环境 URL').fill('https://synthetic.example.test');
+  await page.getByRole('textbox', { name: /^测试环境地址/ }).fill('https://synthetic.example.test');
   await page.getByRole('button', { name: '保存环境配置' }).click();
   await page.getByText('保存环境配置完成').waitFor();
 
-  await page.getByLabel(/测试账号 · 未配置/).fill('synthetic-user');
-  await page
-    .getByLabel(/测试账号 · 未配置/)
+  const onboardingAccount = page.locator('#onboarding-step-3').getByLabel(/^测试账号/);
+  await onboardingAccount.fill('synthetic-user');
+  await onboardingAccount
     .locator('xpath=ancestor::div[contains(@class,"secret-editor")]')
     .getByRole('button', { name: '保存' })
     .click();
-  await page.getByText('保存测试账号完成').waitFor();
+  await page.getByText('保存测试账号（可选）完成').waitFor();
   assert.equal((await page.locator('body').innerText()).includes('synthetic-user'), false);
 
   await page.getByRole('button', { name: '准备执行镜像' }).click();
@@ -843,11 +920,9 @@ try {
 
   await page.goto(`${origin}/projects/${newProject.projectId}/settings/environment`);
   await page.getByLabel('环境说明').fill('有未保存修改的合成环境');
-  page.once('dialog', async (dialog) => {
-    assert.match(dialog.message(), /未保存/);
-    await dialog.dismiss();
-  });
   await page.getByRole('link', { name: '概览', exact: true }).click();
+  await page.getByRole('dialog').getByText('当前页面的修改尚未保存。').waitFor();
+  await page.getByRole('dialog').getByRole('button', { name: '继续编辑' }).click();
   assert.match(page.url(), /\/settings\/environment$/);
   holdConfiguration = true;
   const pendingWrite = page.waitForRequest(
@@ -1061,20 +1136,20 @@ try {
   await page.getByText('正在引用').waitFor();
   await page.getByRole('button', { name: '立即检查' }).last().click();
   assert.ok(writes.includes('POST /api/system/checks/oss'));
-  await page.getByText('OSS 能力尚未提供').waitFor();
+  await page.getByText('OSS 能力尚未提供', { exact: true }).waitFor();
   systemCheckFailure = true;
   await page.getByRole('button', { name: '立即检查' }).nth(1).click();
-  await page.getByText('检查执行失败，请查看服务日志并重试').waitFor();
+  await page
+    .locator('.dependency-note')
+    .filter({ hasText: /^检查执行失败，请查看服务日志并重试$/ })
+    .waitFor();
   systemCheckFailure = false;
 
   await page.goto(`${origin}/settings/models`);
   await page.getByText(/全局执行配置已锁定，相关测试记录/).waitFor();
   assert.equal(await page.getByRole('button', { name: '保存本分组' }).isDisabled(), true);
-  assert.equal(await page.getByLabel('Provider API Key', { exact: true }).isDisabled(), true);
-  assert.equal(
-    await page.getByRole('button', { name: '清除 Provider API Key' }).isDisabled(),
-    true,
-  );
+  assert.equal(await page.getByRole('button', { name: '模型注册' }).isDisabled(), true);
+  assert.equal(await page.getByRole('button', { name: '删除来源' }).first().isDisabled(), true);
   await page.goto(`${origin}/settings/object-storage`);
   assert.equal(await page.getByLabel('Endpoint', { exact: true }).isDisabled(), true);
   const lockedOssSecret = page.getByLabel('设置OSS Access Key ID');
@@ -1088,36 +1163,38 @@ try {
   globalSettingsUnlocked = true;
   await page.goto(`${origin}/settings/models`);
   await page.getByRole('heading', { name: '模型与角色' }).waitFor();
-  await page.getByRole('heading', { name: 'Main', exact: true }).waitFor();
+  await page.getByRole('heading', { name: '测试组长', exact: true }).waitFor();
   assert.equal(await page.getByText(/已载入 .* 个已知模型/).count(), 0);
   assert.equal(await page.getByText('Thinking 自动选择', { exact: true }).count(), 0);
   assert.equal(await page.locator('datalist').count(), 0);
   assert.equal(
-    await page.getByLabel(/Reviewer 模型要求/).getAttribute('title'),
+    await page.getByLabel(/质量审核员模型要求/).getAttribute('title'),
     '需要支持图像输入，用于审核截图证据。',
   );
   await page.locator('.model-capabilities .capability-icon').first().waitFor();
   assert.equal(await page.locator('.model-capabilities .capability-icon').count(), 7);
-  const mainThinking = page.getByLabel('Main Thinking');
-  const runnerThinking = page.getByLabel('Runner Thinking');
-  const reviewerThinking = page.getByLabel('Reviewer Thinking');
-  assert.deepEqual(await mainThinking.locator('option').allTextContents(), ['off', 'low']);
-  assert.equal(await mainThinking.inputValue(), 'low');
-  assert.equal(await runnerThinking.inputValue(), 'low');
-  assert.equal(await reviewerThinking.inputValue(), 'low');
-  await mainThinking.selectOption('off');
+  const mainThinking = page.getByLabel('测试组长思考等级');
+  const runnerThinking = page.getByLabel('测试工程师思考等级');
+  const reviewerThinking = page.getByLabel('质量审核员思考等级');
+  assert.equal((await mainThinking.textContent())?.trim(), 'low');
+  assert.equal((await runnerThinking.textContent())?.trim(), 'low');
+  assert.equal((await reviewerThinking.textContent())?.trim(), 'low');
+  await mainThinking.click();
+  assert.deepEqual(await page.getByRole('option').allTextContents(), ['off', 'low']);
+  await page.getByRole('option', { name: 'off', exact: true }).click();
   const roleModels = [
-    page.getByRole('combobox', { name: 'Main 模型' }),
-    page.getByRole('combobox', { name: 'Runner 模型' }),
-    page.getByRole('combobox', { name: 'Reviewer 模型' }),
+    page.getByRole('combobox', { name: '测试组长模型' }),
+    page.getByRole('combobox', { name: '测试工程师模型' }),
+    page.getByRole('combobox', { name: '质量审核员模型' }),
   ];
-  await roleModels[2].fill('deepseek-v4-flash');
-  await page.getByText('该模型不支持图像输入，视觉场景将被阻塞。').waitFor();
-  await roleModels[2].fill('deepseek-v4-flash-vision-exp');
-  assert.equal(await page.getByText('该模型不支持图像输入，视觉场景将被阻塞。').count(), 0);
-  const providerInput = page.getByRole('combobox', { name: 'Provider', exact: true });
-  const baseUrlInput = page.getByLabel('Provider Base URL');
-  assert.equal(await baseUrlInput.inputValue(), 'https://provider.example.test/v1');
+  assert.equal(await roleModels[0].inputValue(), 'DeepSeek Flash');
+  assert.equal(await roleModels[2].inputValue(), 'DeepSeek Vision');
+  await roleModels[0].focus();
+  await roleModels[0].press('ArrowDown');
+  assert.equal(await page.getByRole('listbox').count(), 1);
+  assert.equal(await page.getByRole('option').count(), 2);
+  await roleModels[0].press('Escape');
+  assert.equal(await page.getByRole('listbox').count(), 0);
   for (const width of [768, 1024, 1440]) {
     await page.setViewportSize({ width, height: 900 });
     assert.equal(
@@ -1127,61 +1204,16 @@ try {
       true,
     );
   }
-  await providerInput.focus();
-  await providerInput.press('ArrowDown');
-  assert.equal(await page.getByRole('listbox').count(), 1);
-  await providerInput.press('Escape');
-  assert.equal(await page.getByRole('listbox').count(), 0);
-  delayOpenAiCatalog = true;
-  const pendingCatalog = page.waitForRequest((request) =>
-    request.url().includes('/api/provider/models?provider=openai'),
-  );
-  await providerInput.fill('openai');
-  assert.equal(await baseUrlInput.inputValue(), 'https://api.openai.example.test/v1');
-  await pendingCatalog;
-  await page.getByText('正在加载模型…').waitFor();
-  await page.waitForTimeout(550);
-  assert.equal(await page.getByText('正在加载模型…').count(), 0);
-  await providerInput.fill('unknown-fixture');
-  await page.waitForTimeout(350);
-  assert.equal(await page.getByText(/已载入|暂无已知模型/).count(), 0);
-  catalogFailure = true;
-  await providerInput.fill('openai-compatible');
-  await page.getByText(/目录加载失败：目录暂不可用/).waitFor();
-  await roleModels[0].fill('manual-model-id');
-  assert.equal(await roleModels[0].inputValue(), 'manual-model-id');
-  catalogFailure = false;
-  delayOpenAiCatalog = false;
-  const compatibleCatalog = page.waitForResponse((response) =>
-    response.url().includes('/api/provider/models?provider=openai-compatible'),
-  );
-  await providerInput.fill('');
-  await providerInput.fill('openai-compatible');
-  await compatibleCatalog;
-  await page.waitForTimeout(20);
-  await roleModels[0].fill('deepseek');
-  await page.getByRole('option', { name: /DeepSeek Flash/ }).click();
-  assert.equal(await mainThinking.inputValue(), 'low');
-  await mainThinking.selectOption('off');
-  await providerInput.fill('fixture-provider');
-  assert.equal(await baseUrlInput.inputValue(), '');
-  const providerSecret = page.getByLabel('Provider API Key', { exact: true });
-  assert.match((await providerSecret.getAttribute('placeholder')) ?? '', /已配置/);
-  assert.equal(await page.getByText(/已配置 .*\*+/).count(), 0);
-  await providerSecret.fill('synthetic-provider-key');
+  await page.getByRole('button', { name: '模型注册' }).click();
+  assert.equal(await page.getByRole('button', { name: '删除来源' }).count(), 2);
+  await page.getByRole('button', { name: '删除来源' }).last().click();
+  await page.getByRole('dialog').getByRole('button', { name: '确认删除' }).click();
+  await page.getByText('未保存的模型来源已移除', { exact: true }).waitFor();
+  assert.equal(await page.getByRole('button', { name: '删除来源' }).count(), 1);
   await page.getByRole('button', { name: '保存本分组' }).click();
-  await page.getByText('配置与 Provider API Key 已保存。').waitFor();
+  await page.getByText('配置已保存', { exact: true }).waitFor();
   assert.ok(writes.includes('PUT /api/deployment'));
-  assert.ok(writes.includes('PUT /api/deployment/secrets/providerApiKey'));
   assert.equal(deploymentConfiguration.agents.main.thinking, 'off');
-  assert.equal((await page.locator('body').innerText()).includes('synthetic-provider-key'), false);
-  page.once('dialog', async (dialog) => {
-    assert.match(dialog.message(), /清除该凭据/);
-    await dialog.accept();
-  });
-  await page.getByRole('button', { name: '清除 Provider API Key' }).click();
-  await page.getByText('凭据已清除。', { exact: true }).waitFor();
-  assert.ok(writes.includes('DELETE /api/deployment/secrets/providerApiKey'));
   await page.goto(`${origin}/settings/object-storage`);
   assert.equal(await page.getByRole('link', { name: '全局凭据', exact: true }).count(), 0);
   assert.equal((await page.locator('body').innerText()).includes('GitHub Token'), false);
@@ -1201,14 +1233,14 @@ try {
   await endpoint.press('Tab');
   assert.equal(await endpoint.inputValue(), 'https://oss.example.test');
   await page.getByRole('button', { name: '保存本分组' }).click();
-  await page.getByText('配置已保存。', { exact: true }).waitFor();
+  await page.getByText('配置已保存', { exact: true }).waitFor();
   assert.equal(deploymentConfiguration.oss.endpoint, 'https://oss.example.test');
   await page.getByLabel('设置OSS Access Key ID').fill('synthetic-oss-id');
   await page.getByRole('button', { name: '保存', exact: true }).nth(0).click();
-  await page.getByText('凭据已更新。', { exact: true }).waitFor();
+  await page.getByText('凭据已更新', { exact: true }).waitFor();
   await page.getByLabel('设置OSS Access Key Secret').fill('synthetic-oss-key');
   await page.getByRole('button', { name: '保存', exact: true }).click();
-  await page.getByText('凭据已更新。', { exact: true }).waitFor();
+  await page.getByText('凭据已更新', { exact: true }).waitFor();
   assert.ok(writes.includes('PUT /api/deployment/secrets/ossAccessKeyId'));
   assert.ok(writes.includes('PUT /api/deployment/secrets/ossAccessKeySecret'));
   assert.equal((await page.locator('body').innerText()).includes('synthetic-oss-id'), false);
@@ -1221,7 +1253,7 @@ try {
 
   holdWorkspace = true;
   const delayedRequest = page.waitForRequest((request) => request.url().endsWith('/api/workspace'));
-  await page.getByRole('link', { name: '工作台', exact: true }).click();
+  await page.getByRole('link', { name: '总览', exact: true }).click();
   await delayedRequest;
   await page.getByRole('link', { name: '系统状态', exact: true }).click();
   await page.getByRole('heading', { name: '系统状态' }).waitFor();

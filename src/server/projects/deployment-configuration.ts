@@ -7,7 +7,15 @@ import {
   type ConfigurationStore,
 } from '../configuration.js';
 
-const DEPLOYMENT_FIELDS = new Set(['provider', 'providerBaseUrl', 'agents', 'mcp', 'oss', 'local']);
+const DEPLOYMENT_FIELDS = new Set([
+  'provider',
+  'providerBaseUrl',
+  'modelProviders',
+  'agents',
+  'mcp',
+  'oss',
+  'local',
+]);
 const OSS_DESTINATION_FIELDS = [
   'endpoint',
   'region',
@@ -52,6 +60,7 @@ export function createDeploymentConfigurationStore(
         const executionChange =
           before.provider !== after.provider ||
           before.providerBaseUrl !== after.providerBaseUrl ||
+          JSON.stringify(before.modelProviders) !== JSON.stringify(after.modelProviders) ||
           JSON.stringify(before.agents) !== JSON.stringify(after.agents) ||
           JSON.stringify(before.mcp) !== JSON.stringify(after.mcp);
         const ossChange = OSS_DESTINATION_FIELDS.some(

@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react';
+import { useEffect, useRef, type ReactNode } from 'react';
 
 import type { AppRoute } from '../app/route';
 import { AppLink } from '../app/navigation';
@@ -16,13 +16,29 @@ export function AppShell({
   children: ReactNode;
 }) {
   const projectId = projectIdFromRoute(route);
+  const operatorMenu = useRef<HTMLDetailsElement>(null);
+  useEffect(() => {
+    const close = (event: PointerEvent) => {
+      if (!operatorMenu.current?.contains(event.target as Node))
+        operatorMenu.current?.removeAttribute('open');
+    };
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') operatorMenu.current?.removeAttribute('open');
+    };
+    document.addEventListener('pointerdown', close);
+    document.addEventListener('keydown', closeOnEscape);
+    return () => {
+      document.removeEventListener('pointerdown', close);
+      document.removeEventListener('keydown', closeOnEscape);
+    };
+  }, []);
   return (
     <div className="lw-shell">
       <a className="skip-link" href="#main-content">
         跳到主要内容
       </a>
       <header className="lw-header">
-        <AppLink className="wordmark" to={{ name: 'workspace' }} aria-label="罗网工作台">
+        <AppLink className="wordmark" to={{ name: 'workspace' }} aria-label="罗网总览">
           <span className="wordmark-cn">
             <span>罗</span>
             <span className="wordmark-cn-second">网</span>
@@ -35,7 +51,7 @@ export function AppShell({
             to={{ name: 'workspace' }}
             current={route.name === 'workspace'}
           >
-            工作台
+            总览
           </AppLink>
           <AppLink className="nav-link" to={{ name: 'projects' }} current={isProjectRoute(route)}>
             项目
@@ -51,7 +67,7 @@ export function AppShell({
             设置
           </AppLink>
         </nav>
-        <details className="operator-menu" key={route.name}>
+        <details className="operator-menu" key={route.name} ref={operatorMenu}>
           <summary aria-label="打开用户菜单" title="管理员">
             <span className="operator-avatar" aria-hidden="true">
               管
@@ -59,7 +75,7 @@ export function AppShell({
             <span className="operator-presence" aria-hidden="true" />
           </summary>
           <div className="operator-menu-popover">
-            <AppLink to={{ name: 'account' }}>账号设置</AppLink>
+            <AppLink to={{ name: 'global-settings', section: 'system' }}>系统设置</AppLink>
             <button type="button" onClick={onLogout}>
               退出登录
             </button>

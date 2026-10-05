@@ -28,6 +28,80 @@ export function Field({
   );
 }
 
+export function NumberInput({
+  value,
+  min,
+  max,
+  step = 1,
+  disabled = false,
+  required = false,
+  ariaLabel,
+  width = 'compact',
+  onChange,
+}: {
+  value: number;
+  min?: number;
+  max?: number;
+  step?: number;
+  disabled?: boolean;
+  required?: boolean;
+  ariaLabel?: string;
+  width?: 'compact' | 'wide' | 'full';
+  onChange: (value: number) => void;
+}) {
+  const precision = Math.max(decimalPlaces(step), decimalPlaces(min), decimalPlaces(max));
+  const normalize = (next: number) => {
+    const bounded = Math.min(
+      max ?? Number.POSITIVE_INFINITY,
+      Math.max(min ?? Number.NEGATIVE_INFINITY, next),
+    );
+    return Number(bounded.toFixed(precision));
+  };
+  const changeBy = (direction: -1 | 1) => onChange(normalize(value + step * direction));
+
+  return (
+    <div className={`number-input number-input-${width}`}>
+      <button
+        type="button"
+        aria-label={ariaLabel ? `减少${ariaLabel}` : '减少'}
+        disabled={disabled || (min !== undefined && value <= min)}
+        onClick={() => changeBy(-1)}
+      >
+        −
+      </button>
+      <input
+        type="number"
+        inputMode="decimal"
+        aria-label={ariaLabel}
+        min={min}
+        max={max}
+        step={step}
+        required={required}
+        disabled={disabled}
+        value={value}
+        onChange={(event) => {
+          const next = event.currentTarget.valueAsNumber;
+          if (Number.isFinite(next)) onChange(next);
+        }}
+      />
+      <button
+        className="number-input-increase"
+        type="button"
+        aria-label={ariaLabel ? `增加${ariaLabel}` : '增加'}
+        disabled={disabled || (max !== undefined && value >= max)}
+        onClick={() => changeBy(1)}
+      >
+        +
+      </button>
+    </div>
+  );
+}
+
+function decimalPlaces(value: number | undefined): number {
+  if (value === undefined || Number.isInteger(value)) return 0;
+  return value.toString().split('.')[1]?.length ?? 0;
+}
+
 export function SectionCard({
   id,
   eyebrow,
@@ -141,26 +215,45 @@ export function ModelCapabilities({ model }: { model: ProviderModelInfo | undefi
   const vision = model.input.some((input) => input.toLowerCase() === 'image');
   return (
     <span className="model-capabilities" aria-label="能力">
-      <CapabilityIcon label="文本" path="M5 3h10l4 4v14H5z M15 3v5h4 M8 12h8 M8 16h6" />
+      <CapabilityIcon
+        kind="text"
+        label="文本"
+        path="M5 2h10l4 4v16H5V2zm9 2v4h4l-4-4zM8 11v2h8v-2H8zm0 4v2h8v-2H8z"
+      />
       {vision && (
         <CapabilityIcon
+          kind="vision"
           label="视觉"
-          path="M2 12s4-6 10-6 10 6 10 6-4 6-10 6S2 12 2 12z M12 9a3 3 0 1 0 0 6 3 3 0 0 0 0-6z"
+          path="M12 5c-6.2 0-10 7-10 7s3.8 7 10 7 10-7 10-7-3.8-7-10-7zm0 11a4 4 0 1 1 0-8 4 4 0 0 1 0 8zm0-2a2 2 0 1 0 0-4 2 2 0 0 0 0 4z"
         />
       )}
       {model.reasoning && (
         <CapabilityIcon
+          kind="reasoning"
           label="推理"
-          path="M9 18h6 M10 22h4 M8 14c-1.3-1.1-2-2.7-2-4.5a6 6 0 0 1 12 0c0 1.8-.7 3.4-2 4.5-.8.7-1 1.3-1 2H9c0-.7-.2-1.3-1-2z"
+          path="M9 21h6v-2H9v2zm3-19a7 7 0 0 0-4.5 12.4c.9.8 1.3 1.5 1.5 2.6h6c.2-1.1.6-1.8 1.5-2.6A7 7 0 0 0 12 2zm2.9 10.9c-1 .9-1.6 1.7-1.8 2.1h-2.2c-.2-.4-.8-1.2-1.8-2.1A4.8 4.8 0 0 1 7 9a5 5 0 0 1 10 0c0 1.5-.8 2.9-2.1 3.9z"
         />
       )}
     </span>
   );
 }
 
-function CapabilityIcon({ label, path }: { label: string; path: string }) {
+function CapabilityIcon({
+  kind,
+  label,
+  path,
+}: {
+  kind: 'text' | 'vision' | 'reasoning';
+  label: string;
+  path: string;
+}) {
   return (
-    <span className="capability-icon" role="img" aria-label={label} title={label}>
+    <span
+      className={`capability-icon capability-icon-${kind}`}
+      role="img"
+      aria-label={label}
+      title={label}
+    >
       <svg viewBox="0 0 24 24" aria-hidden="true">
         <path d={path} />
       </svg>
@@ -176,6 +269,8 @@ export function ComboBox({
   options,
   disabled = false,
   placeholder,
+  displayValue,
+  allowCustom = true,
   onChange,
 }: {
   ariaLabel: string;
@@ -183,13 +278,18 @@ export function ComboBox({
   options: ComboBoxOption[];
   disabled?: boolean;
   placeholder?: string;
+  displayValue?: string;
+  allowCustom?: boolean;
   onChange: (value: string) => void;
 }) {
   const listId = useId();
   const root = useRef<HTMLDivElement>(null);
   const [open, setOpen] = useState(false);
   const [active, setActive] = useState(-1);
-  const normalized = value.trim().toLowerCase();
+  const [filtering, setFiltering] = useState(false);
+  const shownValue = displayValue ?? value;
+  const [inputValue, setInputValue] = useState(shownValue);
+  const normalized = filtering ? inputValue.trim().toLowerCase() : '';
   const filtered = options.filter((option) => {
     const text = `${option.value} ${option.label} ${option.detail ?? ''}`.toLowerCase();
     return !normalized || text.includes(normalized);
@@ -203,10 +303,15 @@ export function ComboBox({
     return () => document.removeEventListener('pointerdown', close);
   }, []);
   useEffect(() => setActive(-1), [value, options]);
+  useEffect(() => {
+    if (!filtering) setInputValue(shownValue);
+  }, [filtering, shownValue]);
 
   function choose(option: ComboBoxOption) {
     onChange(option.value);
+    setInputValue(option.label);
     setOpen(false);
+    setFiltering(false);
     setActive(-1);
   }
   function onKeyDown(event: KeyboardEvent<HTMLInputElement>) {
@@ -232,7 +337,11 @@ export function ComboBox({
       className="combo-box"
       ref={root}
       onBlur={(event) => {
-        if (!event.currentTarget.contains(event.relatedTarget)) setOpen(false);
+        if (!event.currentTarget.contains(event.relatedTarget)) {
+          setOpen(false);
+          setFiltering(false);
+          setInputValue(shownValue);
+        }
       }}
     >
       <input
@@ -245,12 +354,17 @@ export function ComboBox({
         autoComplete="off"
         disabled={disabled}
         placeholder={placeholder}
-        value={value}
+        value={inputValue}
         onChange={(event) => {
-          onChange(event.target.value);
+          setInputValue(event.target.value);
+          if (allowCustom) onChange(event.target.value);
+          setFiltering(true);
           setOpen(true);
         }}
-        onFocus={() => setOpen(true)}
+        onFocus={() => {
+          setFiltering(false);
+          setOpen(true);
+        }}
         onKeyDown={onKeyDown}
       />
       <button
@@ -259,9 +373,12 @@ export function ComboBox({
         tabIndex={-1}
         aria-label={`展开${ariaLabel}选项`}
         disabled={disabled}
-        onClick={() => setOpen((current) => !current)}
+        onClick={() => {
+          setFiltering(false);
+          setOpen((current) => !current);
+        }}
       >
-        <span aria-hidden="true">⌄</span>
+        <span className="combo-chevron" aria-hidden="true" />
       </button>
       {open && !disabled && (
         <div className="combo-options" id={listId} role="listbox">
@@ -285,6 +402,110 @@ export function ComboBox({
           ) : (
             <p className="combo-empty">可继续使用当前输入值</p>
           )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+export function SelectBox({
+  ariaLabel,
+  value,
+  options,
+  disabled = false,
+  onChange,
+}: {
+  ariaLabel: string;
+  value: string;
+  options: ComboBoxOption[];
+  disabled?: boolean;
+  onChange: (value: string) => void;
+}) {
+  const listId = useId();
+  const root = useRef<HTMLDivElement>(null);
+  const [open, setOpen] = useState(false);
+  const [active, setActive] = useState(
+    Math.max(
+      0,
+      options.findIndex((item) => item.value === value),
+    ),
+  );
+  const selected = options.find((item) => item.value === value) ?? options[0];
+
+  useEffect(() => {
+    const close = (event: PointerEvent) => {
+      if (!root.current?.contains(event.target as Node)) setOpen(false);
+    };
+    document.addEventListener('pointerdown', close);
+    return () => document.removeEventListener('pointerdown', close);
+  }, []);
+  useEffect(() => {
+    setActive(
+      Math.max(
+        0,
+        options.findIndex((item) => item.value === value),
+      ),
+    );
+  }, [options, value]);
+
+  function choose(index: number) {
+    const option = options[index];
+    if (!option) return;
+    onChange(option.value);
+    setOpen(false);
+  }
+
+  return (
+    <div
+      className="select-box"
+      ref={root}
+      onBlur={(event) => {
+        if (!event.currentTarget.contains(event.relatedTarget)) setOpen(false);
+      }}
+    >
+      <button
+        className="select-trigger"
+        type="button"
+        role="combobox"
+        aria-label={ariaLabel}
+        aria-expanded={open}
+        aria-controls={listId}
+        disabled={disabled}
+        onClick={() => setOpen((current) => !current)}
+        onKeyDown={(event) => {
+          if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+            event.preventDefault();
+            setOpen(true);
+            const delta = event.key === 'ArrowDown' ? 1 : -1;
+            setActive((current) => (current + delta + options.length) % options.length);
+          } else if (event.key === 'Enter' && open) {
+            event.preventDefault();
+            choose(active);
+          } else if (event.key === 'Escape') {
+            setOpen(false);
+          }
+        }}
+      >
+        <span>{selected?.label ?? value}</span>
+        <span className="combo-chevron" aria-hidden="true" />
+      </button>
+      {open && !disabled && (
+        <div className="combo-options" id={listId} role="listbox">
+          {options.map((option, index) => (
+            <button
+              className="combo-option"
+              type="button"
+              role="option"
+              aria-selected={option.value === value}
+              data-active={index === active || undefined}
+              key={option.value}
+              onPointerDown={(event) => event.preventDefault()}
+              onClick={() => choose(index)}
+            >
+              <strong>{option.label}</strong>
+              {option.detail && <small>{option.detail}</small>}
+            </button>
+          ))}
         </div>
       )}
     </div>

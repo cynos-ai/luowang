@@ -12,6 +12,7 @@ import { requestJson, toUserMessage } from '../../api';
 import { AppLink } from '../../app/navigation';
 import { useResource } from '../../app/resource';
 import { AsyncRegion } from '../../components/AsyncRegion';
+import { AppMessageFeedback } from '../../components/AppMessageProvider';
 import { ConfirmDialog } from '../../components/ConfirmDialog';
 import { Field } from '../../components/FormControls';
 import { PageHeading } from '../../components/PageHeading';
@@ -137,12 +138,7 @@ export function ProjectTestPage({ projectId }: { projectId: string }) {
     <section className="page-content project-test-page">
       <PageHeading title="测试" scope="当前项目" />
       <div className="page-body test-page-layout">
-        {message && <p className="notice notice-success">{message}</p>}
-        {actionError && (
-          <p className="notice notice-error" role="alert">
-            {actionError}
-          </p>
-        )}
+        <AppMessageFeedback success={message} error={actionError} />
         {data && resource.error && (
           <p className="stale-notice" role="status">
             自动刷新失败，继续显示最后可信状态：{resource.error}

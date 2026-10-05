@@ -3,6 +3,7 @@ import type { OperationsQueueItem, OperationsRunDetail } from '../../shared/type
 import { diagnoseRun } from '../../shared/run-diagnostics';
 import { requestJson, toUserMessage } from '../api';
 import { AppLink } from '../app/navigation';
+import { AppMessageFeedback } from './AppMessageProvider';
 import { ConfirmDialog } from './ConfirmDialog';
 
 export function RunFollowupActions({
@@ -146,8 +147,7 @@ export function RunFollowupActions({
           项目环境配置
         </AppLink>
       </div>
-      {message && <p role="status">{message}</p>}
-      {error && !confirm && <p role="alert">{error}</p>}
+      <AppMessageFeedback success={message} error={!confirm ? error : ''} />
       {confirm && (
         <ConfirmDialog
           open

@@ -1,12 +1,14 @@
 import type {
   ConnectivityResult,
   HarnessConfig,
+  ModelProviderSource,
   ProviderInfo,
   ProviderModelInfo,
   ThinkingLevel,
 } from '../../shared/types.js';
 import type { ConfigurationStore } from '../configuration.js';
 import type { SecretStore } from '../security/secret-store.js';
+import { getProviderApiKey } from '../security/provider-secrets.js';
 import { ModelRuntime } from '@earendil-works/pi-coding-agent';
 import type { AgentRole } from './types.js';
 
@@ -27,6 +29,7 @@ export interface ProviderAdapter {
   resolveModel(role: AgentRole): Promise<PiModel>;
   listModels(provider?: string): Promise<ProviderModelInfo[]>;
   listProviders?(): Promise<ProviderInfo[]>;
+  verifySource?(sourceId: string): Promise<ProviderModelInfo[]>;
   checkConnectivity(): Promise<ConnectivityResult>;
 }
 
@@ -54,11 +57,16 @@ export function createProviderAdapter(
 }
 
 class PiProviderAdapter implements ProviderAdapter {
-  private runtime: ModelRuntime | undefined;
-  private runtimeProvider: string | undefined;
-  private runtimeProviderBaseUrl: string | undefined;
+  private readonly sourceRuntimes = new Map<
+    string,
+    {
+      provider: string;
+      baseUrl: string;
+      runtime: ModelRuntime;
+      credentials: MemoryCredentialStore;
+    }
+  >();
   private catalogRuntime: ModelRuntime | undefined;
-  private readonly credentials = new MemoryCredentialStore();
 
   constructor(
     private readonly configuration: ConfigurationStore,
@@ -67,42 +75,45 @@ class PiProviderAdapter implements ProviderAdapter {
 
   async getRuntime(): Promise<ModelRuntime> {
     const harness = this.configuration.getHarness();
-    const provider = harness.provider.trim();
-    const providerBaseUrl = harness.providerBaseUrl.trim();
-    if (!provider) throw new ProviderError('PROVIDER_NOT_CONFIGURED', '模型 Provider 尚未配置');
-    if (this.runtimeProvider && this.runtimeProvider !== provider) {
-      await this.credentials.delete(this.runtimeProvider);
-    }
-    await this.syncCredential(provider);
-    if (
-      !this.runtime ||
-      this.runtimeProvider !== provider ||
-      this.runtimeProviderBaseUrl !== providerBaseUrl
-    ) {
-      const runtime = await this.createStaticRuntime(this.credentials);
+    const source = primarySource(harness);
+    if (!source) throw new ProviderError('PROVIDER_NOT_CONFIGURED', '模型来源尚未配置');
+    return this.getRuntimeForSource(source);
+  }
+
+  private async getRuntimeForSource(source: ModelProviderSource): Promise<ModelRuntime> {
+    const provider = source.provider.trim();
+    const providerBaseUrl = source.baseUrl.trim();
+    let entry = this.sourceRuntimes.get(source.id);
+    if (!entry || entry.provider !== provider || entry.baseUrl !== providerBaseUrl) {
+      const credentials = new MemoryCredentialStore();
+      await this.syncCredential(credentials, provider, source.id);
+      const runtime = await this.createStaticRuntime(credentials);
       if (providerBaseUrl !== '') {
         if (!runtime.getProvider(provider)) {
           throw new ProviderError('PROVIDER_NOT_FOUND', `模型 Provider 不存在：${provider}`);
         }
         runtime.registerProvider(provider, { baseUrl: providerBaseUrl });
       }
-      this.runtime = runtime;
-      this.runtimeProvider = provider;
-      this.runtimeProviderBaseUrl = providerBaseUrl;
+      entry = { provider, baseUrl: providerBaseUrl, runtime, credentials };
+      this.sourceRuntimes.set(source.id, entry);
+    } else {
+      await this.syncCredential(entry.credentials, provider, source.id);
     }
-    return this.runtime;
+    return entry.runtime;
   }
 
   async resolveModel(role: AgentRole): Promise<PiModel> {
     const harness = this.configuration.getHarness();
-    const provider = harness.provider.trim();
-    if (!provider) throw new ProviderError('PROVIDER_NOT_CONFIGURED', '模型 Provider 尚未配置');
-    const runtime = await this.getRuntime();
+    const agent = harness.agents[configuredRole(role)];
+    const source = sourceForAgent(harness, agent.providerSourceId);
+    if (!source) throw new ProviderError('PROVIDER_NOT_CONFIGURED', `${role} 模型来源尚未配置`);
+    const provider = source.provider.trim();
+    const runtime = await this.getRuntimeForSource(source);
     if (!runtime.getProvider(provider)) {
       throw new ProviderError('PROVIDER_NOT_FOUND', `模型 Provider 不存在：${provider}`);
     }
     const model = this.resolveConfiguredModel(runtime, provider, harness, role);
-    if (!this.secretStore.get('providerApiKey')) {
+    if (!getProviderApiKey(this.secretStore, source.id)) {
       throw new ProviderError('AUTHENTICATION_FAILED', '模型 Provider API Key 尚未配置');
     }
     const auth = await runtime.checkAuth(provider);
@@ -113,14 +124,16 @@ class PiProviderAdapter implements ProviderAdapter {
   }
 
   async listModels(requestedProvider?: string): Promise<ProviderModelInfo[]> {
-    const configuredProvider = this.configuration.getHarness().provider.trim();
+    const configuredProvider =
+      primarySource(this.configuration.getHarness())?.provider.trim() ?? '';
     const provider = requestedProvider?.trim() || configuredProvider;
     if (!provider) return [];
     const runtime =
       provider === configuredProvider ? await this.getRuntime() : await this.getCatalogRuntime();
     if (!runtime.getProvider(provider)) return [];
     const auth =
-      provider === configuredProvider && this.secretStore.get('providerApiKey')
+      provider === configuredProvider &&
+      getProviderApiKey(this.secretStore, primarySource(this.configuration.getHarness())?.id ?? '')
         ? await runtime.checkAuth(provider)
         : undefined;
     return runtime.getModels(provider).map((model) => ({
@@ -146,50 +159,78 @@ class PiProviderAdapter implements ProviderAdapter {
       .sort((left, right) => left.name.localeCompare(right.name));
   }
 
+  async verifySource(sourceId: string): Promise<ProviderModelInfo[]> {
+    const harness = this.configuration.getHarness();
+    const source = harness.modelProviders.find((item) => item.id === sourceId);
+    if (!source) throw new ProviderError('PROVIDER_NOT_FOUND', '模型来源不存在');
+    const key = getProviderApiKey(this.secretStore, source.id);
+    if (!key) throw new ProviderError('AUTHENTICATION_FAILED', '模型来源 API Key 尚未配置');
+    const runtime = await this.getRuntimeForSource(source);
+    if (!runtime.getProvider(source.provider)) {
+      throw new ProviderError('PROVIDER_NOT_FOUND', `模型 Provider 不存在：${source.provider}`);
+    }
+    if (!(await runtime.checkAuth(source.provider))) {
+      throw new ProviderError('AUTHENTICATION_FAILED', '模型 Provider 认证失败或 API Key 不可用');
+    }
+    const models = runtime.getModels(source.provider);
+    const configuredModel = Object.values(harness.agents).find(
+      (agent) => sourceForAgent(harness, agent.providerSourceId)?.id === source.id && agent.model,
+    )?.model;
+    const probe =
+      (configuredModel ? runtime.getModel(source.provider, configuredModel) : undefined) ??
+      models[0];
+    if (!probe) throw new ProviderError('MODEL_NOT_FOUND', '该来源没有可用模型');
+    const response = await runtime.completeSimple(
+      probe,
+      {
+        messages: [
+          { role: 'user', content: 'Reply with the single word OK.', timestamp: Date.now() },
+        ],
+      },
+      { timeoutMs: 15_000, maxRetries: 0 },
+    );
+    if (response.stopReason !== 'stop') {
+      throw new ProviderError('AUTHENTICATION_FAILED', '模型来源探测未正常完成');
+    }
+    return models.map((model) => ({
+      provider: model.provider,
+      id: model.id,
+      name: model.name,
+      reasoning: model.reasoning,
+      input: [...model.input],
+      thinkingLevels: supportedThinkingLevels(model),
+      available: true,
+    }));
+  }
+
   async checkConnectivity(): Promise<ConnectivityResult> {
     const startedAt = Date.now();
     const harness = this.configuration.getHarness();
-    const provider = harness.provider.trim();
-    if (!provider) {
-      return result('not_configured', '模型 Provider 尚未配置', startedAt, 'AUTH_NOT_CONFIGURED');
+    const source = primarySource(harness);
+    if (!source) {
+      return result('not_configured', '模型来源尚未配置', startedAt, 'AUTH_NOT_CONFIGURED');
     }
-
-    try {
-      const runtime = await this.getRuntime();
-      if (!runtime.getProvider(provider)) {
+    for (const role of ['main', 'runner', 'reviewer'] as const) {
+      const roleSource = sourceForAgent(harness, harness.agents[role].providerSourceId);
+      if (!roleSource || !getProviderApiKey(this.secretStore, roleSource.id)) {
         return result(
-          'failed',
-          `模型 Provider 不存在：${provider}`,
+          'not_configured',
+          `${role} 模型来源 API Key 尚未配置`,
           startedAt,
-          'PROVIDER_NOT_FOUND',
+          'AUTH_NOT_CONFIGURED',
         );
       }
-      const models = (['main-a', 'runner', 'reviewer'] as const).map((role) => ({
-        role,
-        model: this.resolveConfiguredModel(runtime, provider, harness, role),
-      }));
+    }
+    try {
+      const models: Array<{ role: 'main-a' | 'runner' | 'reviewer'; model: PiModel }> = [];
+      for (const role of ['main-a', 'runner', 'reviewer'] as const) {
+        models.push({ role, model: await this.resolveModel(role) });
+      }
       const mainModel = models.find((item) => item.role === 'main-a')?.model;
       if (!mainModel) {
         return result('failed', 'Main 模型不存在', startedAt, 'MODEL_NOT_FOUND');
       }
 
-      if (!this.secretStore.get('providerApiKey')) {
-        return result(
-          'not_configured',
-          '模型 Provider API Key 尚未配置',
-          startedAt,
-          'AUTH_NOT_CONFIGURED',
-        );
-      }
-      const auth = await runtime.checkAuth(provider);
-      if (!auth) {
-        return result(
-          'failed',
-          '模型 Provider 认证失败或 API Key 不可用',
-          startedAt,
-          'AUTHENTICATION_FAILED',
-        );
-      }
       const reviewerModel = models.find((item) => item.role === 'reviewer')?.model;
       if (!reviewerModel?.input.some((input) => input.toLowerCase() === 'image')) {
         return result(
@@ -200,7 +241,9 @@ class PiProviderAdapter implements ProviderAdapter {
         );
       }
 
-      const response = await runtime.completeSimple(
+      const mainSource = sourceForAgent(harness, harness.agents.main.providerSourceId) ?? source;
+      const mainRuntime = await this.getRuntimeForSource(mainSource);
+      const response = await mainRuntime.completeSimple(
         mainModel,
         {
           messages: [
@@ -214,7 +257,7 @@ class PiProviderAdapter implements ProviderAdapter {
       if (response.stopReason !== 'stop') {
         return result('failed', '模型 Provider 探测未正常完成', startedAt, 'REQUEST_FAILED');
       }
-      return result('ok', `Provider ${provider} 与三个角色模型均可用`, startedAt);
+      return result('ok', '三个角色的模型来源与模型均可用', startedAt);
     } catch (error) {
       if (error instanceof ProviderError) {
         if (error.code === 'MODEL_NOT_FOUND') {
@@ -273,12 +316,16 @@ class PiProviderAdapter implements ProviderAdapter {
     });
   }
 
-  private async syncCredential(provider: string): Promise<void> {
-    const key = this.secretStore.get('providerApiKey');
+  private async syncCredential(
+    credentials: MemoryCredentialStore,
+    provider: string,
+    sourceId: string,
+  ): Promise<void> {
+    const key = getProviderApiKey(this.secretStore, sourceId);
     if (key) {
-      await this.credentials.modify(provider, async () => ({ type: 'api_key', key }));
+      await credentials.modify(provider, async () => ({ type: 'api_key', key }));
     } else {
-      await this.credentials.delete(provider);
+      await credentials.delete(provider);
     }
   }
 }
@@ -356,6 +403,29 @@ export function isThinkingSupported(model: PiModel, level: ThinkingLevel): boole
 
 function configuredRole(role: AgentRole): 'main' | 'runner' | 'reviewer' {
   return role === 'main-a' || role === 'main-b' ? 'main' : role;
+}
+
+function primarySource(harness: HarnessConfig): ModelProviderSource | undefined {
+  return (
+    harness.modelProviders[0] ??
+    (harness.provider.trim()
+      ? {
+          id: 'default',
+          name: harness.provider.trim(),
+          provider: harness.provider.trim(),
+          baseUrl: harness.providerBaseUrl.trim(),
+          verifiedAt: null,
+          models: [],
+        }
+      : undefined)
+  );
+}
+
+function sourceForAgent(
+  harness: HarnessConfig,
+  sourceId: string | undefined,
+): ModelProviderSource | undefined {
+  return harness.modelProviders.find((item) => item.id === sourceId) ?? primarySource(harness);
 }
 
 function result(

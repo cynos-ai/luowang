@@ -5,6 +5,7 @@ import { requestJson, toUserMessage } from '../../api';
 import { AppLink } from '../../app/navigation';
 import { useResource } from '../../app/resource';
 import { AsyncRegion } from '../../components/AsyncRegion';
+import { AppMessageFeedback } from '../../components/AppMessageProvider';
 import { ConfirmDialog } from '../../components/ConfirmDialog';
 import { PageHeading } from '../../components/PageHeading';
 import { StatusLabel } from '../../components/StatusLabel';
@@ -87,12 +88,7 @@ export function ProjectReadinessPage({ projectId }: { projectId: string }) {
         }
       />
       <div className="page-body readiness-layout">
-        {message && <p className="notice notice-success">{message}</p>}
-        {error && (
-          <p className="notice notice-error" role="alert">
-            {error}
-          </p>
-        )}
+        <AppMessageFeedback success={message} error={error} />
         <AsyncRegion
           loading={readiness.loading && !readiness.value}
           error={!readiness.value ? readiness.error : ''}

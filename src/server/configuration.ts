@@ -3,6 +3,8 @@ import type Database from 'better-sqlite3';
 import type {
   AgentConfig,
   HarnessConfig,
+  ModelProviderSource,
+  ProviderModelInfo,
   RepositoryConfig,
   ScenarioMode,
 } from '../shared/types.js';
@@ -55,11 +57,18 @@ class SqliteConfigurationStore implements ConfigurationStore {
     const local = asOptionalRecord(patch.local, 'local must be an object');
     const mcp = asOptionalRecord(patch.mcp, 'mcp must be an object');
     const oss = asOptionalRecord(patch.oss, 'oss must be an object');
+    const modelProviders =
+      patch.modelProviders === undefined
+        ? syncLegacyModelProvider(current.modelProviders, patch)
+        : readModelProviders(patch.modelProviders);
+    const primary = modelProviders[0];
 
     const next: HarnessConfig = {
       language: readText(patch.language, current.language, 'language'),
-      provider: readText(patch.provider, current.provider, 'provider'),
-      providerBaseUrl: readProviderBaseUrl(patch.providerBaseUrl, current.providerBaseUrl),
+      provider: primary?.provider ?? readText(patch.provider, current.provider, 'provider'),
+      providerBaseUrl:
+        primary?.baseUrl ?? readProviderBaseUrl(patch.providerBaseUrl, current.providerBaseUrl),
+      modelProviders,
       agents: {
         main: readAgent(agents?.main, current.agents.main, 'agents.main'),
         runner: readAgent(agents?.runner, current.agents.runner, 'agents.runner'),
@@ -72,7 +81,7 @@ class SqliteConfigurationStore implements ConfigurationStore {
           local?.retentionDays,
           current.local.retentionDays,
           'local.retentionDays',
-          0,
+          1,
           36_500,
         ),
       },
@@ -89,8 +98,8 @@ class SqliteConfigurationStore implements ConfigurationStore {
           mcp?.timeoutMs,
           current.mcp.timeoutMs,
           'mcp.timeoutMs',
-          100,
-          300_000,
+          5_000,
+          120_000,
         ),
       },
       oss: {
@@ -107,6 +116,14 @@ class SqliteConfigurationStore implements ConfigurationStore {
         objectPrefix: readText(oss?.objectPrefix, current.oss.objectPrefix, 'oss.objectPrefix'),
       },
     };
+    for (const [role, agent] of Object.entries(next.agents)) {
+      if (
+        agent.providerSourceId &&
+        !next.modelProviders.some((source) => source.id === agent.providerSourceId)
+      ) {
+        throw new ConfigurationError(`${role} 引用了不存在的模型来源`);
+      }
+    }
     this.write(HARNESS_KEY, next);
     return next;
   }
@@ -200,6 +217,7 @@ function normalizeHarness(
     language: 'zh-CN',
     provider: '',
     providerBaseUrl: '',
+    modelProviders: [],
     agents: {
       main: { model: '', thinking: 'low' },
       runner: { model: '', thinking: 'off' },
@@ -217,10 +235,15 @@ function normalizeHarness(
     },
   };
 
+  const provider = normalizeText(source.provider, defaults.provider);
+  const providerBaseUrl = normalizeProviderBaseUrl(source.providerBaseUrl);
+  const modelProviders = normalizeModelProviders(source.modelProviders, provider, providerBaseUrl);
+  const primary = modelProviders[0];
   return {
     language: normalizeText(source.language, defaults.language),
-    provider: normalizeText(source.provider, defaults.provider),
-    providerBaseUrl: normalizeProviderBaseUrl(source.providerBaseUrl),
+    provider: primary?.provider ?? provider,
+    providerBaseUrl: primary?.baseUrl ?? providerBaseUrl,
+    modelProviders,
     agents: {
       main: normalizeAgent(agents.main, defaults.agents.main),
       runner: normalizeAgent(agents.runner, defaults.agents.runner),
@@ -229,7 +252,7 @@ function normalizeHarness(
     local: {
       repoDir: normalizeText(local.repoDir, defaults.local.repoDir),
       reportDir: normalizeText(local.reportDir, defaults.local.reportDir),
-      retentionDays: normalizeInteger(local.retentionDays, defaults.local.retentionDays, 0, 36_500),
+      retentionDays: normalizeInteger(local.retentionDays, defaults.local.retentionDays, 1, 36_500),
     },
     mcp: {
       enabled: normalizeBoolean(mcp.enabled, defaults.mcp.enabled),
@@ -239,7 +262,7 @@ function normalizeHarness(
         'webkit',
       ]),
       headless: normalizeBoolean(mcp.headless, defaults.mcp.headless),
-      timeoutMs: normalizeInteger(mcp.timeoutMs, defaults.mcp.timeoutMs, 100, 300_000),
+      timeoutMs: normalizeInteger(mcp.timeoutMs, defaults.mcp.timeoutMs, 5_000, 120_000),
     },
     oss: {
       endpoint: normalizeText(oss.endpoint, defaults.oss.endpoint),
@@ -278,6 +301,7 @@ export function normalizeRepository(value: unknown): RepositoryConfig {
 function normalizeAgent(value: unknown, fallback: AgentConfig): AgentConfig {
   const source = isRecord(value) ? value : {};
   return {
+    providerSourceId: normalizeText(source.providerSourceId, fallback.providerSourceId ?? ''),
     model: normalizeText(source.model, fallback.model),
     thinking: normalizeChoice(source.thinking, fallback.thinking, [
       'off',
@@ -294,6 +318,11 @@ function normalizeAgent(value: unknown, fallback: AgentConfig): AgentConfig {
 function readAgent(value: unknown, fallback: AgentConfig, field: string): AgentConfig {
   const source = asOptionalRecord(value, `${field} must be an object`) ?? {};
   return {
+    providerSourceId: readText(
+      source.providerSourceId,
+      fallback.providerSourceId ?? '',
+      `${field}.providerSourceId`,
+    ),
     model: readText(source.model, fallback.model, `${field}.model`),
     thinking: readChoice(
       source.thinking,
@@ -302,6 +331,110 @@ function readAgent(value: unknown, fallback: AgentConfig, field: string): AgentC
       `${field}.thinking`,
     ),
   };
+}
+
+const PROVIDER_SOURCE_ID = /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/;
+
+function normalizeModelProviders(
+  value: unknown,
+  legacyProvider: string,
+  legacyBaseUrl: string,
+): ModelProviderSource[] {
+  if (!Array.isArray(value)) {
+    return legacyProvider
+      ? [
+          {
+            id: 'default',
+            name: legacyProvider,
+            provider: legacyProvider,
+            baseUrl: legacyBaseUrl,
+            verifiedAt: null,
+            models: [],
+          },
+        ]
+      : [];
+  }
+  const seen = new Set<string>();
+  return value.flatMap((item) => {
+    if (!isRecord(item)) return [];
+    const id = normalizeText(item.id, '');
+    const provider = normalizeText(item.provider, '');
+    if (!PROVIDER_SOURCE_ID.test(id) || !provider || seen.has(id)) return [];
+    seen.add(id);
+    return [
+      {
+        id,
+        name: normalizeText(item.name, provider),
+        provider,
+        baseUrl: normalizeProviderBaseUrl(item.baseUrl),
+        verifiedAt:
+          typeof item.verifiedAt === 'string' && item.verifiedAt.trim()
+            ? item.verifiedAt.trim()
+            : null,
+        models: normalizeProviderModels(item.models, provider),
+      },
+    ];
+  });
+}
+
+function readModelProviders(value: unknown): ModelProviderSource[] {
+  if (!Array.isArray(value)) throw new ConfigurationError('modelProviders must be an array');
+  if (value.length > 20) throw new ConfigurationError('模型来源不能超过 20 个');
+  const normalized = normalizeModelProviders(value, '', '');
+  if (normalized.length !== value.length)
+    throw new ConfigurationError('模型来源配置无效或 ID 重复');
+  return normalized;
+}
+
+function syncLegacyModelProvider(
+  sources: ModelProviderSource[],
+  patch: Record<string, unknown>,
+): ModelProviderSource[] {
+  if (patch.provider === undefined && patch.providerBaseUrl === undefined) return sources;
+  const provider = readText(patch.provider, sources[0]?.provider ?? '', 'provider');
+  const baseUrl = readProviderBaseUrl(patch.providerBaseUrl, sources[0]?.baseUrl ?? '');
+  if (!provider) return [];
+  const first = sources[0];
+  const changed = first?.provider !== provider || first?.baseUrl !== baseUrl;
+  const primary: ModelProviderSource = {
+    id: first?.id ?? 'default',
+    name: first?.name || provider,
+    provider,
+    baseUrl,
+    verifiedAt: changed ? null : (first?.verifiedAt ?? null),
+    models: changed ? [] : (first?.models ?? []),
+  };
+  return [primary, ...sources.slice(1)];
+}
+
+function normalizeProviderModels(value: unknown, provider: string): ProviderModelInfo[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((item) => {
+    if (!isRecord(item)) return [];
+    const id = normalizeText(item.id, '');
+    if (!id) return [];
+    const input = Array.isArray(item.input)
+      ? item.input.filter((entry): entry is string => typeof entry === 'string').slice(0, 10)
+      : [];
+    const levels = Array.isArray(item.thinkingLevels)
+      ? item.thinkingLevels.filter(
+          (entry): entry is ProviderModelInfo['thinkingLevels'][number] =>
+            typeof entry === 'string' &&
+            ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'].includes(entry),
+        )
+      : [];
+    return [
+      {
+        provider,
+        id,
+        name: normalizeText(item.name, id),
+        reasoning: item.reasoning === true,
+        input,
+        thinkingLevels: levels,
+        available: item.available === true,
+      },
+    ];
+  });
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

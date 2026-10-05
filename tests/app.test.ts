@@ -48,6 +48,12 @@ describe('Fastify application', () => {
     const shellResponse = await app.inject({ method: 'GET', url: '/' });
     assert.equal(shellResponse.statusCode, 200);
     assert.match(shellResponse.body, /LuoWang shell/);
+    assert.equal(shellResponse.headers['cache-control'], 'no-store');
+
+    const spaResponse = await app.inject({ method: 'GET', url: '/settings/models' });
+    assert.equal(spaResponse.statusCode, 200);
+    assert.match(spaResponse.body, /LuoWang shell/);
+    assert.equal(spaResponse.headers['cache-control'], 'no-store');
   });
 
   it('returns a stable error envelope for missing API resources', async () => {

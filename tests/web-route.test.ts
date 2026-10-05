@@ -65,6 +65,7 @@ it('parses every frozen v0.7.0 console route', () => {
 it('canonicalizes the removed global credentials page without affecting project credentials', () => {
   assert.equal(legacySettingsRedirect('/settings/credentials'), '/settings/models');
   assert.equal(legacySettingsRedirect('/settings/credentials/'), '/settings/models');
+  assert.equal(legacySettingsRedirect('/settings/connections'), '/settings/github');
   assert.equal(legacySettingsRedirect(`/projects/${projectId}/settings/credentials`), null);
 });
 

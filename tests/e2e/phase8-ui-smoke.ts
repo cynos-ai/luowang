@@ -147,12 +147,12 @@ try {
     await page.getByRole('button', { name: '导出 YAML', exact: true }).click();
     const download = await downloadPromise;
     assert.equal(download.suggestedFilename(), 'luowang-config.yml');
-    page.once('dialog', (dialog) => void dialog.accept());
     await page.locator('input[type="file"]').setInputFiles({
       name: 'luowang-config.yml',
       mimeType: 'application/yaml',
       buffer: Buffer.from('version: 1\nharness: {}\nrepository: {}\n'),
     });
+    await page.getByRole('dialog').getByRole('button', { name: '确认导入' }).click();
     await page.getByText('普通配置已从 YAML 原子导入', { exact: false }).waitFor();
     assert.ok(importedYaml.startsWith('version: 1'));
     await page.getByLabel('Provider Base URL（可选）').fill('https://models.example.test/v1');
@@ -265,8 +265,8 @@ try {
     await page.getByText('safe final report', { exact: false }).waitFor();
     await page.getByRole('link', { name: /Issue 42/ }).waitFor();
     await page.getByRole('link', { name: /login\.png/ }).waitFor();
-    page.once('dialog', (dialog) => void dialog.accept());
     await page.getByRole('button', { name: '重试归档', exact: true }).click();
+    await page.getByRole('dialog').getByRole('button', { name: '确认重试' }).click();
     await page.getByText('report：published', { exact: false }).waitFor();
     assert.equal(await page.getByRole('button', { name: '重试归档', exact: true }).count(), 0);
 
