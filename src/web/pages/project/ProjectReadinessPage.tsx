@@ -28,7 +28,7 @@ export function ProjectReadinessPage({ projectId }: { projectId: string }) {
   );
   const loadReadiness = useCallback(
     (signal: AbortSignal) =>
-      requestJson<{ readiness: ConsoleReadinessSnapshot }>(
+      requestJson<{ readiness: ConsoleReadinessSnapshot | null }>(
         `/api/projects/${projectId}/readiness/status`,
         { signal },
       ).then((response) => response.readiness),
@@ -94,7 +94,12 @@ export function ProjectReadinessPage({ projectId }: { projectId: string }) {
           error={!readiness.value ? readiness.error : ''}
           onRetry={readiness.reload}
         >
-          {readiness.value && <ReadinessVerdict snapshot={readiness.value} />}
+          {readiness.value ? (
+            <ReadinessVerdict snapshot={readiness.value} />
+          ) : (
+            !readiness.loading &&
+            !readiness.error && <p className="notice notice-neutral">尚未运行准备检查。</p>
+          )}
         </AsyncRegion>
         <AsyncRegion
           loading={detail.loading && !detail.value}

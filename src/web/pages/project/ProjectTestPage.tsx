@@ -23,7 +23,7 @@ import type { ProjectDetailResponse } from '../../project-types';
 
 type TestPageData = {
   detail: ProjectDetailResponse;
-  readiness: ConsoleReadinessSnapshot;
+  readiness: ConsoleReadinessSnapshot | null;
   current: RunSummary | null;
   queue: OperationsQueueItem[];
   runs: RunSummary[];
@@ -46,7 +46,7 @@ export function ProjectTestPage({ projectId }: { projectId: string }) {
     async (signal: AbortSignal): Promise<TestPageData> => {
       const [detail, readiness, current, queue, runs, workspace] = await Promise.all([
         requestJson<ProjectDetailResponse>(`/api/projects/${projectId}`, { signal }),
-        requestJson<{ readiness: ConsoleReadinessSnapshot }>(
+        requestJson<{ readiness: ConsoleReadinessSnapshot | null }>(
           `/api/projects/${projectId}/readiness/status`,
           { signal },
         ),
@@ -525,7 +525,7 @@ function TestContext({ data, blockers }: { data: TestPageData; blockers: string[
         <Fact label="项目" value={data.detail.project.displayName} />
         <Fact label="环境" value={data.detail.configuration.baseUrl || '未配置'} />
         <Fact label="场景分支" value={data.detail.configuration.scenarioBranch} mono />
-        <Fact label="运行准备" value={readinessLabel(data.readiness.status)} />
+        <Fact label="运行准备" value={readinessLabel(data.readiness?.status ?? 'not_checked')} />
       </dl>
       {blockers.length > 0 && (
         <div className="readiness-blockers">
@@ -606,11 +606,13 @@ function cleanupCompleted(activities: RunActivity[] | undefined): boolean {
 function readinessBlockers(data: TestPageData): string[] {
   const blockers: string[] = [];
   if (data.detail.project.status === 'paused') blockers.push('项目已暂停');
-  if (data.readiness.status !== 'ready') {
-    const failed = data.readiness.checks
+  if (data.readiness?.status !== 'ready') {
+    const failed = (data.readiness?.checks ?? [])
       .filter((check) => check.status !== 'ok')
       .map((check) => `${check.label}：${check.message}`);
-    blockers.push(...(failed.length ? failed : [readinessLabel(data.readiness.status)]));
+    blockers.push(
+      ...(failed.length ? failed : [readinessLabel(data.readiness?.status ?? 'not_checked')]),
+    );
   }
   return blockers;
 }

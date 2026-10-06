@@ -17,7 +17,7 @@ type IndexState = {
 
 type OverviewData = {
   detail: ProjectDetailResponse;
-  readiness: ConsoleReadinessSnapshot;
+  readiness: ConsoleReadinessSnapshot | null;
   index: IndexState;
   runs: RunSummary[];
   queue: Array<{ status: string; request: string; createdAt: string; runId: string | null }>;
@@ -29,7 +29,7 @@ export function ProjectOverviewPage({ projectId }: { projectId: string }) {
     async (signal: AbortSignal): Promise<OverviewData> => {
       const [detail, readiness, index, runs, queue, scenarios] = await Promise.all([
         requestJson<ProjectDetailResponse>(`/api/projects/${projectId}`, { signal }),
-        requestJson<{ readiness: ConsoleReadinessSnapshot }>(
+        requestJson<{ readiness: ConsoleReadinessSnapshot | null }>(
           `/api/projects/${projectId}/readiness/status`,
           { signal },
         ),
@@ -107,7 +107,10 @@ function OverviewContent({ projectId, data }: { projectId: string; data: Overvie
               label="仓库"
               value={`${data.detail.project.repositoryOwner}/${data.detail.project.repositoryName}`}
             />
-            <Fact label="运行准备" value={readinessLabel(data.readiness.status)} />
+            <Fact
+              label="运行准备"
+              value={readinessLabel(data.readiness?.status ?? 'not_checked')}
+            />
             <Fact label="配置修订" value={`#${data.detail.project.configRevision}`} />
             <Fact label="排队请求" value={pending ? pending.request : '无'} />
           </dl>
@@ -163,7 +166,7 @@ function OverviewContent({ projectId, data }: { projectId: string; data: Overvie
 
 function recommendedAction(
   projectId: string,
-  readiness: ConsoleReadinessSnapshot,
+  readiness: ConsoleReadinessSnapshot | null,
   active: RunSummary | undefined,
   latest: RunSummary | null,
 ) {
@@ -183,10 +186,10 @@ function recommendedAction(
       to: { name: 'project-run' as const, projectId, runId: latest.runId, tab: 'summary' as const },
     };
   }
-  if (readiness.status !== 'ready') {
+  if (readiness?.status !== 'ready') {
     return {
       title: '完成运行准备',
-      detail: readiness.staleReason || '项目尚未通过完整运行准备检查。',
+      detail: readiness?.staleReason || '项目尚未通过完整运行准备检查。',
       label: '完成运行准备',
       to: { name: 'project-readiness' as const, projectId },
     };
