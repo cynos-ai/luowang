@@ -8,6 +8,8 @@ import type {
   ScenarioStatus,
 } from '../../shared/types.js';
 import type { RepositoryService } from './service.js';
+
+export const MISSING_SCENARIO_BRANCH_MESSAGE = '场景测试分支不存在';
 import { RepositoryError } from './errors.js';
 import {
   parseReportMarkdown,
@@ -95,7 +97,7 @@ class SqliteRepositoryIndexer implements RepositoryIndexer {
         scenarios: this.count('indexed_scenarios'),
         reports: this.count('indexed_reports'),
         errors: [{ path: branch, message: '场景测试分支不存在，请先创建或确认分支' }],
-        message: '场景测试分支不存在',
+        message: MISSING_SCENARIO_BRANCH_MESSAGE,
       };
     }
 

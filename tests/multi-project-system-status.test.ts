@@ -20,6 +20,7 @@ import { createProjectRunStore } from '../src/server/runs/store.js';
 import { createProjectStore } from '../src/server/projects/store.js';
 import { createProjectConfigurationStore } from '../src/server/projects/configuration.js';
 import { createProjectTestRequestQueue } from '../src/server/automation/queue.js';
+import { createProjectAutomationStateStore } from '../src/server/automation/state.js';
 
 const now = '2026-09-27T06:20:00.000Z';
 const projectAId = '11111111-1111-4111-8111-111111111111';
@@ -188,6 +189,51 @@ it('aggregates persisted project facts without running external checks', async (
     );
     await service.resources();
     assert.equal(inventories, 1);
+  } finally {
+    database.close();
+  }
+});
+
+it('does not present an uninitialized scenario branch as a failed background task', async () => {
+  const database = setup();
+  try {
+    const projects = createProjectStore(database, { now: () => now, id: () => projectAId });
+    const project = projects.createVerified({
+      displayName: '项目 A',
+      repository: { githubRepositoryId: '1001', owner: 'cynos-ai', name: 'a' },
+    });
+    const state = createProjectAutomationStateStore(database, project.projectId);
+    state.set('scheduler.index-error', '场景测试分支不存在');
+    const service = createProjectConsoleService({
+      database,
+      projects,
+      dispatcher: dispatcher(),
+      connectivity: { list: () => [], runAll: async () => [] } as unknown as ConnectivityRegistry,
+      schedulerStatus,
+      inspectResources: async () => ({
+        instanceId: 'fixture',
+        projects: [],
+        containers: [],
+        images: [],
+        candidateImageBytes: 0,
+      }),
+      version: 'test',
+      databaseHealthy: () => true,
+      secretStoreAvailable: () => true,
+      now: () => now,
+    });
+
+    let workspace = await service.workspace();
+    assert.equal(
+      workspace.attention.some((item) => item.kind === 'background_error'),
+      false,
+    );
+
+    state.set('scheduler.index-error', 'GitHub 暂时不可用');
+    workspace = await service.workspace();
+    const failure = workspace.attention.find((item) => item.kind === 'background_error');
+    assert.equal(failure?.title, '场景资料同步失败');
+    assert.equal(failure?.detail, '未能同步项目的场景与报告。');
   } finally {
     database.close();
   }

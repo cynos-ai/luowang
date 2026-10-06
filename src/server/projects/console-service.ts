@@ -23,6 +23,7 @@ import type { ConnectivityRegistry } from '../connectivity.js';
 import { createProjectRunStore, type StoredRun } from '../runs/store.js';
 import type { ProjectResourceInventory } from './resource-inventory.js';
 import type { ProjectRecord, ProjectStore } from './store.js';
+import { MISSING_SCENARIO_BRANCH_MESSAGE } from '../repository/indexer.js';
 
 const READINESS_CHECKS = [
   ['repository', '仓库身份'],
@@ -430,19 +431,23 @@ function addBackgroundAttention(
 ): void {
   const rows = database
     .prepare(
-      `SELECT project_id, updated_at FROM project_automation_state
+      `SELECT project_id, key, value, updated_at FROM project_automation_state
        WHERE key IN ('scheduler.last-error', 'scheduler.index-error')`,
     )
-    .all() as Array<{ project_id: string; updated_at: string }>;
+    .all() as Array<{ project_id: string; key: string; value: string; updated_at: string }>;
   for (const row of rows) {
     const project = projects.get(row.project_id);
     if (!project) continue;
+    if (row.key === 'scheduler.index-error' && row.value === MISSING_SCENARIO_BRANCH_MESSAGE) {
+      continue;
+    }
+    const indexFailure = row.key === 'scheduler.index-error';
     items.push({
       id: `background:${row.project_id}:${row.updated_at}`,
       kind: 'background_error',
       severity: 'warning',
-      title: '项目后台任务失败',
-      detail: project.displayName,
+      title: indexFailure ? '场景资料同步失败' : '自动检查失败',
+      detail: indexFailure ? '未能同步项目的场景与报告。' : '未能检查仓库中的新变化。',
       occurredAt: row.updated_at,
       project: projectReference(project),
       target: { kind: 'project-overview', projectId: project.projectId },
