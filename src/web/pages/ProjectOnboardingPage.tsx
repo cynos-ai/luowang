@@ -2,7 +2,7 @@ import { useCallback, useMemo, useState, type FormEvent } from 'react';
 
 import type { ConsoleReadinessSnapshot } from '../../shared/types';
 import { requestJson, toUserMessage } from '../api';
-import { useNavigation } from '../app/navigation';
+import { AppLink, useNavigation } from '../app/navigation';
 import { useResource } from '../app/resource';
 import { AsyncRegion } from '../components/AsyncRegion';
 import { AppMessageFeedback, useAppMessage } from '../components/AppMessageProvider';
@@ -201,7 +201,7 @@ export function ProjectOnboardingPage({
               number={String(index + 1).padStart(2, '0')}
               title={title}
               status={stepStatus(index)}
-              onSelect={stepDone[index] ? () => goToStep(index) : undefined}
+              onSelect={projectId || stepDone[index] ? () => goToStep(index) : undefined}
             />
           ))}
         </ol>
@@ -334,7 +334,7 @@ function Step({
         type="button"
         disabled={!onSelect}
         aria-current={status === 'current' ? 'step' : undefined}
-        aria-label={`${number} ${title}，${statusLabel}${onSelect ? '，点击返回' : ''}`}
+        aria-label={`${number} ${title}，${statusLabel}${onSelect ? '，点击查看' : ''}`}
         onClick={onSelect}
       >
         <span>{number}</span>
@@ -492,6 +492,29 @@ function RepositoryStep({ data }: { data: OnboardingData }) {
           {data.detail.project.displayName} · {data.detail.project.repositoryOwner}/
           {data.detail.project.repositoryName}
         </p>
+        <small className="field-hint">仓库身份已固定；如需更换仓库，请接入新项目。</small>
+        <div className="row-actions">
+          <AppLink
+            className="text-link"
+            to={{
+              name: 'project-settings',
+              projectId: data.detail.project.projectId,
+              section: 'general',
+            }}
+          >
+            修改项目资料
+          </AppLink>
+          <AppLink
+            className="text-link"
+            to={{
+              name: 'project-settings',
+              projectId: data.detail.project.projectId,
+              section: 'credentials',
+            }}
+          >
+            修改仓库凭据
+          </AppLink>
+        </div>
       </div>
     </section>
   );

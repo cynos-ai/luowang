@@ -137,6 +137,16 @@ export function ProjectsPage({ onProjectsChanged }: { onProjectsChanged: () => P
                     >
                       打开
                     </AppLink>
+                    <AppLink
+                      className="text-link"
+                      to={{
+                        name: 'project-settings',
+                        projectId: summary.project.projectId,
+                        section: 'general',
+                      }}
+                    >
+                      重新配置
+                    </AppLink>
                     <button
                       className="text-button"
                       type="button"
