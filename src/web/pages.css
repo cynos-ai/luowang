@@ -42,13 +42,16 @@
   );
 }
 
-.login-wordmark {
-  width: max-content;
-  transform: rotate(-2deg);
-}
-
 .login-layout {
   width: min(620px, calc(100vw - 96px));
+}
+
+.login-screen .login-layout {
+  min-height: 0;
+}
+
+.login-screen .login-panel {
+  margin-top: 0;
 }
 
 .login-panel {
@@ -69,8 +72,9 @@
 .login-heading h1,
 .login-heading h2 {
   margin: 0 0 24px;
+  color: var(--lw-ink);
   font-family: var(--lw-display);
-  font-size: clamp(42px, 6vw, 70px);
+  font-size: clamp(32px, 4vw, 46px);
   font-weight: 900;
   letter-spacing: -0.05em;
   line-height: 0.95;
@@ -1434,20 +1438,6 @@
     grid-template-columns: auto 1fr auto;
     gap: 12px;
     padding-inline: 20px;
-  }
-
-  .wordmark {
-    width: 150px;
-    height: 70px;
-  }
-
-  .wordmark-cn {
-    font-size: 32px;
-  }
-
-  .wordmark-en {
-    right: 16px;
-    bottom: 9px;
   }
 
   .nav-link {

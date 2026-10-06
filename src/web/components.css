@@ -35,104 +35,37 @@
   background: var(--lw-paper);
 }
 
-.lw-header::before {
-  position: absolute;
-  z-index: -1;
-  top: 0;
-  bottom: 0;
-  left: 140px;
-  width: min(52vw, 760px);
-  background: var(--lw-red);
-  clip-path: polygon(0 0, 95% 0, 100% 72%, 0 100%);
-  content: '';
-}
-
+/* The approved artwork owns the logo geometry; never skew, crop, or recolor it. */
 .wordmark {
-  position: relative;
-  display: block;
-  width: 166px;
-  height: 76px;
-  color: #fff;
-  isolation: isolate;
+  display: inline-flex;
+  align-items: center;
   text-decoration: none;
 }
 
-.wordmark::before,
-.wordmark::after {
-  position: absolute;
-  content: '';
+.brand-logo {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  object-fit: contain;
 }
 
-.wordmark::before {
-  z-index: -1;
-  inset: 0;
-  background: var(--lw-ink);
-  clip-path: polygon(8% 0, 100% 5%, 92% 100%, 0 92%, 0 14%);
+.brand-logo--header {
+  width: 188px;
 }
 
-.wordmark::after {
-  z-index: -2;
-  right: -7px;
-  bottom: -5px;
-  width: 86px;
-  height: 25px;
-  background: var(--lw-red);
-  clip-path: polygon(8% 0, 100% 16%, 90% 100%, 0 78%);
-}
-
-.wordmark-cn {
-  position: absolute;
-  top: 8px;
-  left: 17px;
-  font-family: var(--lw-display);
-  font-size: 35px;
-  font-weight: 900;
-  letter-spacing: -0.1em;
-  line-height: 1;
-  transform: skew(-5deg);
-}
-
-.wordmark-cn-second {
-  position: relative;
-  top: 3px;
-  left: 2px;
-}
-
-.wordmark-en {
-  position: absolute;
-  right: 20px;
-  bottom: 10px;
-  font-family: var(--lw-mono);
-  font-size: 10px;
-  font-weight: 800;
-  letter-spacing: 0.22em;
+.brand-logo--hero {
+  width: 320px;
 }
 
 .login-wordmark {
-  display: flex;
-  align-items: baseline;
-  gap: 9px;
-  padding: 11px 20px;
-  border: 4px solid var(--lw-ink);
-  background: var(--lw-ink);
-  color: #fff;
-  clip-path: polygon(0 8px, 8px 0, 100% 0, calc(100% - 7px) 100%, 0 100%);
-  transform: rotate(-1.5deg);
+  width: min(320px, 100%);
+  justify-self: center;
 }
 
-.login-wordmark strong {
-  font-family: var(--lw-display);
-  font-size: 40px;
-  font-stretch: condensed;
-  font-weight: 900;
-  letter-spacing: -0.08em;
-}
-
-.login-wordmark span {
-  font-family: var(--lw-mono);
-  font-size: 10px;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
+@media (max-width: 1000px) {
+  .brand-logo--header {
+    width: 160px;
+  }
 }
 
 .global-nav,
