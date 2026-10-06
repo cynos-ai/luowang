@@ -40,7 +40,9 @@ export function AppShell({
       </a>
       <header className="lw-header">
         <AppLink className="wordmark" to={{ name: 'workspace' }} aria-label="罗网工作台">
-          <BrandLogo tone="white" decorative />
+          <span className="wordmark-paper">
+            <BrandLogo tone="color" decorative />
+          </span>
         </AppLink>
         <nav className="global-nav" aria-label="全局导航">
           <AppLink

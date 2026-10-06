@@ -52,7 +52,8 @@
 
 .login-panel {
   position: relative;
-  padding: 34px;
+  width: min(100%, 560px);
+  padding: clamp(28px, 4vw, 48px);
   overflow: visible;
   border: 4px solid var(--lw-ink);
   border-radius: 0;
@@ -1848,7 +1849,10 @@
   .global-nav {
     grid-column: 1 / -1;
     grid-row: 2;
+    justify-self: stretch;
     justify-content: flex-start;
+    margin-left: 0;
+    padding-inline: 8px;
   }
 
   .operator-menu {

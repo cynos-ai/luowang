@@ -1,6 +1,7 @@
 import type { FormEvent } from 'react';
 
 import { Field } from './FormControls';
+import { BrandLogo } from './ui';
 
 export function LoginPanel({
   configured,
@@ -25,10 +26,11 @@ export function LoginPanel({
   return (
     <div className="login-layout">
       <section className="panel login-panel" aria-labelledby="login-title">
-        <div className="login-heading">
-          <p className="eyebrow">SECURE CONSOLE</p>
-          <Title id="login-title">管理员登录</Title>
-          <p>登录后配置项目依赖、发起测试并查看实时进展。</p>
+        <Title id="login-title" className="visually-hidden">
+          管理员登录
+        </Title>
+        <div className="login-panel-brand">
+          <BrandLogo tone="color" size="hero" />
         </div>
         {!configured && (
           <p className="notice notice-warning">

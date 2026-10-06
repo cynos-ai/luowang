@@ -25,66 +25,82 @@
   position: relative;
   z-index: 5;
   display: grid;
-  min-height: 94px;
+  min-height: 112px;
   grid-template-columns: auto minmax(360px, 1fr) auto;
   align-items: center;
   gap: 30px;
-  padding: 14px 34px;
+  padding: 14px 34px 18px;
   overflow: visible;
-  border-bottom: 5px solid var(--lw-ink);
+  border-bottom: 3px solid var(--lw-ink);
   background: var(--lw-paper);
+  isolation: isolate;
 }
 
 .lw-header::before {
   position: absolute;
   z-index: -1;
-  top: 0;
-  bottom: 0;
-  left: 164px;
-  width: min(52vw, 760px);
+  top: 48px;
+  bottom: 16px;
+  left: 190px;
+  right: 78px;
   background: var(--lw-red);
-  clip-path: polygon(0 0, 95% 0, 100% 72%, 0 100%);
+  clip-path: polygon(0 0, 100% 26%, 98% 100%, 0 85%);
   pointer-events: none;
   content: '';
 }
 
-/* The approved artwork owns the logo geometry; never skew, crop, or recolor it. */
+/* The approved artwork owns the logo geometry; only its paper layers are angled. */
 .wordmark {
   position: relative;
   display: inline-flex;
-  width: 196px;
-  height: 86px;
+  width: 216px;
+  height: 80px;
   align-items: center;
   justify-content: center;
-  padding: 10px 16px;
   isolation: isolate;
   text-decoration: none;
 }
 
 .wordmark::before,
-.wordmark::after {
+.wordmark::after,
+.wordmark-paper::before {
   position: absolute;
   pointer-events: none;
   content: '';
 }
 
 .wordmark::before {
-  z-index: -1;
-  inset: 0;
+  z-index: -2;
+  inset: 1px -4px 0 -7px;
   background: var(--lw-ink);
-  clip-path: polygon(8% 0, 100% 5%, 92% 100%, 0 92%, 0 14%);
+  clip-path: polygon(0 2%, 97% 11%, 100% 100%, 3% 91%);
 }
 
 .wordmark::after {
-  z-index: -2;
-  right: -7px;
-  bottom: -5px;
-  width: 86px;
-  height: 25px;
+  z-index: -3;
+  inset: -6px -9px -5px 14px;
   background: var(--lw-red);
-  clip-path: polygon(8% 0, 100% 16%, 90% 100%, 0 78%);
+  clip-path: polygon(3% 0, 56% 12%, 99% 0, 100% 88%, 0 100%);
 }
 
+.wordmark-paper {
+  display: flex;
+  width: 100%;
+  height: 100%;
+  align-items: center;
+  justify-content: center;
+}
+
+.wordmark-paper::before {
+  z-index: -1;
+  inset: 0;
+  background: var(--lw-paper);
+  clip-path: polygon(8% 9%, 100% 0, 92% 94%, 0 100%);
+}
+
+.wordmark .brand-logo {
+  width: 160px;
+}
 .brand-logo {
   display: block;
   max-width: 100%;
@@ -105,14 +121,19 @@
   justify-self: center;
 }
 
+.login-panel-brand {
+  width: min(248px, 100%);
+  margin-bottom: 36px;
+}
+
 @media (max-width: 1000px) {
   .lw-header::before {
-    left: 140px;
+    left: 150px;
   }
 
   .wordmark {
-    width: 176px;
-    height: 78px;
+    width: 196px;
+    height: 76px;
   }
 
   .brand-logo--header {
@@ -125,7 +146,7 @@
     top: auto;
     left: 0;
     width: 82%;
-    height: 60px;
+    height: 54px;
   }
 }
 
@@ -145,6 +166,25 @@
   text-decoration: none;
 }
 
+.global-nav {
+  position: relative;
+  min-height: 50px;
+  align-items: center;
+  justify-self: stretch;
+  margin-left: clamp(0px, 4vw, 64px);
+  padding: 4px 24px;
+  isolation: isolate;
+}
+
+.global-nav::before {
+  position: absolute;
+  z-index: -1;
+  inset: 0;
+  background: var(--lw-paper);
+  clip-path: polygon(16px 0, 100% 5px, calc(100% - 8px) 100%, 0 calc(100% - 3px));
+  content: '';
+  pointer-events: none;
+}
 .nav-link:nth-child(even) {
   transform: translateY(4px) rotate(1deg);
 }
@@ -218,13 +258,38 @@
 .operator-menu-popover {
   position: absolute;
   z-index: 10;
-  top: calc(100% + 8px);
+  top: calc(100% + 16px);
   right: 0;
   display: grid;
-  min-width: 150px;
-  border: 3px solid var(--lw-ink);
+  min-width: 176px;
+  padding: 10px 8px;
+  border: 0;
+  background: transparent;
+  isolation: isolate;
+}
+
+.operator-menu-popover::before,
+.operator-menu-popover::after {
+  position: absolute;
+  z-index: -1;
+  inset: 0;
   background: var(--lw-paper);
-  box-shadow: 8px 8px 0 var(--lw-red);
+  clip-path: polygon(5% 6%, 100% 0, 95% 94%, 0 100%);
+  pointer-events: none;
+  content: '';
+}
+
+.operator-menu-popover::after {
+  z-index: -2;
+  inset: -6px -6px -8px;
+  background: linear-gradient(165deg, var(--lw-red) 48%, var(--lw-ink) 49%);
+  clip-path: polygon(0 0, 94% 9%, 100% 100%, 4% 87%);
+}
+
+.operator-menu-popover a:hover,
+.operator-menu-popover button:hover {
+  background: var(--lw-ink);
+  color: var(--lw-paper);
 }
 
 .operator-menu-popover a,

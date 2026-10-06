@@ -195,9 +195,6 @@ export default function AppRouter() {
   if (!auth.authenticated || route.name === 'login') {
     return (
       <main className="login-screen">
-        <div className="login-wordmark">
-          <BrandLogo tone="white" size="hero" />
-        </div>
         <LoginPanel
           configured={auth.configured}
           password={password}
