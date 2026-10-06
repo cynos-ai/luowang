@@ -1,4 +1,5 @@
 export { Button, type ButtonVariant } from './Button';
+export { BrandLogo } from './BrandLogo';
 export { useAppDialog, type ConfirmOptions } from './AppDialogProvider';
 export { AppMessageFeedback, AppMessageProvider, useAppMessage } from './AppMessageProvider';
 export { ConfirmDialog } from './ConfirmDialog';

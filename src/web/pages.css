@@ -38,13 +38,16 @@
   background-image: var(--lw-stripe-on-dark);
 }
 
-.login-wordmark {
-  width: max-content;
-  transform: rotate(-2deg);
-}
-
 .login-layout {
   width: min(620px, calc(100vw - 96px));
+}
+
+.login-screen .login-layout {
+  min-height: 0;
+}
+
+.login-screen .login-panel {
+  margin-top: 0;
 }
 
 .login-panel {
@@ -1717,20 +1720,6 @@
     grid-template-columns: auto 1fr auto;
     gap: 12px;
     padding-inline: 20px;
-  }
-
-  .wordmark {
-    width: 150px;
-    height: 70px;
-  }
-
-  .wordmark-cn {
-    font-size: 32px;
-  }
-
-  .wordmark-en {
-    right: 16px;
-    bottom: 9px;
   }
 
   .nav-link {

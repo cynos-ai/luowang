@@ -3,6 +3,7 @@ import { useEffect, useRef, type ReactNode } from 'react';
 import type { AppRoute } from '../app/route';
 import { AppLink } from '../app/navigation';
 import type { ProjectReference } from '../project-types';
+import { BrandLogo } from './ui';
 
 export function AppShell({
   route,
@@ -38,12 +39,8 @@ export function AppShell({
         跳到主要内容
       </a>
       <header className="lw-header">
-        <AppLink className="wordmark" to={{ name: 'workspace' }} aria-label="罗网总览">
-          <span className="wordmark-cn">
-            <span>罗</span>
-            <span className="wordmark-cn-second">网</span>
-          </span>
-          <span className="wordmark-en">LUOWANG</span>
+        <AppLink className="wordmark" to={{ name: 'workspace' }} aria-label="罗网工作台">
+          <BrandLogo decorative />
         </AppLink>
         <nav className="global-nav" aria-label="全局导航">
           <AppLink

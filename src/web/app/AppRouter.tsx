@@ -7,6 +7,7 @@ import { useAppDialog } from '../components/AppDialogProvider';
 import { useAppMessage } from '../components/AppMessageProvider';
 import { LoginPanel } from '../components/LoginPanel';
 import { PageHeading } from '../components/PageHeading';
+import { BrandLogo } from '../components/ui';
 import { AccountSettingsPage } from '../pages/AccountSettingsPage';
 import { GlobalSettingsPage } from '../pages/GlobalSettingsPage';
 import { ProjectOnboardingPage } from '../pages/ProjectOnboardingPage';
@@ -194,9 +195,8 @@ export default function AppRouter() {
   if (!auth.authenticated || route.name === 'login') {
     return (
       <main className="login-screen">
-        <div className="login-wordmark" aria-label="罗网 LuoWang">
-          <strong>罗网</strong>
-          <span>LuoWang</span>
+        <div className="login-wordmark">
+          <BrandLogo tone="white" size="hero" />
         </div>
         <LoginPanel
           configured={auth.configured}
@@ -309,8 +309,7 @@ function BootScreen({ error }: { error: string }) {
   return (
     <main className="boot-screen" aria-busy={!error}>
       <div className="login-wordmark">
-        <strong>罗网</strong>
-        <span>LuoWang</span>
+        <BrandLogo tone="white" size="hero" />
       </div>
       <p>{error || '正在连接控制台'}</p>
       {error && (

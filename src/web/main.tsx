@@ -5,6 +5,7 @@ import App from './App';
 import AppRouter from './app/AppRouter';
 import { AppDialogProvider } from './components/AppDialogProvider';
 import { AppMessageProvider } from './components/AppMessageProvider';
+import { BrandLogo } from './components/ui';
 import './styles.css';
 import './tokens.css';
 import './components.css';
@@ -30,8 +31,11 @@ async function start() {
     render(<AppRouter />);
   } catch {
     render(
-      <main className="app-shell">
-        <section className="panel">
+      <main className="boot-screen">
+        <div className="login-wordmark">
+          <BrandLogo tone="white" size="hero" />
+        </div>
+        <section>
           <h1>暂时无法连接罗网</h1>
           <p>刷新页面后重试。</p>
           <button className="button" type="button" onClick={() => window.location.reload()}>

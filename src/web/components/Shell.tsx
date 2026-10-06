@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react';
 
 import type { HealthResponse } from '../../shared/types';
+import { BrandLogo } from './ui';
 
 export function Shell({
   health,
@@ -17,7 +18,7 @@ export function Shell({
         <div className="brand-block">
           <div className="eyebrow">AI SCENARIO TESTING HARNESS</div>
           <h1 id="page-title">
-            罗网 <span>LuoWang</span>
+            <BrandLogo tone="white" size="hero" />
           </h1>
           <p className="intro">面向可信场景测试的独立控制台。</p>
         </div>
