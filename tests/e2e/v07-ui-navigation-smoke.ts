@@ -93,7 +93,6 @@ try {
   const stableRoutes: Array<[string, string]> = [
     ['/workspace', '总览'],
     ['/projects', '项目'],
-    ['/projects/new', '接入新项目'],
     ['/system', '系统状态'],
     ['/settings/models', '全局设置'],
     ['/settings/browser', '全局设置'],
@@ -121,6 +120,14 @@ try {
     await page.getByRole('heading', { level: 1, name: title, exact: true }).waitFor();
     assert.equal(await page.locator('h1').count(), 1);
   }
+
+  await page.goto(`${origin}/projects/new`);
+  await page.getByRole('heading', { level: 1, name: '项目', exact: true }).waitFor();
+  const onboardingDialog = page.getByRole('dialog');
+  await onboardingDialog.getByRole('heading', { name: '连接仓库', exact: true }).waitFor();
+  assert.equal(await page.locator('h1').count(), 1);
+  await onboardingDialog.getByRole('button', { name: '关闭', exact: true }).click();
+  await page.waitForURL(`${origin}/projects`);
 
   await page.goto(`${origin}/settings/credentials`);
   await page.getByRole('heading', { level: 1, name: '全局设置', exact: true }).waitFor();

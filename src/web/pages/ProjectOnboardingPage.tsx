@@ -1,12 +1,12 @@
-import { useCallback, useEffect, useState, type FormEvent } from 'react';
+import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
 
 import { requestJson, toUserMessage } from '../api';
 import { useNavigation } from '../app/navigation';
 import { useResource } from '../app/resource';
 import { AppMessageFeedback, useAppMessage } from '../components/AppMessageProvider';
 import { Field, SelectBox } from '../components/FormControls';
-import { PageHeading } from '../components/PageHeading';
 import type { ConnectionResourcesResponse, ProjectReference } from '../project-types';
+import { ProjectsPage } from './ProjectsPage';
 
 const PROJECT_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -17,7 +17,10 @@ export function ProjectOnboardingPage({
 }) {
   const navigation = useNavigation();
   const notify = useAppMessage();
+  const dialog = useRef<HTMLDialogElement>(null);
   const requestedProjectId = new URLSearchParams(window.location.search).get('projectId');
+  const legacyProjectId =
+    requestedProjectId && PROJECT_ID.test(requestedProjectId) ? requestedProjectId : null;
   const connectionResource = useResource(
     'onboarding-connections',
     useCallback(
@@ -34,12 +37,23 @@ export function ProjectOnboardingPage({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   useEffect(() => {
-    if (!requestedProjectId || !PROJECT_ID.test(requestedProjectId)) return;
+    if (!legacyProjectId) return;
     navigation.navigate(
-      { name: 'project-settings', projectId: requestedProjectId, section: 'general' },
+      { name: 'project-settings', projectId: legacyProjectId, section: 'general' },
       { replace: true },
     );
-  }, [navigation, requestedProjectId]);
+  }, [legacyProjectId, navigation]);
+
+  useEffect(() => {
+    const element = dialog.current;
+    if (!element || legacyProjectId || element.open) return;
+    element.showModal();
+  }, [legacyProjectId]);
+
+  function close() {
+    if (busy) return;
+    navigation.navigate({ name: 'projects' }, { replace: true });
+  }
 
   async function createProject(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -69,89 +83,110 @@ export function ProjectOnboardingPage({
   }
 
   return (
-    <section className="page-content onboarding-page">
-      <PageHeading title="接入新项目" scope="全局" />
-      <div className="page-body onboarding-layout onboarding-create-layout">
-        <AppMessageFeedback error={error} />
-        <section className="onboarding-section" aria-labelledby="connect-title">
-          <div className="section-number">01</div>
+    <>
+      <ProjectsPage onProjectsChanged={onProjectsChanged} />
+      <dialog
+        ref={dialog}
+        className="project-onboarding-dialog"
+        aria-labelledby="connect-title"
+        onCancel={(event) => {
+          event.preventDefault();
+          close();
+        }}
+      >
+        <div className="project-onboarding-dialog-heading">
           <div>
+            <span className="scope-label">新项目</span>
             <h2 id="connect-title">连接仓库</h2>
-            <p>完成仓库验证后，进入统一的项目设置继续配置。</p>
-            <form className="form-grid" onSubmit={createProject}>
-              <Field label="项目名称">
-                <input
-                  required
-                  maxLength={120}
-                  value={name}
-                  onChange={(event) => setName(event.target.value)}
-                />
-              </Field>
-              <Field label="GitHub 仓库地址">
-                <input
-                  required
-                  type="url"
-                  placeholder="https://github.com/owner/repository"
-                  value={repositoryUrl}
-                  onChange={(event) => setRepositoryUrl(event.target.value)}
-                />
-              </Field>
-              <div className="field resource-picker-field">
-                <span>GitHub Token</span>
-                <div className="resource-picker-row">
-                  <SelectBox
-                    ariaLabel="GitHub Token"
-                    value={credentialChoice}
-                    options={[
-                      { value: 'none', label: '不使用 Token（公开仓库）' },
-                      ...(connectionResource.value?.githubCredentials ?? []).map((item) => ({
-                        value: item.id,
-                        label: item.name,
-                      })),
-                    ]}
-                    onChange={setCredentialChoice}
-                  />
-                  <button
-                    className="button button-secondary resource-add-button"
-                    type="button"
-                    onClick={() => navigation.navigate('/settings/github')}
-                  >
-                    新增
-                  </button>
-                </div>
-              </div>
-              <div className="field resource-picker-field">
-                <span>执行服务器</span>
-                <div className="resource-picker-row">
-                  <SelectBox
-                    ariaLabel="执行服务器"
-                    value={serverChoice}
-                    options={[
-                      { value: 'local', label: '罗网本机' },
-                      ...(connectionResource.value?.executionServers ?? []).map((item) => ({
-                        value: item.id,
-                        label: item.name,
-                        detail: `${item.username}@${item.host}`,
-                      })),
-                    ]}
-                    onChange={setServerChoice}
-                  />
-                  <button
-                    className="button button-secondary resource-add-button"
-                    type="button"
-                    onClick={() => navigation.navigate('/settings/servers')}
-                  >
-                    新增
-                  </button>
-                </div>
-              </div>
-              <button className="button" type="submit" disabled={busy}>
-                {busy ? '正在验证…' : '验证仓库并进入项目设置'}
-              </button>
-            </form>
           </div>
-        </section>
-      </div>
-    </section>
+          <button type="button" className="dialog-close" aria-label="关闭" onClick={close}>
+            ×
+          </button>
+        </div>
+        <p>完成仓库验证后，进入项目设置继续配置。</p>
+        <AppMessageFeedback error={error} />
+        <form className="form-grid" onSubmit={createProject}>
+          <Field label="项目名称">
+            <input
+              required
+              maxLength={120}
+              value={name}
+              onChange={(event) => setName(event.target.value)}
+            />
+          </Field>
+          <Field label="GitHub 仓库地址">
+            <input
+              required
+              type="url"
+              placeholder="https://github.com/owner/repository"
+              value={repositoryUrl}
+              onChange={(event) => setRepositoryUrl(event.target.value)}
+            />
+          </Field>
+          <div className="field resource-picker-field">
+            <span>GitHub Token</span>
+            <div className="resource-picker-row">
+              <SelectBox
+                ariaLabel="GitHub Token"
+                value={credentialChoice}
+                options={[
+                  { value: 'none', label: '不使用 Token（公开仓库）' },
+                  ...(connectionResource.value?.githubCredentials ?? []).map((item) => ({
+                    value: item.id,
+                    label: item.name,
+                  })),
+                ]}
+                onChange={setCredentialChoice}
+              />
+              <button
+                className="button button-secondary resource-add-button"
+                type="button"
+                onClick={() => navigation.navigate('/settings/github')}
+              >
+                新增
+              </button>
+            </div>
+          </div>
+          <div className="field resource-picker-field">
+            <span>执行服务器</span>
+            <div className="resource-picker-row">
+              <SelectBox
+                ariaLabel="执行服务器"
+                value={serverChoice}
+                options={[
+                  { value: 'local', label: '罗网本机' },
+                  ...(connectionResource.value?.executionServers ?? []).map((item) => ({
+                    value: item.id,
+                    label: item.name,
+                    detail: `${item.username}@${item.host}`,
+                  })),
+                ]}
+                onChange={setServerChoice}
+              />
+              <button
+                className="button button-secondary resource-add-button"
+                type="button"
+                onClick={() => navigation.navigate('/settings/servers')}
+              >
+                新增
+              </button>
+            </div>
+          </div>
+          <div className="dialog-actions">
+            <button
+              className="button button-secondary"
+              type="button"
+              disabled={busy}
+              onClick={close}
+            >
+              取消
+            </button>
+            <button className="button" type="submit" disabled={busy}>
+              {busy ? '正在验证…' : '验证仓库并进入项目设置'}
+            </button>
+          </div>
+        </form>
+      </dialog>
+    </>
   );
 }
