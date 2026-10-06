@@ -478,6 +478,45 @@
   gap: 10px;
 }
 
+.project-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 7px;
+}
+
+.project-action {
+  display: inline-flex;
+  min-height: 34px;
+  align-items: center;
+  justify-content: center;
+  padding: 6px 10px;
+  border: 2px solid var(--lw-ink);
+  background: var(--lw-paper);
+  color: var(--lw-ink);
+  font: inherit;
+  font-weight: 900;
+  line-height: 1;
+  text-decoration: none;
+  white-space: nowrap;
+  box-shadow: 2px 2px 0 var(--lw-ink);
+}
+
+.project-action:hover,
+.project-action:focus-visible {
+  transform: translate(-1px, -1px);
+  box-shadow: 3px 3px 0 var(--lw-ink);
+}
+
+.project-action-primary {
+  background: var(--lw-ink);
+  color: #fff;
+}
+
+.project-action-state {
+  background: var(--lw-red);
+  color: #fff;
+}
+
 .project-onboarding-dialog {
   width: min(840px, calc(100vw - 48px));
   max-width: none;

@@ -129,15 +129,15 @@ export function ProjectsPage({ onProjectsChanged }: { onProjectsChanged: () => P
                   </StatusLabel>
                   <span>{readinessLabel(summary.readiness.status)}</span>
                   <span>{summary.attentionCount} 项待处理</span>
-                  <div className="row-actions">
+                  <div className="project-actions">
                     <AppLink
-                      className="text-link"
+                      className="project-action project-action-primary"
                       to={{ name: 'project-overview', projectId: summary.project.projectId }}
                     >
                       打开
                     </AppLink>
                     <AppLink
-                      className="text-link"
+                      className="project-action"
                       to={{
                         name: 'project-settings',
                         projectId: summary.project.projectId,
@@ -147,7 +147,7 @@ export function ProjectsPage({ onProjectsChanged }: { onProjectsChanged: () => P
                       重新配置
                     </AppLink>
                     <button
-                      className="text-button"
+                      className="project-action project-action-state"
                       type="button"
                       onClick={() => setConfirmation(summary)}
                     >
