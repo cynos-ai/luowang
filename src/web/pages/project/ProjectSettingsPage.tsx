@@ -313,7 +313,7 @@ function SettingsSection({
   if (section === 'general') {
     return (
       <SettingsPanel title="基本资料" description="仓库身份由接入时核验，不能在这里替换。">
-        <form className="form-grid" onSubmit={onSaveProfile}>
+        <form className="form-grid profile-grid" onSubmit={onSaveProfile}>
           <Field label="项目显示名称">
             <input
               required

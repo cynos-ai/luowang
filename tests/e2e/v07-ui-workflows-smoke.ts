@@ -922,6 +922,27 @@ try {
   await page.getByText('启用项目完成').waitFor();
   assert.equal(resumeCalls, 1);
 
+  await page.goto(`${origin}/projects/${projects[0].projectId}/settings/general`);
+  await page.getByRole('heading', { name: '基本资料', exact: true }).waitFor();
+  const profileCells = await page.locator('.profile-grid > *').evaluateAll((elements) =>
+    elements.map((element) => {
+      const box = element.getBoundingClientRect();
+      return { height: box.height, width: box.width };
+    }),
+  );
+  assert.equal(profileCells.length, 4);
+  assert.ok(
+    Math.max(...profileCells.map((cell) => cell.height)) -
+      Math.min(...profileCells.map((cell) => cell.height)) <=
+      1,
+    JSON.stringify(profileCells),
+  );
+  assert.ok(
+    Math.max(...profileCells.map((cell) => cell.width)) -
+      Math.min(...profileCells.map((cell) => cell.width)) <=
+      1,
+  );
+
   await page.goto(`${origin}/projects/${projects[0].projectId}/overview`);
   await page
     .getByRole('heading', { name: '测试正在执行' })
