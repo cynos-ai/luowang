@@ -222,7 +222,6 @@ export default function AppRouter() {
         )}
         <RoutePage
           route={route}
-          projects={projects}
           reloadProjects={() => loadProjects()}
           onPasswordChanged={() => {
             setAuth({ configured: true, authenticated: false });
@@ -237,12 +236,10 @@ export default function AppRouter() {
 
 function RoutePage({
   route,
-  projects,
   reloadProjects,
   onPasswordChanged,
 }: {
   route: AppRoute;
-  projects: ProjectReference[];
   reloadProjects: () => Promise<void>;
   onPasswordChanged: () => void;
 }) {
@@ -264,7 +261,7 @@ function RoutePage({
     return <ProjectsPage onProjectsChanged={reloadProjects} />;
   }
   if (route.name === 'project-new') {
-    return <ProjectOnboardingPage projects={projects} onProjectsChanged={reloadProjects} />;
+    return <ProjectOnboardingPage onProjectsChanged={reloadProjects} />;
   }
   if (route.name === 'project-overview') {
     return <ProjectOverviewPage projectId={route.projectId} />;

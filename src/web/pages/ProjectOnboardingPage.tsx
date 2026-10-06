@@ -11,10 +11,8 @@ import type { ConnectionResourcesResponse, ProjectReference } from '../project-t
 const PROJECT_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 export function ProjectOnboardingPage({
-  projects,
   onProjectsChanged,
 }: {
-  projects: ProjectReference[];
   onProjectsChanged: () => Promise<void>;
 }) {
   const navigation = useNavigation();
@@ -35,8 +33,6 @@ export function ProjectOnboardingPage({
   const [serverChoice, setServerChoice] = useState('local');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
-  const resumable = projects.filter((project) => project.status === 'paused');
-
   useEffect(() => {
     if (!requestedProjectId || !PROJECT_ID.test(requestedProjectId)) return;
     navigation.navigate(
@@ -153,29 +149,6 @@ export function ProjectOnboardingPage({
                 {busy ? '正在验证…' : '验证仓库并进入项目设置'}
               </button>
             </form>
-            {resumable.length > 0 && (
-              <div className="resume-list">
-                <h3>继续配置未启用的项目</h3>
-                {resumable.map((project) => (
-                  <button
-                    type="button"
-                    key={project.projectId}
-                    onClick={() =>
-                      navigation.navigate({
-                        name: 'project-settings',
-                        projectId: project.projectId,
-                        section: 'general',
-                      })
-                    }
-                  >
-                    <strong>{project.displayName}</strong>
-                    <span>
-                      {project.repositoryOwner}/{project.repositoryName}
-                    </span>
-                  </button>
-                ))}
-              </div>
-            )}
           </div>
         </section>
       </div>
