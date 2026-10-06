@@ -416,6 +416,7 @@ export async function startComposeApplication(input: {
         volumeName: sourceVolume.volumeName,
         sourceDirectory: sourceVolume.sourceDirectory,
         image,
+        user: service.user === undefined ? undefined : String(service.user),
         labels: service.labels as Record<string, string>,
         signal: input.signal,
         beforeRemove:
@@ -605,11 +606,14 @@ async function populateSourceVolume(input: {
   volumeName: string;
   sourceDirectory: string;
   image: string;
+  user?: string;
   labels: Record<string, string>;
   signal?: AbortSignal;
   beforeRemove?: (helperContainerId: string) => Promise<void>;
 }): Promise<void> {
   const createArgs = ['create'];
+  // The helper must resolve managed-file ownership as the consuming service does.
+  if (input.user !== undefined) createArgs.push('--user', input.user);
   for (const [key, value] of Object.entries(input.labels))
     createArgs.push('--label', `${key}=${value}`);
   createArgs.push(

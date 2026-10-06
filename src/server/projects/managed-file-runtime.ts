@@ -108,7 +108,8 @@ export async function injectManagedFiles(input: {
         input.signal?.throwIfAborted();
       }
       const copied = await input.docker.run(
-        ['cp', dockerSource, `${input.containerId}:${destination}`],
+        // Docker's archive copy-to-container resolves ownership from Config.User.
+        ['cp', '--archive', dockerSource, `${input.containerId}:${destination}`],
         { timeoutMs: 30_000, signal: input.signal },
       );
       input.signal?.throwIfAborted();
@@ -177,7 +178,7 @@ async function injectIntoStoppedContainer(
     input.signal?.throwIfAborted();
   }
   const copiedIn = await input.docker.run(
-    ['cp', `${dockerSource}/.`, `${input.containerId}:${destinationRoot}`],
+    ['cp', '--archive', `${dockerSource}/.`, `${input.containerId}:${destinationRoot}`],
     { timeoutMs: 30_000, signal: input.signal },
   );
   input.signal?.throwIfAborted();

@@ -120,7 +120,7 @@ dockerIt(
         'FROM docker.m.daocloud.io/library/node:24.14.1-bookworm-slim@sha256:b506e7321f176aae77317f99d67a24b272c1f09f1d10f1761f2773447d8da26c\n';
       await writeFile(
         join(buildSource, 'Dockerfile.app'),
-        `${base}WORKDIR /app\nCOPY app.js marker.txt ./\nCMD ["node", "app.js"]\n`,
+        `${base}WORKDIR /app\nCOPY app.js marker.txt ./\nUSER node\nCMD ["node", "app.js"]\n`,
       );
       await writeFile(
         join(buildSource, 'Dockerfile.database'),
@@ -128,7 +128,7 @@ dockerIt(
       );
       await writeFile(
         join(buildSource, 'Dockerfile.runner'),
-        `${base}WORKDIR /app\nCOPY . .\nCMD ["sleep", "infinity"]\n`,
+        `${base}WORKDIR /app\nCOPY . .\nUSER node\nCMD ["sleep", "infinity"]\n`,
       );
 
       const publishHost = localDockerHostAddress();
@@ -147,6 +147,7 @@ dockerIt(
         '      dockerfile: Dockerfile.database',
         '    volumes: ["database-data:/data"]',
         '  runner:',
+        '    user: "1001:1002"',
         '    build:',
         '      context: .',
         '      dockerfile: Dockerfile.runner',
@@ -260,6 +261,12 @@ dockerIt(
       );
       assert.equal(result.exitCode, 0);
       assert.equal(result.stdout, 'FIXTURE_VALUE=managed\n');
+      const ownership = await docker.run(
+        ['exec', owner.containerId, 'stat', '-c', '%u:%g %a', '/workspace/config/fixture.env'],
+        { timeoutMs: 10_000 },
+      );
+      assert.equal(ownership.exitCode, 0);
+      assert.equal(ownership.stdout.trim(), '1001:1002 600');
       await session.close();
       assert.equal(
         await fetch(`${owner.environment.baseUrl}/`).then((value) => value.text()),
@@ -285,6 +292,7 @@ dockerIt(
           '      dockerfile: Dockerfile.database',
           '    volumes: ["database-data:/data"]',
           '  runner:',
+          '    user: "1001:1002"',
           '    build:',
           '      context: .',
           '      dockerfile: Dockerfile.runner',
@@ -422,6 +430,32 @@ dockerIt(
         await fetch(`${owner.environment.baseUrl}/`).then((response) => response.text()),
         'SINGLE_MANAGED=ready',
       );
+      const ownership = await baseDocker.run(
+        ['exec', owner.containerId, 'stat', '-c', '%u:%g %a', '/luowang-source/config/runtime.env'],
+        { timeoutMs: 10_000 },
+      );
+      assert.equal(ownership.exitCode, 0);
+      assert.equal(ownership.stdout.trim(), '1000:1000 600');
+      // Exercise the running-container injection path under the same non-root user.
+      await injectManagedFiles({
+        docker: baseDocker,
+        containerId: owner.containerId,
+        files: [
+          {
+            id: 'running-fixture',
+            revision: 1,
+            path: 'config/running.env',
+            serviceName: null,
+            content: 'RUNNING_MANAGED=ready\n',
+          },
+        ],
+      });
+      const runningFile = await baseDocker.run(
+        ['exec', owner.containerId, 'cat', '/luowang-source/config/running.env'],
+        { timeoutMs: 10_000 },
+      );
+      assert.equal(runningFile.exitCode, 0);
+      assert.equal(runningFile.stdout, 'RUNNING_MANAGED=ready\n');
     } finally {
       await owner?.close();
       await rm(source, { recursive: true, force: true });

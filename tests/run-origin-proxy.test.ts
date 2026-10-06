@@ -142,6 +142,41 @@ it('allows configured additional origins while continuing to block unlisted orig
   }
 });
 
+it('opens CONNECT tunnels for an allowed HTTPS origin with its implicit default port', async () => {
+  let connections = 0;
+  const allowed = createServer();
+  allowed.on('connection', (socket) => {
+    connections += 1;
+    socket.end();
+  });
+  await new Promise<void>((resolve, reject) => {
+    allowed.once('error', reject);
+    allowed.listen(443, '127.0.0.1', resolve);
+  });
+  const proxy = await createRunOriginProxy('http://127.0.0.1:12345', ['https://127.0.0.1']);
+  try {
+    assert.match(
+      await rawProxyRequest(
+        proxy.port,
+        'CONNECT 127.0.0.1:443 HTTP/1.1\r\nHost: 127.0.0.1:443\r\n\r\n',
+      ),
+      /^HTTP\/1\.1 200 Connection Established/,
+    );
+    assert.equal(connections, 1);
+    assert.match(
+      await rawProxyRequest(
+        proxy.port,
+        'CONNECT 127.0.0.1:444 HTTP/1.1\r\nHost: 127.0.0.1:444\r\n\r\n',
+      ),
+      /^HTTP\/1\.1 403 Forbidden/,
+    );
+    assert.equal(connections, 1);
+  } finally {
+    await proxy.close();
+    await close(allowed);
+  }
+});
+
 function listen(server: ReturnType<typeof createServer>): Promise<void> {
   return new Promise((resolve, reject) => {
     server.once('error', reject);

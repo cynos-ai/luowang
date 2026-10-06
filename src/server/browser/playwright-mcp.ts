@@ -379,15 +379,20 @@ export async function createRunOriginProxy(
     request.pipe(upstream);
   });
   server.on('connect', (request, clientSocket, head) => {
-    const authority = request.url ?? '';
-    const connectTarget = allowed.find((origin) => origin.host === authority);
+    const authority = (request.url ?? '').toLowerCase();
+    // URL.host omits default ports, while CONNECT always includes the port.
+    const connectTarget = allowed.find(
+      (origin) =>
+        `${origin.hostname}:${origin.port || (origin.protocol === 'https:' ? 443 : 80)}` ===
+        authority,
+    );
     if (!connectTarget) {
       clientSocket.end('HTTP/1.1 403 Forbidden\r\n\r\n');
       return;
     }
     const upstream = connectSocket(
       Number(connectTarget.port || (connectTarget.protocol === 'https:' ? 443 : 80)),
-      connectTarget.hostname,
+      connectTarget.hostname.replace(/^\[|\]$/g, ''),
       () => {
         clientSocket.write('HTTP/1.1 200 Connection Established\r\n\r\n');
         if (head.length) upstream.write(head);
