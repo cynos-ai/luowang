@@ -76,6 +76,15 @@ try {
   const brandLink = page.getByRole('link', { name: '罗网工作台', exact: true });
   assert.equal(await brandLink.getAttribute('href'), '/workspace');
   await brandLink.locator('img').evaluate((image: HTMLImageElement) => image.decode());
+  const userMenu = page.locator('.operator-menu');
+  assert.equal(await userMenu.locator('.operator-avatar').textContent(), '管');
+  await userMenu.locator('summary').click();
+  assert.notEqual(await userMenu.getAttribute('open'), null);
+  await page.keyboard.press('Escape');
+  assert.equal(await userMenu.getAttribute('open'), null);
+  await userMenu.locator('summary').click();
+  await page.locator('.lw-header').click({ position: { x: 5, y: 5 } });
+  assert.equal(await userMenu.getAttribute('open'), null);
 
   await page.getByRole('link', { name: '项目', exact: true }).click();
   await page.getByRole('heading', { name: '项目', exact: true }).waitFor();

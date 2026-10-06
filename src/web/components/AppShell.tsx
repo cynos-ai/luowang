@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react';
+import { useEffect, useRef, type ReactNode } from 'react';
 
 import type { AppRoute } from '../app/route';
 import { AppLink } from '../app/navigation';
@@ -17,6 +17,22 @@ export function AppShell({
   children: ReactNode;
 }) {
   const projectId = projectIdFromRoute(route);
+  const operatorMenu = useRef<HTMLDetailsElement>(null);
+  useEffect(() => {
+    const close = (event: PointerEvent) => {
+      if (!operatorMenu.current?.contains(event.target as Node))
+        operatorMenu.current?.removeAttribute('open');
+    };
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') operatorMenu.current?.removeAttribute('open');
+    };
+    document.addEventListener('pointerdown', close);
+    document.addEventListener('keydown', closeOnEscape);
+    return () => {
+      document.removeEventListener('pointerdown', close);
+      document.removeEventListener('keydown', closeOnEscape);
+    };
+  }, []);
   return (
     <div className="lw-shell">
       <a className="skip-link" href="#main-content">
@@ -24,7 +40,7 @@ export function AppShell({
       </a>
       <header className="lw-header">
         <AppLink className="wordmark" to={{ name: 'workspace' }} aria-label="罗网工作台">
-          <BrandLogo decorative />
+          <BrandLogo tone="white" decorative />
         </AppLink>
         <nav className="global-nav" aria-label="全局导航">
           <AppLink
@@ -48,8 +64,13 @@ export function AppShell({
             设置
           </AppLink>
         </nav>
-        <details className="operator-menu" key={route.name}>
-          <summary aria-label="打开用户菜单">管理员</summary>
+        <details className="operator-menu" key={route.name} ref={operatorMenu}>
+          <summary aria-label="打开用户菜单" title="管理员">
+            <span className="operator-avatar" aria-hidden="true">
+              管
+            </span>
+            <span className="operator-presence" aria-hidden="true" />
+          </summary>
           <div className="operator-menu-popover">
             <AppLink to={{ name: 'account' }}>账号设置</AppLink>
             <button type="button" onClick={onLogout}>
