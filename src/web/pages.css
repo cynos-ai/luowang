@@ -35,11 +35,7 @@
   gap: 30px;
   padding: 48px;
   background-color: var(--lw-canvas);
-  background-image: repeating-linear-gradient(
-    -16deg,
-    transparent 0 42px,
-    rgb(255 255 255 / 4%) 43px 45px
-  );
+  background-image: var(--lw-stripe-on-dark);
 }
 
 .login-wordmark {
@@ -68,12 +64,13 @@
 
 .login-heading h1,
 .login-heading h2 {
-  margin: 0 0 24px;
+  margin: 0 0 20px;
+  color: var(--lw-ink);
   font-family: var(--lw-display);
-  font-size: clamp(42px, 6vw, 70px);
+  font-size: clamp(32px, 4vw, 46px);
   font-weight: 900;
-  letter-spacing: -0.05em;
-  line-height: 0.95;
+  letter-spacing: -0.035em;
+  line-height: 1;
 }
 
 .login-form,
@@ -258,6 +255,22 @@
 
 .active-run-block {
   grid-area: active;
+}
+
+.active-run-block.has-active-run {
+  position: relative;
+  overflow: hidden;
+}
+
+.active-run-block.has-active-run::before {
+  position: absolute;
+  top: 0;
+  right: 0;
+  left: 0;
+  height: 9px;
+  background-color: var(--lw-red);
+  background-image: var(--lw-stripe-on-paper);
+  content: '';
 }
 
 .workspace-layout > :nth-child(3) {
@@ -801,7 +814,8 @@
   gap: 28px;
   padding: 28px 32px;
   border: 4px solid var(--lw-ink);
-  background: var(--lw-ink);
+  background-color: var(--lw-ink);
+  background-image: var(--lw-stripe-on-dark);
   color: #fff;
   box-shadow: 10px 10px 0 var(--lw-red);
   transform: rotate(-0.25deg);

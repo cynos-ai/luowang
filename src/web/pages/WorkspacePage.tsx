@@ -93,8 +93,11 @@ function AttentionList({ workspace }: { workspace: WorkspaceResponse }) {
 }
 
 function ActiveRun({ workspace }: { workspace: WorkspaceResponse }) {
+  const activeClassName = workspace.activeRuns.length
+    ? 'content-block active-run-block has-active-run'
+    : 'content-block active-run-block';
   return (
-    <section className="content-block active-run-block" aria-labelledby="active-run-title">
+    <section className={activeClassName} aria-labelledby="active-run-title">
       <div className="content-block-heading">
         <h2 id="active-run-title">当前执行</h2>
       </div>
