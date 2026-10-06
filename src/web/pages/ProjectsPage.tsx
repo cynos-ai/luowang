@@ -123,7 +123,6 @@ export function ProjectsPage({ onProjectsChanged }: { onProjectsChanged: () => P
                     <code>
                       {summary.project.repositoryOwner}/{summary.project.repositoryName}
                     </code>
-                    <small>{summary.project.projectId}</small>
                   </div>
                   <StatusLabel tone={summary.project.status === 'active' ? 'success' : 'warning'}>
                     {summary.project.status === 'active' ? '已启用' : '已暂停'}

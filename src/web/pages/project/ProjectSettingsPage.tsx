@@ -322,10 +322,6 @@ function SettingsSection({
             value={`${data.detail.project.repositoryOwner}/${data.detail.project.repositoryName}`}
           />
           <ReadOnly label="创建时间" value={formatDate(data.detail.project.createdAt ?? null)} />
-          <details className="technical-details">
-            <summary>技术信息</summary>
-            <code>{data.detail.project.projectId}</code>
-          </details>
           <SaveButton disabled={disabled}>保存基本资料</SaveButton>
         </form>
       </SettingsPanel>

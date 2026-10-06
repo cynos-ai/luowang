@@ -103,7 +103,7 @@ function ProjectContext({
     projectId,
     displayName: '项目读取中',
     repositoryOwner: '—',
-    repositoryName: projectId,
+    repositoryName: '加载中',
   };
   return (
     <section className="project-context" aria-label="当前项目">
@@ -111,7 +111,7 @@ function ProjectContext({
         <span className="scope-label">当前项目</span>
         <h2>{reference.displayName}</h2>
         <p>
-          {reference.repositoryOwner}/{reference.repositoryName} · {projectId}
+          {reference.repositoryOwner}/{reference.repositoryName}
         </p>
       </div>
       <nav className="project-nav" aria-label="项目导航">
