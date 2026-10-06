@@ -3,16 +3,18 @@ import { strict as assert } from 'node:assert';
 import Database from 'better-sqlite3';
 import { describe, it } from 'vitest';
 
-import { runMigrations } from '../src/server/db/migrate.js';
+import { ensureSystemMetadata, runMigrations } from '../src/server/db/migrate.js';
 import { projectIdentityMigration } from '../src/server/db/migrations/0009-project-identity.js';
 import { migrateLegacyRunOwnership } from '../src/server/db/migrations/0011-project-run-ownership.js';
 import { migrateLegacyConfigurationOwnership } from '../src/server/db/migrations/0012-project-configuration-ownership.js';
 import { migrateProjectQueueContext } from '../src/server/db/migrations/0014-project-queue-context.js';
 import { migrateProjectImageState } from '../src/server/db/migrations/0015-project-image-state.js';
+import { migrateConnectionResources } from '../src/server/db/migrations/0021-connection-resources.js';
+import { migrateExecutionRuntime } from '../src/server/db/migrations/0022-execution-runtime.js';
 import { createConfigurationStore } from '../src/server/configuration.js';
 import { createProjectConfigurationStore } from '../src/server/projects/configuration.js';
 import { BUILTIN_IMAGE_DEFINITION } from '../src/server/projects/image-source.js';
-import { createProjectImageStateStore } from '../src/server/projects/image-state.js';
+import { createLocationImageStateStore } from '../src/server/projects/execution-image-cache.js';
 import { createLiveProjectReadinessAdapters } from '../src/server/projects/readiness-adapters.js';
 import { createProjectReadinessService } from '../src/server/projects/readiness.js';
 import { createProjectStore } from '../src/server/projects/store.js';
@@ -32,8 +34,14 @@ describe('live project readiness adapters', () => {
         repository: { githubRepositoryId: '102', owner: 'example', name: 'b' },
       });
       const configuration = createProjectConfigurationStore(database);
-      configuration.update(a.projectId, { baseUrl: 'https://a.example' });
-      configuration.update(b.projectId, { baseUrl: 'https://b.example' });
+      configuration.update(a.projectId, {
+        runtimeMode: 'external',
+        baseUrl: 'https://a.example',
+      });
+      configuration.update(b.projectId, {
+        runtimeMode: 'external',
+        baseUrl: 'https://b.example',
+      });
       const secrets = createScopedSecretStore(database, 'test-master');
       secrets.project(a.projectId).set('gitToken', 'token-a');
       secrets.project(b.projectId).set('gitToken', 'token-b');
@@ -78,6 +86,7 @@ describe('live project readiness adapters', () => {
         checkProvider: async () => deploymentHealthy,
         checkBrowser: async () => true,
         checkOss: async () => true,
+        checkExecution: async () => true,
         inspectImage: async (key) =>
           inspectValid && key.projectId === a.projectId && key.targetCommit === commitA,
       });
@@ -92,7 +101,17 @@ describe('live project readiness adapters', () => {
         (await readiness.check(a.projectId)).checks.find((check) => check.id === 'image')?.status,
         'not_configured',
       );
-      const images = createProjectImageStateStore(database);
+      const images = createLocationImageStateStore(database, {
+        executionLocationId: `local:${
+          (
+            database.prepare("SELECT value FROM system_metadata WHERE key='instance_id'").get() as {
+              value: string;
+            }
+          ).value
+        }`,
+        executionLocationRevision: 1,
+        platform: `${process.platform}/${process.arch}`,
+      });
       const key = {
         projectId: a.projectId,
         targetCommit: commitA,
@@ -122,10 +141,13 @@ function setup(): Database.Database {
   const database = new Database(':memory:');
   database.pragma('foreign_keys = ON');
   runMigrations(database);
+  ensureSystemMetadata(database, { appVersion: 'test' });
   runMigrations(database, [projectIdentityMigration]);
   migrateLegacyRunOwnership(database, null);
   migrateLegacyConfigurationOwnership(database, null);
   migrateProjectQueueContext(database);
   migrateProjectImageState(database);
+  migrateConnectionResources(database);
+  migrateExecutionRuntime(database);
   return database;
 }

@@ -191,3 +191,68 @@ it('rejects mismatched image labels and distinguishes a missing image from a Doc
     /DOCKER_UNAVAILABLE/,
   );
 });
+
+it('propagates cancellation through image preparation and cleans the prepared source', async () => {
+  const database = new Database(':memory:');
+  try {
+    runMigrations(database);
+    runMigrations(database, [projectIdentityMigration]);
+    migrateProjectImageState(database);
+    const project = createProjectStore(database).createVerified({
+      displayName: 'cancel',
+      repository: { githubRepositoryId: '2', owner: 'cynos-ai', name: 'cancel' },
+    });
+    const controller = new AbortController();
+    let cleanup = 0;
+    let startBuild!: () => void;
+    const buildStarted = new Promise<void>((resolve) => {
+      startBuild = resolve;
+    });
+    const preparation = ensureProjectImage(
+      {
+        repository: new GitRepository({ directory: '/tmp/cancel', remoteUrl: '/tmp/cancel' }),
+        projectId: project.projectId,
+        instanceId: project.projectId,
+        targetCommit: COMMIT,
+        dockerfilePath: 'Dockerfile.test',
+        storageRoot: '/tmp',
+        state: createProjectImageStateStore(database),
+        signal: controller.signal,
+      },
+      {
+        async ensureDocker(signal) {
+          assert.equal(signal, controller.signal);
+        },
+        async prepareSource(input) {
+          assert.equal(input.signal, controller.signal);
+          return {
+            directory: '/tmp/source',
+            dockerfilePath: 'Dockerfile.test',
+            targetCommit: COMMIT,
+            cleanup: async () => {
+              cleanup += 1;
+            },
+          };
+        },
+        async build(input) {
+          assert.equal(input.signal, controller.signal);
+          startBuild();
+          return new Promise((_, reject) =>
+            input.signal?.addEventListener('abort', () => reject(input.signal?.reason), {
+              once: true,
+            }),
+          );
+        },
+        async inspect() {
+          return false;
+        },
+      },
+    );
+    await buildStarted;
+    controller.abort();
+    await assert.rejects(preparation, { name: 'AbortError' });
+    assert.equal(cleanup, 1);
+  } finally {
+    database.close();
+  }
+});

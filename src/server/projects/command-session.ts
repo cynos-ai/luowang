@@ -2,6 +2,7 @@ import type { RunCommandSessionFactory } from '../runs/orchestrator.js';
 import type { Logger } from 'pino';
 
 import { startProjectCommandSession, type ProjectCommandSession } from './execution-container.js';
+import type { DockerRuntime } from './execution-container.js';
 import { ensureProjectImage, type PreparedProjectImage } from './image-preparation.js';
 import type { ProjectImageStateStore } from './image-state.js';
 import { prepareProjectRunSource, type ProjectRunSource } from './run-source.js';
@@ -22,6 +23,7 @@ export function createProjectRunCommandSessionFactory(
     imageState: ProjectImageStateStore;
     logger?: Logger;
     recordImage?: (input: { runId: string; targetCommit: string; imageId: string }) => void;
+    dockerRuntime?: DockerRuntime;
   },
   dependencies: ProjectCommandSessionDependencies = {
     ensureImage: ensureProjectImage,
@@ -83,18 +85,21 @@ export function createProjectRunCommandSessionFactory(
     let session: ProjectCommandSession | undefined;
     try {
       session = await runStage('container', () =>
-        dependencies.startSession({
-          signal: input.signal,
-          onExitUnconfirmed: input.onExitUnconfirmed,
-          projectId: options.projectId,
-          instanceId: options.instanceId,
-          runId: input.runId,
-          targetCommit: input.targetCommit,
-          imageId: image.imageId,
-          repositoryDirectory: input.repository.directory,
-          sourceRoot: options.storageRoot,
-          runSource: source,
-        }),
+        dependencies.startSession(
+          {
+            signal: input.signal,
+            onExitUnconfirmed: input.onExitUnconfirmed,
+            projectId: options.projectId,
+            instanceId: options.instanceId,
+            runId: input.runId,
+            targetCommit: input.targetCommit,
+            imageId: image.imageId,
+            repositoryDirectory: input.repository.directory,
+            sourceRoot: options.storageRoot,
+            runSource: source,
+          },
+          options.dockerRuntime,
+        ),
       );
       await runStage('binding', async () => {
         options.recordImage?.({

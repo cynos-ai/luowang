@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { requestJson, toUserMessage } from '../api';
 import { ConfirmDialog } from './ConfirmDialog';
+import { AppMessageFeedback } from './AppMessageProvider';
 
 export function StopRequestButton({
   projectId,
@@ -76,8 +77,7 @@ export function StopRequestButton({
       >
         {requested ? '正在停止与收尾' : queued ? '取消排队' : '停止本次测试'}
       </button>
-      {message && <p role="status">{message}</p>}
-      {error && !confirm && <p role="alert">{error}</p>}
+      <AppMessageFeedback success={message} error={!confirm ? error : ''} />
       {confirm && (
         <ConfirmDialog
           open

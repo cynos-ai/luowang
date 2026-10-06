@@ -21,14 +21,26 @@ export interface ErrorResponse {
 export type ThinkingLevel = 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max';
 
 export interface AgentConfig {
+  providerSourceId?: string;
   model: string;
   thinking: ThinkingLevel;
 }
 
+export interface ModelProviderSource {
+  id: string;
+  name: string;
+  provider: string;
+  baseUrl: string;
+  verifiedAt: string | null;
+  models: ProviderModelInfo[];
+}
+
 export interface HarnessConfig {
   language: string;
+  /** Legacy primary source fields retained for configuration compatibility. */
   provider: string;
   providerBaseUrl: string;
+  modelProviders: ModelProviderSource[];
   agents: {
     main: AgentConfig;
     runner: AgentConfig;
@@ -399,9 +411,24 @@ export interface OperationsArchiveView {
 
 export interface OperationsRunSummary extends RunSummary {
   archive: OperationsArchiveView | null;
+  execution: RunExecutionView | null;
   scenarioResults: ScenarioResultSummary[];
   confirmedBugs: ConfirmedBugSummary[];
   issues: OperationsIssueLink[];
+}
+
+export interface RunExecutionView {
+  locationId: string;
+  locationRevision: number;
+  serverName: string;
+  configRevision: number;
+  startType: 'single-container' | 'compose';
+  imageId: string | null;
+  scenarioPatchSha256: string | null;
+  baseUrl: string | null;
+  applicationService: string | null;
+  commandService: string | null;
+  cleanupState: 'planned' | 'created' | 'cleanup_pending' | 'unknown' | 'released';
 }
 
 export interface OperationsRunDetail extends OperationsRunSummary {

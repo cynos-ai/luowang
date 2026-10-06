@@ -1,16 +1,16 @@
 import { execFile } from 'node:child_process';
 import { lstat, realpath } from 'node:fs/promises';
-import { relative, resolve, sep } from 'node:path';
+import { posix, relative, resolve, sep } from 'node:path';
 import { promisify } from 'node:util';
 
 import {
   ControlledCommandError,
-  parseControlledCommand,
   type CommandRunResult,
   type ControlledCommandRunner,
 } from '../runs/command-runner.js';
 
 import type { ProjectRunSource } from './run-source.js';
+import type { ExecutionAdapter } from './execution-adapter.js';
 
 const execFileAsync = promisify(execFile);
 const PROJECT_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -38,6 +38,102 @@ export interface ProjectCommandSession extends ControlledCommandRunner {
   close(): Promise<void>;
 }
 
+/** Attach Runner commands to the application owner's fixed command service. */
+export async function createAttachedProjectCommandSession(
+  input: {
+    projectId: string;
+    runId: string;
+    targetCommit: string;
+    repositoryDirectory: string;
+    containerId: string;
+    sourceRoot: string;
+    workingDirectory: string;
+  },
+  docker: DockerRuntime,
+): Promise<ProjectCommandSession> {
+  if (
+    !PROJECT_ID.test(input.projectId) ||
+    !RUN_ID.test(input.runId) ||
+    !COMMIT_SHA.test(input.targetCommit) ||
+    !/^[0-9a-f]{12,64}$/.test(input.containerId) ||
+    !input.sourceRoot.startsWith('/') ||
+    posix.normalize(input.sourceRoot) !== input.sourceRoot ||
+    (input.workingDirectory !== input.sourceRoot &&
+      !input.workingDirectory.startsWith(`${input.sourceRoot}/`))
+  )
+    throw new ControlledCommandError('COMMAND_INVALID', '项目测试服务身份无效');
+  const inspected = await requireDockerSuccess(
+    docker,
+    ['inspect', '--format', '{{json .Config.Labels}}', input.containerId],
+    10_000,
+  );
+  let labels: Record<string, unknown>;
+  try {
+    labels = JSON.parse(inspected.stdout) as Record<string, unknown>;
+  } catch {
+    throw new ControlledCommandError('COMMAND_FAILED', '测试服务归属无法核验');
+  }
+  if (
+    labels['luowang.project-id'] !== input.projectId ||
+    (labels['luowang.run-id'] !== input.runId && labels['luowang.attempt-id'] !== input.runId)
+  )
+    throw new ControlledCommandError('COMMAND_NOT_ALLOWED', '测试服务不属于当前 Run');
+  return {
+    containerId: input.containerId,
+    async run(command, options) {
+      if (
+        options.runId !== input.runId ||
+        options.targetCommit !== input.targetCommit ||
+        resolve(options.cwd) !== resolve(input.repositoryDirectory)
+      )
+        throw new ControlledCommandError('COMMAND_NOT_ALLOWED', '命令与项目 Run 上下文不符');
+      const args = containerShellCommand(command);
+      options.signal?.throwIfAborted();
+      let result: DockerRuntimeResult;
+      try {
+        result = await docker.run(
+          [
+            'exec',
+            '--workdir',
+            input.workingDirectory,
+            '--env',
+            `LUOWANG_RUN_ID=${input.runId}`,
+            '--env',
+            `LUOWANG_TARGET_COMMIT=${input.targetCommit}`,
+            input.containerId,
+            ...args,
+          ],
+          { timeoutMs: 120_000, signal: options.signal },
+        );
+      } catch (error) {
+        // Closing an SSH/Docker client does not prove the exec process exited.
+        // Stop the owned command service so the Run owner can perform final cleanup.
+        await stopOwnedCommandContainer(docker, input.containerId);
+        throw error;
+      }
+      return {
+        stdout: result.stdout,
+        stderr: result.stderr,
+        exitCode: result.exitCode,
+        environmentKeys: ['LUOWANG_RUN_ID', 'LUOWANG_TARGET_COMMIT'],
+      };
+    },
+    async close() {},
+  };
+}
+
+async function stopOwnedCommandContainer(
+  docker: DockerRuntime,
+  containerId: string,
+): Promise<void> {
+  await docker.run(['kill', containerId], { timeoutMs: 30_000 }).catch(() => undefined);
+  const inspected = await docker
+    .run(['inspect', '--format', '{{.State.Running}}', containerId], { timeoutMs: 10_000 })
+    .catch(() => null);
+  if (!inspected || inspected.exitCode !== 0 || inspected.stdout.trim() !== 'false')
+    throw new ControlledCommandError('COMMAND_FAILED', '项目测试服务停止状态未知');
+}
+
 export function createDockerRuntime(): DockerRuntime {
   return {
     async run(args, options) {
@@ -52,6 +148,10 @@ export function createDockerRuntime(): DockerRuntime {
             PATH: process.env.PATH,
             SystemRoot: process.env.SystemRoot,
             HOME: process.env.HOME,
+            USERPROFILE: process.env.USERPROFILE,
+            LOCALAPPDATA: process.env.LOCALAPPDATA,
+            ProgramFiles: process.env.ProgramFiles,
+            DOCKER_CONFIG: process.env.DOCKER_CONFIG,
             DOCKER_HOST: process.env.DOCKER_HOST,
           },
         });
@@ -81,6 +181,18 @@ export function createDockerRuntime(): DockerRuntime {
   };
 }
 
+export function createDockerRuntimeFromAdapter(adapter: ExecutionAdapter): DockerRuntime {
+  return {
+    async run(args, options) {
+      const result = await adapter.execute('docker', args, {
+        signal: options.signal,
+        timeoutMs: options.timeoutMs,
+      });
+      return { stdout: result.stdout, stderr: result.stderr, exitCode: result.code };
+    },
+  };
+}
+
 /** Start one Run container from a pinned image and its isolated Run source. */
 export async function startProjectCommandSession(
   input: {
@@ -94,6 +206,8 @@ export async function startProjectCommandSession(
     repositoryDirectory: string;
     sourceRoot: string;
     runSource: ProjectRunSource;
+    /** A source tree already copied to a fixed execution-server workspace. */
+    executionSourceDirectory?: string;
   },
   docker: DockerRuntime = createDockerRuntime(),
 ): Promise<ProjectCommandSession> {
@@ -115,22 +229,25 @@ export async function startProjectCommandSession(
   ) {
     throw new ControlledCommandError('COMMAND_NOT_ALLOWED', 'Run 源码与执行容器归属不符');
   }
-  const sourceDirectory = resolve(input.runSource.directory);
+  const sourceDirectory = input.executionSourceDirectory ?? resolve(input.runSource.directory);
   const expectedRoot = resolve(input.sourceRoot, 'projects', input.projectId, 'run-sources');
-  const sourceParts = relative(expectedRoot, sourceDirectory).split(sep);
-  if (
-    sourceParts.length !== 2 ||
-    !/^source-[a-zA-Z0-9_-]+$/.test(sourceParts[0]) ||
-    sourceParts[1] !== 'context'
-  ) {
-    throw new ControlledCommandError('COMMAND_NOT_ALLOWED', 'Run 源码不在当前项目受控目录');
-  }
-  const sourceInfo = await lstat(sourceDirectory);
-  if (!sourceInfo.isDirectory() || sourceInfo.isSymbolicLink()) {
-    throw new ControlledCommandError('COMMAND_INVALID', 'Run 源码目录无效');
-  }
-  if ((await realpath(sourceDirectory)) !== sourceDirectory) {
-    throw new ControlledCommandError('COMMAND_INVALID', 'Run 源码路径不能经过符号链接');
+  if (input.executionSourceDirectory) {
+    const expected = `/tmp/luowang/${input.instanceId}/${input.projectId}/command-${input.runId}`;
+    if (sourceDirectory !== expected)
+      throw new ControlledCommandError('COMMAND_NOT_ALLOWED', '远程 Run 源码路径不受控');
+  } else {
+    const sourceParts = relative(expectedRoot, sourceDirectory).split(sep);
+    if (
+      sourceParts.length !== 2 ||
+      !/^source-[a-zA-Z0-9_-]+$/.test(sourceParts[0]) ||
+      sourceParts[1] !== 'context'
+    )
+      throw new ControlledCommandError('COMMAND_NOT_ALLOWED', 'Run 源码不在当前项目受控目录');
+    const sourceInfo = await lstat(sourceDirectory);
+    if (!sourceInfo.isDirectory() || sourceInfo.isSymbolicLink())
+      throw new ControlledCommandError('COMMAND_INVALID', 'Run 源码目录无效');
+    if ((await realpath(sourceDirectory)) !== sourceDirectory)
+      throw new ControlledCommandError('COMMAND_INVALID', 'Run 源码路径不能经过符号链接');
   }
   const inspected = await requireDockerSuccess(
     docker,
@@ -277,7 +394,7 @@ class BoundProjectCommandSession implements ProjectCommandSession {
     ) {
       throw new ControlledCommandError('COMMAND_NOT_ALLOWED', '命令与项目 Run 上下文不符');
     }
-    const args = parseControlledCommand(command);
+    const args = containerShellCommand(command);
     if (options.signal?.aborted) {
       throw new ControlledCommandError('COMMAND_FAILED', '受控命令已被取消');
     }
@@ -332,6 +449,17 @@ class BoundProjectCommandSession implements ProjectCommandSession {
       this.closing = undefined;
     }
   }
+}
+
+function containerShellCommand(command: string): string[] {
+  if (
+    typeof command !== 'string' ||
+    command.trim() === '' ||
+    command.length > 16_384 ||
+    command.includes('\0')
+  )
+    throw new ControlledCommandError('COMMAND_INVALID', '项目命令无效');
+  return ['/bin/sh', '-lc', command];
 }
 
 async function requireDockerSuccess(

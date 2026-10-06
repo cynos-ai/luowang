@@ -540,7 +540,7 @@ describe('Phase 3 agent run', () => {
     );
     assert.deepEqual(
       context.sessions.inputs.map((input) => input.config.thinking),
-      ['low', 'off', 'low', 'off'],
+      ['off', 'off', 'off', 'off'],
     );
     for (const input of context.sessions.inputs) {
       assert.match(input.systemPrompt, /luowang-role-id: common/);
@@ -856,7 +856,7 @@ describe('Phase 3 agent run', () => {
         context.sessions.inputs[index]?.config.model,
         context.sessions.inputs[0]?.config.model,
       );
-      assert.equal(context.sessions.inputs[index]?.config.thinking, index === 5 ? 'off' : 'low');
+      assert.equal(context.sessions.inputs[index]?.config.thinking, 'off');
     }
     for (const index of [1, 3, 4]) {
       assert.equal(

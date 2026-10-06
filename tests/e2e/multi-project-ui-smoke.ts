@@ -308,7 +308,7 @@ try {
   await onboarding.getByText('还没有项目。先连接一个 GitHub 仓库。').waitFor();
   await onboarding.getByLabel('项目名称').fill('新项目');
   await onboarding.getByLabel('GitHub 仓库地址').fill('https://github.com/cynos-ai/new-project');
-  await onboarding.getByRole('button', { name: '核验并创建暂停项目' }).click();
+  await onboarding.getByRole('button', { name: '验证仓库并继续' }).click();
   await onboarding.getByRole('heading', { name: '新项目', exact: true }).waitFor();
   assert.equal(newProject.status, 'paused');
   assert.equal(new URL(onboarding.url()).hash, `#/projects/${newProject.projectId}`);

@@ -5,6 +5,10 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { createServer, request as httpRequest, type IncomingMessage } from 'node:http';
+import { request as httpsRequest } from 'node:https';
+import { connect as connectSocket } from 'node:net';
+import type { Duplex } from 'node:stream';
 
 import { Client } from '@modelcontextprotocol/client';
 import {
@@ -98,8 +102,16 @@ export interface PlaywrightMcpAdapterOptions {
 
 export interface BrowserMcpAdapter {
   isEnabled(): boolean;
-  serverDefinition(evidenceDirectory: string): PlaywrightMcpServerDefinition;
-  extension(evidenceDirectory: string): InlineExtension;
+  serverDefinition(
+    evidenceDirectory: string,
+    targetBaseUrl?: string | null,
+    additionalOrigins?: readonly string[],
+  ): PlaywrightMcpServerDefinition;
+  extension(
+    evidenceDirectory: string,
+    targetBaseUrl?: string | null,
+    additionalOrigins?: readonly string[],
+  ): InlineExtension;
   checkConnectivity(): Promise<ConnectivityResult>;
 }
 
@@ -120,7 +132,11 @@ class DefaultPlaywrightMcpAdapter implements BrowserMcpAdapter {
     return this.configuration.getHarness().mcp.enabled;
   }
 
-  serverDefinition(evidenceDirectory: string): PlaywrightMcpServerDefinition {
+  serverDefinition(
+    evidenceDirectory: string,
+    targetBaseUrl?: string | null,
+    additionalOrigins: readonly string[] = [],
+  ): PlaywrightMcpServerDefinition {
     const mcp = this.configuration.getHarness().mcp;
     // Resolve from the Harness module, never the target or evidence cwd.
     const require = createRequire(import.meta.url);
@@ -140,6 +156,13 @@ class DefaultPlaywrightMcpAdapter implements BrowserMcpAdapter {
         // Cookie read/restore for session-revocation evidence. The adapter
         // hides every other storage tool through excludeTools below.
         '--caps=storage',
+        ...(targetBaseUrl
+          ? [
+              `--allowed-origins=${[new URL(targetBaseUrl).origin, ...additionalOrigins]
+                .filter((origin, index, all) => all.indexOf(origin) === index)
+                .join(';')}`,
+            ]
+          : []),
       ],
       env: safeBrowserEnvironment(),
       // Playwright MCP resolves explicit screenshot filenames relative to its
@@ -153,12 +176,26 @@ class DefaultPlaywrightMcpAdapter implements BrowserMcpAdapter {
     };
   }
 
-  extension(evidenceDirectory: string): InlineExtension {
-    const definition = this.serverDefinition(evidenceDirectory);
+  extension(
+    evidenceDirectory: string,
+    targetBaseUrl?: string | null,
+    additionalOrigins: readonly string[] = [],
+  ): InlineExtension {
+    const definition = this.serverDefinition(evidenceDirectory, targetBaseUrl, additionalOrigins);
     return {
       name: `luowang-playwright-mcp-${PLAYWRIGHT_MCP_VERSION}`,
       hidden: true,
       factory: async (pi) => {
+        const originProxy = targetBaseUrl
+          ? await createRunOriginProxy(targetBaseUrl, additionalOrigins)
+          : null;
+        if (originProxy) {
+          definition.args.push(
+            `--proxy-server=http://127.0.0.1:${originProxy.port}`,
+            '--proxy-bypass=<-loopback>',
+          );
+          pi.on('session_shutdown', () => originProxy.close());
+        }
         // Load the adapter only inside the isolated Pi session. This keeps the
         // MCP extension out of Main and Reviewer sessions and prevents any
         // project-provided extension from changing the browser tool boundary.
@@ -188,7 +225,12 @@ class DefaultPlaywrightMcpAdapter implements BrowserMcpAdapter {
             },
           },
         });
-        await install(pi);
+        try {
+          await install(pi);
+        } catch (error) {
+          await originProxy?.close();
+          throw error;
+        }
       },
     };
   }
@@ -274,6 +316,184 @@ class DefaultPlaywrightMcpAdapter implements BrowserMcpAdapter {
   private now(): Date {
     return (this.options.now ?? (() => new Date()))();
   }
+}
+
+export async function createRunOriginProxy(
+  targetBaseUrl: string,
+  additionalOrigins: readonly string[] = [],
+): Promise<{
+  port: number;
+  close(): Promise<void>;
+}> {
+  const primary = new URL(targetBaseUrl);
+  const allowed = [primary, ...additionalOrigins.map((origin) => new URL(origin))];
+  if (
+    allowed.some(
+      (origin) =>
+        !['http:', 'https:'].includes(origin.protocol) || origin.username || origin.password,
+    )
+  )
+    throw new Error('浏览器目标 origin 无效');
+  const connections = new Set<Duplex>();
+  const server = createServer((request, response) => {
+    let target: URL;
+    try {
+      target = new URL(request.url ?? '', primary.origin);
+      assertAllowedProxyTarget(target, allowed);
+    } catch {
+      response.writeHead(403, { 'content-type': 'text/plain; charset=utf-8' });
+      response.end('Run browser origin blocked');
+      return;
+    }
+    const upstreamTarget = normalizeWebSocketUrl(target);
+    const upstream = (upstreamTarget.protocol === 'https:' ? httpsRequest : httpRequest)(
+      upstreamTarget,
+      {
+        method: request.method,
+        headers: forwardedHeaders(request, upstreamTarget),
+      },
+      (upstreamResponse) => {
+        const location = upstreamResponse.headers.location;
+        if (
+          location &&
+          (upstreamResponse.statusCode ?? 0) >= 300 &&
+          (upstreamResponse.statusCode ?? 0) < 400
+        ) {
+          try {
+            assertAllowedProxyTarget(new URL(location, target), allowed);
+          } catch {
+            upstreamResponse.resume();
+            response.writeHead(403, { 'content-type': 'text/plain; charset=utf-8' });
+            response.end('Run browser redirect blocked');
+            return;
+          }
+        }
+        response.writeHead(upstreamResponse.statusCode ?? 502, upstreamResponse.headers);
+        upstreamResponse.pipe(response);
+      },
+    );
+    upstream.on('error', () => {
+      if (!response.headersSent) response.writeHead(502);
+      response.end();
+    });
+    request.pipe(upstream);
+  });
+  server.on('connect', (request, clientSocket, head) => {
+    const authority = (request.url ?? '').toLowerCase();
+    // URL.host omits default ports, while CONNECT always includes the port.
+    const connectTarget = allowed.find(
+      (origin) =>
+        `${origin.hostname}:${origin.port || (origin.protocol === 'https:' ? 443 : 80)}` ===
+        authority,
+    );
+    if (!connectTarget) {
+      clientSocket.end('HTTP/1.1 403 Forbidden\r\n\r\n');
+      return;
+    }
+    const upstream = connectSocket(
+      Number(connectTarget.port || (connectTarget.protocol === 'https:' ? 443 : 80)),
+      connectTarget.hostname.replace(/^\[|\]$/g, ''),
+      () => {
+        clientSocket.write('HTTP/1.1 200 Connection Established\r\n\r\n');
+        if (head.length) upstream.write(head);
+        upstream.pipe(clientSocket);
+        clientSocket.pipe(upstream);
+      },
+    );
+    closePairOnError(clientSocket, upstream);
+  });
+  server.on('upgrade', (request, clientSocket, head) => {
+    let target: URL;
+    try {
+      target = new URL(request.url ?? '', primary.origin);
+      assertAllowedProxyTarget(target, allowed);
+    } catch {
+      clientSocket.end('HTTP/1.1 403 Forbidden\r\n\r\n');
+      return;
+    }
+    const upstreamTarget = normalizeWebSocketUrl(target);
+    const upstream = (upstreamTarget.protocol === 'https:' ? httpsRequest : httpRequest)(
+      upstreamTarget,
+      {
+        method: request.method,
+        headers: forwardedHeaders(request, upstreamTarget),
+      },
+    );
+    upstream.on('upgrade', (upstreamResponse, upstreamSocket, upstreamHead) => {
+      clientSocket.write(
+        `HTTP/1.1 ${upstreamResponse.statusCode ?? 101} ${upstreamResponse.statusMessage ?? 'Switching Protocols'}\r\n`,
+      );
+      for (const [name, value] of Object.entries(upstreamResponse.headers))
+        if (value !== undefined)
+          clientSocket.write(`${name}: ${Array.isArray(value) ? value.join(', ') : value}\r\n`);
+      clientSocket.write('\r\n');
+      if (upstreamHead.length) clientSocket.write(upstreamHead);
+      if (head.length) upstreamSocket.write(head);
+      upstreamSocket.pipe(clientSocket);
+      clientSocket.pipe(upstreamSocket);
+      closePairOnError(clientSocket, upstreamSocket);
+    });
+    upstream.on('error', () => clientSocket.destroy());
+    upstream.end();
+  });
+  await new Promise<void>((resolveListen, reject) => {
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', () => {
+      server.off('error', reject);
+      resolveListen();
+    });
+  });
+  server.on('connection', (socket) => {
+    connections.add(socket);
+    socket.once('close', () => connections.delete(socket));
+  });
+  const address = server.address();
+  if (!address || typeof address === 'string') throw new Error('Run 浏览器代理端口无效');
+  return {
+    port: address.port,
+    close: () => {
+      for (const connection of connections) connection.destroy();
+      return new Promise<void>((resolveClose, reject) =>
+        server.close((error) => (error ? reject(error) : resolveClose())),
+      );
+    },
+  };
+}
+
+function assertAllowedProxyTarget(target: URL, allowed: readonly URL[]): void {
+  if (
+    !allowed.some((origin) => normalizeWebSocketUrl(target).origin === origin.origin) ||
+    target.username ||
+    target.password
+  )
+    throw new Error('Run browser origin blocked');
+}
+
+function normalizeWebSocketUrl(target: URL): URL {
+  const normalized = new URL(target);
+  if (normalized.protocol === 'ws:') normalized.protocol = 'http:';
+  if (normalized.protocol === 'wss:') normalized.protocol = 'https:';
+  if (!['http:', 'https:'].includes(normalized.protocol))
+    throw new Error('Run browser protocol blocked');
+  return normalized;
+}
+
+function forwardedHeaders(
+  request: IncomingMessage,
+  target: URL,
+): Record<string, string | string[]> {
+  const headers: Record<string, string | string[]> = {};
+  for (const [name, value] of Object.entries(request.headers)) {
+    if (value === undefined || ['proxy-authorization', 'proxy-connection'].includes(name)) continue;
+    headers[name] = value;
+  }
+  headers.host = target.host;
+  return headers;
+}
+
+function closePairOnError(first: Duplex, second: Duplex): void {
+  first.on('error', () => second.destroy());
+  second.on('error', () => first.destroy());
 }
 
 async function probeWithMcpClient(

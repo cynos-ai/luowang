@@ -2,7 +2,6 @@ import type { ReactNode } from 'react';
 
 export function PageHeading({
   title,
-  scope,
   actions,
 }: {
   title: string;
@@ -10,13 +9,9 @@ export function PageHeading({
   actions?: ReactNode;
 }) {
   return (
-    <header className={`page-heading${actions ? ' page-heading-with-actions' : ''}`}>
-      <div className="page-heading-title">
-        {scope && <span className="scope-label">{scope}</span>}
-        <h1>{title}</h1>
-      </div>
+    <header className={actions ? 'page-toolbar' : 'page-title-only'}>
+      <h1 className="visually-hidden">{title}</h1>
       {actions && <div className="page-actions">{actions}</div>}
-      <span className="page-heading-mark" aria-hidden="true" />
     </header>
   );
 }

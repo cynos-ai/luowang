@@ -17,6 +17,8 @@
 
 ## 仓库与分支
 
+- 执行服务器、应用启动和 Compose 的下一步方案位于 `docs/changes/luowang-execution-server-redesign/`。当前为评审建议，尚未实施，不覆盖现行运行规则；各服务器使用自己的 Docker，首版包含 Compose。实施前读取该目录并确认 Spec 状态，不把已保存的服务器/受控文件当作远程执行或注入已启用。
+
 - 项目并行开发位于 `docs/changes/luowang-project-concurrency/`：跨项目有界并行、同项目串行，准备阶段计入容量；实现与验收进度见 Plan，发布前不视为已上线。其 Spec 覆盖旧多项目全局单槽约束。
 
 - v0.6.0 代码深读的实现与验收遵循 `docs/changes/luowang-code-understanding/`。它扩展 Main 的内置角色资源、固定版本读取回执与计划引用；不启用 Pi Skills，不新增角色 Session。当前多项目开发以 `docs/changes/luowang-multi-project/` 的 Spec 覆盖单仓库基线，不能将合成测试视为真实联合验收。
@@ -74,3 +76,11 @@ docs/
 - 保持安全边界：不得提交密码、Token、密钥、生产数据或可取回的 Secret。
 - 验证后结束：运行与风险匹配的最小充分检查，明确报告已通过、未运行、失败或受阻的项目。
 - 重要且难以回退的产品、架构、安全或数据决策，一次向项目负责人确认一个问题，并给出推荐默认值。
+
+## 前端组件与交互
+
+- 页面优先使用 `src/web/components/` 提供的罗网 UI 组件，并从 `src/web/components/ui.ts` 的稳定入口复用；新增通用交互前先检查现有 `Button`、`Message`、`Dialog`、`Prompt`、`Field`、`SelectBox`、`ComboBox`、`NumberInput`、`StatusLabel`、`DataTable` 和 `PageHeading`。
+- 页面只表达组件语义和业务状态，不复制组件的颜色、边框、阴影、层级或动效。视觉变量集中维护在 `tokens.css`，组件外观集中维护在 `components.css` 或对应共享样式中，以便统一调整罗网风格或切换主题。
+- 不新增浏览器原生 `confirm`、`prompt`、`alert` 或原生 `select`。危险、不可恢复或会中断工作的操作使用罗网站内确认组件；选择控件使用 `SelectBox` 或 `ComboBox`。缺少通用能力时先补最小共享组件，再由页面使用。
+- 所有改变系统状态的操作都必须在完成后通过全局 Message 明确反馈成功或失败；只读导航、筛选、展开收起和自动轮询不产生冗余提示。错误详情可以同时保留在相关内容区域。
+- 共享组件必须保留语义化 HTML、键盘操作、焦点管理和辅助技术可读状态；不得为了视觉统一降低可访问性。

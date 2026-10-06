@@ -2,6 +2,8 @@ import { useEffect, useState, type FormEvent } from 'react';
 import { screenshotInspectionLabel } from '../shared/types';
 
 import { requestJson, toUserMessage } from './api';
+import { useAppDialog } from './components/AppDialogProvider';
+import { AppMessageFeedback } from './components/AppMessageProvider';
 import { Field } from './components/FormControls';
 import { LoginPanel } from './components/LoginPanel';
 import { Shell } from './components/Shell';
@@ -163,6 +165,7 @@ export default function App() {
 
   return (
     <Shell health={health}>
+      <AppMessageFeedback success={message} error={error} />
       <div className="console-toolbar">
         <div>
           <p className="eyebrow">ADMIN CONSOLE</p>
@@ -172,9 +175,6 @@ export default function App() {
           退出登录
         </button>
       </div>
-
-      {message && <p className="notice notice-success">{message}</p>}
-      {error && <p className="notice notice-error">{error}</p>}
 
       <nav className="console-nav" aria-label="控制台导航">
         {CONSOLE_VIEWS.map((item) => (
@@ -214,6 +214,7 @@ export default function App() {
 }
 
 function RepositoryWorkspace() {
+  const dialogs = useAppDialog();
   const [status, setStatus] = useState<RepositoryStatusResponse | null>(null);
   const [scenarios, setScenarios] = useState<IndexedScenario[]>([]);
   const [reports, setReports] = useState<IndexedReport[]>([]);
@@ -281,10 +282,20 @@ function RepositoryWorkspace() {
   };
 
   const createBranch = async () => {
-    const initialRef = window.prompt('输入用于创建场景测试分支的 branch、tag 或 SHA', 'main');
+    const initialRef = await dialogs.prompt({
+      title: '创建场景测试分支',
+      message: '请输入作为首次创建起点的 Git 引用。',
+      label: 'Branch、Tag 或 SHA',
+      initialValue: 'main',
+      confirmLabel: '下一步',
+    });
     if (
       !initialRef ||
-      !window.confirm(`确认从 ${initialRef} 首次创建场景测试分支并启动初始化 Run？`)
+      !(await dialogs.confirm({
+        title: '创建分支并启动初始化？',
+        message: `将从 ${initialRef} 首次创建场景测试分支并启动初始化 Run。`,
+        confirmLabel: '确认创建',
+      }))
     )
       return;
     setBusy('branch');
@@ -304,8 +315,20 @@ function RepositoryWorkspace() {
   };
 
   const merge = async () => {
-    const sourceRef = window.prompt('输入要合并到场景测试分支的 branch、tag 或 SHA');
-    if (!sourceRef || !window.confirm(`确认以 --no-ff 合并 ${sourceRef}？`)) return;
+    const sourceRef = await dialogs.prompt({
+      title: '合并到场景测试分支',
+      label: 'Branch、Tag 或 SHA',
+      confirmLabel: '下一步',
+    });
+    if (
+      !sourceRef ||
+      !(await dialogs.confirm({
+        title: '确认合并？',
+        message: `将以 --no-ff 合并 ${sourceRef}。`,
+        confirmLabel: '确认合并',
+      }))
+    )
+      return;
     setBusy('merge');
     setError('');
     try {
@@ -929,6 +952,7 @@ function ScenariosPanel() {
 }
 
 function RunsPanel() {
+  const dialogs = useAppDialog();
   const [runs, setRuns] = useState<OperationsRunSummary[]>([]);
   const [selected, setSelected] = useState<OperationsRunDetail | null>(null);
   const [filter, setFilter] = useState('');
@@ -972,7 +996,14 @@ function RunsPanel() {
   };
 
   const retryArchive = async (runId: string) => {
-    if (!window.confirm(`确认重试 Run ${runId} 的归档？`)) return;
+    if (
+      !(await dialogs.confirm({
+        title: '重试归档？',
+        message: `将重新执行 Run ${runId} 的归档。`,
+        confirmLabel: '确认重试',
+      }))
+    )
+      return;
     setBusyRun(runId);
     try {
       await requestJson(`/api/runs/${encodeURIComponent(runId)}/archive`, { method: 'POST' });

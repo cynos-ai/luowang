@@ -12,11 +12,13 @@ import type {
   ThinkingLevel,
 } from '../../shared/types';
 import { requestJson, toUserMessage } from '../api';
+import { useAppDialog } from '../components/AppDialogProvider';
 import {
   checkStatusLabel,
   ConnectivityResult,
   Field,
   ModelCapabilities,
+  NumberInput,
   SecretField,
   SectionCard,
 } from '../components/FormControls';
@@ -67,6 +69,7 @@ export function SettingsPage({
   onError,
   onSessionEnded,
 }: SettingsPageProps) {
+  const dialogs = useAppDialog();
   const [harness, setHarness] = useState(config.harness);
   const [repository, setRepository] = useState(config.repository);
   const [secretDraft, setSecretDraft] = useState(emptySecretDraft);
@@ -240,7 +243,15 @@ export function SettingsPage({
 
   const deleteSecret = async (secretKey: SecretKey) => {
     const field = SECRET_FIELDS[secretKey];
-    if (!window.confirm(`确定删除“${field.label}”吗？`)) return;
+    if (
+      !(await dialogs.confirm({
+        title: `删除${field.label}？`,
+        message: '原值无法恢复，依赖该凭据的连接检查和运行可能失败。',
+        confirmLabel: '确认删除',
+        danger: true,
+      }))
+    )
+      return;
     await execute(`delete-${secretKey}`, async () => {
       const next = await requestJson<ConfigResponse>(
         `/api/secrets/${encodeURIComponent(secretKey)}`,
@@ -278,14 +289,15 @@ export function SettingsPage({
           })
         }
         onImport={(file) => {
-          if (
-            !window.confirm(
-              '导入会替换当前普通配置并清除旧连接结果，但不会覆盖或删除任何 Secret。是否继续？',
-            )
-          ) {
-            return;
-          }
           void execute('config-import', async () => {
+            if (
+              !(await dialogs.confirm({
+                title: '导入普通配置？',
+                message: '导入会替换当前普通配置并清除旧连接结果，但不会覆盖或删除任何 Secret。',
+                confirmLabel: '确认导入',
+              }))
+            )
+              return;
             const yaml = await file.text();
             const next = await requestJson<ConfigResponse>('/api/config/import', {
               method: 'POST',
@@ -792,15 +804,16 @@ function BrowserSection({
           </select>
         </Field>
         <Field label="MCP 超时（毫秒）">
-          <input
-            type="number"
-            min="100"
-            max="300000"
+          <NumberInput
+            ariaLabel="MCP 超时（毫秒）"
+            min={100}
+            max={300000}
+            step={100}
             value={harness.mcp.timeoutMs}
-            onChange={(event) =>
+            onChange={(timeoutMs) =>
               onChange({
                 ...harness,
-                mcp: { ...harness.mcp, timeoutMs: Number(event.target.value) },
+                mcp: { ...harness.mcp, timeoutMs },
               })
             }
           />
@@ -864,15 +877,16 @@ function LocalSection({
           />
         </Field>
         <Field label="保留天数">
-          <input
-            type="number"
-            min="0"
-            max="36500"
+          <NumberInput
+            ariaLabel="保留天数"
+            min={1}
+            max={36500}
+            step={1}
             value={harness.local.retentionDays}
-            onChange={(event) =>
+            onChange={(retentionDays) =>
               onChange({
                 ...harness,
-                local: { ...harness.local, retentionDays: Number(event.target.value) },
+                local: { ...harness.local, retentionDays },
               })
             }
           />
@@ -1245,17 +1259,17 @@ function AutomationSection({
         label="新提交检查间隔（分钟）"
         hint={repository.triggerOnCommit ? '最短 5 分钟' : '启用“新 commit 自动测试”后可编辑'}
       >
-        <input
-          type="number"
-          min="5"
-          max="525600"
-          step="1"
+        <NumberInput
+          ariaLabel="新提交检查间隔（分钟）"
+          min={5}
+          max={525600}
+          step={1}
           disabled={!repository.triggerOnCommit}
           value={secondsToMinutes(repository.pollIntervalSeconds)}
-          onChange={(event) =>
+          onChange={(minutes) =>
             onChange({
               ...repository,
-              pollIntervalSeconds: minutesToSeconds(Number(event.target.value)),
+              pollIntervalSeconds: minutesToSeconds(minutes),
             })
           }
         />

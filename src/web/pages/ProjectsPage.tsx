@@ -5,6 +5,7 @@ import { requestJson, toUserMessage } from '../api';
 import { AppLink } from '../app/navigation';
 import { useResource } from '../app/resource';
 import { AsyncRegion } from '../components/AsyncRegion';
+import { AppMessageFeedback } from '../components/AppMessageProvider';
 import { ConfirmDialog } from '../components/ConfirmDialog';
 import { PageHeading } from '../components/PageHeading';
 import { StatusLabel } from '../components/StatusLabel';
@@ -21,6 +22,7 @@ export function ProjectsPage({ onProjectsChanged }: { onProjectsChanged: () => P
   const [confirmation, setConfirmation] = useState<WorkspaceProjectSummary | null>(null);
   const [busy, setBusy] = useState(false);
   const [actionError, setActionError] = useState('');
+  const [actionMessage, setActionMessage] = useState('');
   const projects = useMemo(() => {
     const values = [...(resource.value?.projects ?? [])].sort(
       (left, right) =>
@@ -40,6 +42,7 @@ export function ProjectsPage({ onProjectsChanged }: { onProjectsChanged: () => P
     if (!confirmation) return;
     setBusy(true);
     setActionError('');
+    setActionMessage('');
     try {
       const operation = confirmation.project.status === 'active' ? 'pause' : 'resume';
       await requestJson(`/api/projects/${confirmation.project.projectId}/${operation}`, {
@@ -47,6 +50,7 @@ export function ProjectsPage({ onProjectsChanged }: { onProjectsChanged: () => P
       });
       setConfirmation(null);
       await Promise.all([onProjectsChanged(), Promise.resolve(resource.reload())]);
+      setActionMessage(confirmation.project.status === 'active' ? '项目已暂停' : '项目已启用');
     } catch (cause) {
       setActionError(toUserMessage(cause, '项目状态更新失败'));
     } finally {
@@ -86,7 +90,7 @@ export function ProjectsPage({ onProjectsChanged }: { onProjectsChanged: () => P
             </button>
           ))}
         </div>
-        {actionError && <p className="app-banner">{actionError}</p>}
+        <AppMessageFeedback success={actionMessage} error={actionError} />
         <AsyncRegion
           loading={resource.loading && !resource.value}
           error={!resource.value ? resource.error : ''}
@@ -119,22 +123,31 @@ export function ProjectsPage({ onProjectsChanged }: { onProjectsChanged: () => P
                     <code>
                       {summary.project.repositoryOwner}/{summary.project.repositoryName}
                     </code>
-                    <small>{summary.project.projectId}</small>
                   </div>
                   <StatusLabel tone={summary.project.status === 'active' ? 'success' : 'warning'}>
                     {summary.project.status === 'active' ? '已启用' : '已暂停'}
                   </StatusLabel>
                   <span>{readinessLabel(summary.readiness.status)}</span>
                   <span>{summary.attentionCount} 项待处理</span>
-                  <div className="row-actions">
+                  <div className="project-actions">
                     <AppLink
-                      className="text-link"
+                      className="project-action project-action-primary"
                       to={{ name: 'project-overview', projectId: summary.project.projectId }}
                     >
                       打开
                     </AppLink>
+                    <AppLink
+                      className="project-action"
+                      to={{
+                        name: 'project-settings',
+                        projectId: summary.project.projectId,
+                        section: 'general',
+                      }}
+                    >
+                      重新配置
+                    </AppLink>
                     <button
-                      className="text-button"
+                      className="project-action project-action-state"
                       type="button"
                       onClick={() => setConfirmation(summary)}
                     >

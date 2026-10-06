@@ -36,7 +36,7 @@ describe('production stage configuration', () => {
     }
   });
 
-  it('passes product-owned stage thinking to Sessions without mutating model configuration', () => {
+  it('passes the shared persisted role thinking to every Session without mutating it', () => {
     const config = Object.freeze({ model: 'configured-model', thinking: 'medium' as const });
     const stages: [AgentRole, AgentSessionKind][] = [
       ['main-a', 'main-planning'],
@@ -49,7 +49,7 @@ describe('production stage configuration', () => {
     );
     assert.deepEqual(
       inputs.map((i) => i.config.thinking),
-      ['low', 'off', 'low', 'off'],
+      ['medium', 'medium', 'medium', 'medium'],
     );
     assert.ok(inputs.every((i) => i.config.model === config.model && i.config !== config));
     assert.equal(config.thinking, 'medium');

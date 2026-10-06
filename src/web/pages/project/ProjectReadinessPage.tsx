@@ -5,6 +5,7 @@ import { requestJson, toUserMessage } from '../../api';
 import { AppLink } from '../../app/navigation';
 import { useResource } from '../../app/resource';
 import { AsyncRegion } from '../../components/AsyncRegion';
+import { AppMessageFeedback } from '../../components/AppMessageProvider';
 import { ConfirmDialog } from '../../components/ConfirmDialog';
 import { PageHeading } from '../../components/PageHeading';
 import { StatusLabel } from '../../components/StatusLabel';
@@ -27,7 +28,7 @@ export function ProjectReadinessPage({ projectId }: { projectId: string }) {
   );
   const loadReadiness = useCallback(
     (signal: AbortSignal) =>
-      requestJson<{ readiness: ConsoleReadinessSnapshot }>(
+      requestJson<{ readiness: ConsoleReadinessSnapshot | null }>(
         `/api/projects/${projectId}/readiness/status`,
         { signal },
       ).then((response) => response.readiness),
@@ -70,35 +71,57 @@ export function ProjectReadinessPage({ projectId }: { projectId: string }) {
         title="运行准备"
         scope="当前项目"
         actions={
-          <button
-            className="button"
-            type="button"
-            disabled={Boolean(busy)}
-            onClick={() =>
-              void action(
-                '运行准备检查',
-                () => requestJson(`/api/projects/${projectId}/readiness/check`, { method: 'POST' }),
-                readiness.reload,
-              )
-            }
-          >
-            {busy === '运行准备检查' ? '检查中…' : '重新检查'}
-          </button>
+          <div className="page-actions">
+            <button
+              className="button button-secondary"
+              type="button"
+              disabled={Boolean(busy)}
+              onClick={() =>
+                void action(
+                  '运行准备检查',
+                  () =>
+                    requestJson(`/api/projects/${projectId}/readiness/check`, { method: 'POST' }),
+                  readiness.reload,
+                )
+              }
+            >
+              {busy === '运行准备检查' ? '检查中…' : '重新检查'}
+            </button>
+            {project?.status === 'paused' && (
+              <button
+                className="button"
+                type="button"
+                disabled={Boolean(busy) || readiness.value?.status !== 'ready'}
+                onClick={() =>
+                  void action(
+                    '启用项目',
+                    () => requestJson(`/api/projects/${projectId}/resume`, { method: 'POST' }),
+                    () => {
+                      detail.reload();
+                      readiness.reload();
+                    },
+                  )
+                }
+              >
+                {busy === '启用项目' ? '启用中…' : '启用项目'}
+              </button>
+            )}
+          </div>
         }
       />
       <div className="page-body readiness-layout">
-        {message && <p className="notice notice-success">{message}</p>}
-        {error && (
-          <p className="notice notice-error" role="alert">
-            {error}
-          </p>
-        )}
+        <AppMessageFeedback success={message} error={error} />
         <AsyncRegion
           loading={readiness.loading && !readiness.value}
           error={!readiness.value ? readiness.error : ''}
           onRetry={readiness.reload}
         >
-          {readiness.value && <ReadinessVerdict snapshot={readiness.value} />}
+          {readiness.value ? (
+            <ReadinessVerdict snapshot={readiness.value} />
+          ) : (
+            !readiness.loading &&
+            !readiness.error && <p className="notice notice-neutral">尚未运行准备检查。</p>
+          )}
         </AsyncRegion>
         <AsyncRegion
           loading={detail.loading && !detail.value}

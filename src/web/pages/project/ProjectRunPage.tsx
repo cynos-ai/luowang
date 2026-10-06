@@ -272,7 +272,28 @@ function SummaryTab({ run }: { run: OperationsRunDetail }) {
               value={run.includedCommits.length ? run.includedCommits.join(', ') : '无'}
               mono
             />
-            <Fact label="配置修订" value="记录未提供" />
+            <Fact
+              label="配置修订"
+              value={run.execution ? String(run.execution.configRevision) : '历史记录未提供'}
+            />
+            <Fact
+              label="执行位置"
+              value={
+                run.execution
+                  ? `${run.execution.serverName} · 修订 ${run.execution.locationRevision}`
+                  : '历史记录未提供'
+              }
+            />
+            <Fact
+              label="启动方式"
+              value={
+                run.execution?.startType === 'compose'
+                  ? 'Docker Compose'
+                  : run.execution
+                    ? '单容器'
+                    : '历史记录未提供'
+              }
+            />
           </dl>
         </section>
         <section className="content-block">
@@ -283,7 +304,16 @@ function SummaryTab({ run }: { run: OperationsRunDetail }) {
             <Fact label="开始" value={formatDate(run.startedAt)} />
             <Fact label="结束" value={formatDate(run.finishedAt)} />
             <Fact label="耗时" value={duration(run.startedAt, run.finishedAt)} />
-            <Fact label="执行镜像" value="记录未提供" />
+            <Fact label="执行镜像" value={run.execution?.imageId ?? '历史记录未提供'} mono />
+            <Fact
+              label="运行入口"
+              value={
+                run.execution?.baseUrl
+                  ? `${run.execution.baseUrl}${run.execution.cleanupState === 'released' ? '（已失效）' : '（仅 Run 期间有效）'}`
+                  : '无应用入口'
+              }
+            />
+            <Fact label="资源状态" value={run.execution?.cleanupState ?? '历史记录未提供'} />
           </dl>
         </section>
         <section className="content-block">

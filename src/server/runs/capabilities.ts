@@ -74,13 +74,13 @@ export async function collectRunCapabilities(input: {
   browserConfigured: boolean;
   testData: TestDataManager;
   configuration?: RunCapabilities['configuration'];
-  checkEnvironment?: (signal?: AbortSignal) => Promise<EnvironmentObservation>;
+  checkEnvironment?: (baseUrl: string, signal?: AbortSignal) => Promise<EnvironmentObservation>;
   signal?: AbortSignal;
   now: () => Date;
 }): Promise<RunCapabilities> {
   input.signal?.throwIfAborted();
   const [environment, accountStorage] = await Promise.all([
-    input.checkEnvironment?.(input.signal) ??
+    input.checkEnvironment?.(input.baseUrl, input.signal) ??
       Promise.resolve<EnvironmentObservation>({
         status: input.baseUrl ? 'unknown' : 'not_configured',
         checkedAt: null,

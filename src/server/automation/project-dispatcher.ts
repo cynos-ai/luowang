@@ -12,6 +12,7 @@ import { createRunId } from '../runs/workspace.js';
 import type { ScopedSecretStore } from '../security/scoped-secret-store.js';
 import { createProjectRunServices } from '../projects/run-services.js';
 import { recoverProjectDockerResources } from '../projects/docker-recovery.js';
+import { reconcileExecutionResourceLedger } from '../projects/execution-resource-recovery.js';
 import type { ProjectTaskRuntime } from '../projects/task-runtime.js';
 import { createProjectTaskRuntime } from '../projects/task-runtime.js';
 import type { ProjectStore } from '../projects/store.js';
@@ -19,6 +20,7 @@ import { awaitsCutoverActivation } from '../projects/cutover-activation.js';
 import { createProjectQueueCoordinator } from './project-queue-coordinator.js';
 import { createProjectRunRecoveryStore } from './recovery.js';
 import {
+  configureProjectQueueConcurrency,
   createProjectTestRequestQueue,
   createTestRequestQueue,
   type TestRequestInput,
@@ -37,10 +39,12 @@ export interface ProjectAutomationDispatcher {
   retryArchive(projectId: string, runId: string): Promise<TestRequestRecord>;
   stopRequest(projectId: string, queueId: number): Promise<TestRequestRecord>;
   readonly maxConcurrentProjects: number;
+  setMaxConcurrentProjects?(limit: number): void;
   enqueue(projectId: string, input: TestRequestInput): TestRequestRecord;
   drain(): Promise<void>;
   recover(): Promise<void>;
   retryArchives(at?: Date): Promise<void>;
+  reconcileResources?(): Promise<{ released: number; unknown: number }>;
   currentRuns(projectId?: string): Promise<Array<{ projectId: string; run: RunSummary }>>;
   stop(): Promise<void>;
   getActiveRun(projectId: string, runId: string): Promise<RunDetail | null>;
@@ -58,7 +62,7 @@ export function createProjectAutomationDispatcher(options: {
   maxConcurrentProjects?: number;
   createServices?: (task: ProjectTaskRuntime) => ProjectDispatchServices;
 }): ProjectAutomationDispatcher {
-  const maxConcurrentProjects = options.maxConcurrentProjects ?? 2;
+  let maxConcurrentProjects = options.maxConcurrentProjects ?? 2;
   const coordinator = createProjectQueueCoordinator(options.database, maxConcurrentProjects);
   const createServices =
     options.createServices ??
@@ -103,6 +107,7 @@ export function createProjectAutomationDispatcher(options: {
   let recovering = false;
   let recoveryPromise: Promise<void> | null = null;
   let retryPromise: Promise<void> | null = null;
+  let resourceRecoveryPromise: Promise<{ released: number; unknown: number }> | null = null;
   const activeRuns = new Map<string, { runId: string; runs: RunOrchestrator }>();
   const preparingRuns = new Map<number, { runId: string; runs: RunOrchestrator }>();
   const deferredArchives = new Set<number>();
@@ -336,6 +341,12 @@ export function createProjectAutomationDispatcher(options: {
   }
 
   async function recoverInner(): Promise<void> {
+    const ledgerRecovery = await reconcileExecutionResourceLedger(
+      options.database,
+      options.secrets,
+      { includeRunning: true },
+    );
+    options.logger?.info(ledgerRecovery, 'execution resource ledger reconciled');
     if (!options.createServices) {
       const recovered = await recoverProjectDockerResources(options.database);
       options.logger?.info(recovered, 'project Docker resources recovered');
@@ -461,7 +472,15 @@ export function createProjectAutomationDispatcher(options: {
       pump();
       return result;
     },
-    maxConcurrentProjects,
+    get maxConcurrentProjects() {
+      return maxConcurrentProjects;
+    },
+    setMaxConcurrentProjects(limit) {
+      configureProjectQueueConcurrency(options.database, limit);
+      coordinator.setLimit(limit);
+      maxConcurrentProjects = limit;
+      pump();
+    },
     enqueue(projectId, input) {
       return queueFor(projectId).enqueue(input);
     },
@@ -490,6 +509,17 @@ export function createProjectAutomationDispatcher(options: {
         pump();
       });
       return retryPromise;
+    },
+    reconcileResources() {
+      if (resourceRecoveryPromise) return resourceRecoveryPromise;
+      resourceRecoveryPromise = reconcileExecutionResourceLedger(
+        options.database,
+        options.secrets,
+      ).finally(() => {
+        resourceRecoveryPromise = null;
+        pump();
+      });
+      return resourceRecoveryPromise;
     },
     async currentRuns(selectedProjectId) {
       const current = await Promise.all(

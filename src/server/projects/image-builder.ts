@@ -1,4 +1,5 @@
 import { execFile } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { readFile, rm } from 'node:fs/promises';
 import { dirname, isAbsolute, relative, resolve, sep } from 'node:path';
 import { promisify } from 'node:util';
@@ -18,7 +19,10 @@ export interface ProjectImageBuild {
 }
 
 export interface DockerCommand {
-  run(args: string[], options: { cwd: string; timeoutMs: number }): Promise<void>;
+  run(
+    args: string[],
+    options: { cwd: string; timeoutMs: number; signal?: AbortSignal },
+  ): Promise<void>;
 }
 
 /** Only this controlled adapter invokes Docker; callers pass a verified fixed-commit source. */
@@ -30,6 +34,7 @@ export function createDockerCommand(): DockerCommand {
         timeout: options.timeoutMs,
         maxBuffer: 1024 * 1024,
         windowsHide: true,
+        signal: options.signal,
         env: {
           PATH: process.env.PATH,
           SystemRoot: process.env.SystemRoot,
@@ -43,7 +48,12 @@ export function createDockerCommand(): DockerCommand {
 
 /** Build a reusable project image and return its immutable local content ID. */
 export async function buildProjectImage(
-  input: { projectId: string; instanceId: string; source: ProjectImageSource },
+  input: {
+    projectId: string;
+    instanceId: string;
+    source: ProjectImageSource;
+    signal?: AbortSignal;
+  },
   docker: DockerCommand = createDockerCommand(),
 ): Promise<ProjectImageBuild> {
   if (
@@ -58,7 +68,11 @@ export async function buildProjectImage(
   const dockerfile = resolve(directory, input.source.dockerfilePath);
   assertWithin(directory, dockerfile);
   const imageIdPath = resolve(dirname(directory), 'image-id.txt');
-  const tag = `luowang-project-${input.projectId}:${input.source.targetCommit}`;
+  const tag = projectImageTag(
+    input.projectId,
+    input.source.targetCommit,
+    input.source.buildDefinition ?? input.source.dockerfilePath,
+  );
   try {
     await docker.run(
       [
@@ -79,7 +93,7 @@ export async function buildProjectImage(
         `luowang.build-definition=${input.source.buildDefinition ?? input.source.dockerfilePath}`,
         directory,
       ],
-      { cwd: directory, timeoutMs: 15 * 60 * 1000 },
+      { cwd: directory, timeoutMs: 15 * 60 * 1000, signal: input.signal },
     );
     const imageId = (await readFile(imageIdPath, 'utf8')).trim();
     if (!IMAGE_ID.test(imageId)) throw new Error('Docker 未返回有效镜像 ID');
@@ -87,6 +101,15 @@ export async function buildProjectImage(
   } finally {
     await rm(imageIdPath, { force: true });
   }
+}
+
+export function projectImageTag(
+  projectId: string,
+  targetCommit: string,
+  buildDefinition: string,
+): string {
+  const definition = createHash('sha256').update(buildDefinition).digest('hex').slice(0, 12);
+  return `luowang-project-${projectId}:${targetCommit}-${definition}`;
 }
 
 function assertWithin(root: string, path: string): void {

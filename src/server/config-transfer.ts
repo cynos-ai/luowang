@@ -78,7 +78,7 @@ export function parseConfigurationYaml(source: unknown): ImportedConfiguration {
 
   const harness = requireObject(root.harness, 'harness');
   const repository = requireObject(root.repository, 'repository');
-  assertExactKeys(harness, HARNESS_KEYS, 'harness');
+  assertExactKeys(harness, HARNESS_KEYS, 'harness', ['modelProviders']);
   assertExactKeys(repository, REPOSITORY_KEYS, 'repository');
 
   const agents = requireObject(harness.agents, 'harness.agents');
@@ -94,7 +94,29 @@ export function parseConfigurationYaml(source: unknown): ImportedConfiguration {
       requireObject(agents[role], `harness.agents.${role}`),
       AGENT_KEYS,
       `harness.agents.${role}`,
+      ['providerSourceId'],
     );
+  }
+  if (harness.modelProviders !== undefined) {
+    if (!Array.isArray(harness.modelProviders)) {
+      throw new ConfigurationError('harness.modelProviders 必须是数组');
+    }
+    for (const source of harness.modelProviders) {
+      const entry = requireObject(source, '模型来源');
+      assertExactKeys(
+        entry,
+        ['id', 'name', 'provider', 'baseUrl', 'verifiedAt', 'models'],
+        '模型来源',
+      );
+      if (!Array.isArray(entry.models)) throw new ConfigurationError('模型目录必须是数组');
+      for (const model of entry.models) {
+        assertExactKeys(
+          requireObject(model, '模型目录项'),
+          ['provider', 'id', 'name', 'reasoning', 'input', 'thinkingLevels', 'available'],
+          '模型目录项',
+        );
+      }
+    }
   }
 
   return {
@@ -114,8 +136,9 @@ function assertExactKeys(
   value: Record<string, unknown>,
   expectedKeys: readonly string[],
   field: string,
+  optionalKeys: readonly string[] = [],
 ): void {
-  const expected = new Set(expectedKeys);
+  const expected = new Set([...expectedKeys, ...optionalKeys]);
   const unknown = Object.keys(value).filter((key) => !expected.has(key));
   const missing = expectedKeys.filter((key) => !(key in value));
   if (unknown.length > 0) {

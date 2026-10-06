@@ -115,8 +115,9 @@ const SENSITIVE_PATH =
   /(^|\/)(?:\.env(?:\.|$)|.*(?:secret|credential|password|token|private[-_]?key|key\.txt).*)/i;
 
 export interface RunOrchestratorOptions {
+  browserAllowedOrigins?: readonly string[];
   capabilityConfiguration?: RunCapabilities['configuration'];
-  checkEnvironment?: (signal?: AbortSignal) => Promise<EnvironmentObservation>;
+  checkEnvironment?: (baseUrl: string, signal?: AbortSignal) => Promise<EnvironmentObservation>;
   configuration: ConfigurationStore;
   repository: RepositoryService;
   indexer?: RepositoryIndexer;
@@ -126,6 +127,7 @@ export interface RunOrchestratorOptions {
   sessions?: AgentSessionFactory;
   commandRunner?: ControlledCommandRunner;
   commandSessionFactory?: RunCommandSessionFactory;
+  runtimeEnvironmentFactory?: RunRuntimeEnvironmentFactory;
   browser?: BrowserMcpAdapter;
   oss?: OssAdapter;
   testData?: TestDataManager;
@@ -137,6 +139,21 @@ export interface RunOrchestratorOptions {
   logger?: Logger;
   roleInstructions?: RoleInstructionLoader;
 }
+
+export type RunRuntimeEnvironmentOwner = {
+  baseUrl: string | null;
+  browserAvailable: boolean;
+  sensitiveValues?: readonly string[];
+  close(): Promise<void>;
+};
+export type RunRuntimeEnvironmentFactory = (input: {
+  repository: GitRepository;
+  runId: string;
+  targetCommit: string;
+  scenarioPatch?: string;
+  signal?: AbortSignal;
+  onExitUnconfirmed?: () => void;
+}) => Promise<RunRuntimeEnvironmentOwner>;
 
 export type RunCommandSessionFactory = (input: {
   signal?: AbortSignal;
@@ -426,6 +443,7 @@ class DefaultRunOrchestrator implements RunOrchestrator {
 
   private async execute(state: RunState, workspace: RunWorkspace, input: RunInput): Promise<void> {
     let cleanupDone = false;
+    let runtimeOwner: RunRuntimeEnvironmentOwner | undefined;
     const finishCleanup = async () => {
       if (cleanupDone) return;
       cleanupDone = true;
@@ -452,6 +470,7 @@ class DefaultRunOrchestrator implements RunOrchestrator {
         historyIssuesAvailable: history.available,
         evidence: [],
         blockingReasons: [],
+        runtimeBaseUrl: null,
         browserRequired: false,
         scenarioMode: this.options.configuration.getRepository().scenarioMode,
         initialization: input.initialization === true,
@@ -463,10 +482,38 @@ class DefaultRunOrchestrator implements RunOrchestrator {
           ),
       });
 
+      const registerRuntimeSecrets = (owner: RunRuntimeEnvironmentOwner | undefined) => {
+        for (const value of owner?.sensitiveValues ?? []) {
+          evidenceStore.registerSensitiveValue?.(value);
+        }
+      };
+
+      runtimeOwner = this.options.runtimeEnvironmentFactory
+        ? await this.options.runtimeEnvironmentFactory({
+            repository: prepared.repository,
+            runId: context.runId,
+            targetCommit: context.targetCommit,
+            signal: state.stopController?.signal,
+            onExitUnconfirmed: () =>
+              this.setPhase(
+                state,
+                state.phase,
+                '应用运行资源尚未确认退出；继续保留名额并核对',
+                'warning',
+              ),
+          })
+        : undefined;
+      registerRuntimeSecrets(runtimeOwner);
+
+      context.runtimeBaseUrl =
+        runtimeOwner?.baseUrl ??
+        (this.options.configuration.getRepository().baseUrl.trim() || null);
+
       context.capabilities = await collectRunCapabilities({
         runId: context.runId,
-        baseUrl: this.options.configuration.getRepository().baseUrl,
-        browserConfigured: this.options.browser?.isEnabled() ?? false,
+        baseUrl: runtimeOwner?.baseUrl ?? this.options.configuration.getRepository().baseUrl,
+        browserConfigured:
+          (runtimeOwner?.browserAvailable ?? true) && (this.options.browser?.isEnabled() ?? false),
         testData: this.options.testData ?? createTestDataManager(),
         configuration: this.options.capabilityConfiguration,
         checkEnvironment: this.options.checkEnvironment,
@@ -504,10 +551,45 @@ class DefaultRunOrchestrator implements RunOrchestrator {
         await this.finishScenarioReviewRun(state, workspace, context, closure);
         return;
       }
-      let runnerCleanup: { uploaded: boolean; uploadFailed: boolean } = {
-        uploaded: false,
-        uploadFailed: false,
-      };
+      const scenarioPatch = await readOptionalScenarioPatch(workspace);
+      if (scenarioPatch !== undefined && this.options.runtimeEnvironmentFactory) {
+        // The planning environment uses only the immutable target. Recreate it from
+        // the validated Run source before execution so the scenario patch never
+        // enters the reusable image while the tested application and command
+        // session observe the same source tree.
+        if (runtimeOwner) await runtimeOwner.close();
+        runtimeOwner = undefined;
+        runtimeOwner = await this.options.runtimeEnvironmentFactory({
+          repository: prepared.repository,
+          runId: context.runId,
+          targetCommit: context.targetCommit,
+          scenarioPatch,
+          signal: state.stopController?.signal,
+          onExitUnconfirmed: () =>
+            this.setPhase(
+              state,
+              state.phase,
+              '应用运行资源尚未确认退出；继续保留名额并核对',
+              'warning',
+            ),
+        });
+        registerRuntimeSecrets(runtimeOwner);
+        context.runtimeBaseUrl =
+          runtimeOwner.baseUrl ??
+          (this.options.configuration.getRepository().baseUrl.trim() || null);
+        context.capabilities = await collectRunCapabilities({
+          runId: context.runId,
+          baseUrl: runtimeOwner.baseUrl ?? this.options.configuration.getRepository().baseUrl,
+          browserConfigured:
+            runtimeOwner.browserAvailable && (this.options.browser?.isEnabled() ?? false),
+          testData: this.options.testData ?? createTestDataManager(),
+          configuration: this.options.capabilityConfiguration,
+          checkEnvironment: this.options.checkEnvironment,
+          signal: state.stopController?.signal,
+          now: this.now,
+        });
+        this.assertNotStopped();
+      }
       try {
         if (context.initialization) {
           await this.runRunner(
@@ -530,7 +612,7 @@ class DefaultRunOrchestrator implements RunOrchestrator {
         }
       } finally {
         try {
-          runnerCleanup = await this.finishRunner(state, workspace, context, evidenceStore);
+          await this.finishRunner(state, workspace, context, evidenceStore);
         } catch (error) {
           this.addBlockingReason(context, `Runner 收尾失败：${safeMessage(error)}`);
           await this.appendExecutionNotes(workspace, [
@@ -554,9 +636,6 @@ class DefaultRunOrchestrator implements RunOrchestrator {
         await this.appendExecutionNotes(workspace, [
           'Reviewer 未读取截图 evidence，无法完成独立视觉审核。',
         ]);
-      }
-      if (runnerCleanup.uploaded && !runnerCleanup.uploadFailed) {
-        await this.cleanupRetainedEvidence(workspace, context, evidenceStore);
       }
       const patchBeforeFinalMain = await readOptionalScenarioPatch(workspace);
       await this.runMainB(state, workspace, context);
@@ -601,6 +680,15 @@ class DefaultRunOrchestrator implements RunOrchestrator {
       this.markExecutionFailure(state, error);
     } finally {
       await finishCleanup();
+      if (runtimeOwner) {
+        try {
+          await runtimeOwner.close();
+        } catch {
+          state.errorMessage = [state.errorMessage, '应用运行资源清理失败或状态未知']
+            .filter(Boolean)
+            .join('；');
+        }
+      }
       await this.options.repository.cleanWorkspace().catch(() => undefined);
       if (state.stopRequestedAt && !state.completionCommitted) {
         state.status = 'interrupted';
@@ -747,8 +835,7 @@ class DefaultRunOrchestrator implements RunOrchestrator {
     context: RunContext,
     repository: GitRepository,
   ): Promise<void> {
-    const config = this.options.configuration.getRepository();
-    if (!isValidTestEnvironmentUrl(config.baseUrl.trim())) {
+    if (!context.runtimeBaseUrl || !isValidTestEnvironmentUrl(context.runtimeBaseUrl)) {
       this.addBlockingReason(context, '初始化所需的非生产测试环境基础 URL 未配置或无效');
     }
     try {
@@ -1176,7 +1263,10 @@ class DefaultRunOrchestrator implements RunOrchestrator {
         return { ...result, evidenceId };
       }),
       createRunnerEnvironmentTool(
-        this.options.configuration.getRepository(),
+        {
+          ...this.options.configuration.getRepository(),
+          baseUrl: context.runtimeBaseUrl ?? '',
+        },
         this.options.secretStore,
       ),
       ...createTestDataTools(
@@ -1192,10 +1282,10 @@ class DefaultRunOrchestrator implements RunOrchestrator {
         },
         context.capabilities?.accountStorage,
       ),
-      ...(evidenceStore && this.options.configuration.getRepository().baseUrl
+      ...(evidenceStore && context.runtimeBaseUrl
         ? createControlledHttpTools({
             signal: state.stopController?.signal,
-            baseUrl: this.options.configuration.getRepository().baseUrl,
+            baseUrl: context.runtimeBaseUrl,
             cleanupUrl: this.options.testDataCleanupUrl,
             runId: context.runId,
             getTestPassword: () => this.options.secretStore?.get('testPassword'),
@@ -1245,7 +1335,11 @@ class DefaultRunOrchestrator implements RunOrchestrator {
     ];
     const browserExtension =
       context.browserRequired && this.options.browser?.isEnabled()
-        ? this.options.browser.extension(workspace.evidenceDirectory)
+        ? this.options.browser.extension(
+            workspace.evidenceDirectory,
+            context.runtimeBaseUrl,
+            this.options.browserAllowedOrigins,
+          )
         : undefined;
     if (browserExtension) evidenceStore?.allowBrowserRecords?.();
     const commandSession = this.options.commandSessionFactory
@@ -1415,7 +1509,7 @@ class DefaultRunOrchestrator implements RunOrchestrator {
     if (!browser?.isEnabled()) {
       this.addBlockingReason(context, '计划包含 UI 场景，但 Playwright MCP 未启用');
     }
-    const baseUrl = this.options.configuration.getRepository().baseUrl.trim();
+    const baseUrl = context.runtimeBaseUrl?.trim() ?? '';
     if (baseUrl === '') {
       this.addBlockingReason(context, '计划包含 UI 场景，但测试环境基础 URL 未配置');
     } else if (!isValidTestEnvironmentUrl(baseUrl)) {
@@ -1584,25 +1678,6 @@ class DefaultRunOrchestrator implements RunOrchestrator {
       );
     }
     return `${message}\n\n${detail}`;
-  }
-
-  private async cleanupRetainedEvidence(
-    workspace: RunWorkspace,
-    context: RunContext,
-    evidenceStore: RunEvidenceStore | undefined,
-  ): Promise<void> {
-    if (!evidenceStore || this.options.configuration.getHarness().local.retentionDays !== 0) {
-      return;
-    }
-    try {
-      await evidenceStore.cleanupLocal();
-      await this.appendExecutionNotes(workspace, ['已按 retentionDays=0 清理本地 evidence。']);
-    } catch (error) {
-      this.addBlockingReason(context, `本地 evidence 清理失败：${safeMessage(error)}`);
-      await this.appendExecutionNotes(workspace, [
-        `本地 evidence 清理失败，保留本地文件：${safeMessage(error)}`,
-      ]);
-    }
   }
 
   private async appendExecutionNotes(

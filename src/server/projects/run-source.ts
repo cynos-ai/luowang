@@ -34,7 +34,9 @@ export async function prepareProjectRunSource(input: {
   targetCommit: string;
   scenarioPatch?: string;
   storageRoot: string;
+  signal?: AbortSignal;
 }): Promise<ProjectRunSource> {
+  input.signal?.throwIfAborted();
   if (!RUN_ID.test(input.runId)) throw new Error('Run ID 无效');
   const source = await prepareProjectCommitTree({
     repository: input.repository,
@@ -42,6 +44,7 @@ export async function prepareProjectRunSource(input: {
     targetCommit: input.targetCommit,
     storageRoot: input.storageRoot,
     sourceKind: 'run-sources',
+    signal: input.signal,
   });
   try {
     let scenarioPatchSha256: string | null = null;
@@ -50,24 +53,32 @@ export async function prepareProjectRunSource(input: {
       if (!input.scenarioPatch.endsWith('\n')) {
         throw new ScenarioPatchError('patch 缺少末尾换行');
       }
-      const before = await readScenarioFiles(source.directory);
+      const before = await readScenarioFiles(source.directory, input.signal);
       const patchPath = join(dirname(source.directory), 'changes.patch');
       await writeFile(patchPath, input.scenarioPatch, { mode: 0o600, flag: 'wx' });
       try {
         await execFileAsync(
           'git',
           ['apply', '--check', '--recount', '--whitespace=nowarn', patchPath],
-          { cwd: source.directory, windowsHide: true, maxBuffer: 64 * 1024 },
+          {
+            cwd: source.directory,
+            windowsHide: true,
+            maxBuffer: 64 * 1024,
+            signal: input.signal,
+          },
         );
         await execFileAsync('git', ['apply', '--recount', '--whitespace=nowarn', patchPath], {
           cwd: source.directory,
           windowsHide: true,
           maxBuffer: 64 * 1024,
+          signal: input.signal,
         });
       } catch {
+        input.signal?.throwIfAborted();
         throw new ScenarioPatchError('patch 无法应用到固定提交的 Run 源码');
       }
-      const after = await readScenarioFiles(source.directory);
+      input.signal?.throwIfAborted();
+      const after = await readScenarioFiles(source.directory, input.signal);
       validateScenarioContents(after, before, metadata.changes);
       scenarioPatchSha256 = createHash('sha256').update(input.scenarioPatch).digest('hex');
     }
@@ -85,10 +96,11 @@ export async function prepareProjectRunSource(input: {
   }
 }
 
-async function readScenarioFiles(root: string): Promise<Map<string, string>> {
+async function readScenarioFiles(root: string, signal?: AbortSignal): Promise<Map<string, string>> {
   const files = new Map<string, string>();
   const scenarioRoot = resolve(root, SCENARIO_DIRECTORY);
   const walk = async (directory: string): Promise<void> => {
+    signal?.throwIfAborted();
     const entries = await readdir(directory, { withFileTypes: true }).catch(
       (error: NodeJS.ErrnoException) => {
         if (error.code === 'ENOENT') return [];

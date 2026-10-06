@@ -18,6 +18,11 @@ import { createGuardedScopedSecretStore } from './guarded-secrets.js';
 import { ProjectImageAdminError, type ProjectImageAdminService } from './image-admin.js';
 import { invalidateProjectReadiness, type ProjectReadinessService } from './readiness.js';
 import { ProjectStoreError, type ProjectStore } from './store.js';
+import {
+  createConnectionResourceService,
+  type ConnectionResourceService,
+} from './connection-resources.js';
+import { createSshExecutionAdapter, readSshHostFingerprint } from './execution-adapter.js';
 
 type ProjectSecretKey = 'gitToken' | 'testUsername' | 'testPassword' | 'testDataCleanupToken';
 const PROJECT_SECRET_KEYS = new Set<ProjectSecretKey>([
@@ -36,6 +41,7 @@ export interface ProjectAdminRouteOptions {
   secrets: ScopedSecretStore;
   readiness: ProjectReadinessService;
   images: ProjectImageAdminService;
+  connectionResources?: ConnectionResourceService;
   allowedOrigin?: string;
   verifyRepository?: (
     repositoryUrl: string,
@@ -49,6 +55,9 @@ export async function registerProjectAdminRoutes(
   options: ProjectAdminRouteOptions,
 ): Promise<void> {
   const secrets = createGuardedScopedSecretStore(options.database, options.secrets);
+  const connectionResources =
+    options.connectionResources ??
+    createConnectionResourceService({ database: options.database, secrets });
   const verifyRepository =
     options.verifyRepository ??
     ((repositoryUrl: string, token: string | undefined) =>
@@ -65,6 +74,112 @@ export async function registerProjectAdminRoutes(
 
     routes.get('/api/projects', async () => ({ projects: options.projects.list() }));
 
+    routes.get('/api/connection-resources', async () => connectionResources.list());
+
+    routes.post('/api/connection-resources/github', async (request, reply) =>
+      reply.status(201).send({
+        credential: connectionResources.createGithubCredential(readGithubCredential(request.body)),
+      }),
+    );
+    routes.put<{ Params: { id: string } }>(
+      '/api/connection-resources/github/:id',
+      async (request) => ({
+        credential: connectionResources.updateGithubCredential(
+          request.params.id,
+          readRecord(request.body),
+        ),
+      }),
+    );
+    routes.delete<{ Params: { id: string } }>(
+      '/api/connection-resources/github/:id',
+      async (request) => {
+        connectionResources.deleteGithubCredential(request.params.id);
+        return { deleted: true };
+      },
+    );
+    routes.post<{ Params: { id: string } }>(
+      '/api/connection-resources/servers/:id/fingerprint',
+      async (request) => {
+        const server = connectionResources.executionServerConnection(request.params.id);
+        const fingerprint = await readSshHostFingerprint({
+          host: server.host,
+          port: server.port,
+          username: server.username,
+        });
+        return { fingerprint, confirmed: fingerprint === server.hostFingerprint };
+      },
+    );
+    routes.put<{ Params: { id: string } }>(
+      '/api/connection-resources/servers/:id/fingerprint',
+      async (request) => ({
+        server: connectionResources.confirmExecutionServerFingerprint(
+          request.params.id,
+          readRecord(request.body).fingerprint,
+        ),
+      }),
+    );
+    routes.post<{ Params: { id: string } }>(
+      '/api/connection-resources/servers/:id/check',
+      async (request) => {
+        const server = connectionResources.executionServerConnection(request.params.id);
+        if (!server.hostFingerprint) throw new ConfigurationError('请先核对并确认 SSH 主机指纹');
+        const adapter = await createSshExecutionAdapter({
+          locationId: `server:${server.id}`,
+          host: server.host,
+          port: server.port,
+          username: server.username,
+          password: server.password,
+          privateKey: server.privateKey,
+          passphrase: server.privateKeyPassphrase,
+          pinnedFingerprint: server.hostFingerprint,
+        });
+        try {
+          const [docker, compose, platform, disk] = await Promise.all([
+            adapter.execute('docker', ['version', '--format', '{{.Server.Version}}']),
+            adapter.execute('docker', ['compose', 'version', '--short']),
+            adapter.execute('docker', ['info', '--format', '{{.OSType}}/{{.Architecture}}']),
+            adapter.execute('docker', ['system', 'df', '--format', '{{json .}}']),
+          ]);
+          if ([docker, compose, platform, disk].some((result) => result.code !== 0))
+            throw new ConfigurationError('远程 Docker 或 Compose 检查失败');
+          return {
+            server: connectionResources.recordExecutionServerCheck(server.id, {
+              fingerprint: server.hostFingerprint,
+              capabilities: {
+                dockerVersion: docker.stdout.trim(),
+                composeVersion: compose.stdout.trim(),
+                platform: platform.stdout.trim(),
+                disk: disk.stdout.slice(0, 8192),
+              },
+            }),
+          };
+        } finally {
+          await adapter.close();
+        }
+      },
+    );
+    routes.post('/api/connection-resources/servers', async (request, reply) =>
+      reply.status(201).send({
+        server: connectionResources.createExecutionServer(readRecord(request.body)),
+      }),
+    );
+    routes.put<{ Params: { id: string } }>(
+      '/api/connection-resources/servers/:id',
+      async (request) => ({
+        server: connectionResources.updateExecutionServer(
+          request.params.id,
+          readRecord(request.body),
+        ),
+      }),
+    );
+    routes.delete<{ Params: { id: string } }>(
+      '/api/connection-resources/servers/:id',
+      async (request) => {
+        connectionResources.deleteExecutionServer(request.params.id);
+        return { deleted: true };
+      },
+    );
+
     routes.post('/api/projects', async (request, reply) => {
       const body = readRecord(request.body);
       if (
@@ -72,12 +187,35 @@ export async function registerProjectAdminRoutes(
         typeof body.repositoryUrl !== 'string' ||
         (body.gitToken !== undefined &&
           (typeof body.gitToken !== 'string' || body.gitToken.length === 0)) ||
-        Object.keys(body).some((key) => !['displayName', 'repositoryUrl', 'gitToken'].includes(key))
+        (body.githubCredentialId !== undefined && typeof body.githubCredentialId !== 'string') ||
+        (body.executionServerId !== undefined && typeof body.executionServerId !== 'string') ||
+        (body.newGithubCredential !== undefined &&
+          !isNewGithubCredential(body.newGithubCredential)) ||
+        Object.keys(body).some(
+          (key) =>
+            ![
+              'displayName',
+              'repositoryUrl',
+              'gitToken',
+              'githubCredentialId',
+              'newGithubCredential',
+              'executionServerId',
+            ].includes(key),
+        ) ||
+        [body.gitToken, body.githubCredentialId, body.newGithubCredential].filter(
+          (value) => value !== undefined,
+        ).length > 1
       ) {
         throw new AppError('PROJECT_INPUT_INVALID', '项目名称、仓库地址或凭据无效', 400);
       }
       parseGitHubRepository(body.repositoryUrl);
-      const token = body.gitToken as string | undefined;
+      const newCredential = body.newGithubCredential as { name: string; token: string } | undefined;
+      const token =
+        (body.gitToken as string | undefined) ??
+        newCredential?.token ??
+        (body.githubCredentialId
+          ? connectionResources.githubToken(body.githubCredentialId as string)
+          : undefined);
       let repository: VerifiedGitHubRepositoryIdentity;
       try {
         repository = await verifyRepository(body.repositoryUrl, token);
@@ -89,6 +227,9 @@ export async function registerProjectAdminRoutes(
         );
       }
       const project = options.database.transaction(() => {
+        const credentialId = newCredential
+          ? connectionResources.createGithubCredential(newCredential).id
+          : (body.githubCredentialId as string | undefined);
         const created = options.projects.createVerified({
           displayName: body.displayName as string,
           repository,
@@ -97,6 +238,13 @@ export async function registerProjectAdminRoutes(
           language: options.deployment.getHarness().language,
         });
         if (token) secrets.project(created.projectId).set('gitToken', token);
+        if (credentialId || body.executionServerId) {
+          connectionResources.bindProject(created.projectId, {
+            githubCredentialId: credentialId ?? null,
+            executionServerId: (body.executionServerId as string | undefined) ?? null,
+          });
+          if (credentialId) secrets.project(created.projectId).delete('gitToken');
+        }
         return options.projects.get(created.projectId)!;
       })();
       return reply.status(201).send({ project });
@@ -108,8 +256,67 @@ export async function registerProjectAdminRoutes(
         project,
         configuration: options.configuration.get(project.projectId),
         secrets: secrets.project(project.projectId).metadata(),
+        resources: connectionResources.bindings(project.projectId),
+        managedFiles: connectionResources.listProjectFiles(project.projectId),
       };
     });
+
+    routes.put<{ Params: { projectId: string } }>(
+      '/api/projects/:projectId/resources',
+      async (request) => {
+        const project = requireProject(options.projects, request.params.projectId);
+        const resources = connectionResources.bindProject(
+          project.projectId,
+          readResourceBindings(request.body),
+        );
+        invalidateProjectReadiness(options.database, project.projectId);
+        return { resources };
+      },
+    );
+
+    routes.get<{ Params: { projectId: string } }>(
+      '/api/projects/:projectId/files',
+      async (request) => ({
+        files: connectionResources.listProjectFiles(
+          requireProject(options.projects, request.params.projectId).projectId,
+        ),
+      }),
+    );
+    routes.post<{ Params: { projectId: string } }>(
+      '/api/projects/:projectId/files',
+      async (request, reply) => {
+        const project = requireProject(options.projects, request.params.projectId);
+        const file = connectionResources.createProjectFile(
+          project.projectId,
+          readRecord(request.body) as {
+            path: unknown;
+            content: unknown;
+            serviceName?: unknown;
+          },
+        );
+        return reply.status(201).send({ file });
+      },
+    );
+    routes.put<{ Params: { projectId: string; fileId: string } }>(
+      '/api/projects/:projectId/files/:fileId',
+      async (request) => ({
+        file: connectionResources.updateProjectFile(
+          requireProject(options.projects, request.params.projectId).projectId,
+          request.params.fileId,
+          readRecord(request.body),
+        ),
+      }),
+    );
+    routes.delete<{ Params: { projectId: string; fileId: string } }>(
+      '/api/projects/:projectId/files/:fileId',
+      async (request) => {
+        connectionResources.deleteProjectFile(
+          requireProject(options.projects, request.params.projectId).projectId,
+          request.params.fileId,
+        );
+        return { deleted: true };
+      },
+    );
 
     routes.put<{ Params: { projectId: string } }>(
       '/api/projects/:projectId/profile',
@@ -266,6 +473,44 @@ function readRecord(value: unknown): Record<string, unknown> {
     throw new AppError('BODY_INVALID', '请求体必须是 JSON 对象', 400);
   }
   return value as Record<string, unknown>;
+}
+
+function readGithubCredential(value: unknown): { name: unknown; token: unknown } {
+  const body = readRecord(value);
+  if (Object.keys(body).some((key) => !['name', 'token'].includes(key))) {
+    throw new AppError('CONNECTION_INPUT_INVALID', 'GitHub Token 配置包含未知字段', 400);
+  }
+  return { name: body.name, token: body.token };
+}
+
+function isNewGithubCredential(value: unknown): value is { name: string; token: string } {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const body = value as Record<string, unknown>;
+  return (
+    Object.keys(body).length === 2 &&
+    typeof body.name === 'string' &&
+    typeof body.token === 'string' &&
+    body.name.length > 0 &&
+    body.token.length > 0
+  );
+}
+
+function readResourceBindings(value: unknown): {
+  githubCredentialId?: string | null;
+  executionServerId?: string | null;
+} {
+  const body = readRecord(value);
+  if (
+    Object.keys(body).length === 0 ||
+    Object.keys(body).some((key) => !['githubCredentialId', 'executionServerId'].includes(key)) ||
+    [body.githubCredentialId, body.executionServerId].some(
+      (resourceId) =>
+        resourceId !== undefined && resourceId !== null && typeof resourceId !== 'string',
+    )
+  ) {
+    throw new AppError('CONNECTION_INPUT_INVALID', '项目连接资源配置无效', 400);
+  }
+  return body;
 }
 
 function requireProject(projects: ProjectStore, projectId: string) {

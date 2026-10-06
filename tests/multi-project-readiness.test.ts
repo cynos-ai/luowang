@@ -128,7 +128,10 @@ describe('project readiness and lifecycle', () => {
       assert.doesNotMatch(JSON.stringify(timedOut), /private-token-canary|private-message-canary/);
       assert.equal(readiness.latest(project.projectId)?.ready, false);
       gitTimeout = false;
-      config.update(project.projectId, { baseUrl: 'https://a.example' });
+      config.update(project.projectId, {
+        runtimeMode: 'external',
+        baseUrl: 'https://a.example',
+      });
       repositoryFailure = true;
       const inaccessible = await readiness.check(project.projectId);
       const repositoryCheck = inaccessible.checks.find((item) => item.id === 'repository');

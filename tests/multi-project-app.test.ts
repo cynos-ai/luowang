@@ -22,7 +22,8 @@ import { migrateProjectQueueContext } from '../src/server/db/migrations/0014-pro
 import { migrateProjectImageState } from '../src/server/db/migrations/0015-project-image-state.js';
 import { migrateProjectRunImage } from '../src/server/db/migrations/0016-project-run-image.js';
 import { migrateProjectReportIndexIdentity } from '../src/server/db/migrations/0017-project-report-index-identity.js';
-import { migrateRunTelemetry } from '../src/server/db/migrations/0020-run-telemetry.js';
+import { migrateConnectionResources } from '../src/server/db/migrations/0021-connection-resources.js';
+import { migrateExecutionRuntime } from '../src/server/db/migrations/0022-execution-runtime.js';
 import { createProjectApp } from '../src/server/projects/app.js';
 import { createProjectTestRequestQueue } from '../src/server/automation/queue.js';
 import { createProjectRunStore } from '../src/server/runs/store.js';
@@ -56,7 +57,8 @@ it('uses only new-schema administration routes, scoped Secrets, and the existing
   migrateProjectImageState(database.sqlite);
   migrateProjectRunImage(database.sqlite);
   migrateProjectReportIndexIdentity(database.sqlite);
-  migrateRunTelemetry(database.sqlite);
+  migrateConnectionResources(database.sqlite);
+  migrateExecutionRuntime(database.sqlite);
   database.sqlite
     .prepare(
       `INSERT INTO system_metadata (key, value, created_at, updated_at)
@@ -65,10 +67,12 @@ it('uses only new-schema administration routes, scoped Secrets, and the existing
     .run();
   let drains = 0;
   let archiveRetries = 0;
+  let dispatcherLimit = 2;
   let stalledRepository: GitRepository | null = null;
   const evidenceReads: Array<{ projectId: string; key: string }> = [];
   let activeRun: { projectId: string; run: RunSummary } | null = null;
   const backgroundEvents: string[] = [];
+  const dependencyEvents: string[] = [];
   const app = await createProjectApp({
     config,
     database,
@@ -96,7 +100,12 @@ it('uses only new-schema administration routes, scoped Secrets, and the existing
         assert.ok(queue);
         return queue;
       },
-      maxConcurrentProjects: 2,
+      get maxConcurrentProjects() {
+        return dispatcherLimit;
+      },
+      setMaxConcurrentProjects(limit) {
+        dispatcherLimit = limit;
+      },
       stop: async () => undefined,
       currentRuns: async () => (activeRun ? [activeRun] : []),
       getActiveRun: async (projectId, runId) =>
@@ -127,6 +136,14 @@ it('uses only new-schema administration routes, scoped Secrets, and the existing
         backgroundEvents.push('stop');
       },
     },
+    sharedDependencyMonitor: {
+      trigger: (ids) => dependencyEvents.push(`trigger:${ids.join(',')}`),
+      checkStale: async () => {},
+      start: () => dependencyEvents.push('start'),
+      stop: async () => {
+        dependencyEvents.push('stop');
+      },
+    },
     readinessDependencies: {
       verifyRepository: async (project) => ({
         githubRepositoryId: project.githubRepositoryId,
@@ -148,6 +165,7 @@ it('uses only new-schema administration routes, scoped Secrets, and the existing
   });
   try {
     assert.deepEqual(backgroundEvents, ['recover', 'start']);
+    assert.deepEqual(dependencyEvents, ['start']);
     assert.equal((await app.inject({ method: 'GET', url: '/api/projects' })).statusCode, 401);
     assert.equal(
       (await app.inject({ method: 'GET', url: '/api/provider/providers' })).statusCode,
@@ -193,6 +211,30 @@ it('uses only new-schema administration routes, scoped Secrets, and the existing
       '管理员',
     );
     assert.equal(
+      (await app.inject({ method: 'GET', url: '/api/system-settings', headers })).json().runtime
+        .maxConcurrentProjects,
+      2,
+    );
+    assert.equal(
+      (
+        await app.inject({
+          method: 'PUT',
+          url: '/api/system-settings',
+          headers,
+          payload: { maxConcurrentProjects: 3 },
+        })
+      ).json().runtime.maxConcurrentProjects,
+      3,
+    );
+    assert.equal(dispatcherLimit, 3);
+    assert.equal(
+      database.sqlite
+        .prepare("SELECT value FROM system_metadata WHERE key = 'runtime_max_concurrent_projects'")
+        .pluck()
+        .get(),
+      '3',
+    );
+    assert.equal(
       (
         await app.inject({
           method: 'PUT',
@@ -229,6 +271,34 @@ it('uses only new-schema administration routes, scoped Secrets, and the existing
     });
     assert.equal(deploymentSecret.statusCode, 200);
     assert.ok(!deploymentSecret.body.includes('provider-secret'));
+    assert.deepEqual(dependencyEvents, ['start', 'trigger:provider-model']);
+    const savedDeployment = (
+      await app.inject({ method: 'GET', url: '/api/deployment', headers })
+    ).json().configuration;
+    assert.equal(
+      (
+        await app.inject({
+          method: 'PUT',
+          url: '/api/deployment',
+          headers,
+          payload: { mcp: savedDeployment.mcp },
+        })
+      ).statusCode,
+      200,
+    );
+    assert.equal(dependencyEvents.at(-1), 'trigger:playwright-mcp');
+    assert.equal(
+      (
+        await app.inject({
+          method: 'PUT',
+          url: '/api/deployment',
+          headers,
+          payload: { oss: savedDeployment.oss },
+        })
+      ).statusCode,
+      200,
+    );
+    assert.equal(dependencyEvents.at(-1), 'trigger:oss');
     const created = await app.inject({
       method: 'POST',
       url: '/api/projects',
@@ -241,6 +311,71 @@ it('uses only new-schema administration routes, scoped Secrets, and the existing
     });
     assert.equal(created.statusCode, 201);
     const projectId = created.json().project.projectId;
+    const namedToken = await app.inject({
+      method: 'POST',
+      url: '/api/connection-resources/github',
+      headers,
+      payload: { name: '共享 GitHub', token: 'shared-project-secret' },
+    });
+    assert.equal(namedToken.statusCode, 201);
+    assert.doesNotMatch(namedToken.body, /shared-project-secret/);
+    const credentialId = namedToken.json().credential.id;
+    const server = await app.inject({
+      method: 'POST',
+      url: '/api/connection-resources/servers',
+      headers,
+      payload: {
+        name: 'Beta 服务器',
+        host: 'beta.example.test',
+        port: 22,
+        username: 'runner',
+        authType: 'private-key',
+        privateKey: 'test-private-key',
+      },
+    });
+    assert.equal(server.statusCode, 201);
+    assert.doesNotMatch(server.body, /test-private-key/);
+    const serverId = server.json().server.id;
+    assert.equal(
+      (
+        await app.inject({
+          method: 'PUT',
+          url: `/api/projects/${projectId}/resources`,
+          headers,
+          payload: { githubCredentialId: credentialId, executionServerId: serverId },
+        })
+      ).statusCode,
+      200,
+    );
+    const managedFile = await app.inject({
+      method: 'POST',
+      url: `/api/projects/${projectId}/files`,
+      headers,
+      payload: { path: 'config/beta.yml', content: 'secret: hidden-value' },
+    });
+    assert.equal(managedFile.statusCode, 201);
+    assert.doesNotMatch(managedFile.body, /hidden-value/);
+    for (const payload of [
+      { path: 'C:/config.env', content: 'invalid-path' },
+      { path: 'too-large.txt', content: '密'.repeat(90_000) },
+    ]) {
+      assert.equal(
+        (
+          await app.inject({
+            method: 'POST',
+            url: `/api/projects/${projectId}/files`,
+            headers,
+            payload,
+          })
+        ).statusCode,
+        400,
+      );
+    }
+    assert.equal(
+      (await app.inject({ method: 'GET', url: `/api/projects/${projectId}`, headers })).json()
+        .managedFiles[0].path,
+      'config/beta.yml',
+    );
     const stalled = createServer(() => {});
     const gitDirectory = await mkdtemp(join(tmpdir(), 'luowang-api-timeout-'));
     await new Promise<void>((done) => stalled.listen(0, '127.0.0.1', done));
@@ -313,6 +448,21 @@ it('uses only new-schema administration routes, scoped Secrets, and the existing
       (
         await app.inject({
           method: 'PUT',
+          url: `/api/connection-resources/servers/${serverId}`,
+          headers,
+          payload: { host: 'updated.example.test' },
+        })
+      ).statusCode,
+      200,
+    );
+    assert.deepEqual(
+      database.sqlite.prepare('SELECT project_id FROM project_connectivity_check_results').all(),
+      [{ project_id: projectB }],
+    );
+    assert.equal(
+      (
+        await app.inject({
+          method: 'PUT',
           url: '/api/deployment',
           headers,
           payload: { providerBaseUrl: 'https://provider.example.test' },
@@ -321,6 +471,7 @@ it('uses only new-schema administration routes, scoped Secrets, and the existing
       200,
     );
     assert.equal(projectReadinessRows(database.sqlite, 'deployment'), 0);
+    assert.equal(dependencyEvents.at(-1), 'trigger:provider-model');
     for (const id of [projectId, projectB]) {
       database.sqlite
         .prepare(
@@ -342,6 +493,7 @@ it('uses only new-schema administration routes, scoped Secrets, and the existing
       200,
     );
     assert.equal(projectReadinessRows(database.sqlite, 'deployment'), 0);
+    assert.equal(dependencyEvents.at(-1), 'trigger:provider-model');
     const activeId = '01ARZ3NDEKTSV4RRFFQ69G5FAV';
     activeRun = {
       projectId,
@@ -1037,6 +1189,7 @@ it('uses only new-schema administration routes, scoped Secrets, and the existing
   } finally {
     await app.close();
     assert.deepEqual(backgroundEvents, ['recover', 'start', 'stop']);
+    assert.equal(dependencyEvents.at(-1), 'stop');
   }
 });
 

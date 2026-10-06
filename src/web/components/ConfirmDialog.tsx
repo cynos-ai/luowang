@@ -1,10 +1,13 @@
 import { useEffect, useRef } from 'react';
 
+import { Button } from './Button';
+
 export function ConfirmDialog({
   open,
   title,
   message,
   confirmLabel = '确认',
+  cancelLabel = '返回',
   danger = false,
   error,
   onConfirm,
@@ -14,6 +17,7 @@ export function ConfirmDialog({
   title: string;
   message: string;
   confirmLabel?: string;
+  cancelLabel?: string;
   danger?: boolean;
   error?: string;
   onConfirm: () => void;
@@ -39,16 +43,12 @@ export function ConfirmDialog({
       <p>{message}</p>
       {error && <p role="alert">{error}</p>}
       <div className="dialog-actions">
-        <button className="button button-secondary" type="button" onClick={onClose}>
-          返回
-        </button>
-        <button
-          className={`button${danger ? ' button-danger' : ''}`}
-          type="button"
-          onClick={onConfirm}
-        >
+        <Button variant="secondary" type="button" onClick={onClose}>
+          {cancelLabel}
+        </Button>
+        <Button variant={danger ? 'danger' : 'default'} type="button" onClick={onConfirm}>
           {confirmLabel}
-        </button>
+        </Button>
       </div>
     </dialog>
   );

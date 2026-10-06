@@ -10,7 +10,7 @@ import { PageHeading } from '../components/PageHeading';
 import { StatusLabel } from '../components/StatusLabel';
 import { RunTelemetryPanel } from '../components/RunTelemetryPanel';
 
-const workspaceError = (cause: unknown) => toUserMessage(cause, '工作台读取失败');
+const workspaceError = (cause: unknown) => toUserMessage(cause, '总览读取失败');
 
 export function WorkspacePage() {
   const load = useCallback(
@@ -25,7 +25,7 @@ export function WorkspacePage() {
   const value = resource.value;
   return (
     <section className="page-content workspace-page">
-      <PageHeading title="工作台" scope="全局" />
+      <PageHeading title="总览" scope="全局" />
       <AsyncRegion
         loading={resource.loading && !value}
         error={!value ? resource.error : ''}
@@ -93,13 +93,13 @@ function AttentionList({ workspace }: { workspace: WorkspaceResponse }) {
 }
 
 function ActiveRun({ workspace }: { workspace: WorkspaceResponse }) {
+  const activeClassName = workspace.activeRuns.length
+    ? 'content-block active-run-block has-active-run'
+    : 'content-block active-run-block';
   return (
-    <section className="content-block active-run-block" aria-labelledby="active-run-title">
+    <section className={activeClassName} aria-labelledby="active-run-title">
       <div className="content-block-heading">
         <h2 id="active-run-title">当前执行</h2>
-        <StatusLabel tone={workspace.capacity.occupied ? 'running' : 'neutral'}>
-          {workspace.capacity.occupied}/{workspace.capacity.limit} 个项目正在处理
-        </StatusLabel>
       </div>
       {workspace.activeRuns.length === 0 ? (
         <p className="empty-line">当前没有正在执行的测试。</p>

@@ -75,7 +75,7 @@ describe('project command container', () => {
     },
   );
 
-  it('checks image ownership, shares the command allowlist, and binds every command to one Run', async () => {
+  it('checks image ownership, permits project shell commands, and binds every command to one Run', async () => {
     const calls: string[][] = [];
     const docker: DockerRuntime = {
       async run(args): Promise<DockerRuntimeResult> {
@@ -119,19 +119,16 @@ describe('project command container', () => {
     assert.equal(result.stdout, 'v24.0.0\n');
     assert.deepEqual(result.environmentKeys, ['LUOWANG_RUN_ID', 'LUOWANG_TARGET_COMMIT']);
     const exec = calls.find((args) => args[0] === 'exec')!;
-    assert.deepEqual(exec.slice(-2), ['node', '--version']);
+    assert.deepEqual(exec.slice(-3), ['/bin/sh', '-lc', 'node --version']);
     assert.ok(exec.includes('/luowang-source'));
     assert.ok(exec.includes(`LUOWANG_RUN_ID=${RUN}`));
     assert.ok(exec.includes(`LUOWANG_TARGET_COMMIT=${COMMIT}`));
-    await assert.rejects(
-      () => session.run('node -e "process.exit(0)"', commandOptions()),
-      /内联代码/,
-    );
+    await session.run('node -e "process.exit(0)" && echo complete', commandOptions());
     await assert.rejects(
       () => session.run('node --version', { ...commandOptions(), runId: 'other' }),
       /上下文不符/,
     );
-    assert.equal(calls.filter((args) => args[0] === 'exec').length, 1);
+    assert.equal(calls.filter((args) => args[0] === 'exec').length, 2);
     await session.close();
     await session.close();
     assert.equal(calls.filter((args) => args[0] === 'rm').length, 1);

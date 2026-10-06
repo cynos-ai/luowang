@@ -42,6 +42,7 @@ export interface RunInput {
 
 export interface RunContext {
   capabilities?: RunCapabilities;
+  runtimeBaseUrl: string | null;
   runId: string;
   request: string;
   trigger: RunTrigger;

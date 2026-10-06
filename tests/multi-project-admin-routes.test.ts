@@ -7,12 +7,14 @@ import { describe, it } from 'vitest';
 
 import { createProjectTestRequestQueue } from '../src/server/automation/queue.js';
 import { GitHubApiError } from '../src/server/repository/github.js';
-import { runMigrations } from '../src/server/db/migrate.js';
+import { ensureSystemMetadata, runMigrations } from '../src/server/db/migrate.js';
 import { projectIdentityMigration } from '../src/server/db/migrations/0009-project-identity.js';
 import { migrateLegacyRunOwnership } from '../src/server/db/migrations/0011-project-run-ownership.js';
 import { migrateLegacyConfigurationOwnership } from '../src/server/db/migrations/0012-project-configuration-ownership.js';
 import { migrateProjectQueueContext } from '../src/server/db/migrations/0014-project-queue-context.js';
 import { migrateProjectImageState } from '../src/server/db/migrations/0015-project-image-state.js';
+import { migrateConnectionResources } from '../src/server/db/migrations/0021-connection-resources.js';
+import { migrateExecutionRuntime } from '../src/server/db/migrations/0022-execution-runtime.js';
 import { registerProjectAdminRoutes } from '../src/server/projects/admin-routes.js';
 import { createProjectConfigurationStore } from '../src/server/projects/configuration.js';
 import { createDeploymentConfigurationStore } from '../src/server/projects/deployment-configuration.js';
@@ -180,7 +182,7 @@ describe('project administration routes', () => {
             method: 'PUT',
             url: `/api/projects/${a.projectId}/configuration`,
             headers: cookie,
-            payload: { baseUrl: 'https://a.example' },
+            payload: { runtimeMode: 'external', baseUrl: 'https://a.example' },
           })
         ).statusCode,
         200,
@@ -366,11 +368,14 @@ function setupDatabase(): Database.Database {
   const database = new Database(':memory:');
   database.pragma('foreign_keys = ON');
   runMigrations(database);
+  ensureSystemMetadata(database, { appVersion: 'test' });
   runMigrations(database, [projectIdentityMigration]);
   migrateLegacyRunOwnership(database, null);
   migrateLegacyConfigurationOwnership(database, null);
   migrateProjectQueueContext(database);
   migrateProjectImageState(database);
+  migrateConnectionResources(database);
+  migrateExecutionRuntime(database);
   return database;
 }
 

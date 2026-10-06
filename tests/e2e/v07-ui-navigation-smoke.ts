@@ -31,7 +31,15 @@ const server = createServer(async (request, response) => {
   const bytes = await readFile(path);
   const extension = extname(path);
   const contentType =
-    extension === '.js' ? 'text/javascript' : extension === '.css' ? 'text/css' : 'text/html';
+    extension === '.js'
+      ? 'text/javascript'
+      : extension === '.css'
+        ? 'text/css'
+        : extension === '.png'
+          ? 'image/png'
+          : extension === '.ico'
+            ? 'image/x-icon'
+            : 'text/html';
   response.writeHead(200, { 'content-type': contentType }).end(bytes);
 });
 await new Promise<void>((done) => server.listen(0, '127.0.0.1', done));
@@ -65,6 +73,18 @@ try {
   assert.equal(new URL(page.url()).pathname, `/projects/${project.projectId}/overview`);
   assert.equal(new URL(page.url()).hash, '');
   await page.getByRole('region', { name: '当前项目' }).getByText(project.displayName).waitFor();
+  const brandLink = page.getByRole('link', { name: '罗网工作台', exact: true });
+  assert.equal(await brandLink.getAttribute('href'), '/workspace');
+  await brandLink.locator('img').evaluate((image: HTMLImageElement) => image.decode());
+  const userMenu = page.locator('.operator-menu');
+  assert.equal(await userMenu.locator('.operator-avatar').textContent(), '管');
+  await userMenu.locator('summary').click();
+  assert.notEqual(await userMenu.getAttribute('open'), null);
+  await page.keyboard.press('Escape');
+  assert.equal(await userMenu.getAttribute('open'), null);
+  await userMenu.locator('summary').click();
+  await page.locator('.lw-header').click({ position: { x: 5, y: 5 } });
+  assert.equal(await userMenu.getAttribute('open'), null);
 
   await page.getByRole('link', { name: '项目', exact: true }).click();
   await page.getByRole('heading', { name: '项目', exact: true }).waitFor();
@@ -83,7 +103,7 @@ try {
   await page.keyboard.press('Tab');
   await page.keyboard.press('Tab');
   await page.keyboard.press('Tab');
-  assert.equal(await page.evaluate(() => document.activeElement?.textContent?.trim()), '工作台');
+  assert.equal(await page.evaluate(() => document.activeElement?.textContent?.trim()), '总览');
   await page.keyboard.press('Tab');
   assert.equal(await page.evaluate(() => document.activeElement?.textContent?.trim()), '项目');
   await page.keyboard.press('Enter');
@@ -91,9 +111,8 @@ try {
 
   const projectRoot = `/projects/${project.projectId}`;
   const stableRoutes: Array<[string, string]> = [
-    ['/workspace', '工作台'],
+    ['/workspace', '总览'],
     ['/projects', '项目'],
-    ['/projects/new', '接入项目'],
     ['/system', '系统状态'],
     ['/settings/models', '全局设置'],
     ['/settings/browser', '全局设置'],
@@ -121,6 +140,14 @@ try {
     await page.getByRole('heading', { level: 1, name: title, exact: true }).waitFor();
     assert.equal(await page.locator('h1').count(), 1);
   }
+
+  await page.goto(`${origin}/projects/new`);
+  await page.getByRole('heading', { level: 1, name: '项目', exact: true }).waitFor();
+  const onboardingDialog = page.getByRole('dialog');
+  await onboardingDialog.getByRole('heading', { name: '连接仓库', exact: true }).waitFor();
+  assert.equal(await page.locator('h1').count(), 1);
+  await onboardingDialog.getByRole('button', { name: '关闭', exact: true }).click();
+  await page.waitForURL(`${origin}/projects`);
 
   await page.goto(`${origin}/settings/credentials`);
   await page.getByRole('heading', { level: 1, name: '全局设置', exact: true }).waitFor();

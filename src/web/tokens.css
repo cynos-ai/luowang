@@ -16,6 +16,16 @@
   --lw-page-pad: clamp(20px, 3vw, 44px);
   --lw-panel-pad: clamp(18px, 2vw, 28px);
   --lw-gap: clamp(14px, 1.5vw, 22px);
+  --lw-stripe-on-dark: repeating-linear-gradient(
+    -16deg,
+    transparent 0 42px,
+    rgb(255 255 255 / 4%) 43px 45px
+  );
+  --lw-stripe-on-paper: repeating-linear-gradient(
+    -16deg,
+    transparent 0 16px,
+    rgb(7 7 7 / 12%) 17px 19px
+  );
   color: var(--lw-ink);
   background: var(--lw-canvas);
   font-family: var(--lw-body);
@@ -33,11 +43,7 @@ body,
 
 body {
   background-color: var(--lw-canvas);
-  background-image: repeating-linear-gradient(
-    -16deg,
-    transparent 0 42px,
-    rgb(255 255 255 / 4%) 43px 45px
-  );
+  background-image: var(--lw-stripe-on-dark);
 }
 
 button,
