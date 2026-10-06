@@ -40,19 +40,23 @@
   z-index: -1;
   top: 0;
   bottom: 0;
-  left: 140px;
+  left: 164px;
   width: min(52vw, 760px);
   background: var(--lw-red);
   clip-path: polygon(0 0, 95% 0, 100% 72%, 0 100%);
+  pointer-events: none;
   content: '';
 }
 
+/* The approved artwork owns the logo geometry; never skew, crop, or recolor it. */
 .wordmark {
   position: relative;
-  display: block;
-  width: 166px;
-  height: 76px;
-  color: #fff;
+  display: inline-flex;
+  width: 196px;
+  height: 86px;
+  align-items: center;
+  justify-content: center;
+  padding: 10px 16px;
   isolation: isolate;
   text-decoration: none;
 }
@@ -60,6 +64,7 @@
 .wordmark::before,
 .wordmark::after {
   position: absolute;
+  pointer-events: none;
   content: '';
 }
 
@@ -80,59 +85,48 @@
   clip-path: polygon(8% 0, 100% 16%, 90% 100%, 0 78%);
 }
 
-.wordmark-cn {
-  position: absolute;
-  top: 8px;
-  left: 17px;
-  font-family: var(--lw-display);
-  font-size: 35px;
-  font-weight: 900;
-  letter-spacing: -0.1em;
-  line-height: 1;
-  transform: skew(-5deg);
+.brand-logo {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  object-fit: contain;
 }
 
-.wordmark-cn-second {
-  position: relative;
-  top: 3px;
-  left: 2px;
+.brand-logo--header {
+  width: 188px;
 }
 
-.wordmark-en {
-  position: absolute;
-  right: 20px;
-  bottom: 10px;
-  font-family: var(--lw-mono);
-  font-size: 10px;
-  font-weight: 800;
-  letter-spacing: 0.22em;
+.brand-logo--hero {
+  width: 320px;
 }
 
 .login-wordmark {
-  display: flex;
-  align-items: baseline;
-  gap: 9px;
-  padding: 11px 20px;
-  border: 4px solid var(--lw-ink);
-  background: var(--lw-ink);
-  color: #fff;
-  clip-path: polygon(0 8px, 8px 0, 100% 0, calc(100% - 7px) 100%, 0 100%);
-  transform: rotate(-1.5deg);
+  width: min(320px, 100%);
+  justify-self: center;
 }
 
-.login-wordmark strong {
-  font-family: var(--lw-display);
-  font-size: 40px;
-  font-stretch: condensed;
-  font-weight: 900;
-  letter-spacing: -0.08em;
+@media (max-width: 1000px) {
+  .lw-header::before {
+    left: 140px;
+  }
+
+  .wordmark {
+    width: 176px;
+    height: 78px;
+  }
+
+  .brand-logo--header {
+    width: 160px;
+  }
 }
 
-.login-wordmark span {
-  font-family: var(--lw-mono);
-  font-size: 10px;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
+@media (max-width: 820px) {
+  .lw-header::before {
+    top: auto;
+    left: 0;
+    width: 82%;
+    height: 60px;
+  }
 }
 
 .global-nav,
@@ -168,11 +162,53 @@
 }
 
 .operator-menu summary {
-  padding: 10px 12px;
-  border: 3px solid var(--lw-ink);
-  background: var(--lw-paper);
+  position: relative;
+  display: grid;
+  width: 50px;
+  height: 42px;
+  padding: 0;
+  place-items: center;
+  border: 0;
+  background: transparent;
+  color: #fff;
   cursor: pointer;
+  isolation: isolate;
   list-style: none;
+  filter: drop-shadow(4px 4px 0 var(--lw-red));
+  transform: rotate(-1deg);
+}
+
+.operator-menu summary::before {
+  position: absolute;
+  z-index: -1;
+  inset: 0;
+  background: var(--lw-ink);
+  clip-path: polygon(6px 0, 100% 4px, calc(100% - 7px) 100%, 0 calc(100% - 5px));
+  pointer-events: none;
+  content: '';
+}
+
+.operator-menu[open] summary,
+.operator-menu summary:hover {
+  transform: translate(-1px, -1px);
+  filter: drop-shadow(6px 6px 0 var(--lw-red));
+}
+
+.operator-avatar {
+  font-family: var(--lw-mono);
+  font-size: 16px;
+  font-weight: 900;
+}
+
+.operator-presence {
+  position: absolute;
+  right: 1px;
+  bottom: 0;
+  width: 11px;
+  height: 11px;
+  border: 2px solid var(--lw-ink);
+  border-radius: 50%;
+  background: var(--lw-green);
 }
 
 .operator-menu summary::-webkit-details-marker {

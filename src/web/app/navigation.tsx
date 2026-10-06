@@ -29,11 +29,13 @@ export function AppLink({
   children,
   className,
   current,
+  'aria-label': ariaLabel,
 }: {
   to: NavigableRoute;
   children: ReactNode;
   className?: string;
   current?: boolean;
+  'aria-label'?: string;
 }) {
   const navigation = useNavigation();
   const href = appPath(to);
@@ -56,6 +58,7 @@ export function AppLink({
       className={className}
       href={href}
       aria-current={current ? 'page' : undefined}
+      aria-label={ariaLabel}
       onClick={onClick}
     >
       {children}
