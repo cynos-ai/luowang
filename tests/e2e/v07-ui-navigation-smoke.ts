@@ -93,7 +93,7 @@ try {
   const stableRoutes: Array<[string, string]> = [
     ['/workspace', '总览'],
     ['/projects', '项目'],
-    ['/projects/new', '接入项目'],
+    ['/projects/new', '接入新项目'],
     ['/system', '系统状态'],
     ['/settings/models', '全局设置'],
     ['/settings/browser', '全局设置'],

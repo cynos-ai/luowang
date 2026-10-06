@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type FormEvent, type ReactNode } from 'react';
+import { useCallback, useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
 
 import { requestJson, toUserMessage } from '../../api';
 import { AppLink, useNavigationBlocker } from '../../app/navigation';
@@ -106,9 +106,11 @@ export function ProjectSettingsPage({
           JSON.stringify(sectionValue(section, data.detail.configuration))) ||
       Object.values(secrets).some(Boolean)),
   );
+  const navigationState = useRef({ busy: false, dirty: false });
+  navigationState.current = { busy: Boolean(busy), dirty };
   const blocker = useCallback(() => {
-    if (busy) return false;
-    if (!dirty) return null;
+    if (navigationState.current.busy) return false;
+    if (!navigationState.current.dirty) return null;
     return {
       title: '放弃未保存修改？',
       message: '当前页面的修改尚未保存。离开后，这些修改将丢失。',
@@ -116,7 +118,7 @@ export function ProjectSettingsPage({
       cancelLabel: '继续编辑',
       danger: true,
     };
-  }, [busy, dirty]);
+  }, []);
   useNavigationBlocker(dirty || Boolean(busy) ? blocker : null);
 
   useEffect(() => {
@@ -128,6 +130,7 @@ export function ProjectSettingsPage({
   }, [projectId, section]);
 
   async function action(label: string, operation: () => Promise<unknown>, clear: () => void) {
+    navigationState.current.busy = true;
     setBusy(label);
     setMessage('');
     setError('');
@@ -135,8 +138,11 @@ export function ProjectSettingsPage({
       await operation();
       clear();
       resource.reload();
+      navigationState.current = { busy: false, dirty: false };
+      setBusy('');
       setMessage(`${label}。已保存不代表连通或就绪，请前往运行准备检查。`);
     } catch (cause) {
+      navigationState.current.busy = false;
       setError(toUserMessage(cause, `${label}失败`));
     } finally {
       setBusy('');

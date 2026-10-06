@@ -236,28 +236,23 @@
 
 .project-context {
   position: relative;
-  display: grid;
-  grid-template-columns: minmax(220px, 1fr) auto;
-  align-items: end;
-  gap: 18px;
-  margin: 10px 24px 0;
-  padding: 20px 26px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  padding: 10px 34px;
   overflow: hidden;
-  border: 4px solid var(--lw-ink);
-  background: var(--lw-ink);
-  color: #fff;
-  transform: rotate(-0.35deg);
+  border-bottom: 3px solid var(--lw-ink);
+  background: var(--lw-paper);
+  color: var(--lw-ink);
 }
 
 .project-context::before {
   position: absolute;
-  top: -60px;
-  right: 12%;
-  width: 28%;
-  height: 180px;
+  inset: 0 auto 0 0;
+  width: 8px;
   background: var(--lw-red);
   content: '';
-  transform: rotate(13deg);
 }
 
 .project-context > * {
@@ -269,16 +264,26 @@
   margin: 0;
 }
 
+.project-context-title {
+  display: flex;
+  min-width: 220px;
+  align-items: baseline;
+  gap: 10px;
+}
+
+.project-context-title .scope-label {
+  margin: 0;
+}
+
 .project-context h2 {
   font-family: var(--lw-display);
-  font-size: 23px;
+  font-size: 19px;
   font-weight: 900;
 }
 
 .project-context p {
-  margin-top: 5px;
   font-family: var(--lw-mono);
-  font-size: 11px;
+  font-size: 10px;
   overflow-wrap: anywhere;
 }
 
@@ -292,12 +297,14 @@
 }
 
 .project-link {
-  color: #fff;
+  padding: 8px 12px;
+  color: var(--lw-ink);
+  font-size: 14px;
 }
 
 .project-link[aria-current='page'] {
-  background: #fff;
-  color: var(--lw-ink);
+  background: var(--lw-ink);
+  color: #fff;
   clip-path: polygon(5px 0, 100% 2px, calc(100% - 5px) 100%, 0 calc(100% - 2px));
   transform: rotate(-1deg);
 }

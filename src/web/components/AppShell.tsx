@@ -64,7 +64,7 @@ export function AppShell({
             to={{ name: 'global-settings', section: 'models' }}
             current={route.name === 'global-settings'}
           >
-            设置
+            全局设置
           </AppLink>
         </nav>
         <details className="operator-menu" key={route.name} ref={operatorMenu}>
@@ -130,7 +130,7 @@ function ProjectContext({
           to={{ name: 'project-settings', projectId, section: 'general' }}
           current={route.name === 'project-settings'}
         >
-          设置
+          项目设置
         </AppLink>
       </nav>
     </section>

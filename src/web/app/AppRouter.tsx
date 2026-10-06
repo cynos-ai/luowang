@@ -364,7 +364,7 @@ function pageCopy(route: Exclude<AppRoute, { name: 'not-found' }>): {
     case 'projects':
       return { title: '项目', scope: '全局', description: '查看和管理已接入项目。' };
     case 'project-new':
-      return { title: '接入项目', scope: '全局', description: '连接仓库并完成运行准备。' };
+      return { title: '接入新项目', scope: '全局', description: '验证仓库后进入统一项目设置。' };
     case 'system':
       return { title: '系统状态', scope: '全局', description: '查看依赖和本地资源状态。' };
     case 'global-settings':

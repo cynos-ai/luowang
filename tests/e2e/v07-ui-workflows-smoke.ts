@@ -24,6 +24,7 @@ const newProject = {
 };
 const projectAConfiguration = {
   language: 'zh-CN',
+  browserAllowedOrigins: [],
   scenarioBranch: 'scenario-testing',
   scenarioMode: 'autonomous',
   scenarioLabels: ['core'],
@@ -35,9 +36,24 @@ const projectAConfiguration = {
   externalDatabase: '',
   testDataCleanupUrl: '',
   executionDockerfile: 'Dockerfile',
+  runtimeMode: 'external',
+  startType: 'single-container',
+  runtime: {
+    workingDirectory: '.',
+    prepareCommand: [],
+    startCommand: [],
+    servicePort: null,
+    healthPath: '/',
+    healthTimeoutSeconds: 60,
+    composeFile: 'compose.yml',
+    composeServices: [],
+    applicationService: '',
+    commandService: '',
+  },
 };
 const configuration = {
   language: 'zh-CN',
+  browserAllowedOrigins: [],
   scenarioBranch: 'scenario-testing',
   scenarioMode: 'autonomous',
   scenarioLabels: [],
@@ -49,6 +65,20 @@ const configuration = {
   externalDatabase: '',
   testDataCleanupUrl: '',
   executionDockerfile: '',
+  runtimeMode: 'managed',
+  startType: 'single-container',
+  runtime: {
+    workingDirectory: '.',
+    prepareCommand: [],
+    startCommand: [],
+    servicePort: null,
+    healthPath: '/',
+    healthTimeoutSeconds: 60,
+    composeFile: 'compose.yml',
+    composeServices: [],
+    applicationService: '',
+    commandService: '',
+  },
 };
 const secrets = {
   gitToken: { configured: false, masked: null },
@@ -855,41 +885,42 @@ try {
   await page.getByLabel('GitHub 仓库地址').fill('https://github.com/cynos-ai/synthetic-onboarding');
   await page.getByRole('combobox', { name: 'GitHub Token', exact: true }).click();
   await page.getByRole('option', { name: '合成共享 Token', exact: true }).click();
-  await page.getByRole('button', { name: '验证仓库并继续' }).click();
-  await page.getByRole('heading', { name: '配置测试' }).waitFor();
-  assert.equal(new URL(page.url()).searchParams.get('projectId'), newProject.projectId);
+  await page.getByRole('button', { name: '验证仓库并进入项目设置' }).click();
+  await page.getByRole('heading', { name: '测试策略' }).waitFor();
+  assert.equal(new URL(page.url()).pathname, `/projects/${newProject.projectId}/settings/testing`);
   assert.equal((await page.locator('body').innerText()).includes('synthetic-secret-token'), false);
 
   await page.getByRole('combobox', { name: '语言', exact: true }).click();
   await page.getByRole('option', { name: 'English', exact: true }).click();
-  await page.getByRole('button', { name: '保存测试配置' }).click();
-  await page.getByText('保存测试配置完成').waitFor();
-  await page.getByRole('textbox', { name: /^测试环境地址/ }).fill('https://synthetic.example.test');
-  await page.getByRole('button', { name: '保存环境配置' }).click();
-  await page.getByText('保存环境配置完成').waitFor();
+  await page.getByRole('button', { name: '保存测试策略' }).click();
+  await page.getByText(/项目配置已保存/).waitFor();
+  await page.getByRole('link', { name: '测试环境', exact: true }).click();
+  await page.getByLabel('非生产环境 URL').fill('https://synthetic.example.test');
+  await page.getByRole('button', { name: '保存测试环境' }).click();
+  await page.getByText(/项目配置已保存/).waitFor();
 
-  const onboardingAccount = page.locator('#onboarding-step-3').getByLabel(/^测试账号/);
-  await onboardingAccount.fill('synthetic-user');
-  await onboardingAccount
-    .locator('xpath=ancestor::div[contains(@class,"secret-editor")]')
-    .getByRole('button', { name: '保存' })
-    .click();
-  await page.getByText('保存测试账号（可选）完成').waitFor();
+  await page.getByRole('link', { name: '凭据', exact: true }).click();
+  const accountRow = page
+    .getByRole('heading', { name: '测试账号', exact: true })
+    .locator('xpath=ancestor::section[contains(@class,"credential-row")]');
+  await accountRow.getByLabel('新测试账号').fill('synthetic-user');
+  await accountRow.getByRole('button', { name: '更新' }).click();
+  await page.getByText(/测试账号已保存/).waitFor();
   assert.equal((await page.locator('body').innerText()).includes('synthetic-user'), false);
 
-  await page.getByRole('button', { name: '准备执行镜像' }).click();
+  await page.getByRole('link', { name: '运行准备', exact: true }).click();
+  await page.getByRole('button', { name: '准备或重建镜像' }).click();
+  await page.getByRole('dialog').getByRole('button', { name: '确认准备镜像' }).click();
   await page.getByText('准备执行镜像完成').waitFor();
   await page.reload();
-  await page.getByRole('heading', { name: '准备并启用' }).waitFor();
-  assert.equal(new URL(page.url()).searchParams.get('projectId'), newProject.projectId);
+  await page.getByRole('heading', { name: '仓库与同步' }).waitFor();
   assert.equal(resumeCalls, 0);
-  await page.getByRole('button', { name: '运行全部检查' }).click();
+  await page.getByRole('button', { name: '重新检查' }).click();
   await page.getByText('运行准备检查完成').waitFor();
   assert.equal(resumeCalls, 0);
-  await page.getByRole('button', { name: '明确启用项目' }).click();
+  await page.getByRole('button', { name: '启用项目' }).click();
   await page.getByText('启用项目完成').waitFor();
   assert.equal(resumeCalls, 1);
-  await page.getByRole('button', { name: '项目已启用' }).waitFor();
 
   await page.goto(`${origin}/projects/${projects[0].projectId}/overview`);
   await page

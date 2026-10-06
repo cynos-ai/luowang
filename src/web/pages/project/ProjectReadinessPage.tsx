@@ -71,20 +71,42 @@ export function ProjectReadinessPage({ projectId }: { projectId: string }) {
         title="运行准备"
         scope="当前项目"
         actions={
-          <button
-            className="button"
-            type="button"
-            disabled={Boolean(busy)}
-            onClick={() =>
-              void action(
-                '运行准备检查',
-                () => requestJson(`/api/projects/${projectId}/readiness/check`, { method: 'POST' }),
-                readiness.reload,
-              )
-            }
-          >
-            {busy === '运行准备检查' ? '检查中…' : '重新检查'}
-          </button>
+          <div className="page-actions">
+            <button
+              className="button button-secondary"
+              type="button"
+              disabled={Boolean(busy)}
+              onClick={() =>
+                void action(
+                  '运行准备检查',
+                  () =>
+                    requestJson(`/api/projects/${projectId}/readiness/check`, { method: 'POST' }),
+                  readiness.reload,
+                )
+              }
+            >
+              {busy === '运行准备检查' ? '检查中…' : '重新检查'}
+            </button>
+            {project?.status === 'paused' && (
+              <button
+                className="button"
+                type="button"
+                disabled={Boolean(busy) || readiness.value?.status !== 'ready'}
+                onClick={() =>
+                  void action(
+                    '启用项目',
+                    () => requestJson(`/api/projects/${projectId}/resume`, { method: 'POST' }),
+                    () => {
+                      detail.reload();
+                      readiness.reload();
+                    },
+                  )
+                }
+              >
+                {busy === '启用项目' ? '启用中…' : '启用项目'}
+              </button>
+            )}
+          </div>
         }
       />
       <div className="page-body readiness-layout">
