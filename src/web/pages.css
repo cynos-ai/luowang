@@ -303,6 +303,7 @@
   justify-content: space-between;
   gap: 14px;
   padding-bottom: 12px;
+  margin-bottom: 14px;
   border-bottom: 3px solid var(--lw-ink);
 }
 
@@ -667,10 +668,6 @@
 .provider-source-list {
   display: grid;
   gap: 14px;
-}
-
-.provider-source-list + .button {
-  margin-top: 14px;
 }
 
 .provider-source-card {
