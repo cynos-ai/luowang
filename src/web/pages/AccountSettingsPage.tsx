@@ -151,7 +151,7 @@ export function AccountSettingsContent({ onPasswordChanged }: { onPasswordChange
                 <input
                   required
                   type="password"
-                  minLength={12}
+                  minLength={6}
                   maxLength={128}
                   placeholder="6–128 个字符"
                   autoComplete="new-password"
@@ -164,7 +164,7 @@ export function AccountSettingsContent({ onPasswordChanged }: { onPasswordChange
                 <input
                   required
                   type="password"
-                  minLength={12}
+                  minLength={6}
                   maxLength={128}
                   autoComplete="new-password"
                   disabled={Boolean(busy)}
