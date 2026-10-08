@@ -62,6 +62,7 @@ export function AccountSettingsContent({ onPasswordChanged }: { onPasswordChange
       });
       setDisplayName(null);
       resource.reload();
+      window.dispatchEvent(new CustomEvent('luowang:profile-changed'));
       setMessage(`显示名称已更新为“${response.profile.displayName}”。`);
     } catch (cause) {
       setError(toUserMessage(cause, '显示名称更新失败'));
@@ -78,8 +79,8 @@ export function AccountSettingsContent({ onPasswordChanged }: { onPasswordChange
       setError('两次输入的新密码不一致');
       return;
     }
-    if (newPassword.length < 12 || newPassword.length > 128) {
-      setError('新密码长度必须在 12 到 128 个字符之间');
+    if (newPassword.length < 6 || newPassword.length > 128) {
+      setError('新密码长度必须在 6 到 128 个字符之间');
       return;
     }
     setBusy('password');
@@ -152,7 +153,7 @@ export function AccountSettingsContent({ onPasswordChanged }: { onPasswordChange
                   type="password"
                   minLength={12}
                   maxLength={128}
-                  placeholder="12–128 个字符"
+                  placeholder="6–128 个字符"
                   autoComplete="new-password"
                   disabled={Boolean(busy)}
                   value={newPassword}

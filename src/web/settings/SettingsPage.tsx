@@ -1387,11 +1387,11 @@ function PasswordSection({
             onChange={(event) => setCurrentPassword(event.target.value)}
           />
         </Field>
-        <Field label="新密码（至少 12 个字符）">
+        <Field label="新密码（至少 6 个字符）">
           <input
             type="password"
             autoComplete="new-password"
-            minLength={12}
+            minLength={6}
             value={newPassword}
             onChange={(event) => setNewPassword(event.target.value)}
           />

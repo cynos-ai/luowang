@@ -5,7 +5,7 @@ import type Database from 'better-sqlite3';
 
 export const SESSION_COOKIE_NAME = 'luowang_session';
 export const SESSION_TTL_MS = 2 * 60 * 60 * 1000;
-export const MIN_PASSWORD_LENGTH = 12;
+export const MIN_PASSWORD_LENGTH = 6;
 const MAX_PASSWORD_LENGTH = 1024;
 
 export class AuthError extends Error {

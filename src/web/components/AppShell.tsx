@@ -1,9 +1,29 @@
-import { useEffect, useRef, type ReactNode } from 'react';
+import { useCallback, useEffect, useRef, type ReactNode } from 'react';
 
 import type { AppRoute } from '../app/route';
+import { useResource } from '../app/resource';
+import { requestJson, toUserMessage } from '../api';
 import { AppLink } from '../app/navigation';
 import type { ProjectReference } from '../project-types';
 import { BrandLogo } from './ui';
+
+function useOperatorName(): string {
+  const load = useCallback(
+    (signal: AbortSignal) =>
+      requestJson<{ profile: { displayName: string } | null }>('/api/account', { signal }),
+    [],
+  );
+  const profile = useResource('operator-profile', load, (cause) =>
+    toUserMessage(cause, '管理员资料读取失败'),
+  );
+  const reload = profile.reload;
+  useEffect(() => {
+    const onProfileChanged = () => reload();
+    window.addEventListener('luowang:profile-changed', onProfileChanged);
+    return () => window.removeEventListener('luowang:profile-changed', onProfileChanged);
+  }, [reload]);
+  return profile.value?.profile?.displayName?.trim() || '管理员';
+}
 
 export function AppShell({
   route,
@@ -18,6 +38,8 @@ export function AppShell({
 }) {
   const projectId = projectIdFromRoute(route);
   const operatorMenu = useRef<HTMLDetailsElement>(null);
+  const operatorName = useOperatorName();
+  const operatorInitial = [...operatorName][0] ?? '管';
   useEffect(() => {
     const close = (event: PointerEvent) => {
       if (!operatorMenu.current?.contains(event.target as Node))
@@ -67,9 +89,9 @@ export function AppShell({
           </AppLink>
         </nav>
         <details className="operator-menu" key={route.name} ref={operatorMenu}>
-          <summary aria-label="打开用户菜单" title="管理员">
+          <summary aria-label={`管理员 ${operatorName}`} title={operatorName}>
             <span className="operator-avatar" aria-hidden="true">
-              管
+              {operatorInitial}
             </span>
             <span className="operator-presence" aria-hidden="true" />
           </summary>
