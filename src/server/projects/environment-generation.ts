@@ -292,9 +292,8 @@ export function createEnvironmentGenerationService(input: {
       return publicTask(task);
     },
     current(projectId: string) {
-      const task = [...tasks.values()].find(
-        (value) => value.projectId === projectId && value.status === 'running',
-      );
+      const scoped = [...tasks.values()].filter((value) => value.projectId === projectId);
+      const task = scoped.find((value) => value.status === 'running') ?? scoped.at(-1);
       return task ? publicTask(task) : null;
     },
     stop(projectId: string, id: string) {
