@@ -106,6 +106,7 @@
 .notice {
   padding: 12px;
   border: 2px solid var(--lw-ink);
+  border-radius: 0;
   background: var(--lw-paper-soft);
   color: var(--lw-ink);
 }
@@ -666,6 +667,10 @@
 .provider-source-list {
   display: grid;
   gap: 14px;
+}
+
+.provider-source-list + .button {
+  margin-top: 14px;
 }
 
 .provider-source-card {

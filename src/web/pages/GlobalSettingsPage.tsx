@@ -593,7 +593,7 @@ function ModelSettings({
           })}
         </div>
         {sources.length === 0 && (
-          <button className="button button-secondary" type="button" onClick={addSource}>
+          <button className="button" type="button" onClick={addSource}>
             注册第一个模型
           </button>
         )}
