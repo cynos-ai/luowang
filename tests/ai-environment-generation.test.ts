@@ -9,9 +9,16 @@ import type { ProjectConfigurationStore } from '../src/server/projects/configura
 import type { ConnectionResourceService } from '../src/server/projects/connection-resources.js';
 import type { GitRepository } from '../src/server/repository/git-repository.js';
 
+function prepareState(database: Database.Database) {
+  database.exec(
+    "CREATE TABLE projects(project_id TEXT PRIMARY KEY); INSERT INTO projects VALUES('p'); CREATE TABLE project_automation_state(project_id TEXT,key TEXT,value TEXT,updated_at TEXT,PRIMARY KEY(project_id,key));",
+  );
+}
+
 it('generates an isolated draft from a fixed commit and never saves or starts a Run', async () => {
   const database = new Database(':memory:');
   runMigrations(database);
+  prepareState(database);
   database.exec('ALTER TABLE test_request_queue ADD COLUMN project_id TEXT');
   const deployment = createConfigurationStore(database, {
     repoDir: '/repos',
@@ -67,6 +74,7 @@ it('generates an isolated draft from a fixed commit and never saves or starts a 
           'read_project_file',
           'submit_environment_definition',
           'list_project_files',
+          'report_missing_inputs',
         ]);
         assert.ok(input.userMessage.includes('seed.sql'));
         return {
@@ -76,13 +84,9 @@ it('generates an isolated draft from a fixed commit and never saves or starts a 
             assert.deepEqual(actualPrompt.paths, ['package.json', 'src/']);
             assert.equal(actualPrompt.files[0].path, 'seed.sql');
             assert.equal(message, input.userMessage);
-            const listing = await input.customTools[2].execute(
-              'list',
-              { directory: 'src/' },
-              input.signal,
-              undefined,
-              {} as never,
-            );
+            const listing = await input.customTools
+              .find((tool) => tool.name === 'list_project_files')!
+              .execute('list', { directory: 'src/' }, input.signal, undefined, {} as never);
             assert.deepEqual(JSON.parse((listing.content[0] as { text: string }).text).entries, [
               'src/main.js',
             ]);
@@ -155,6 +159,7 @@ it('generates an isolated draft from a fixed commit and never saves or starts a 
 it('cancels source preparation and does not start a model session afterwards', async () => {
   const database = new Database(':memory:');
   database.exec('CREATE TABLE test_request_queue(project_id TEXT,status TEXT)');
+  prepareState(database);
   let models = 0;
   const generation = createEnvironmentGenerationService({
     database,
@@ -182,5 +187,107 @@ it('cancels source preparation and does not start a model session afterwards', a
   } finally {
     await generation.close();
     database.close();
+  }
+});
+
+it('persists missing inputs and draft decisions, carries manual runtime and failure context, and rejects stale application', async () => {
+  const { environmentFixture } = await import('./environment-fixture.js');
+  const f = environmentFixture();
+  let mode: 'missing' | 'draft' = 'missing';
+  const calls: Array<Record<string, unknown>> = [];
+  const options = {
+    ...f,
+    repoRoot: '/repo',
+    executionContext: () => ({ kind: 'local', platform: 'linux/amd64' }),
+    validationFailure: () => ({ stage: 'health', message: 'HTTP 503' }),
+    loadSource: async () => ({
+      commit: f.commit,
+      repository: { directory: '/repo', listTree: async () => [] } as unknown as GitRepository,
+    }),
+    sessions: {
+      async create(
+        input: Parameters<import('../src/server/runs/types.js').AgentSessionFactory['create']>[0],
+      ) {
+        return {
+          async prompt(message: string) {
+            calls.push(JSON.parse(message));
+            const tool = input.customTools!.find(
+              (value) =>
+                value.name ===
+                (mode === 'missing' ? 'report_missing_inputs' : 'submit_environment_definition'),
+            )!;
+            await tool.execute(
+              'submit',
+              mode === 'missing'
+                ? { items: [{ item: '.env.test', reason: '需要提供测试服务地址配置' }] }
+                : {
+                    definition: JSON.stringify({
+                      summary: 'application and tools',
+                      files: [
+                        {
+                          path: '.luowang-generated/compose.yml',
+                          content:
+                            'services:\n  app:\n    image: node:24\n  tools:\n    image: node:24',
+                        },
+                      ],
+                      runtime: f.configuration.get(f.project.projectId).runtime,
+                    }),
+                  },
+              input.signal,
+              undefined,
+              {} as never,
+            );
+          },
+          dispose() {},
+        };
+      },
+    },
+  };
+  let service = createEnvironmentGenerationService(options);
+  try {
+    service.start(f.project.projectId, {
+      requirements: '保留手动健康检查',
+      useValidationFailure: true,
+    });
+    await vi.waitFor(() =>
+      assert.equal(service.current(f.project.projectId)?.status, 'needs_input'),
+    );
+    assert.deepEqual(calls[0].currentConfiguration, {
+      runtimeMode: 'managed',
+      startType: 'compose',
+      executionDockerfile: '',
+      runtime: f.configuration.get(f.project.projectId).runtime,
+      environmentDescription: f.configuration.get(f.project.projectId).environmentDescription,
+    });
+    assert.equal(calls[0].requirements, '保留手动健康检查');
+    assert.deepEqual(calls[0].validationFailure, { stage: 'health', message: 'HTTP 503' });
+    await service.close();
+    service = createEnvironmentGenerationService(options);
+    assert.equal(service.current(f.project.projectId)?.missingInputs[0].item, '.env.test');
+    mode = 'draft';
+    const started = service.start(f.project.projectId);
+    await vi.waitFor(() => assert.equal(service.current(f.project.projectId)?.status, 'completed'));
+    assert.equal(calls[1].validationFailure, null);
+    const draft = service.current(f.project.projectId)!.draft!;
+    draft.runtime.healthPath = '/health';
+    service.apply(f.project.projectId, started.id, draft);
+    await service.close();
+    service = createEnvironmentGenerationService(options);
+    assert.equal(service.current(f.project.projectId)?.reviewState, 'applied');
+    assert.equal(f.configuration.get(f.project.projectId).runtime.healthPath, '/health');
+    const updated = service.start(f.project.projectId);
+    await vi.waitFor(() => assert.equal(service.current(f.project.projectId)?.status, 'completed'));
+    const old = service.current(f.project.projectId)!.draft!;
+    f.configuration.update(f.project.projectId, { runtime: { ...old.runtime, servicePort: 9090 } });
+    assert.equal(service.current(f.project.projectId)?.stale, true);
+    assert.throws(() => service.apply(f.project.projectId, updated.id, old), /已变化/);
+    service.discard(f.project.projectId, updated.id);
+    await service.close();
+    service = createEnvironmentGenerationService(options);
+    assert.equal(service.current(f.project.projectId)?.reviewState, 'discarded');
+    assert.equal(f.configuration.get(f.project.projectId).runtime.servicePort, 9090);
+  } finally {
+    await service.close();
+    f.database.close();
   }
 });

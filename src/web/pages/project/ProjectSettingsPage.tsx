@@ -143,9 +143,11 @@ export function ProjectSettingsPage({
       navigationState.current = { busy: false, dirty: false };
       setBusy('');
       setMessage(label);
+      return true;
     } catch (cause) {
       navigationState.current.busy = false;
       setError(toUserMessage(cause, `${label}失败`));
+      return false;
     } finally {
       setBusy('');
     }
@@ -213,14 +215,19 @@ export function ProjectSettingsPage({
                         () => setDisplayName(null),
                       );
                     }}
-                    onSaveConfiguration={(patch) =>
-                      void action(
+                    onSaveConfiguration={(patch, taskId) =>
+                      action(
                         '项目配置已保存',
                         () =>
-                          requestJson(`/api/projects/${projectId}/configuration`, {
-                            method: 'PUT',
-                            body: JSON.stringify(patch),
-                          }),
+                          requestJson(
+                            taskId
+                              ? `/api/projects/${projectId}/environment-generation/${taskId}/apply`
+                              : `/api/projects/${projectId}/configuration`,
+                            {
+                              method: 'PUT',
+                              body: JSON.stringify(patch),
+                            },
+                          ),
                         () => setDraft(null),
                       )
                     }
@@ -330,7 +337,7 @@ function SettingsSection({
   onDisplayName: (value: string) => void;
   onSecret: (key: ProjectSecret, value: string) => void;
   onSaveProfile: (event: FormEvent<HTMLFormElement>) => void;
-  onSaveConfiguration: (patch: Partial<ProjectConfiguration>) => void;
+  onSaveConfiguration: (patch: Partial<ProjectConfiguration>, taskId?: string) => Promise<boolean>;
   onSaveSecret: (key: ProjectSecret) => void;
   onSaveTestAccount: () => void;
   onDeleteSecret: (key: ProjectSecret) => void;
@@ -535,7 +542,11 @@ function SettingsSection({
             <ProjectEnvironmentEditor
               projectId={data.detail.project.projectId}
               recommendation={data.detail.environmentRecommendation}
-              configuration={configuration}
+              configuration={data.detail.configuration}
+              hasUnsavedConfiguration={
+                JSON.stringify(configuration) !== JSON.stringify(data.detail.configuration)
+              }
+              managedFiles={data.detail.managedFiles}
               disabled={disabled}
               onSave={onSaveConfiguration}
             />

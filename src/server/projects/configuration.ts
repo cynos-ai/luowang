@@ -1,5 +1,6 @@
 import type Database from 'better-sqlite3';
 import { normalizeGeneratedDefinition, type GeneratedDefinition } from './generated-definition.js';
+import { assertEnvironmentIdle } from './environment-state.js';
 
 import type { RepositoryConfig } from '../../shared/types.js';
 import {
@@ -228,6 +229,7 @@ export function createProjectConfigurationStore(
               `项目仍有 ${pending.count} 个待处理请求，不能修改测试语义配置`,
             );
           }
+          assertEnvironmentIdle(database, projectId);
         }
         const now = new Date().toISOString();
         database

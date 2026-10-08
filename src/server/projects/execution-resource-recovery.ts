@@ -16,6 +16,7 @@ export async function reconcileExecutionResourceLedger(
   secrets: ScopedSecretStore,
   options: {
     includeRunning?: boolean;
+    resourceIds?: readonly string[];
     adapterFactory?: (locationId: string, revision: number) => Promise<ExecutionAdapter>;
   } = {},
 ): Promise<{ released: number; unknown: number }> {
@@ -31,6 +32,7 @@ export async function reconcileExecutionResourceLedger(
   let released = 0;
   let unknown = 0;
   for (const resource of ledger.unresolved()) {
+    if (options.resourceIds && !options.resourceIds.includes(resource.resourceId)) continue;
     if (isExecutionResourceActive(resource.resourceId)) continue;
     if (
       !options.includeRunning &&

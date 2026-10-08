@@ -113,6 +113,10 @@ const environmentDraft = {
     initializationSteps: [],
   },
 };
+let generationNeedsInput = false;
+let generationTask: Record<string, unknown> | null = null;
+let validationTask: Record<string, unknown> | null = null;
+let validationShouldFail = true;
 const managedFiles: Array<{
   id: string;
   path: string;
@@ -256,7 +260,9 @@ try {
     await Promise.all([
       page.waitForResponse(
         (response) =>
-          response.url().endsWith(`/api/projects/${newProject.projectId}/configuration`) &&
+          (response.url().endsWith(`/api/projects/${newProject.projectId}/configuration`) ||
+            (response.url().includes('/environment-generation/') &&
+              response.url().endsWith('/apply'))) &&
           response.request().method() === 'PUT',
       ),
       page.getByRole('button', { name, exact: true }).click(),
@@ -869,31 +875,68 @@ try {
       return route.fulfill({ json: { run: null } });
     }
     if (suffix === '/environment-generation' && method === 'GET')
-      return route.fulfill({ json: { task: null } });
-    if (suffix === '/environment-generation' && method === 'POST')
-      return route.fulfill({
-        json: {
-          task: {
-            id: 'fixture-generation',
-            status: 'running',
-            draft: null,
-            error: null,
-            targetCommit: null,
-          },
-        },
-      });
-    if (suffix === '/environment-generation/fixture-generation' && method === 'GET')
-      return route.fulfill({
-        json: {
-          task: {
-            id: 'fixture-generation',
-            status: 'completed',
-            draft: environmentDraft,
-            error: null,
-            targetCommit: 'a'.repeat(40),
-          },
-        },
-      });
+      return route.fulfill({ json: { task: generationTask } });
+    if (suffix === '/environment-generation' && method === 'POST') {
+      generationTask = {
+        id: 'fixture-generation',
+        status: 'running',
+        draft: null,
+        error: null,
+        targetCommit: null,
+        reviewState: 'pending',
+        stale: false,
+      };
+      return route.fulfill({ json: { task: generationTask } });
+    }
+    if (suffix === '/environment-generation/fixture-generation' && method === 'GET') {
+      generationTask = {
+        ...generationTask,
+        status: generationNeedsInput ? 'needs_input' : 'completed',
+        draft: generationNeedsInput ? null : environmentDraft,
+        targetCommit: 'a'.repeat(40),
+        missingInputs: generationNeedsInput
+          ? [{ item: '上传 .env.test', reason: '需要测试配置文件' }]
+          : [],
+      };
+      return route.fulfill({ json: { task: generationTask } });
+    }
+    if (suffix === '/environment-generation/fixture-generation/apply' && method === 'PUT') {
+      Object.assign(configuration, request.postDataJSON());
+      newProject.configRevision += 1;
+      generationTask = { ...generationTask, reviewState: 'applied' };
+      return route.fulfill({ json: { configuration } });
+    }
+    if (suffix === '/environment-generation/fixture-generation/discard' && method === 'POST') {
+      generationTask = { ...generationTask, reviewState: 'discarded' };
+      return route.fulfill({ json: { task: generationTask } });
+    }
+    if (suffix === '/environment-validation' && method === 'POST') {
+      validationTask = {
+        id: 'fixture-validation',
+        status: 'running',
+        steps: [{ stage: 'source', status: 'running' }],
+        cleanupConfirmed: false,
+        stale: false,
+      };
+      return route.fulfill({ json: { task: validationTask } });
+    }
+    if (suffix === '/environment-validation' && method === 'GET') {
+      if (validationTask?.status === 'running')
+        validationTask = {
+          ...validationTask,
+          status: validationShouldFail ? 'failed' : 'passed',
+          targetCommit: 'a'.repeat(40),
+          cleanupConfirmed: true,
+          steps: [
+            { stage: 'health', status: validationShouldFail ? 'failed' : 'passed' },
+            { stage: 'cleanup', status: 'passed' },
+          ],
+          failure: validationShouldFail
+            ? { stage: 'health', message: '应用健康检查超时：HTTP 503' }
+            : null,
+        };
+      return route.fulfill({ json: { task: validationTask } });
+    }
     if (suffix === '/files' && method === 'POST') {
       const body = request.postDataJSON();
       const bytes = body.encodedContent
@@ -1033,6 +1076,9 @@ try {
   assert.equal(writes.filter((write) => write.endsWith('/environment-generation')).length, 0);
   await page.getByRole('button', { name: 'AI 生成配置', exact: true }).click();
   const definitionEditor = page.getByLabel('配置内容（JSON）');
+  await page.getByText('AI 草案', { exact: true }).waitFor();
+  assert.equal(await definitionEditor.isVisible(), false);
+  await page.getByText('高级：查看 / 编辑原始 JSON', { exact: true }).click();
   await definitionEditor.waitFor();
   assert.equal(configuration.generatedDefinition, null);
   const draft = JSON.parse(await definitionEditor.inputValue());
@@ -1041,9 +1087,31 @@ try {
   await saveConfiguration('保存启动配置');
   assert.equal(configuration.generatedDefinition!.summary, '人工修改');
   await page.getByRole('button', { name: 'AI 更新配置', exact: true }).click();
+  await page.getByRole('button', { name: '保存启动配置', exact: true }).waitFor();
+  if (!(await definitionEditor.isVisible()))
+    await page.getByText('高级：查看 / 编辑原始 JSON', { exact: true }).click();
   await page.getByText('上次保存的配置', { exact: true }).waitFor();
   assert.equal(configuration.generatedDefinition!.summary, '人工修改');
   await page.getByRole('button', { name: '取消修改', exact: true }).click();
+  await page.getByRole('button', { name: '验证已保存环境', exact: true }).click();
+  await page.getByRole('button', { name: '根据本次失败更新配置', exact: true }).waitFor();
+  const retryRequest = page.waitForRequest(
+    (request) => request.method() === 'POST' && request.url().endsWith('/environment-generation'),
+  );
+  await page.getByRole('button', { name: '根据本次失败更新配置', exact: true }).click();
+  assert.equal((await retryRequest).postDataJSON().useValidationFailure, true);
+  await page.getByRole('button', { name: '保存启动配置', exact: true }).waitFor();
+  await page.getByRole('button', { name: '取消修改', exact: true }).click();
+  validationShouldFail = false;
+  await page.getByRole('button', { name: '验证已保存环境', exact: true }).click();
+  await page.getByText('验证通过', { exact: true }).waitFor();
+  generationNeedsInput = true;
+  await page.getByRole('button', { name: 'AI 更新配置', exact: true }).click();
+  await page.getByText('上传 .env.test', { exact: true }).waitFor();
+  assert.equal(await page.getByRole('button', { name: '保存启动配置', exact: true }).count(), 0);
+  await page.reload();
+  await page.getByText('上传 .env.test', { exact: true }).waitFor();
+  generationNeedsInput = false;
   await page.getByRole('combobox', { name: '运行模式', exact: true }).click();
   await page.getByRole('option', { name: '仅仓库测试', exact: true }).click();
   assert.equal(await page.getByLabel('测试网址').count(), 0);

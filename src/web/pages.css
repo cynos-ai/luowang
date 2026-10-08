@@ -2461,3 +2461,27 @@
     flex-direction: column;
   }
 }
+
+.environment-summary {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 14rem), 1fr));
+  gap: 1rem;
+}
+.environment-summary dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.environment-validation-steps li {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+  margin-block: 0.5rem;
+}
+.environment-validation-steps p {
+  flex-basis: 100%;
+}
+.environment-editor pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}

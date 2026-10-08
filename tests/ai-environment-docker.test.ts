@@ -6,7 +6,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
 import Database from 'better-sqlite3';
-import { it } from 'vitest';
+import { it, vi } from 'vitest';
+import { createEnvironmentValidationService } from '../src/server/projects/environment-validation.js';
+import { createDeploymentConfigurationStore } from '../src/server/projects/deployment-configuration.js';
 import { GitRepository } from '../src/server/repository/git-repository.js';
 import { ensureSystemMetadata, runMigrations } from '../src/server/db/migrate.js';
 import { projectIdentityMigration } from '../src/server/db/migrations/0009-project-identity.js';
@@ -217,6 +219,71 @@ dockerIt(
       assert.equal(JSON.parse(first).serviceImages.app, second.serviceImages.app);
       assert.equal((await git(['status', '--porcelain'])).stdout, '');
       assert.equal(secrets.resource('project-file', upload.id).get('content'), stored);
+      await owner.close();
+      owner = undefined;
+      const validation = createEnvironmentValidationService({
+        database,
+        projects: createProjectStore(database),
+        configuration,
+        deployment: createDeploymentConfigurationStore(database, {
+          repoDir: repo,
+          reportDir: root,
+        }),
+        resources,
+        secrets,
+        repoRoot: root,
+        reportRoot: root,
+        storageRoot: root,
+        loadSource: async () => ({ repository, commit }),
+      });
+      try {
+        validation.start(project.projectId);
+        await vi.waitFor(
+          () => {
+            const result = validation.current(project.projectId)!;
+            assert.notEqual(result.status, 'running');
+            assert.equal(result.status, 'passed', JSON.stringify(result));
+            assert.equal(result.cleanupConfirmed, true);
+          },
+          { timeout: 120000, interval: 500 },
+        );
+        assert.equal(
+          (database.prepare('SELECT count(*) n FROM run_execution_context').get() as { n: number })
+            .n,
+          2,
+        );
+        assert.equal(
+          (database.prepare('SELECT count(*) n FROM test_request_queue').get() as { n: number }).n,
+          0,
+        );
+        configuration.update(project.projectId, {
+          runtime: {
+            ...runtime,
+            initializationSteps: [{ service: 'tools', command: 'sleep 60', timeoutSeconds: 90 }],
+          },
+        });
+        const cancelled = validation.start(project.projectId);
+        await vi.waitFor(
+          () =>
+            assert.ok(
+              validation
+                .current(project.projectId)
+                ?.steps.some((step) => step.stage === 'initialize' && step.status === 'running'),
+            ),
+          { timeout: 60000, interval: 100 },
+        );
+        validation.stop(project.projectId, cancelled.id);
+        await vi.waitFor(
+          () => {
+            const result = validation.current(project.projectId)!;
+            assert.equal(result.status, 'cancelled');
+            assert.equal(result.cleanupConfirmed, true);
+          },
+          { timeout: 60000, interval: 500 },
+        );
+      } finally {
+        await validation.close();
+      }
     } finally {
       await owner?.close();
       const filter = `label=luowang.project-id=${project.projectId}`;
@@ -230,5 +297,5 @@ dockerIt(
       await rm(root, { recursive: true, force: true });
     }
   },
-  180000,
+  300000,
 );

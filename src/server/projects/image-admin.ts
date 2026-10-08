@@ -163,6 +163,11 @@ export function createProjectImageAdminService(input: {
             .get(projectId);
           if (
             active ||
+            input.database
+              .prepare(
+                "SELECT 1 FROM execution_resource_ledger WHERE project_id=? AND resource_type='environment-validation' AND state <> 'released'",
+              )
+              .get(projectId) ||
             !locationHasCapacity(input.database, location.id, location.revision, globalLimit)
           ) {
             throw new ProjectImageAdminError(

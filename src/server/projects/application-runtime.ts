@@ -7,6 +7,7 @@ import type { DockerRuntime } from './execution-container.js';
 import type { ProjectRuntimeDefinition } from './configuration.js';
 import { ControlledCommandError } from '../runs/command-runner.js';
 import type { ControlledComposeDefinition } from './compose-contract.js';
+import type { EnvironmentStage } from '../../shared/environment-preparation.js';
 
 export type RunRuntimeEnvironment = {
   mode: 'managed' | 'external' | 'repository-only';
@@ -33,6 +34,7 @@ export interface ManagedApplicationRuntime {
 }
 
 export async function startSingleContainerApplication(input: {
+  onStage?: (stage: EnvironmentStage) => void;
   docker: DockerRuntime;
   instanceId: string;
   projectId: string;
@@ -109,6 +111,7 @@ export async function startSingleContainerApplication(input: {
   const containerId = created.stdout.trim();
   let controlConnected = false;
   try {
+    input.onStage?.('initialize');
     await success(
       input.docker,
       ['cp', `${input.sourceDirectory}/.`, `${containerId}:/luowang-source`],
@@ -142,6 +145,7 @@ export async function startSingleContainerApplication(input: {
         input.signal,
       );
     input.signal?.throwIfAborted();
+    input.onStage?.('start');
     await success(
       input.docker,
       [
@@ -191,6 +195,7 @@ export async function startSingleContainerApplication(input: {
           };
     input.signal?.throwIfAborted();
     const baseUrl = endpoint.baseUrl;
+    input.onStage?.('health');
     await waitForHealth(
       `${baseUrl}${input.runtime.healthPath}`,
       input.runtime.healthTimeoutSeconds,
@@ -238,6 +243,7 @@ export async function startSingleContainerApplication(input: {
 }
 
 export async function startComposeApplication(input: {
+  onStage?: (stage: EnvironmentStage) => void;
   docker: DockerRuntime;
   definition: ControlledComposeDefinition;
   buildSourceDirectory: string;
@@ -260,6 +266,7 @@ export async function startComposeApplication(input: {
     managedFileRoot: string | null,
   ) => Promise<void>;
 }): Promise<ManagedApplicationRuntime> {
+  input.onStage?.('build');
   const localFile = join(
     dirname(input.buildSourceDirectory),
     `.luowang-${input.definition.projectName}.compose.yml`,
@@ -415,6 +422,7 @@ export async function startComposeApplication(input: {
       );
       controlNetwork = { name: networkName, containerId: controlId };
     }
+    input.onStage?.('initialize');
     for (const sourceVolume of sourceVolumes) {
       const service = controlled.services[sourceVolume.service];
       const image = String(service.image ?? '');
@@ -517,6 +525,7 @@ export async function startComposeApplication(input: {
             `初始化步骤失败：${step.service}（第 ${index + 1} 步，退出码 ${result.exitCode}）；请检查初始化脚本`,
           );
       }
+      input.onStage?.('start');
       await success(
         input.docker,
         [...composePrefix, file, 'start', input.definition.applicationService],
@@ -524,6 +533,7 @@ export async function startComposeApplication(input: {
         input.signal,
       );
     } else {
+      input.onStage?.('start');
       await success(
         input.docker,
         [...composePrefix, file, 'start', ...Object.keys(controlled.services)],
@@ -568,6 +578,7 @@ export async function startComposeApplication(input: {
           };
     input.signal?.throwIfAborted();
     const baseUrl = endpoint.baseUrl;
+    input.onStage?.('health');
     await waitForHealth(
       `${baseUrl}${input.runtime.healthPath}`,
       input.runtime.healthTimeoutSeconds,
@@ -750,7 +761,7 @@ async function removeConfirmed(docker: DockerRuntime, id: string): Promise<void>
   const remaining = await docker.run(['ps', '--all', '--quiet', '--filter', `id=${id}`], {
     timeoutMs: 10_000,
   });
-  if (remaining.stdout.trim()) throw new Error('应用容器清理状态未知');
+  if (remaining.exitCode !== 0 || remaining.stdout.trim()) throw new Error('应用容器清理状态未知');
 }
 async function removeNetworkConfirmed(docker: DockerRuntime, name: string): Promise<void> {
   const removed = await docker.run(['network', 'rm', name], { timeoutMs: 30_000 });

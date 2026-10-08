@@ -25,6 +25,7 @@ import {
 import { createSshExecutionAdapter, readSshHostFingerprint } from './execution-adapter.js';
 import { deleteProject } from './delete-project.js';
 import type { createEnvironmentGenerationService } from './environment-generation.js';
+import type { createEnvironmentValidationService } from './environment-validation.js';
 import { readEnvironmentRecommendation } from './environment-recommendation.js';
 
 type ProjectSecretKey = 'gitToken' | 'testUsername' | 'testPassword' | 'testDataCleanupToken';
@@ -45,6 +46,7 @@ export interface ProjectAdminRouteOptions {
   readiness: ProjectReadinessService;
   images: ProjectImageAdminService;
   environmentGeneration?: ReturnType<typeof createEnvironmentGenerationService>;
+  environmentValidation?: ReturnType<typeof createEnvironmentValidationService>;
   connectionResources?: ConnectionResourceService;
   allowedOrigin?: string;
   verifyRepository?: (
@@ -93,6 +95,7 @@ export async function registerProjectAdminRoutes(
           reply.status(202).send({
             task: generation.start(
               requireProject(options.projects, request.params.projectId).projectId,
+              readRecord(request.body ?? {}),
             ),
           }),
       );
@@ -109,6 +112,53 @@ export async function registerProjectAdminRoutes(
         '/api/projects/:projectId/environment-generation/:id',
         async (request) => ({
           task: generation.stop(
+            requireProject(options.projects, request.params.projectId).projectId,
+            request.params.id,
+          ),
+        }),
+      );
+      routes.put<{ Params: { projectId: string; id: string } }>(
+        '/api/projects/:projectId/environment-generation/:id/apply',
+        async (request) => {
+          const projectId = requireProject(options.projects, request.params.projectId).projectId;
+          const configuration = generation.apply(projectId, request.params.id, request.body);
+          invalidateProjectReadiness(options.database, projectId);
+          return { configuration };
+        },
+      );
+      routes.post<{ Params: { projectId: string; id: string } }>(
+        '/api/projects/:projectId/environment-generation/:id/discard',
+        async (request) => ({
+          task: generation.discard(
+            requireProject(options.projects, request.params.projectId).projectId,
+            request.params.id,
+          ),
+        }),
+      );
+    }
+    if (options.environmentValidation) {
+      const validation = options.environmentValidation;
+      routes.get<{ Params: { projectId: string } }>(
+        '/api/projects/:projectId/environment-validation',
+        async (request) => ({
+          task: validation.current(
+            requireProject(options.projects, request.params.projectId).projectId,
+          ),
+        }),
+      );
+      routes.post<{ Params: { projectId: string } }>(
+        '/api/projects/:projectId/environment-validation',
+        async (request, reply) =>
+          reply.status(202).send({
+            task: validation.start(
+              requireProject(options.projects, request.params.projectId).projectId,
+            ),
+          }),
+      );
+      routes.delete<{ Params: { projectId: string; id: string } }>(
+        '/api/projects/:projectId/environment-validation/:id',
+        async (request) => ({
+          task: validation.stop(
             requireProject(options.projects, request.params.projectId).projectId,
             request.params.id,
           ),

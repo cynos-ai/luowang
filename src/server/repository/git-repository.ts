@@ -144,8 +144,9 @@ export class GitRepository {
     };
   }
 
-  async ensureClone(): Promise<void> {
+  async ensureClone(signal?: AbortSignal): Promise<void> {
     return withRepositoryLock(this.directory, async () => {
+      signal?.throwIfAborted();
       if (await this.isGitWorktree()) {
         return;
       }
@@ -162,14 +163,16 @@ export class GitRepository {
       await this.run(
         ['clone', '--no-tags', '--', this.remoteUrl, this.directory],
         dirname(this.directory),
+        signal,
       );
     });
   }
 
-  async fetch(): Promise<void> {
+  async fetch(signal?: AbortSignal): Promise<void> {
     return withRepositoryLock(this.directory, async () => {
-      await this.ensureClone();
-      await this.run(['fetch', '--prune', 'origin', '--tags']);
+      signal?.throwIfAborted();
+      await this.ensureClone(signal);
+      await this.run(['fetch', '--prune', 'origin', '--tags'], this.directory, signal);
     });
   }
 
@@ -1305,6 +1308,7 @@ export class GitRepository {
   private async run(
     args: string[],
     cwd = this.directory,
+    signal?: AbortSignal,
   ): Promise<{ stdout: string; stderr: string }> {
     const token = this.tokenProvider?.();
     let authDir: string | undefined;
@@ -1342,6 +1346,7 @@ export class GitRepository {
         env.GIT_TERMINAL_PROMPT = '0';
       }
       const result = await execFileAsync('git', args, {
+        signal,
         cwd,
         env,
         windowsHide: true,

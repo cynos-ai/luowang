@@ -1,4 +1,5 @@
 import type Database from 'better-sqlite3';
+import { assertEnvironmentIdle } from './environment-state.js';
 
 import {
   type BoundSecretStore,
@@ -85,4 +86,5 @@ function guardProject(database: Database.Database, projectId: string, key: Proje
   if (pending.count > 0) {
     throw new Error(`项目仍有 ${pending.count} 个待处理请求，不能替换测试或清理凭据`);
   }
+  assertEnvironmentIdle(database, projectId);
 }

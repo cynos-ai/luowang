@@ -317,6 +317,19 @@ class SqliteTestRequestQueue implements TestRequestQueue {
           )
           .get(this.projectId);
         if (waiting) return null;
+        if (
+          this.database
+            .prepare(
+              "SELECT 1 FROM sqlite_master WHERE type='table' AND name='execution_resource_ledger'",
+            )
+            .get() &&
+          this.database
+            .prepare(
+              "SELECT 1 FROM execution_resource_ledger WHERE project_id=? AND state <> 'released' AND queue_id IS NULL",
+            )
+            .get(this.projectId)
+        )
+          return null;
       }
       const row = this.database
         .prepare(

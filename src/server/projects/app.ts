@@ -68,6 +68,7 @@ import { assertProjectSchema } from './schema-mode.js';
 import { CONNECTION_RESOURCES_VERSION } from '../db/migrations/0021-connection-resources.js';
 import { EXECUTION_RUNTIME_VERSION } from '../db/migrations/0022-execution-runtime.js';
 import { createEnvironmentGenerationService } from './environment-generation.js';
+import { createEnvironmentValidationService } from './environment-validation.js';
 import { createGitPoller } from '../automation/poller.js';
 import { createProjectAutomationStateStore } from '../automation/state.js';
 import { createProjectRunStore } from '../runs/store.js';
@@ -159,6 +160,34 @@ export async function createProjectApp(options: ProjectAppOptions) {
     secrets: scoped,
     resources: connectionResources,
     repoRoot: options.config.repoDir,
+    validationFailure: (projectId): unknown => environmentValidation.failure(projectId),
+    executionContext: (projectId) => {
+      const serverId = connectionResources.bindings(projectId).executionServerId;
+      const server = connectionResources
+        .list()
+        .executionServers.find((value) => value.id === serverId);
+      return server
+        ? {
+            kind: 'ssh',
+            id: server.id,
+            revision: server.revision,
+            name: server.name,
+            capabilities: server.capabilities,
+          }
+        : { kind: 'local', name: '罗网本机' };
+    },
+  });
+  const environmentValidation = createEnvironmentValidationService({
+    database,
+    deployment,
+    projects,
+    configuration,
+    secrets: scoped,
+    resources: connectionResources,
+    repoRoot: options.config.repoDir,
+    reportRoot: options.config.reportDir,
+    storageRoot: options.config.dataDir,
+    generationActive: (projectId) => environmentGeneration.isActive(projectId),
   });
   const profile = createAdminProfileStore(database);
   const readiness = createProjectReadinessService({
@@ -572,6 +601,7 @@ export async function createProjectApp(options: ProjectAppOptions) {
     readiness,
     images,
     environmentGeneration,
+    environmentValidation,
     connectionResources,
     allowedOrigin: options.config.allowedOrigin,
     verifyRepository: options.verifyRepository,
@@ -659,6 +689,7 @@ export async function createProjectApp(options: ProjectAppOptions) {
   });
   app.addHook('onClose', async () => {
     await environmentGeneration.close();
+    await environmentValidation.close();
     await sharedDependencies.stop();
     await background.stop();
     options.database.close();

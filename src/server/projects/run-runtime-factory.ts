@@ -34,12 +34,15 @@ import { createHash } from 'node:crypto';
 import { projectImageTag } from './image-builder.js';
 import { materializeGeneratedDefinition, generatedDefinitionHash } from './generated-definition.js';
 import { decodeProjectFileContent } from './file-content.js';
+import type { EnvironmentStage } from '../../shared/environment-preparation.js';
 
 export function createProjectRunRuntimeEnvironmentFactory(input: {
   database: Database.Database;
   task: ProjectTaskRuntime;
   secrets: ScopedSecretStore;
   storageRoot: string;
+  preparationResourceId?: string;
+  onStage?: (stage: EnvironmentStage) => void;
   setManagedCommandTarget?: (
     runId: string,
     target: {
@@ -170,6 +173,7 @@ export function createProjectRunRuntimeEnvironmentFactory(input: {
                 ).capabilities_json,
               ) as { platform?: string }
             ).platform ?? 'linux/unknown');
+        input.onStage?.('executor');
         const image = await ensureProjectImage(
           {
             repository: context.repository,
@@ -232,21 +236,23 @@ export function createProjectRunRuntimeEnvironmentFactory(input: {
           input.database,
           readInstanceId(input.database),
         );
-        const resource = ledger.plan({
-          projectId: input.task.projectId,
-          queueId: input.task.queueId,
-          attemptId: context.runId,
-          runId: context.runId,
-          executionLocationId: input.task.executionLocationId,
-          executionLocationRevision: input.task.executionLocationRevision,
-          resourceType:
-            input.task.startType === 'compose' ? 'compose-stack' : 'application-container',
-          ownerLabels: {
-            'luowang.instance-id': readInstanceId(input.database),
-            'luowang.project-id': input.task.projectId,
-            'luowang.attempt-id': context.runId,
-          },
-        });
+        const resource = input.preparationResourceId
+          ? ledger.get(input.preparationResourceId)
+          : ledger.plan({
+              projectId: input.task.projectId,
+              queueId: input.task.queueId,
+              attemptId: context.runId,
+              runId: context.runId,
+              executionLocationId: input.task.executionLocationId,
+              executionLocationRevision: input.task.executionLocationRevision,
+              resourceType:
+                input.task.startType === 'compose' ? 'compose-stack' : 'application-container',
+              ownerLabels: {
+                'luowang.instance-id': readInstanceId(input.database),
+                'luowang.project-id': input.task.projectId,
+                'luowang.attempt-id': context.runId,
+              },
+            });
         return { platform, image, source, files, ledger, resource };
       } catch (error) {
         if (remoteSource) await adapter.removeTree(remoteSource).catch(() => undefined);
@@ -287,6 +293,7 @@ export function createProjectRunRuntimeEnvironmentFactory(input: {
               );
               let composeSource: string;
               try {
+                input.onStage?.('parse');
                 if (input.task.executionLocationId.startsWith('server:')) {
                   remoteBuildSource = `/tmp/luowang/${readInstanceId(input.database)}/${input.task.projectId}/build-${context.runId}`;
                   await adapter.uploadTree(composeBuildSource.directory, remoteBuildSource, {
@@ -346,6 +353,7 @@ export function createProjectRunRuntimeEnvironmentFactory(input: {
                   cachedImageIds[serviceName] = cached.imageId;
               }
               return startComposeApplication({
+                onStage: input.onStage,
                 docker: selectedDocker,
                 definition,
                 buildSourceDirectory: buildSource,
@@ -429,6 +437,7 @@ export function createProjectRunRuntimeEnvironmentFactory(input: {
               });
             })()
           : await startSingleContainerApplication({
+              onStage: input.onStage,
               docker: selectedDocker,
               instanceId: readInstanceId(input.database),
               projectId: input.task.projectId,
@@ -479,37 +488,38 @@ export function createProjectRunRuntimeEnvironmentFactory(input: {
         }
       }
       ledger.transition(resource.resourceId, 'planned', 'created', owner.resourceExternalId);
-      input.database
-        .prepare(
-          `INSERT INTO run_execution_context(run_id,project_id,execution_location_id,execution_location_revision,config_revision,target_commit,start_type,build_definition_hash,image_id,scenario_patch_sha256,runtime_environment_json,cleanup_state,recorded_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,'created',?) ON CONFLICT(run_id) DO UPDATE SET scenario_patch_sha256=excluded.scenario_patch_sha256,runtime_environment_json=excluded.runtime_environment_json,cleanup_state='created',recorded_at=excluded.recorded_at`,
-        )
-        .run(
-          context.runId,
-          input.task.projectId,
-          input.task.executionLocationId,
-          input.task.executionLocationRevision,
-          input.task.configRevision,
-          context.targetCommit,
-          input.task.startType,
-          runtimeDefinitionHash,
-          owner.imageIds[owner.environment.applicationService ?? 'app'] ?? image.imageId,
-          source.scenarioPatchSha256,
-          JSON.stringify({
-            ...owner.environment,
-            managedFiles: files.map((file) => ({
-              id: file.id,
-              revision: file.revision,
-              path: file.path,
-              purpose: file.purpose,
-              serviceName: file.serviceName ?? owner.environment.commandService,
-              byteSize: file.bytes.length,
-              ...(file.purpose === 'data'
-                ? { sha256: createHash('sha256').update(file.bytes).digest('hex') }
-                : {}),
-            })),
-          }),
-          new Date().toISOString(),
-        );
+      if (!input.preparationResourceId)
+        input.database
+          .prepare(
+            `INSERT INTO run_execution_context(run_id,project_id,execution_location_id,execution_location_revision,config_revision,target_commit,start_type,build_definition_hash,image_id,scenario_patch_sha256,runtime_environment_json,cleanup_state,recorded_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,'created',?) ON CONFLICT(run_id) DO UPDATE SET scenario_patch_sha256=excluded.scenario_patch_sha256,runtime_environment_json=excluded.runtime_environment_json,cleanup_state='created',recorded_at=excluded.recorded_at`,
+          )
+          .run(
+            context.runId,
+            input.task.projectId,
+            input.task.executionLocationId,
+            input.task.executionLocationRevision,
+            input.task.configRevision,
+            context.targetCommit,
+            input.task.startType,
+            runtimeDefinitionHash,
+            owner.imageIds[owner.environment.applicationService ?? 'app'] ?? image.imageId,
+            source.scenarioPatchSha256,
+            JSON.stringify({
+              ...owner.environment,
+              managedFiles: files.map((file) => ({
+                id: file.id,
+                revision: file.revision,
+                path: file.path,
+                purpose: file.purpose,
+                serviceName: file.serviceName ?? owner.environment.commandService,
+                byteSize: file.bytes.length,
+                ...(file.purpose === 'data'
+                  ? { sha256: createHash('sha256').update(file.bytes).digest('hex') }
+                  : {}),
+              })),
+            }),
+            new Date().toISOString(),
+          );
       input.setManagedCommandTarget?.(context.runId, {
         docker: selectedDocker,
         containerId: owner.containerId,
