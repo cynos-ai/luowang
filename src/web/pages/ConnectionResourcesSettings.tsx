@@ -320,7 +320,7 @@ export function ConnectionResourcesSettings({ kind }: { kind: 'github' | 'server
                       onChange={(e) => setServer({ ...server, privateKey: e.target.value })}
                     />
                   </Field>
-                  <Field label="私钥口令（选填）">
+                  <Field label="私钥口令（选填）" hint="私钥文件本身的加密口令；私钥未加密时留空">
                     <input
                       type="password"
                       autoComplete="new-password"

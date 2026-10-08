@@ -407,8 +407,8 @@
 }
 
 .button {
-  min-height: 42px;
-  padding: 9px 16px;
+  min-height: 44px;
+  padding: 7px 16px;
   border: 3px solid var(--lw-ink);
   border-radius: 0;
   background: var(--lw-red);
@@ -609,6 +609,7 @@
 
 .field {
   display: grid;
+  align-content: start;
   gap: 7px;
   color: var(--lw-ink);
   font-weight: 800;
