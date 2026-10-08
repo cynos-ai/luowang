@@ -19,8 +19,104 @@ import { createLiveProjectReadinessAdapters } from '../src/server/projects/readi
 import { createProjectReadinessService } from '../src/server/projects/readiness.js';
 import { createProjectStore } from '../src/server/projects/store.js';
 import { createScopedSecretStore } from '../src/server/security/scoped-secret-store.js';
+import type { ExecutionAdapter } from '../src/server/projects/execution-adapter.js';
 
 describe('live project readiness adapters', () => {
+  it('inspects the cached image on its selected SSH daemon and closes that adapter', async () => {
+    const database = setup();
+    try {
+      const project = createProjectStore(database).createVerified({
+        displayName: 'remote',
+        repository: { githubRepositoryId: '101', owner: 'example', name: 'remote' },
+      });
+      const server = '22222222-2222-4222-8222-222222222222';
+      database
+        .prepare(
+          `INSERT INTO execution_servers(server_id,name,host,port,username,auth_type,created_at,updated_at,revision,capacity,health_status,capabilities_json)
+        VALUES(?, 'remote','test.example',22,'test','password', '', '',1,1,'ready',?)`,
+        )
+        .run(server, JSON.stringify({ platform: 'linux/amd64' }));
+      database
+        .prepare(
+          'INSERT INTO project_resource_bindings(project_id,execution_server_id,updated_at) VALUES(?,?,?)',
+        )
+        .run(project.projectId, server, '');
+      const secrets = createScopedSecretStore(database, 'synthetic-key');
+      secrets.project(project.projectId).set('gitToken', 'synthetic-token');
+      const commit = 'a'.repeat(40),
+        imageId = 'sha256:' + 'b'.repeat(64);
+      const key = {
+        projectId: project.projectId,
+        targetCommit: commit,
+        dockerfilePath: BUILTIN_IMAGE_DEFINITION,
+      };
+      const state = createLocationImageStateStore(database, {
+        executionLocationId: `server:${server}`,
+        executionLocationRevision: 1,
+        platform: 'linux/amd64',
+      });
+      state.begin(key);
+      state.ready(key, imageId);
+      let inspected = 0,
+        closed = 0;
+      const dependencies = createLiveProjectReadinessAdapters({
+        database,
+        secrets,
+        configuration: createProjectConfigurationStore(database),
+        deployment: createConfigurationStore(database, {
+          repoDir: '/repos',
+          reportDir: '/reports',
+        }),
+        repoRoot: '/repos',
+        branchHead: async () => commit,
+        github: () => ({
+          verifyIdentity: async () => ({
+            githubRepositoryId: '101',
+            owner: 'example',
+            name: 'remote',
+          }),
+          readRepository: async () => ({ defaultBranch: 'main' }) as never,
+        }),
+        executionAdapter: async (input) => {
+          assert.equal(input.locationId, `server:${server}`);
+          assert.equal(input.revision, 1);
+          return {
+            locationId: input.locationId,
+            async execute(binary: string, args: string[]) {
+              assert.equal(binary, 'docker');
+              assert.equal(args.at(-1), imageId);
+              inspected++;
+              return {
+                code: 0,
+                stderr: '',
+                stdout: JSON.stringify({
+                  'luowang.project-id': project.projectId,
+                  'luowang.target-commit': commit,
+                  'luowang.build-definition': BUILTIN_IMAGE_DEFINITION,
+                }),
+              };
+            },
+            async close() {
+              closed++;
+            },
+          } as ExecutionAdapter;
+        },
+      });
+      assert.equal(
+        (
+          await dependencies.checkImage(
+            project,
+            createProjectConfigurationStore(database).get(project.projectId),
+          )
+        ).status,
+        'ok',
+      );
+      assert.equal(inspected, 1);
+      assert.equal(closed, 1);
+    } finally {
+      database.close();
+    }
+  });
   it('uses project-scoped environment and current commit, and rejects absent or mismatched images', async () => {
     const database = setup();
     try {

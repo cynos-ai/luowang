@@ -70,7 +70,7 @@ export function ProjectOnboardingPage({
         }),
       });
       await onProjectsChanged();
-      notify.success('项目已连接，请继续完成项目设置');
+      notify.success('项目已连接');
       navigation.navigate(
         { name: 'project-settings', projectId: response.project.projectId, section: 'testing' },
         { replace: true },
@@ -103,7 +103,6 @@ export function ProjectOnboardingPage({
             ×
           </button>
         </div>
-        <p>完成仓库验证后，进入项目设置继续配置。</p>
         <AppMessageFeedback error={error} />
         <form className="form-grid" onSubmit={createProject}>
           <Field label="项目名称">

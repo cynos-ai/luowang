@@ -11,16 +11,28 @@ export function Field({
   label,
   hint,
   error,
+  status,
   children,
 }: {
   label: ReactNode;
   hint?: string;
   error?: string;
+  status?: 'success';
   children: ReactNode;
 }) {
   return (
-    <label className={`field ${error ? 'field-invalid' : ''}`}>
-      <span>{label}</span>
+    <label
+      className={`field ${error ? 'field-invalid' : ''}`}
+      data-status={!error ? status : undefined}
+    >
+      <span>
+        {label}
+        {!error && status === 'success' && (
+          <span className="field-status" role="img" aria-label="已保存">
+            ✓
+          </span>
+        )}
+      </span>
       {children}
       {hint && !error && <small className="field-hint">{hint}</small>}
       {error && <small className="field-error">{error}</small>}
@@ -132,7 +144,7 @@ export function SectionCard({
   title: string;
   description?: string;
   actions?: ReactNode;
-  children: ReactNode;
+  children?: ReactNode;
 }) {
   return (
     <section className="panel settings-section" aria-labelledby={id}>

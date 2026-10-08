@@ -25,11 +25,14 @@ export async function requestJson<T>(url: string, init: RequestInit = {}): Promi
   }
 
   if (!response.ok) {
-    if (response.status === 401) window.dispatchEvent(new Event('luowang:unauthorized'));
-    const message =
-      isRecord(payload) && isRecord(payload.error) && typeof payload.error.message === 'string'
-        ? payload.error.message
-        : '请求失败';
+    const error = isRecord(payload) && isRecord(payload.error) ? payload.error : null;
+    if (
+      response.status === 401 &&
+      error?.code !== 'INVALID_CREDENTIALS' &&
+      error?.code !== 'INVALID_CURRENT_PASSWORD'
+    )
+      window.dispatchEvent(new Event('luowang:unauthorized'));
+    const message = typeof error?.message === 'string' ? error.message : '请求失败';
     throw new ApiError(message, response.status);
   }
   return payload as T;

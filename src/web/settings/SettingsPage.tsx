@@ -532,7 +532,6 @@ function ProviderSection({
       id="provider-title"
       eyebrow="MODEL SERVICE"
       title="模型服务"
-      description="Provider、地址与凭据在这里统一配置。测试连接会真实调用当前 Main 模型。"
       actions={
         <>
           <button className="button button-secondary" disabled={busy !== null} onClick={onSave}>
@@ -611,7 +610,6 @@ function AgentModelsSection({
       id="agents-title"
       eyebrow="AGENT MODELS"
       title="Agent 模型"
-      description="模型候选只来自上方选中的 Provider。Reviewer 负责读取截图证据，视觉场景必须使用支持图像输入的模型。"
       actions={
         <button className="button" disabled={busy !== null} onClick={onSaveAndCheck}>
           {busy === 'agents-check' ? '验证中…' : '保存并验证三个角色'}
@@ -755,7 +753,6 @@ function BrowserSection({
       id="browser-title"
       eyebrow="BROWSER"
       title="浏览器自动化"
-      description="配置 Playwright MCP，并启动一次真实 MCP 握手检查。"
       actions={
         <button className="button" disabled={busy !== null} onClick={onSaveAndCheck}>
           {busy === 'browser-check' ? '测试中…' : '保存并测试'}
@@ -840,7 +837,6 @@ function LocalSection({
       id="local-title"
       eyebrow="LOCAL RUNTIME"
       title="本地运行与保留"
-      description="容器内工作目录与临时报告保留策略。"
       actions={
         <button className="button button-secondary" disabled={busy !== null} onClick={onSave}>
           {busy === 'local-save' ? '保存中…' : '保存'}
@@ -922,7 +918,7 @@ function OssSection({
       id="oss-title"
       eyebrow="EVIDENCE STORAGE"
       title="Evidence 存储"
-      description="配置 S3-compatible 私有或公开对象存储；测试会写入、读取并删除一个临时对象。"
+      description="连接测试会创建并删除一个临时对象。"
       actions={
         <button className="button" disabled={busy !== null} onClick={onSaveAndCheck}>
           {busy === 'oss-check' ? '测试中…' : '保存并测试'}
@@ -1048,7 +1044,6 @@ function RepositorySection({
       id="repository-title"
       eyebrow="GITHUB PROJECT"
       title="GitHub 仓库"
-      description="一个罗网实例只连接一个可信目标仓库。一次执行四项无副作用检查，不制造测试 PR、Issue 或远端分支。"
       actions={
         <>
           <button className="button button-secondary" disabled={busy !== null} onClick={onSave}>
@@ -1153,7 +1148,7 @@ function EnvironmentSection({
       id="environment-title"
       eyebrow="TEST ENVIRONMENT"
       title="非生产测试环境"
-      description="只连接可清理的非生产环境；连接检查不会提交测试数据。"
+      description="仅限非生产环境"
       actions={
         <button className="button" disabled={busy !== null} onClick={onSaveAndCheck}>
           {busy === 'environment-check' ? '测试中…' : '保存并测试'}
@@ -1228,7 +1223,6 @@ function AutomationSection({
       id="automation-title"
       eyebrow="AUTOMATION"
       title="自动触发"
-      description="自动测试默认关闭。新提交检查只负责发现变化后创建 Run，不会按间隔无条件重复测试。"
       actions={
         <button className="button button-secondary" disabled={busy !== null} onClick={onSave}>
           {busy === 'automation-save' ? '保存中…' : '保存'}
@@ -1252,7 +1246,6 @@ function AutomationSection({
         />
         <span>
           <strong>新 commit 自动测试</strong>
-          <small>启用后按下方间隔检查场景测试分支，有可测试提交时才进入顺序队列。</small>
         </span>
       </label>
       <Field
@@ -1343,7 +1336,7 @@ function ConnectivityOverview({
       id="checks-title"
       eyebrow="CONNECTIVITY OVERVIEW"
       title="配置检查总览"
-      description={`最近结果：${passed}/${checks.length} 项通过。点击一次测试所有已保存配置，下面逐项显示问题原因。`}
+      description={`最近结果：${passed}/${checks.length} 项通过`}
       actions={
         <button className="button" type="button" disabled={busy !== null} onClick={onRunAll}>
           {busy === 'checks-all' ? '正在测试全部…' : '测试全部'}
@@ -1377,7 +1370,7 @@ function PasswordSection({
       id="password-title"
       eyebrow="ADMINISTRATOR"
       title="修改管理员密码"
-      description="修改成功后所有管理会话立即失效，需要重新登录。"
+      description="修改后需重新登录"
     >
       <form
         className="password-form"

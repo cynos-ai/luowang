@@ -41,6 +41,9 @@ export default function AppRouter() {
   const [password, setPassword] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  useEffect(() => {
+    if (error) notify.error(error);
+  }, [error, notify]);
   const returnRoute = useRef<AppRoute | null>(null);
   const routeRef = useRef(route);
   const blockerRef = useRef<NavigationBlocker | null>(null);
@@ -200,7 +203,7 @@ export default function AppRouter() {
           password={password}
           busy={busy}
           message=""
-          error={error}
+          error=""
           onPasswordChange={setPassword}
           onSubmit={login}
           titleAsHeading1
@@ -212,18 +215,14 @@ export default function AppRouter() {
   return (
     <NavigationProvider navigate={navigate} registerBlocker={registerBlocker}>
       <AppShell route={route} project={project} onLogout={() => void logout()}>
-        {error && (
-          <p className="app-banner" role="alert">
-            {error}
-          </p>
-        )}
         <RoutePage
           route={route}
           reloadProjects={() => loadProjects()}
           onPasswordChanged={() => {
             setAuth({ configured: true, authenticated: false });
             setProjects([]);
-            setError('密码已更新，请重新登录');
+            setError('');
+            notify.success('密码已更新，请重新登录');
           }}
         />
       </AppShell>

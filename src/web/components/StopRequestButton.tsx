@@ -52,11 +52,7 @@ export function StopRequestButton({
       });
       if (current.current !== submitted) return;
       setConfirm(false);
-      setMessage(
-        result.queue.stopRequestedAt
-          ? '停止请求已记录；实际退出与清理状态会继续更新。'
-          : '本次测试已结束执行，保留原结果并继续归档。',
-      );
+      setMessage(result.queue.stopRequestedAt ? '停止请求已记录' : '本次测试已结束');
       onChanged();
     } catch (cause) {
       if (current.current === submitted) setError(toUserMessage(cause, '停止请求失败'));

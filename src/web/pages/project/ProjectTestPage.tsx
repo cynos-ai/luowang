@@ -138,6 +138,28 @@ export function ProjectTestPage({ projectId }: { projectId: string }) {
     <section className="page-content project-test-page">
       <PageHeading title="测试" scope="当前项目" />
       <div className="page-body test-page-layout">
+        <button
+          className="button button-secondary"
+          type="button"
+          disabled={busy}
+          onClick={() => {
+            setBusy(true);
+            setActionError('');
+            void requestJson<{ status: string; message: string }>(
+              `/api/projects/${projectId}/check-for-test`,
+              { method: 'POST', body: '{}' },
+            )
+              .then((result) => {
+                if (result.status === 'failed') setActionError(result.message);
+                else setMessage(result.message);
+                resource.reload();
+              })
+              .catch((cause) => setActionError(toUserMessage(cause, '检查待测提交失败')))
+              .finally(() => setBusy(false));
+          }}
+        >
+          检查待测提交
+        </button>
         <AppMessageFeedback success={message} error={actionError} />
         {data && resource.error && (
           <p className="stale-notice" role="status">
@@ -300,7 +322,6 @@ function IdleState({
           <span>空闲</span>
           <div>
             <h2 id="test-request-title">发起测试</h2>
-            <p>同一项目顺序执行，不同项目可在名额允许时同时测试。</p>
           </div>
         </div>
         <div className="request-mode" role="group" aria-label="测试请求类型">

@@ -69,7 +69,6 @@ export function SystemSettingsPage({ onPasswordChanged }: { onPasswordChanged: (
           <form className="content-block settings-form" onSubmit={saveConcurrency}>
             <div className="content-block-heading">
               <h2>任务调度</h2>
-              <p>限制同时执行测试的不同项目数量；同一个项目始终串行。</p>
             </div>
             <Field label="最大并发项目数">
               <NumberInput
@@ -95,7 +94,7 @@ export function SystemSettingsPage({ onPasswordChanged }: { onPasswordChanged: (
           <section className="content-block">
             <div className="content-block-heading">
               <h2>启动配置</h2>
-              <p>这些项目涉及监听地址和数据目录，需要修改部署环境并重启罗网。</p>
+              <p>修改部署配置后重启生效</p>
             </div>
             <dl className="fact-list system-startup-facts">
               <Fact

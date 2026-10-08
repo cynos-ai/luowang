@@ -29,12 +29,20 @@ export type ProjectConfiguration = Omit<RepositoryConfig, 'repository'> & {
     composeServices: string[];
     applicationService: string;
     commandService: string;
+    initializationSteps?: Array<{ service: string; command: string; timeoutSeconds: number }>;
   };
+  generatedDefinition?: {
+    sourceCommit: string;
+    summary: string;
+    files: Array<{ path: string; content: string }>;
+  } | null;
+  scheduleIntervalSeconds?: number;
 };
 
 export type ProjectSecret = 'gitToken' | 'testUsername' | 'testPassword' | 'testDataCleanupToken';
 
 export type ProjectDetailResponse = {
+  environmentRecommendation?: { runId: string; targetCommit: string; reason: string } | null;
   project: ProjectReference;
   configuration: ProjectConfiguration;
   secrets: Record<ProjectSecret, SecretMetadata>;
@@ -90,4 +98,6 @@ export type ProjectManagedFile = {
   revision: number;
   serviceName: string | null;
   runtimeInjectionEnabled: boolean;
+  purpose?: 'config' | 'data';
+  byteSize?: number;
 };

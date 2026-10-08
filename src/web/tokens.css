@@ -8,6 +8,7 @@
   --lw-red: #e51c23;
   --lw-red-soft: #f6c9c5;
   --lw-green: #286956;
+  --lw-green-soft: color-mix(in srgb, var(--lw-green) 10%, var(--lw-paper));
   --lw-amber: #9a5b0b;
   --lw-focus: #e51c23;
   --lw-display: 'Arial Narrow', 'Noto Sans CJK SC', 'Microsoft YaHei', sans-serif;

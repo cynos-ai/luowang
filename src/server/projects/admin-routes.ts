@@ -23,6 +23,9 @@ import {
   type ConnectionResourceService,
 } from './connection-resources.js';
 import { createSshExecutionAdapter, readSshHostFingerprint } from './execution-adapter.js';
+import { deleteProject } from './delete-project.js';
+import type { createEnvironmentGenerationService } from './environment-generation.js';
+import { readEnvironmentRecommendation } from './environment-recommendation.js';
 
 type ProjectSecretKey = 'gitToken' | 'testUsername' | 'testPassword' | 'testDataCleanupToken';
 const PROJECT_SECRET_KEYS = new Set<ProjectSecretKey>([
@@ -41,6 +44,7 @@ export interface ProjectAdminRouteOptions {
   secrets: ScopedSecretStore;
   readiness: ProjectReadinessService;
   images: ProjectImageAdminService;
+  environmentGeneration?: ReturnType<typeof createEnvironmentGenerationService>;
   connectionResources?: ConnectionResourceService;
   allowedOrigin?: string;
   verifyRepository?: (
@@ -73,6 +77,54 @@ export async function registerProjectAdminRoutes(
     });
 
     routes.get('/api/projects', async () => ({ projects: options.projects.list() }));
+    if (options.environmentGeneration) {
+      const generation = options.environmentGeneration;
+      routes.get<{ Params: { projectId: string } }>(
+        '/api/projects/:projectId/environment-generation',
+        async (request) => ({
+          task: generation.current(
+            requireProject(options.projects, request.params.projectId).projectId,
+          ),
+        }),
+      );
+      routes.post<{ Params: { projectId: string } }>(
+        '/api/projects/:projectId/environment-generation',
+        async (request, reply) =>
+          reply.status(202).send({
+            task: generation.start(
+              requireProject(options.projects, request.params.projectId).projectId,
+            ),
+          }),
+      );
+      routes.get<{ Params: { projectId: string; id: string } }>(
+        '/api/projects/:projectId/environment-generation/:id',
+        async (request) => ({
+          task: generation.get(
+            requireProject(options.projects, request.params.projectId).projectId,
+            request.params.id,
+          ),
+        }),
+      );
+      routes.delete<{ Params: { projectId: string; id: string } }>(
+        '/api/projects/:projectId/environment-generation/:id',
+        async (request) => ({
+          task: generation.stop(
+            requireProject(options.projects, request.params.projectId).projectId,
+            request.params.id,
+          ),
+        }),
+      );
+    }
+
+    routes.delete<{ Params: { projectId: string } }>(
+      '/api/projects/:projectId',
+      async (request) => {
+        if (options.environmentGeneration?.isActive(request.params.projectId))
+          throw new ConfigurationError('项目正在生成配置，请先停止生成');
+        deleteProject(options.database, request.params.projectId);
+        return { deleted: true };
+      },
+    );
 
     routes.get('/api/connection-resources', async () => connectionResources.list());
 
@@ -258,6 +310,11 @@ export async function registerProjectAdminRoutes(
         secrets: secrets.project(project.projectId).metadata(),
         resources: connectionResources.bindings(project.projectId),
         managedFiles: connectionResources.listProjectFiles(project.projectId),
+        environmentRecommendation: readEnvironmentRecommendation(
+          options.database,
+          project.projectId,
+          options.configuration.get(project.projectId).generatedDefinition,
+        ),
       };
     });
 
@@ -290,7 +347,9 @@ export async function registerProjectAdminRoutes(
           project.projectId,
           readRecord(request.body) as {
             path: unknown;
-            content: unknown;
+            content?: unknown;
+            encodedContent?: unknown;
+            purpose?: unknown;
             serviceName?: unknown;
           },
         );
@@ -413,6 +472,34 @@ export async function registerProjectAdminRoutes(
         store.set(key, body.value);
         invalidateProjectReadiness(options.database, project.projectId);
         return { key, metadata: store.metadata()[key] };
+      },
+    );
+
+    routes.put<{ Params: { projectId: string } }>(
+      '/api/projects/:projectId/test-account',
+      async (request) => {
+        const project = requireProject(options.projects, request.params.projectId);
+        const body = readRecord(request.body);
+        const keys = ['testUsername', 'testPassword'] as const;
+        if (
+          Object.keys(body).some((key) => !keys.includes(key as (typeof keys)[number])) ||
+          keys.some((key) => key in body && typeof body[key] !== 'string') ||
+          !keys.some((key) => typeof body[key] === 'string' && body[key])
+        ) {
+          throw new AppError('SECRET_INPUT_INVALID', '测试账号值无效', 400);
+        }
+        const store = secrets.project(project.projectId);
+        options.database.transaction(() => {
+          for (const key of keys) {
+            const value = body[key];
+            if (typeof value === 'string' && value) store.set(key, value);
+          }
+          invalidateProjectReadiness(options.database, project.projectId);
+        })();
+        const metadata = store.metadata();
+        return {
+          secrets: { testUsername: metadata.testUsername, testPassword: metadata.testPassword },
+        };
       },
     );
 

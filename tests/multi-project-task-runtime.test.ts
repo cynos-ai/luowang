@@ -35,7 +35,21 @@ describe('claimed project task runtime', () => {
         repository: { githubRepositoryId: '102', owner: 'example', name: 'b' },
       });
       const config = createProjectConfigurationStore(database);
+      const generatedDefinition = {
+        sourceCommit: 'a'.repeat(40),
+        summary: 'original',
+        files: [{ path: '.luowang-generated/compose.yml', content: 'services: {}\n' }],
+      };
       config.update(a.projectId, {
+        generatedDefinition,
+        runtime: {
+          composeServices: ['app', 'tools'],
+          applicationService: 'app',
+          commandService: 'tools',
+          initializationSteps: [
+            { service: 'tools', command: 'seed && verify', timeoutSeconds: 30 },
+          ],
+        },
         language: 'en-US',
         baseUrl: 'https://a.example',
         executionDockerfile: 'build/Dockerfile',
@@ -67,6 +81,11 @@ describe('claimed project task runtime', () => {
       assert.equal(runtimeA.projectId, a.projectId);
       assert.equal(runtimeA.configRevision, claimedA.configRevision);
       assert.equal(runtimeA.executionDockerfile, 'build/Dockerfile');
+      assert.deepEqual(runtimeA.generatedDefinition, generatedDefinition);
+      assert.deepEqual(runtimeA.runtime.initializationSteps, [
+        { service: 'tools', command: 'seed && verify', timeoutSeconds: 30 },
+      ]);
+      assert.equal('generatedDefinition' in runtimeA.configuration.getRepository(), false);
       assert.equal(
         runtimeA.configuration.getRepository().repository,
         'https://github.com/example/a',
@@ -84,7 +103,14 @@ describe('claimed project task runtime', () => {
       assert.equal(runtimeA.configuration.getRepository().pollIntervalSeconds, 300);
       assert.throws(() => runtimeA.configuration.updateHarness({ language: 'other' }), /只读/);
       queueA.complete(claimedA.queueId);
-      config.update(a.projectId, { baseUrl: 'https://new-a.example' });
+      config.update(a.projectId, {
+        baseUrl: 'https://new-a.example',
+        generatedDefinition: {
+          ...generatedDefinition,
+          files: [{ ...generatedDefinition.files[0], content: 'changed configuration' }],
+        },
+      });
+      assert.deepEqual(runtimeA.generatedDefinition, generatedDefinition);
       assert.equal(runtimeA.configuration.getRepository().baseUrl, 'https://a.example');
 
       const claimedB = queueB.claimNext()!;

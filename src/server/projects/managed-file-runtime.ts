@@ -5,15 +5,18 @@ import type { DockerRuntime } from './execution-container.js';
 import type { ExecutionAdapter } from './execution-adapter.js';
 import { ControlledCommandError } from '../runs/command-runner.js';
 import { isManagedFilePath } from './managed-file-path.js';
+import { MAX_UPLOAD_BYTES } from './file-content.js';
 
 const MAX_FILE = 256 * 1024;
-const MAX_TOTAL = 1024 * 1024;
+const MAX_TOTAL = 32 * 1024 * 1024;
 export type ManagedFileRuntimeInput = {
   id: string;
   revision: number;
   path: string;
   serviceName: string | null;
   content: string;
+  bytes?: Buffer;
+  purpose?: 'config' | 'data';
 };
 
 export async function injectManagedFiles(input: {
@@ -33,11 +36,18 @@ export async function injectManagedFiles(input: {
   if (!destinationRoot.startsWith('/') || destinationRoot.includes('..'))
     throw new ControlledCommandError('COMMAND_INVALID', '受控配置文件目标根目录无效');
   let total = 0;
+  let configTotal = 0;
   const seen = new Set<string>();
   for (const file of selected) {
     validatePath(file.path);
-    const size = Buffer.byteLength(file.content, 'utf8');
-    if (!file.content || size > MAX_FILE || (total += size) > MAX_TOTAL)
+    const size = file.bytes?.length ?? Buffer.byteLength(file.content, 'utf8');
+    if (file.purpose !== 'data' && (configTotal += size) > 1024 * 1024)
+      throw new ControlledCommandError('COMMAND_INVALID', '受控配置文件超过总大小限制');
+    if (
+      !size ||
+      size > (file.purpose === 'data' ? MAX_UPLOAD_BYTES : MAX_FILE) ||
+      (total += size) > MAX_TOTAL
+    )
       throw new ControlledCommandError('COMMAND_INVALID', '受控配置文件超过大小限制');
     if (seen.has(file.path))
       throw new ControlledCommandError('COMMAND_INVALID', '受控配置文件路径冲突');
@@ -95,7 +105,7 @@ export async function injectManagedFiles(input: {
       if (parentCheck.exitCode !== 0)
         throw new ControlledCommandError('COMMAND_NOT_ALLOWED', '受控配置文件父路径无效');
       const local = join(staging, String(index));
-      await writeFile(local, file.content, { mode: 0o600, flag: 'wx' });
+      await writeFile(local, file.bytes ?? file.content, { mode: 0o600, flag: 'wx' });
       input.signal?.throwIfAborted();
       const dockerSource = input.executionAdapter?.locationId.startsWith('server:')
         ? `/tmp/luowang-managed/${input.containerId}/${index}`
@@ -167,7 +177,7 @@ async function injectIntoStoppedContainer(
     await assertSafeDestination(inspection, file.path);
     const target = join(payload, ...file.path.split('/'));
     await mkdir(join(target, '..'), { recursive: true });
-    await writeFile(target, file.content, { mode: 0o600, flag: 'wx' });
+    await writeFile(target, file.bytes ?? file.content, { mode: 0o600, flag: 'wx' });
   }
   const dockerSource = remote ? `${remoteRoot}/payload` : payload;
   if (remote) {

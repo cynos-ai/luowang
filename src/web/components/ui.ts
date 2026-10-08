@@ -4,6 +4,7 @@ export { useAppDialog, type ConfirmOptions } from './AppDialogProvider';
 export { AppMessageFeedback, AppMessageProvider, useAppMessage } from './AppMessageProvider';
 export { ConfirmDialog } from './ConfirmDialog';
 export { DataTable } from './DataTable';
+export { FileUpload } from './FileUpload';
 export {
   ComboBox,
   Field,
@@ -17,3 +18,4 @@ export {
 export { PageHeading } from './PageHeading';
 export { PromptDialog } from './PromptDialog';
 export { StatusLabel } from './StatusLabel';
+export { Switch } from './Switch';

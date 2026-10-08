@@ -6,7 +6,7 @@ import { useResource } from '../../app/resource';
 import { AsyncRegion } from '../../components/AsyncRegion';
 import { AppMessageFeedback } from '../../components/AppMessageProvider';
 import { ConfirmDialog } from '../../components/ConfirmDialog';
-import { Field, HelpLabel, NumberInput, SelectBox } from '../../components/FormControls';
+import { Button, Field, HelpLabel, NumberInput, SelectBox } from '../../components/ui';
 import { PageHeading } from '../../components/PageHeading';
 import { StatusLabel } from '../../components/StatusLabel';
 import type {
@@ -26,6 +26,8 @@ const languageOptions = [
 ];
 import type { ProjectSettingSection } from '../../app/route';
 import { ProjectManagedFilesSettings } from './ProjectManagedFilesSettings';
+import { ProjectEnvironmentEditor } from './ProjectEnvironmentEditor';
+import { ProjectTriggerSettings } from './ProjectTriggerSettings';
 
 type PendingItem = { queueId: number; status: string; runId: string | null; request: string };
 type SettingsData = {
@@ -36,29 +38,29 @@ type SettingsData = {
 
 const sections: Array<[ProjectSettingSection, string]> = [
   ['general', '基本资料'],
-  ['testing', '测试策略'],
-  ['environment', '测试环境'],
-  ['execution', '执行环境'],
-  ['automation', '自动化'],
-  ['credentials', '凭据'],
-  ['files', '受控文件'],
+  ['testing', '测试规则'],
+  ['execution', '运行环境'],
+  ['credentials', '测试数据'],
+  ['automation', '触发规则'],
+  ['files', '配置文件'],
 ];
 const secretLabels: Record<ProjectSecret, string> = {
   gitToken: 'GitHub Token',
   testUsername: '测试账号',
   testPassword: '测试密码',
-  testDataCleanupToken: '清理 Token',
+  testDataCleanupToken: '清理接口 Token',
 };
 
 export function ProjectSettingsPage({
   projectId,
-  section,
+  section: requestedSection,
   onProjectChanged,
 }: {
   projectId: string;
   section: ProjectSettingSection;
   onProjectChanged: () => Promise<void>;
 }) {
+  const section = requestedSection === 'environment' ? 'execution' : requestedSection;
   const load = useCallback(
     async (signal: AbortSignal): Promise<SettingsData> => {
       const [detail, queue, current, resources] = await Promise.all([
@@ -140,7 +142,7 @@ export function ProjectSettingsPage({
       resource.reload();
       navigationState.current = { busy: false, dirty: false };
       setBusy('');
-      setMessage(`${label}。已保存不代表连通或就绪，请前往运行准备检查。`);
+      setMessage(label);
     } catch (cause) {
       navigationState.current.busy = false;
       setError(toUserMessage(cause, `${label}失败`));
@@ -178,7 +180,7 @@ export function ProjectSettingsPage({
                 {section === 'files' ? (
                   <ProjectManagedFilesSettings
                     projectId={projectId}
-                    files={data.detail.managedFiles}
+                    files={data.detail.managedFiles.filter((file) => file.purpose !== 'data')}
                     disabled={locked || Boolean(busy)}
                     onChanged={resource.reload}
                   />
@@ -192,6 +194,7 @@ export function ProjectSettingsPage({
                     busy={Boolean(busy)}
                     locked={locked}
                     onConfiguration={setDraft}
+                    onFilesChanged={resource.reload}
                     onDisplayName={setDisplayName}
                     onSecret={(key, value) =>
                       setSecrets((current) => ({ ...current, [key]: value }))
@@ -232,6 +235,26 @@ export function ProjectSettingsPage({
                             body: JSON.stringify({ value }),
                           }),
                         () => setSecrets((current) => ({ ...current, [key]: '' })),
+                      );
+                    }}
+                    onSaveTestAccount={() => {
+                      if (!secrets.testUsername && !secrets.testPassword) return;
+                      void action(
+                        '测试账号已保存',
+                        () =>
+                          requestJson(`/api/projects/${projectId}/test-account`, {
+                            method: 'PUT',
+                            body: JSON.stringify({
+                              testUsername: secrets.testUsername ?? '',
+                              testPassword: secrets.testPassword ?? '',
+                            }),
+                          }),
+                        () =>
+                          setSecrets((current) => ({
+                            ...current,
+                            testUsername: '',
+                            testPassword: '',
+                          })),
                       );
                     }}
                     onDeleteSecret={setDeleteSecret}
@@ -285,11 +308,13 @@ function SettingsSection({
   busy,
   locked,
   onConfiguration,
+  onFilesChanged,
   onDisplayName,
   onSecret,
   onSaveProfile,
   onSaveConfiguration,
   onSaveSecret,
+  onSaveTestAccount,
   onDeleteSecret,
   onResourceBinding,
 }: {
@@ -301,20 +326,25 @@ function SettingsSection({
   busy: boolean;
   locked: boolean;
   onConfiguration: (value: ProjectConfiguration) => void;
+  onFilesChanged: () => void;
   onDisplayName: (value: string) => void;
   onSecret: (key: ProjectSecret, value: string) => void;
   onSaveProfile: (event: FormEvent<HTMLFormElement>) => void;
   onSaveConfiguration: (patch: Partial<ProjectConfiguration>) => void;
   onSaveSecret: (key: ProjectSecret) => void;
+  onSaveTestAccount: () => void;
   onDeleteSecret: (key: ProjectSecret) => void;
   onResourceBinding: (patch: Partial<ProjectResourceBindings>) => void;
 }) {
   const disabled = busy || locked;
   if (section === 'general') {
     return (
-      <SettingsPanel title="基本资料" description="仓库身份由接入时核验，不能在这里替换。">
+      <SettingsPanel title="基本资料">
         <form className="form-grid profile-grid" onSubmit={onSaveProfile}>
-          <Field label="项目显示名称">
+          <Field
+            label="项目显示名称"
+            status={displayName === data.detail.project.displayName ? 'success' : undefined}
+          >
             <input
               required
               maxLength={120}
@@ -326,19 +356,37 @@ function SettingsSection({
           <ReadOnly
             label="GitHub 仓库"
             value={`${data.detail.project.repositoryOwner}/${data.detail.project.repositoryName}`}
+            status="success"
           />
           <ReadOnly label="创建时间" value={formatDate(data.detail.project.createdAt ?? null)} />
           <SaveButton disabled={disabled}>保存基本资料</SaveButton>
         </form>
+        <Field label="GitHub Token">
+          <SelectBox
+            ariaLabel="GitHub Token"
+            disabled={disabled}
+            value={data.detail.resources.githubCredentialId ?? 'legacy'}
+            options={[
+              {
+                value: 'legacy',
+                label: data.detail.secrets.gitToken.configured ? '项目专属旧凭据' : '不使用 Token',
+              },
+              ...data.resources.githubCredentials.map((item) => ({
+                value: item.id,
+                label: item.name,
+              })),
+            ]}
+            onChange={(value) =>
+              onResourceBinding({ githubCredentialId: value === 'legacy' ? null : value })
+            }
+          />
+        </Field>
       </SettingsPanel>
     );
   }
   if (section === 'testing') {
     return (
-      <SettingsPanel
-        title="测试策略"
-        description="修改后运行准备状态失效；保存时不会执行连接检查。"
-      >
+      <SettingsPanel title="测试策略">
         <form
           className="form-grid"
           onSubmit={(event) => {
@@ -417,437 +465,550 @@ function SettingsSection({
       </SettingsPanel>
     );
   }
-  if (section === 'environment') {
-    return (
-      <SettingsPanel title="测试环境" description="只允许非生产环境。凭据在凭据分组单独提交。">
-        <form
-          className="form-grid"
-          onSubmit={(event) => {
-            event.preventDefault();
-            onSaveConfiguration(sectionValue('environment', configuration));
-          }}
-        >
-          <Field label="非生产环境 URL">
-            <input
-              type="url"
-              value={configuration.baseUrl}
-              disabled={disabled}
-              onChange={(event) =>
-                onConfiguration({ ...configuration, baseUrl: event.target.value })
-              }
-            />
-          </Field>
-          <Field label="环境说明">
-            <textarea
-              value={configuration.environmentDescription}
-              disabled={disabled}
-              onChange={(event) =>
-                onConfiguration({ ...configuration, environmentDescription: event.target.value })
-              }
-            />
-          </Field>
-          <Field label="浏览器额外来源" hint="每行一个完整 origin，例如 https://cdn.example.com。">
-            <textarea
-              value={configuration.browserAllowedOrigins.join('\n')}
-              disabled={disabled}
-              onChange={(event) =>
-                onConfiguration({
-                  ...configuration,
-                  browserAllowedOrigins: event.target.value
-                    .split(/[\n,]/)
-                    .map((item) => item.trim())
-                    .filter(Boolean),
-                })
-              }
-            />
-          </Field>
-          <Field label="外部数据库说明">
-            <textarea
-              value={configuration.externalDatabase}
-              disabled={disabled}
-              onChange={(event) =>
-                onConfiguration({ ...configuration, externalDatabase: event.target.value })
-              }
-            />
-          </Field>
-          <Field label="测试数据清理地址">
-            <input
-              type="url"
-              value={configuration.testDataCleanupUrl}
-              disabled={disabled}
-              onChange={(event) =>
-                onConfiguration({ ...configuration, testDataCleanupUrl: event.target.value })
-              }
-            />
-          </Field>
-          <SaveButton disabled={disabled}>保存测试环境</SaveButton>
-        </form>
-      </SettingsPanel>
-    );
-  }
   if (section === 'execution') {
     return (
-      <SettingsPanel title="执行环境" description="保存后前往运行准备，针对固定提交准备镜像。">
-        <Field label="执行服务器">
-          <SelectBox
-            ariaLabel="执行服务器"
-            disabled={disabled}
-            value={data.detail.resources.executionServerId ?? 'local'}
-            options={[
-              { value: 'local', label: '罗网本机' },
-              ...data.resources.executionServers.map((item) => ({
-                value: item.id,
-                label: item.name,
-                detail: `${item.username}@${item.host}:${item.port}`,
-              })),
-            ]}
-            onChange={(value) =>
-              onResourceBinding({ executionServerId: value === 'local' ? null : value })
-            }
-          />
-        </Field>
-        {data.detail.resources.executionServerId &&
-          (() => {
-            const server = data.resources.executionServers.find(
-              (item) => item.id === data.detail.resources.executionServerId,
-            );
-            return (
-              <p className="muted-copy">
-                {server?.remoteExecutionEnabled
-                  ? `已验证 · 容量 ${server.capacity}`
-                  : '待完成主机指纹与 Docker/Compose 检查'}
-              </p>
-            );
-          })()}
-        <form
-          className="form-grid"
-          onSubmit={(event) => {
-            event.preventDefault();
-            onSaveConfiguration(sectionValue('execution', configuration));
-          }}
-        >
-          <Field label="运行模式">
-            <SelectBox
-              ariaLabel="运行模式"
-              disabled={disabled}
-              value={configuration.runtimeMode}
-              options={[
-                { value: 'managed', label: '罗网启动项目' },
-                { value: 'external', label: '已有测试环境' },
-                { value: 'repository-only', label: '仅仓库测试' },
-              ]}
-              onChange={(runtimeMode) =>
-                onConfiguration({
-                  ...configuration,
-                  runtimeMode: runtimeMode as ProjectConfiguration['runtimeMode'],
-                })
-              }
-            />
-          </Field>
-          {configuration.runtimeMode === 'managed' && (
-            <Field label="启动方式">
+      <SettingsPanel title="运行环境">
+        <div className="settings-stack">
+          <form
+            className="settings-fields"
+            onSubmit={(event) => {
+              event.preventDefault();
+              onSaveConfiguration({ runtimeMode: configuration.runtimeMode });
+            }}
+          >
+            <Field label="执行服务器">
               <SelectBox
-                ariaLabel="启动方式"
+                ariaLabel="执行服务器"
                 disabled={disabled}
-                value={configuration.startType}
+                value={data.detail.resources.executionServerId ?? 'local'}
                 options={[
-                  { value: 'single-container', label: '单容器' },
-                  { value: 'compose', label: 'Docker Compose' },
+                  { value: 'local', label: '罗网本机' },
+                  ...data.resources.executionServers.map((item) => ({
+                    value: item.id,
+                    label: item.name,
+                    detail: `${item.username}@${item.host}:${item.port}`,
+                  })),
                 ]}
-                onChange={(startType) =>
+                onChange={(value) =>
+                  onResourceBinding({ executionServerId: value === 'local' ? null : value })
+                }
+              />
+            </Field>
+            <Field label="运行模式">
+              <SelectBox
+                ariaLabel="运行模式"
+                disabled={disabled}
+                value={configuration.runtimeMode}
+                options={[
+                  { value: 'managed', label: '罗网启动项目' },
+                  { value: 'external', label: '已有测试环境' },
+                  { value: 'repository-only', label: '仅仓库测试' },
+                ]}
+                onChange={(runtimeMode) =>
                   onConfiguration({
                     ...configuration,
-                    startType: startType as ProjectConfiguration['startType'],
+                    runtimeMode: runtimeMode as ProjectConfiguration['runtimeMode'],
                   })
                 }
               />
             </Field>
-          )}
-          <Field label="执行 Dockerfile" hint="留空使用罗网内置执行镜像。">
-            <input
-              value={configuration.executionDockerfile}
-              disabled={disabled}
-              onChange={(event) =>
-                onConfiguration({ ...configuration, executionDockerfile: event.target.value })
-              }
-            />
-          </Field>
-          {configuration.runtimeMode === 'managed' &&
-            configuration.startType === 'single-container' && (
-              <>
-                <Field label="准备命令（每行一个参数）">
-                  <textarea
-                    value={configuration.runtime.prepareCommand.join('\n')}
-                    disabled={disabled}
-                    onChange={(event) =>
-                      onConfiguration({
-                        ...configuration,
-                        runtime: {
-                          ...configuration.runtime,
-                          prepareCommand: event.target.value.split('\n').filter(Boolean),
-                        },
-                      })
-                    }
-                  />
-                </Field>
-                <Field label="启动命令（每行一个参数）">
-                  <textarea
-                    value={configuration.runtime.startCommand.join('\n')}
-                    disabled={disabled}
-                    onChange={(event) =>
-                      onConfiguration({
-                        ...configuration,
-                        runtime: {
-                          ...configuration.runtime,
-                          startCommand: event.target.value.split('\n').filter(Boolean),
-                        },
-                      })
-                    }
-                  />
-                </Field>
-                <Field label="服务端口">
-                  <NumberInput
-                    ariaLabel="服务端口"
-                    min={1}
-                    max={65535}
-                    step={1}
-                    value={configuration.runtime.servicePort ?? 3000}
-                    disabled={disabled}
-                    onChange={(servicePort) =>
-                      onConfiguration({
-                        ...configuration,
-                        runtime: { ...configuration.runtime, servicePort },
-                      })
-                    }
-                  />
-                </Field>
-              </>
-            )}
-          {configuration.runtimeMode === 'managed' && configuration.startType === 'compose' && (
-            <>
-              <Field label="Compose 文件">
-                <input
-                  value={configuration.runtime.composeFile}
-                  disabled={disabled}
-                  onChange={(event) =>
-                    onConfiguration({
-                      ...configuration,
-                      runtime: { ...configuration.runtime, composeFile: event.target.value },
-                    })
-                  }
-                />
-              </Field>
-              <Field label="启用服务（逗号分隔）">
-                <input
-                  value={configuration.runtime.composeServices.join(', ')}
-                  disabled={disabled}
-                  onChange={(event) =>
-                    onConfiguration({
-                      ...configuration,
-                      runtime: {
-                        ...configuration.runtime,
-                        composeServices: event.target.value
-                          .split(',')
-                          .map((item) => item.trim())
-                          .filter(Boolean),
-                      },
-                    })
-                  }
-                />
-              </Field>
-              <Field label="应用服务">
-                <input
-                  value={configuration.runtime.applicationService}
-                  disabled={disabled}
-                  onChange={(event) =>
-                    onConfiguration({
-                      ...configuration,
-                      runtime: { ...configuration.runtime, applicationService: event.target.value },
-                    })
-                  }
-                />
-              </Field>
-              <Field label="测试命令服务">
-                <input
-                  value={configuration.runtime.commandService}
-                  disabled={disabled}
-                  onChange={(event) =>
-                    onConfiguration({
-                      ...configuration,
-                      runtime: { ...configuration.runtime, commandService: event.target.value },
-                    })
-                  }
-                />
-              </Field>
-            </>
-          )}
+            <div className="form-actions">
+              {data.detail.resources.executionServerId &&
+                (() => {
+                  const server = data.resources.executionServers.find(
+                    (item) => item.id === data.detail.resources.executionServerId,
+                  );
+                  return (
+                    <StatusLabel tone={server?.remoteExecutionEnabled ? 'success' : 'warning'}>
+                      {server?.remoteExecutionEnabled
+                        ? `服务器已验证 · 容量 ${server.capacity}`
+                        : '服务器待验证'}
+                    </StatusLabel>
+                  );
+                })()}
+              <Button variant="secondary" type="submit" disabled={disabled}>
+                保存运行方式
+              </Button>
+            </div>
+          </form>
           {configuration.runtimeMode === 'managed' && (
-            <>
-              <Field label="健康检查路径">
+            <ProjectEnvironmentEditor
+              projectId={data.detail.project.projectId}
+              recommendation={data.detail.environmentRecommendation}
+              configuration={configuration}
+              disabled={disabled}
+              onSave={onSaveConfiguration}
+            />
+          )}
+          {configuration.runtimeMode === 'external' && (
+            <form
+              className="settings-fields"
+              onSubmit={(event) => {
+                event.preventDefault();
+                onSaveConfiguration(sectionValue('environment', configuration));
+              }}
+            >
+              <Field label="测试网址">
                 <input
-                  value={configuration.runtime.healthPath}
+                  type="url"
+                  required
+                  value={configuration.baseUrl}
+                  disabled={disabled}
+                  placeholder="https://test.example.com"
+                  onChange={(event) =>
+                    onConfiguration({ ...configuration, baseUrl: event.target.value })
+                  }
+                />
+              </Field>
+              <Field label="环境备注（可选）">
+                <textarea
+                  value={configuration.environmentDescription}
                   disabled={disabled}
                   onChange={(event) =>
                     onConfiguration({
                       ...configuration,
-                      runtime: { ...configuration.runtime, healthPath: event.target.value },
+                      environmentDescription: event.target.value,
                     })
                   }
                 />
               </Field>
-              <Field label="健康检查超时（秒）">
-                <NumberInput
-                  ariaLabel="健康检查超时"
-                  min={5}
-                  max={600}
-                  step={5}
-                  value={configuration.runtime.healthTimeoutSeconds}
-                  disabled={disabled}
-                  onChange={(healthTimeoutSeconds) =>
-                    onConfiguration({
-                      ...configuration,
-                      runtime: { ...configuration.runtime, healthTimeoutSeconds },
-                    })
-                  }
-                />
-              </Field>
-            </>
+              <div className="form-actions">
+                <SaveButton disabled={disabled}>保存测试网址</SaveButton>
+              </div>
+            </form>
           )}
-          <AppLink
-            className="text-link"
-            to={{ name: 'project-readiness', projectId: data.detail.project.projectId }}
-          >
-            查看运行准备
-          </AppLink>
-          <SaveButton disabled={disabled}>保存执行环境</SaveButton>
-        </form>
-      </SettingsPanel>
-    );
-  }
-  if (section === 'automation') {
-    return (
-      <SettingsPanel
-        title="自动化"
-        description={
-          data.detail.project.status === 'paused'
-            ? '项目已暂停，自动请求不会被认领。'
-            : '自动请求进入本项目队列，项目间按名额并行。'
-        }
-      >
-        <form
-          className="form-grid"
-          onSubmit={(event) => {
-            event.preventDefault();
-            onSaveConfiguration(sectionValue('automation', configuration));
-          }}
-        >
-          <Field label="Git 轮询间隔（秒）">
-            <NumberInput
-              ariaLabel="Git 轮询间隔（秒）"
-              min={0}
-              step={1}
-              value={configuration.pollIntervalSeconds}
-              disabled={disabled}
-              onChange={(pollIntervalSeconds) =>
-                onConfiguration({
-                  ...configuration,
-                  pollIntervalSeconds,
-                })
-              }
-            />
-          </Field>
-          <Field label="Cron">
-            <input
-              value={configuration.cron}
-              disabled={disabled}
-              onChange={(event) => onConfiguration({ ...configuration, cron: event.target.value })}
-            />
-          </Field>
-          <label className="check-control">
-            <input
-              type="checkbox"
-              checked={configuration.triggerOnCommit}
-              disabled={disabled}
-              onChange={(event) =>
-                onConfiguration({ ...configuration, triggerOnCommit: event.target.checked })
-              }
-            />
-            提交变化时触发
-          </label>
-          <SaveButton disabled={disabled}>保存自动化</SaveButton>
-        </form>
-      </SettingsPanel>
-    );
-  }
-  return (
-    <SettingsPanel title="凭据" description="原值永远不返回前端。更新和清除会使运行准备状态失效。">
-      <Field label="GitHub Token">
-        <SelectBox
-          ariaLabel="GitHub Token"
-          disabled={disabled}
-          value={data.detail.resources.githubCredentialId ?? 'legacy'}
-          options={[
-            {
-              value: 'legacy',
-              label: data.detail.secrets.gitToken.configured ? '项目专属旧凭据' : '不使用 Token',
-            },
-            ...data.resources.githubCredentials.map((item) => ({
-              value: item.id,
-              label: item.name,
-            })),
-          ]}
-          onChange={(value) =>
-            onResourceBinding({ githubCredentialId: value === 'legacy' ? null : value })
-          }
-        />
-      </Field>
-      <div className="credential-list">
-        {(Object.keys(secretLabels) as ProjectSecret[])
-          .filter((key) => key !== 'gitToken')
-          .map((key) => {
-            const metadata = data.detail.secrets[key];
-            return (
-              <section className="credential-row" key={key} aria-labelledby={`credential-${key}`}>
-                <div>
-                  <h3 id={`credential-${key}`}>{secretLabels[key]}</h3>
-                  <StatusLabel tone={metadata.configured ? 'success' : 'warning'}>
-                    {metadata.configured ? `已配置 ${metadata.masked ?? ''}` : '未配置'}
-                  </StatusLabel>
-                </div>
-                <Field label={`新${secretLabels[key]}`} hint="留空保持现有值。">
-                  <input
-                    type="password"
-                    autoComplete="new-password"
-                    value={secrets[key] ?? ''}
+          <details className="settings-details">
+            <summary>运行参数（高级）</summary>
+            <form
+              className="settings-fields"
+              onSubmit={(event) => {
+                event.preventDefault();
+                onSaveConfiguration(sectionValue('execution', configuration));
+              }}
+            >
+              {configuration.runtimeMode === 'managed' && (
+                <Field label="启动方式">
+                  <SelectBox
+                    ariaLabel="启动方式"
                     disabled={disabled}
-                    onChange={(event) => onSecret(key, event.target.value)}
+                    value={configuration.startType}
+                    options={[
+                      { value: 'single-container', label: '单容器' },
+                      { value: 'compose', label: 'Docker Compose' },
+                    ]}
+                    onChange={(startType) =>
+                      onConfiguration({
+                        ...configuration,
+                        startType: startType as ProjectConfiguration['startType'],
+                      })
+                    }
                   />
                 </Field>
-                <div className="row-actions">
-                  <button
-                    className="button button-secondary"
-                    type="button"
-                    disabled={disabled || !secrets[key]}
-                    onClick={() => onSaveSecret(key)}
-                  >
-                    更新
-                  </button>
-                  {metadata.configured && (
-                    <button
-                      className="button button-danger"
-                      type="button"
+              )}
+              <Field
+                label={
+                  <HelpLabel
+                    label="执行 Dockerfile"
+                    help="填写仓库内路径。留空使用罗网内置执行镜像。"
+                  />
+                }
+              >
+                <input
+                  aria-label="执行 Dockerfile"
+                  value={configuration.executionDockerfile}
+                  disabled={disabled}
+                  onChange={(event) =>
+                    onConfiguration({ ...configuration, executionDockerfile: event.target.value })
+                  }
+                />
+              </Field>
+              {configuration.runtimeMode !== 'external' && (
+                <Field label="环境备注（可选）">
+                  <textarea
+                    value={configuration.environmentDescription}
+                    disabled={disabled}
+                    onChange={(event) =>
+                      onConfiguration({
+                        ...configuration,
+                        environmentDescription: event.target.value,
+                      })
+                    }
+                  />
+                </Field>
+              )}
+              {configuration.runtimeMode === 'managed' &&
+                configuration.startType === 'single-container' && (
+                  <>
+                    <Field label="准备命令（每行一个参数）">
+                      <textarea
+                        value={configuration.runtime.prepareCommand.join('\n')}
+                        disabled={disabled}
+                        onChange={(event) =>
+                          onConfiguration({
+                            ...configuration,
+                            runtime: {
+                              ...configuration.runtime,
+                              prepareCommand: event.target.value.split('\n').filter(Boolean),
+                            },
+                          })
+                        }
+                      />
+                    </Field>
+                    <Field label="启动命令（每行一个参数）">
+                      <textarea
+                        value={configuration.runtime.startCommand.join('\n')}
+                        disabled={disabled}
+                        onChange={(event) =>
+                          onConfiguration({
+                            ...configuration,
+                            runtime: {
+                              ...configuration.runtime,
+                              startCommand: event.target.value.split('\n').filter(Boolean),
+                            },
+                          })
+                        }
+                      />
+                    </Field>
+                    <Field label="服务端口">
+                      <NumberInput
+                        ariaLabel="服务端口"
+                        width="full"
+                        min={1}
+                        max={65535}
+                        step={1}
+                        value={configuration.runtime.servicePort ?? 3000}
+                        disabled={disabled}
+                        onChange={(servicePort) =>
+                          onConfiguration({
+                            ...configuration,
+                            runtime: { ...configuration.runtime, servicePort },
+                          })
+                        }
+                      />
+                    </Field>
+                  </>
+                )}
+              {configuration.runtimeMode === 'managed' && configuration.startType === 'compose' && (
+                <>
+                  <Field label="Compose 文件">
+                    <input
+                      value={configuration.runtime.composeFile}
                       disabled={disabled}
-                      onClick={() => onDeleteSecret(key)}
-                    >
-                      清除
-                    </button>
-                  )}
-                </div>
-              </section>
-            );
-          })}
+                      onChange={(event) =>
+                        onConfiguration({
+                          ...configuration,
+                          runtime: { ...configuration.runtime, composeFile: event.target.value },
+                        })
+                      }
+                    />
+                  </Field>
+                  <Field label="启用服务（逗号分隔）">
+                    <input
+                      value={configuration.runtime.composeServices.join(', ')}
+                      disabled={disabled}
+                      onChange={(event) =>
+                        onConfiguration({
+                          ...configuration,
+                          runtime: {
+                            ...configuration.runtime,
+                            composeServices: event.target.value
+                              .split(',')
+                              .map((item) => item.trim())
+                              .filter(Boolean),
+                          },
+                        })
+                      }
+                    />
+                  </Field>
+                  <Field label="应用服务">
+                    <input
+                      value={configuration.runtime.applicationService}
+                      disabled={disabled}
+                      onChange={(event) =>
+                        onConfiguration({
+                          ...configuration,
+                          runtime: {
+                            ...configuration.runtime,
+                            applicationService: event.target.value,
+                          },
+                        })
+                      }
+                    />
+                  </Field>
+                  <Field label="测试命令服务">
+                    <input
+                      value={configuration.runtime.commandService}
+                      disabled={disabled}
+                      onChange={(event) =>
+                        onConfiguration({
+                          ...configuration,
+                          runtime: { ...configuration.runtime, commandService: event.target.value },
+                        })
+                      }
+                    />
+                  </Field>
+                </>
+              )}
+              {configuration.runtimeMode === 'managed' && (
+                <>
+                  <Field label="健康检查路径">
+                    <input
+                      value={configuration.runtime.healthPath}
+                      disabled={disabled}
+                      onChange={(event) =>
+                        onConfiguration({
+                          ...configuration,
+                          runtime: { ...configuration.runtime, healthPath: event.target.value },
+                        })
+                      }
+                    />
+                  </Field>
+                  <Field label="健康检查超时（秒）">
+                    <NumberInput
+                      ariaLabel="健康检查超时"
+                      width="full"
+                      min={5}
+                      max={600}
+                      step={5}
+                      value={configuration.runtime.healthTimeoutSeconds}
+                      disabled={disabled}
+                      onChange={(healthTimeoutSeconds) =>
+                        onConfiguration({
+                          ...configuration,
+                          runtime: { ...configuration.runtime, healthTimeoutSeconds },
+                        })
+                      }
+                    />
+                  </Field>
+                </>
+              )}
+              <div className="form-actions">
+                <AppLink
+                  className="text-link"
+                  to={{ name: 'project-readiness', projectId: data.detail.project.projectId }}
+                >
+                  查看运行准备
+                </AppLink>
+                <SaveButton disabled={disabled}>保存执行环境</SaveButton>
+              </div>
+            </form>
+          </details>
+          <details className="settings-details">
+            <summary>浏览器额外来源</summary>
+            <form
+              className="settings-stack"
+              onSubmit={(event) => {
+                event.preventDefault();
+                onSaveConfiguration({ browserAllowedOrigins: configuration.browserAllowedOrigins });
+              }}
+            >
+              <Field label="浏览器额外来源">
+                <textarea
+                  value={configuration.browserAllowedOrigins.join('\n')}
+                  disabled={disabled}
+                  onChange={(event) =>
+                    onConfiguration({
+                      ...configuration,
+                      browserAllowedOrigins: event.target.value
+                        .split(/[\n,]/)
+                        .map((item) => item.trim())
+                        .filter(Boolean),
+                    })
+                  }
+                />
+              </Field>
+              <div className="form-actions">
+                <SaveButton disabled={disabled}>保存额外来源</SaveButton>
+              </div>
+            </form>
+          </details>
+        </div>
+      </SettingsPanel>
+    );
+  }
+  if (section === 'automation')
+    return (
+      <SettingsPanel title="触发规则">
+        <ProjectTriggerSettings
+          configuration={configuration}
+          disabled={disabled}
+          onChange={onConfiguration}
+          onSave={onSaveConfiguration}
+        />
+      </SettingsPanel>
+    );
+  return (
+    <SettingsPanel title="测试数据">
+      <div className="settings-stack">
+        <ProjectManagedFilesSettings
+          projectId={data.detail.project.projectId}
+          files={data.detail.managedFiles.filter((file) => file.purpose === 'data')}
+          disabled={disabled}
+          onChanged={onFilesChanged}
+          title="初始数据文件"
+          defaultPurpose="data"
+          embedded
+        />
+        <section className="settings-group" aria-labelledby="test-account-title">
+          <header>
+            <h3 id="test-account-title">测试账号</h3>
+          </header>
+          <form
+            className="settings-stack"
+            onSubmit={(event) => {
+              event.preventDefault();
+              onSaveTestAccount();
+            }}
+          >
+            <div className="settings-fields">
+              {(['testUsername', 'testPassword'] as const).map((key) => (
+                <ProjectSecretEditor
+                  key={key}
+                  secretKey={key}
+                  label={key === 'testUsername' ? '账号' : '密码'}
+                  metadata={data.detail.secrets[key]}
+                  value={secrets[key] ?? ''}
+                  disabled={disabled}
+                  onChange={(value) => onSecret(key, value)}
+                  onDelete={() => onDeleteSecret(key)}
+                />
+              ))}
+            </div>
+            <div className="form-actions">
+              <Button
+                type="submit"
+                disabled={disabled || (!secrets.testUsername && !secrets.testPassword)}
+              >
+                保存测试账号
+              </Button>
+            </div>
+          </form>
+        </section>
+        <details className="settings-details">
+          <summary>测试后清理（可选）</summary>
+          <div className="settings-fields">
+            <form
+              className="settings-stack"
+              onSubmit={(event) => {
+                event.preventDefault();
+                onSaveConfiguration({ testDataCleanupUrl: configuration.testDataCleanupUrl });
+              }}
+            >
+              <Field
+                label={
+                  <HelpLabel
+                    label="清理接口地址"
+                    help="已有测试环境提供的清理接口，用于测试后删除本次产生的数据。罗网启动的临时容器和数据卷会自动清理，无需填写。"
+                  />
+                }
+              >
+                <input
+                  type="url"
+                  aria-label="清理接口地址"
+                  placeholder="https://test.example.com/test-data"
+                  value={configuration.testDataCleanupUrl}
+                  disabled={disabled}
+                  onChange={(event) =>
+                    onConfiguration({ ...configuration, testDataCleanupUrl: event.target.value })
+                  }
+                />
+              </Field>
+              <div className="form-actions">
+                <Button type="submit" variant="secondary" disabled={disabled}>
+                  保存清理地址
+                </Button>
+              </div>
+            </form>
+            <ProjectSecretEditor
+              secretKey="testDataCleanupToken"
+              label={
+                <HelpLabel
+                  label="清理接口 Token"
+                  help="罗网调用清理接口时使用的授权值，由该接口提供。没有清理接口时无需配置。"
+                />
+              }
+              metadata={data.detail.secrets.testDataCleanupToken}
+              value={secrets.testDataCleanupToken ?? ''}
+              disabled={disabled}
+              onChange={(value) => onSecret('testDataCleanupToken', value)}
+              onSave={() => onSaveSecret('testDataCleanupToken')}
+              onDelete={() => onDeleteSecret('testDataCleanupToken')}
+            />
+          </div>
+        </details>
       </div>
     </SettingsPanel>
+  );
+}
+
+function ProjectSecretEditor({
+  secretKey,
+  label,
+  metadata,
+  value,
+  disabled,
+  onChange,
+  onSave,
+  onDelete,
+}: {
+  secretKey: ProjectSecret;
+  label: ReactNode;
+  metadata: ProjectDetailResponse['secrets'][ProjectSecret];
+  value: string;
+  disabled: boolean;
+  onChange: (value: string) => void;
+  onSave?: () => void;
+  onDelete: () => void;
+}) {
+  return (
+    <div className="settings-stack credential-editor">
+      <Field
+        label={
+          <span className="credential-field-label">
+            {label}
+            <StatusLabel tone={metadata.configured ? 'success' : 'warning'}>
+              {metadata.configured ? '已配置' : '未配置'}
+            </StatusLabel>
+          </span>
+        }
+      >
+        <input
+          type="password"
+          aria-label={secretLabels[secretKey]}
+          autoComplete="new-password"
+          placeholder={metadata.configured ? '输入新值' : ''}
+          value={value}
+          disabled={disabled}
+          onChange={(event) => onChange(event.target.value)}
+        />
+      </Field>
+      {(metadata.configured || onSave) && (
+        <div className="form-actions">
+          {metadata.configured && (
+            <Button
+              type="button"
+              variant="secondary"
+              aria-label={`清除${secretLabels[secretKey]}`}
+              disabled={disabled}
+              onClick={onDelete}
+            >
+              清除
+            </Button>
+          )}
+          {onSave && (
+            <Button
+              type="button"
+              variant="secondary"
+              aria-label={`保存${secretLabels[secretKey]}`}
+              disabled={disabled || !value}
+              onClick={onSave}
+            >
+              保存
+            </Button>
+          )}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -857,7 +1018,7 @@ function SettingsPanel({
   children,
 }: {
   title: string;
-  description: string;
+  description?: string;
   children: ReactNode;
 }) {
   return (
@@ -865,7 +1026,7 @@ function SettingsPanel({
       <header>
         <span className="scope-label">项目设置</span>
         <h2>{title}</h2>
-        <p>{description}</p>
+        {description && <p>{description}</p>}
       </header>
       {children}
     </section>
@@ -873,15 +1034,22 @@ function SettingsPanel({
 }
 function SaveButton({ disabled, children }: { disabled: boolean; children: ReactNode }) {
   return (
-    <button className="button" type="submit" disabled={disabled}>
+    <Button type="submit" disabled={disabled}>
       {children}
-    </button>
+    </Button>
   );
 }
-function ReadOnly({ label, value }: { label: string; value: string }) {
+function ReadOnly({ label, value, status }: { label: string; value: string; status?: 'success' }) {
   return (
-    <div className="read-only-field">
-      <span>{label}</span>
+    <div className="read-only-field" data-status={status}>
+      <span>
+        {label}
+        {status === 'success' && (
+          <span className="field-status" role="img" aria-label="已核验">
+            ✓
+          </span>
+        )}
+      </span>
       <strong>{value}</strong>
     </div>
   );
@@ -926,11 +1094,14 @@ function sectionValue(
         runtimeMode: config.runtimeMode,
         startType: config.startType,
         runtime: config.runtime,
+        generatedDefinition: config.generatedDefinition,
+        ...sectionValue('environment', config),
       };
     case 'automation':
       return {
         pollIntervalSeconds: config.pollIntervalSeconds,
         cron: config.cron,
+        scheduleIntervalSeconds: config.scheduleIntervalSeconds ?? 0,
         triggerOnCommit: config.triggerOnCommit,
       };
     default:

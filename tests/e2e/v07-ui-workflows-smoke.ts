@@ -52,6 +52,12 @@ const projectAConfiguration = {
   },
 };
 const configuration = {
+  generatedDefinition: null as {
+    sourceCommit: string;
+    summary: string;
+    files: Array<{ path: string; content: string }>;
+  } | null,
+  scheduleIntervalSeconds: 0,
   language: 'zh-CN',
   browserAllowedOrigins: [],
   scenarioBranch: 'scenario-testing',
@@ -86,6 +92,36 @@ const secrets = {
   testPassword: { configured: false, masked: null },
   testDataCleanupToken: { configured: false, masked: null },
 };
+const environmentDraft = {
+  generatedDefinition: {
+    sourceCommit: 'a'.repeat(40),
+    summary: 'AI 草案',
+    files: [
+      {
+        path: '.luowang-generated/compose.yml',
+        content: 'services:\n  app:\n    image: node:24\n  tools:\n    image: node:24\n',
+      },
+    ],
+  },
+  runtime: {
+    ...configuration.runtime,
+    servicePort: 3000,
+    composeFile: '.luowang-generated/compose.yml',
+    composeServices: ['app', 'tools'],
+    applicationService: 'app',
+    commandService: 'tools',
+    initializationSteps: [],
+  },
+};
+const managedFiles: Array<{
+  id: string;
+  path: string;
+  purpose: string;
+  revision: number;
+  byteSize: number;
+  configured: boolean;
+  serviceName: null;
+}> = [];
 const deploymentConfiguration = {
   language: 'zh-CN',
   provider: 'openai-compatible',
@@ -152,6 +188,8 @@ let created = false;
 let ready = false;
 let resumeCalls = 0;
 let emptyWorkspace = false;
+const deletedProjects = new Set<string>();
+let deletionBlocked = true;
 let readinessFailure = false;
 let readinessGitTimeout = false;
 let parallelPreparing = false;
@@ -214,6 +252,17 @@ const origin = `http://127.0.0.1:${address.port}`;
 const browser = await chromium.launch({ headless: true, ignoreDefaultArgs: ['--hide-scrollbars'] });
 try {
   const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
+  const saveConfiguration = async (name: string) => {
+    await Promise.all([
+      page.waitForResponse(
+        (response) =>
+          response.url().endsWith(`/api/projects/${newProject.projectId}/configuration`) &&
+          response.request().method() === 'PUT',
+      ),
+      page.getByRole('button', { name, exact: true }).click(),
+    ]);
+    await page.getByText('项目配置已保存', { exact: true }).last().waitFor();
+  };
   const pageErrors: string[] = [];
   page.on('pageerror', (error) => pageErrors.push(error.message));
   await page.route('**/api/**', async (route) => {
@@ -248,6 +297,9 @@ try {
         workspace.activeRuns[0].progress = { completed: 0, total: 0 };
         workspace.activeRuns[0].currentScenario = null;
       }
+      workspace.projects = workspace.projects.filter(
+        (summary) => !deletedProjects.has(summary.project.projectId),
+      );
       return route.fulfill({ json: workspace });
     }
     if (pathname === '/api/system/status' && method === 'GET') {
@@ -416,11 +468,37 @@ try {
       return route.fulfill({ json: { profile: { displayName: adminDisplayName } } });
     }
     if (pathname === '/api/auth/password' && method === 'POST') {
+      if (request.postDataJSON().currentPassword !== 'current-password') {
+        return route.fulfill({
+          status: 401,
+          json: { error: { code: 'INVALID_CURRENT_PASSWORD', message: '当前管理员密码不正确' } },
+        });
+      }
       assert.equal(request.postDataJSON().currentPassword, 'current-password');
       return route.fulfill({ json: { authenticated: false, passwordChanged: true } });
     }
     if (pathname === '/api/projects' && method === 'GET') {
-      return route.fulfill({ json: { projects: created ? [...projects, newProject] : projects } });
+      return route.fulfill({
+        json: {
+          projects: (created ? [...projects, newProject] : projects).filter(
+            (project) => !deletedProjects.has(project.projectId),
+          ),
+        },
+      });
+    }
+    if (pathname === `/api/projects/${projects[0].projectId}` && method === 'DELETE') {
+      if (deletionBlocked)
+        return route.fulfill({
+          status: 409,
+          json: {
+            error: {
+              code: 'PROJECT_DELETE_CONFLICT',
+              message: '项目仍有待处理任务，请先停止测试并完成归档',
+            },
+          },
+        });
+      deletedProjects.add(projects[0].projectId);
+      return route.fulfill({ json: { deleted: true } });
     }
     if (pathname === '/api/connection-resources' && method === 'GET') {
       return route.fulfill({
@@ -762,7 +840,7 @@ try {
             githubCredentialId: '44444444-4444-4444-8444-444444444444',
             executionServerId: null,
           },
-          managedFiles: [],
+          managedFiles,
         },
       });
     }
@@ -790,6 +868,51 @@ try {
     if (suffix === '/runs/current' && method === 'GET') {
       return route.fulfill({ json: { run: null } });
     }
+    if (suffix === '/environment-generation' && method === 'GET')
+      return route.fulfill({ json: { task: null } });
+    if (suffix === '/environment-generation' && method === 'POST')
+      return route.fulfill({
+        json: {
+          task: {
+            id: 'fixture-generation',
+            status: 'running',
+            draft: null,
+            error: null,
+            targetCommit: null,
+          },
+        },
+      });
+    if (suffix === '/environment-generation/fixture-generation' && method === 'GET')
+      return route.fulfill({
+        json: {
+          task: {
+            id: 'fixture-generation',
+            status: 'completed',
+            draft: environmentDraft,
+            error: null,
+            targetCommit: 'a'.repeat(40),
+          },
+        },
+      });
+    if (suffix === '/files' && method === 'POST') {
+      const body = request.postDataJSON();
+      const bytes = body.encodedContent
+        ? Buffer.from(body.encodedContent, 'base64')
+        : Buffer.from(body.content, 'utf8');
+      if (body.purpose === 'data') assert.equal(bytes.toString(), 'SELECT 42;\n');
+      else assert.equal(bytes.toString(), 'FIXTURE=edited\n');
+      const file = {
+        id: `fixture-${managedFiles.length}`,
+        path: body.path,
+        purpose: body.purpose,
+        revision: 1,
+        byteSize: bytes.length,
+        configured: true,
+        serviceName: null,
+      };
+      managedFiles.push(file);
+      return route.fulfill({ json: { file } });
+    }
     if (suffix === '/queue' && method === 'GET') {
       return route.fulfill({ json: { queue: [] } });
     }
@@ -809,6 +932,17 @@ try {
     const secretMatch = suffix.match(
       /^\/secrets\/(gitToken|testUsername|testPassword|testDataCleanupToken)$/,
     );
+    if (suffix === '/test-account' && method === 'PUT') {
+      const body = request.postDataJSON();
+      for (const key of ['testUsername', 'testPassword'] as const) {
+        if (body[key]) secrets[key] = { configured: true, masked: '••••' };
+      }
+      return route.fulfill({
+        json: {
+          secrets: { testUsername: secrets.testUsername, testPassword: secrets.testPassword },
+        },
+      });
+    }
     if (secretMatch && method === 'PUT') {
       const key = secretMatch[1] as keyof typeof secrets;
       assert.ok(request.postDataJSON().value);
@@ -894,18 +1028,136 @@ try {
   await page.getByRole('option', { name: 'English', exact: true }).click();
   await page.getByRole('button', { name: '保存测试策略' }).click();
   await page.getByText(/项目配置已保存/).waitFor();
-  await page.getByRole('link', { name: '测试环境', exact: true }).click();
-  await page.getByLabel('非生产环境 URL').fill('https://synthetic.example.test');
-  await page.getByRole('button', { name: '保存测试环境' }).click();
+  await page.getByRole('link', { name: '运行环境', exact: true }).click();
+  assert.equal(await page.getByLabel('测试网址').count(), 0);
+  assert.equal(writes.filter((write) => write.endsWith('/environment-generation')).length, 0);
+  await page.getByRole('button', { name: 'AI 生成配置', exact: true }).click();
+  const definitionEditor = page.getByLabel('配置内容（JSON）');
+  await definitionEditor.waitFor();
+  assert.equal(configuration.generatedDefinition, null);
+  const draft = JSON.parse(await definitionEditor.inputValue());
+  draft.generatedDefinition.summary = '人工修改';
+  await definitionEditor.fill(JSON.stringify(draft));
+  await saveConfiguration('保存启动配置');
+  assert.equal(configuration.generatedDefinition!.summary, '人工修改');
+  await page.getByRole('button', { name: 'AI 更新配置', exact: true }).click();
+  await page.getByText('上次保存的配置', { exact: true }).waitFor();
+  assert.equal(configuration.generatedDefinition!.summary, '人工修改');
+  await page.getByRole('button', { name: '取消修改', exact: true }).click();
+  await page.getByRole('combobox', { name: '运行模式', exact: true }).click();
+  await page.getByRole('option', { name: '仅仓库测试', exact: true }).click();
+  assert.equal(await page.getByLabel('测试网址').count(), 0);
+  await page.getByRole('combobox', { name: '运行模式', exact: true }).click();
+  await page.getByRole('option', { name: '已有测试环境', exact: true }).click();
+  await saveConfiguration('保存运行方式');
+  await page.getByLabel('测试网址').fill('https://synthetic.example.test');
+  await page.getByRole('button', { name: '保存测试网址' }).click();
   await page.getByText(/项目配置已保存/).waitFor();
 
-  await page.getByRole('link', { name: '凭据', exact: true }).click();
+  await page.getByRole('link', { name: '测试数据', exact: true }).click();
+  assert.equal(await page.getByLabel('文件内容', { exact: true }).count(), 0);
+  assert.equal(await page.locator('.settings-panel .settings-panel').count(), 0);
+  assert.equal(await page.getByText('尚未保存受控文件', { exact: true }).count(), 0);
+  const dataUploader = page.locator('.file-upload');
+  await dataUploader.getByRole('button', { name: '选择文件', exact: true }).focus();
+  assert.equal(
+    await dataUploader
+      .getByRole('button', { name: '选择文件', exact: true })
+      .evaluate((element) => element === document.activeElement),
+    true,
+  );
+  await page.getByLabel('上传文件', { exact: true }).setInputFiles({
+    name: 'seed.sql',
+    mimeType: 'application/sql',
+    buffer: Buffer.from('SELECT 42;\n'),
+  });
+  await dataUploader.getByText('seed.sql', { exact: true }).waitFor();
+  await dataUploader.getByRole('button', { name: '移除', exact: true }).click();
+  await dataUploader.getByRole('button', { name: '选择文件', exact: true }).waitFor();
+  assert.equal(await page.getByLabel('文件内容', { exact: true }).count(), 0);
+  await page.getByLabel('上传文件', { exact: true }).setInputFiles({
+    name: 'seed.sql',
+    mimeType: 'application/sql',
+    buffer: Buffer.from('SELECT 42;\n'),
+  });
+  await dataUploader.getByText('seed.sql', { exact: true }).waitFor();
+  await page.getByLabel('项目内相对路径', { exact: true }).fill('data/seed.sql');
+  await page.getByRole('button', { name: '新增文件', exact: true }).click();
+  await page.getByText('受控文件已保存', { exact: true }).waitFor();
+  assert.equal(managedFiles[0].path, 'data/seed.sql');
+  await page.getByRole('link', { name: '配置文件', exact: true }).click();
+  assert.equal(await page.getByText('尚未保存受控文件', { exact: true }).count(), 0);
+  await page.getByLabel('上传文件', { exact: true }).setInputFiles({
+    name: 'oversized.env',
+    mimeType: 'text/plain',
+    buffer: Buffer.alloc(256 * 1024 + 1, 'a'),
+  });
+  await page.getByText('文件不能超过 256 KiB', { exact: true }).waitFor();
+  assert.equal(await page.getByLabel('项目内相对路径', { exact: true }).inputValue(), '');
+  await page.getByLabel('上传文件', { exact: true }).setInputFiles({
+    name: '.env.test',
+    mimeType: 'text/plain',
+    buffer: Buffer.from('FIXTURE=original\n'),
+  });
+  await page.getByLabel('项目内相对路径', { exact: true }).fill('.env.test');
+  assert.equal(await page.getByLabel('文件内容', { exact: true }).isVisible(), false);
+  await page.getByText('编辑文件内容（可选）', { exact: true }).click();
+  await page.getByLabel('文件内容').fill('FIXTURE=edited\n');
+  await page.getByRole('button', { name: '新增文件', exact: true }).click();
+  await page.getByText('受控文件已保存', { exact: true }).waitFor();
+  await page.getByRole('link', { name: '触发规则', exact: true }).click();
+  const scheduledRule = page.getByRole('region', { name: /定时触发测试/ });
+  const scheduleSwitch = page.getByRole('switch', { name: '启用定时检查' });
+  assert.equal(await page.getByRole('spinbutton', { name: '每隔', exact: true }).isVisible(), true);
+  assert.equal(
+    await page.getByRole('spinbutton', { name: '每隔', exact: true }).isDisabled(),
+    true,
+  );
+  assert.equal(await scheduledRule.getAttribute('data-enabled'), 'false');
+  await scheduleSwitch.focus();
+  await page.keyboard.press('Space');
+  assert.equal(await scheduleSwitch.isChecked(), true);
+  assert.equal(await scheduledRule.getAttribute('data-enabled'), 'true');
+  await scheduleSwitch.uncheck();
+  await page.getByLabel('启用定时检查').check();
+  await page.getByRole('combobox', { name: '每隔单位' }).click();
+  await page.getByRole('option', { name: '秒', exact: true }).click();
+  await page.getByRole('spinbutton', { name: '每隔', exact: true }).fill('7');
+  await saveConfiguration('保存触发规则');
+  assert.equal(configuration.scheduleIntervalSeconds, 7);
+  await page.getByText('Cron（高级，UTC）', { exact: true }).click();
+  await page.getByLabel('Cron', { exact: true }).fill('0 8 * * *');
+  assert.equal(
+    await page.getByRole('spinbutton', { name: '每隔', exact: true }).isDisabled(),
+    true,
+  );
+  await saveConfiguration('保存触发规则');
+  assert.equal(configuration.scheduleIntervalSeconds, 0);
+  await page.getByLabel('Cron', { exact: true }).fill('');
+  assert.equal(await page.getByRole('spinbutton', { name: '每隔', exact: true }).isEnabled(), true);
+  await saveConfiguration('保存触发规则');
+  assert.equal(configuration.scheduleIntervalSeconds, 7);
+  await page.getByLabel('启用定时检查').uncheck();
+  await saveConfiguration('保存触发规则');
+  assert.equal(configuration.cron, '');
+  await page.getByRole('link', { name: '测试数据', exact: true }).click();
   const accountRow = page
     .getByRole('heading', { name: '测试账号', exact: true })
-    .locator('xpath=ancestor::section[contains(@class,"credential-row")]');
-  await accountRow.getByLabel('新测试账号').fill('synthetic-user');
-  await accountRow.getByRole('button', { name: '更新' }).click();
+    .locator('xpath=ancestor::section[contains(@class,"settings-group")]');
+  await accountRow.getByLabel('测试密码', { exact: true }).waitFor();
+  await accountRow.getByLabel('测试账号', { exact: true }).fill('synthetic-user');
+  await accountRow.getByLabel('测试密码', { exact: true }).fill('synthetic-account-password');
+  const accountWritesBefore = writes.filter((write) => write.endsWith('/test-account')).length;
+  await accountRow.getByRole('button', { name: '保存测试账号' }).click();
   await page.getByText(/测试账号已保存/).waitFor();
+  assert.equal(
+    writes.filter((write) => write.endsWith('/test-account')).length,
+    accountWritesBefore + 1,
+  );
+  assert.equal(secrets.testUsername.configured, true);
+  assert.equal(secrets.testPassword.configured, true);
+  assert.equal(await accountRow.getByLabel('测试账号', { exact: true }).inputValue(), '');
+  assert.equal(await accountRow.getByLabel('测试密码', { exact: true }).inputValue(), '');
   assert.equal((await page.locator('body').innerText()).includes('synthetic-user'), false);
 
   await page.getByRole('link', { name: '运行准备', exact: true }).click();
@@ -984,7 +1236,7 @@ try {
   );
 
   await page.goto(`${origin}/projects/${newProject.projectId}/settings/environment`);
-  await page.getByLabel('环境说明').fill('有未保存修改的合成环境');
+  await page.getByLabel('环境备注（可选）').fill('有未保存修改的合成环境');
   await page.getByRole('link', { name: '概览', exact: true }).click();
   await page.getByRole('dialog').getByText('当前页面的修改尚未保存。').waitFor();
   await page.getByRole('dialog').getByRole('button', { name: '继续编辑' }).click();
@@ -995,12 +1247,12 @@ try {
       request.method() === 'PUT' &&
       request.url().endsWith(`/api/projects/${newProject.projectId}/configuration`),
   );
-  await page.getByRole('button', { name: '保存测试环境' }).click();
+  await page.getByRole('button', { name: '保存测试网址' }).click();
   await pendingWrite;
   await page.getByRole('link', { name: '项目', exact: true }).click();
   assert.match(page.url(), /\/settings\/environment$/);
   releaseConfiguration();
-  await page.getByText(/已保存不代表连通或就绪/).waitFor();
+  await page.getByText('项目配置已保存', { exact: true }).waitFor();
   assert.ok(writes.includes(`PUT /api/projects/${newProject.projectId}/configuration`));
 
   await page.goto(`${origin}/projects/${newProject.projectId}/test`);
@@ -1063,14 +1315,14 @@ try {
   stopGate = null;
   await page.waitForTimeout(100);
   assert.equal(
-    await page.getByText('停止请求已记录；实际退出与清理状态会继续更新。').count(),
+    await page.getByText('停止请求已记录', { exact: true }).count(),
     0,
     'late stop response cannot change another page',
   );
   await page.goto(`${origin}/projects/${projects[1].projectId}/test`);
   await page.getByRole('button', { name: '取消排队', exact: true }).click();
   await page.getByRole('dialog').getByRole('button', { name: '确认停止', exact: true }).click();
-  await page.getByText('停止请求已记录；实际退出与清理状态会继续更新。').waitFor();
+  await page.getByText('停止请求已记录', { exact: true }).waitFor();
 
   await page.goto(`${origin}/projects/${projects[0].projectId}/test`);
   await page.getByRole('heading', { name: '验证登录状态恢复与注册错误处理' }).waitFor();
@@ -1109,9 +1361,9 @@ try {
   await telemetry.getByText(/耗时 1 分 30 秒/).waitFor();
   await telemetry.getByText(/已结束 Session 的部分用量/).waitFor();
   await telemetry.getByText(/reviewer-audit.*输入 未知/).waitFor();
-  await telemetry.getByText(/SDK 估价.*未知.*不是 Provider 账单/).waitFor();
+  await telemetry.getByText(/SDK 估价.*未知/).waitFor();
   await page.getByRole('button', { name: '重试归档', exact: true }).click();
-  await page.getByText('归档重试已结束：completed；原测试结论保持。').waitFor();
+  await page.getByText('归档重试已结束：completed').waitFor();
   await page.getByRole('button', { name: '重试归档', exact: true }).waitFor({ state: 'detached' });
   for (const width of [768, 1024, 1440]) {
     await page.setViewportSize({ width, height: 900 });
@@ -1163,7 +1415,6 @@ try {
     .locator('.detail-panel > header')
     .getByRole('heading', { name: 'AI Reviewer 审核' })
     .waitFor();
-  await page.getByText('这是 AI 角色工件，不是人工评分。').waitFor();
   await page.getByRole('link', { name: '正式报告', exact: true }).click();
   await page.locator('.detail-panel > header').getByRole('heading', { name: '正式报告' }).waitFor();
   assert.equal(await page.locator('.markdown-view script').count(), 0);
@@ -1332,7 +1583,10 @@ try {
     `/projects/new?projectId=${newProject.projectId}`,
     `/projects/${projects[0].projectId}/overview`,
     `/projects/${projects[0].projectId}/readiness`,
+    `/projects/${newProject.projectId}/settings/execution`,
     `/projects/${newProject.projectId}/settings/credentials`,
+    `/projects/${newProject.projectId}/settings/automation`,
+    `/projects/${newProject.projectId}/settings/files`,
     `/projects/${projects[0].projectId}/test`,
     `/projects/${projects[0].projectId}/runs`,
     `/projects/${projects[0].projectId}/runs/${fixtureRunId}/evidence`,
@@ -1352,6 +1606,29 @@ try {
         .catch(() => {
           throw new Error(`Missing page heading at ${path}: ${pageErrors.join('; ')}`);
         });
+      if (path.endsWith('/settings/execution')) {
+        await page.getByRole('combobox', { name: '执行服务器', exact: true }).waitFor();
+        await page.getByText('运行参数（高级）', { exact: true }).click();
+        await page.getByText('浏览器额外来源', { exact: true }).first().click();
+        const saveOrigins = await page
+          .getByRole('button', { name: '保存额外来源', exact: true })
+          .boundingBox();
+        assert.ok(
+          saveOrigins && saveOrigins.height < 70,
+          'save button must not stretch with its textarea',
+        );
+      } else if (path.endsWith('/settings/credentials')) {
+        await page
+          .getByRole('region', { name: '测试账号', exact: true })
+          .getByLabel('测试账号', { exact: true })
+          .waitFor();
+        await page.getByText('测试后清理（可选）', { exact: true }).click();
+        await page.getByLabel('清理接口 Token', { exact: true }).waitFor();
+      } else if (path.endsWith('/settings/automation')) {
+        await page.getByRole('switch', { name: '启用定时检查' }).waitFor();
+      } else if (path.endsWith('/settings/files')) {
+        await page.locator('.file-upload').waitFor();
+      }
       await page.addStyleTag({ content: 'html { overflow-y: scroll; scrollbar-gutter: stable; }' });
       assert.ok(
         await page.evaluate(() => document.documentElement.clientWidth < window.innerWidth),
@@ -1414,6 +1691,35 @@ try {
   assert.ok(['0.01ms', '1e-05s'].includes(reducedMotion.transition));
   await cdp.detach();
 
+  await page.goto(`${origin}/projects`);
+  const deleteButton = page
+    .locator('.project-directory > li')
+    .filter({ hasText: projects[0].displayName })
+    .getByRole('button', { name: '删除', exact: true });
+  const deletionRequest = `DELETE /api/projects/${projects[0].projectId}`;
+  assert.equal(
+    await deleteButton.evaluate((element) => {
+      const style = getComputedStyle(element);
+      return style.color !== style.backgroundColor;
+    }),
+    true,
+  );
+  const beforeDelete = writes.filter((write) => write === deletionRequest).length;
+  await deleteButton.click();
+  await page.getByRole('dialog').getByRole('button', { name: '取消', exact: true }).click();
+  assert.equal(writes.filter((write) => write === deletionRequest).length, beforeDelete);
+  assert.equal(await deleteButton.evaluate((element) => element === document.activeElement), true);
+  await deleteButton.click();
+  await page.getByRole('dialog').getByRole('button', { name: '删除项目', exact: true }).click();
+  await page.getByText('项目仍有待处理任务，请先停止测试并完成归档', { exact: true }).waitFor();
+  assert.equal(await deleteButton.count(), 1);
+  deletionBlocked = false;
+  await deleteButton.click();
+  await page.getByRole('dialog').getByRole('button', { name: '删除项目', exact: true }).click();
+  await page.getByText('项目已删除', { exact: true }).waitFor();
+  await deleteButton.waitFor({ state: 'hidden' });
+  assert.equal(await page.locator('.project-directory > li').count(), 1);
+
   await page.goto(`${origin}/account`);
   await page.getByLabel('当前密码').fill('current-password');
   await page.getByLabel('新密码', { exact: true }).fill('new-password-123');
@@ -1421,8 +1727,19 @@ try {
   await page.getByRole('button', { name: '更新密码并退出' }).click();
   await page.getByText('两次输入的新密码不一致').waitFor();
   await page.getByLabel('确认新密码').fill('new-password-123');
+  await page.getByLabel('当前密码').fill('incorrect-current-password');
+  await page.getByRole('button', { name: '更新密码并退出' }).click();
+  await page.locator('.app-message').filter({ hasText: '当前管理员密码不正确' }).waitFor();
+  assert.equal(new URL(page.url()).pathname, '/account');
+  assert.equal(await page.getByText('登录已过期，请重新登录', { exact: true }).count(), 0);
+  await page.getByLabel('当前密码').fill('current-password');
   await page.getByRole('button', { name: '更新密码并退出' }).click();
   await page.getByRole('heading', { name: '管理员登录' }).waitFor();
+  await page
+    .locator('.app-message-success')
+    .filter({ hasText: '密码已更新，请重新登录' })
+    .waitFor();
+  assert.equal(await page.locator('.login-panel .notice-error').count(), 0);
   assert.ok(writes.includes('POST /api/auth/password'));
 
   assert.deepEqual(pageErrors, []);

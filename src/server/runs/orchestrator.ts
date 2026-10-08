@@ -115,6 +115,11 @@ const SENSITIVE_PATH =
   /(^|\/)(?:\.env(?:\.|$)|.*(?:secret|credential|password|token|private[-_]?key|key\.txt).*)/i;
 
 export interface RunOrchestratorOptions {
+  environmentRecommendation?: {
+    sourceCommit: string;
+    summary: string;
+    record: (value: { runId: string; targetCommit: string; reason: string }) => void;
+  };
   browserAllowedOrigins?: readonly string[];
   capabilityConfiguration?: RunCapabilities['configuration'];
   checkEnvironment?: (baseUrl: string, signal?: AbortSignal) => Promise<EnvironmentObservation>;
@@ -770,6 +775,7 @@ class DefaultRunOrchestrator implements RunOrchestrator {
   ): Promise<void> {
     this.setPhase(state, 'main-a', 'Main · 规划正在分析变更并选择场景');
     const tools = [
+      ...this.environmentRecommendationTools(context),
       ...createTargetContextTools(
         this.targetToolOptions(
           repository,
@@ -866,6 +872,7 @@ class DefaultRunOrchestrator implements RunOrchestrator {
     let patchWriteAttempted = false;
     let patchWriteSucceeded = false;
     const tools = [
+      ...this.environmentRecommendationTools(context),
       ...createTargetContextTools(
         this.targetToolOptions(
           repository,
@@ -2038,6 +2045,25 @@ class DefaultRunOrchestrator implements RunOrchestrator {
       this.sourceReadStores.set(context, store);
     }
     return store;
+  }
+
+  private environmentRecommendationTools(context: RunContext): ToolDefinition[] {
+    const config = this.options.environmentRecommendation;
+    if (!config) return [];
+    return [
+      {
+        name: 'recommend_environment_update',
+        label: '建议更新启动配置',
+        description: `正常分析发现启动脚本、依赖或服务结构变化时，记录具体原因，供用户在配置页决定是否更新。只提醒，不修改配置或调用生成模型。当前配置来源：${config.sourceCommit}；摘要：${config.summary}`,
+        parameters: Type.Object({ reason: Type.String({ minLength: 1, maxLength: 1000 }) }),
+        execute: async (_id, params) => {
+          const reason = this.sanitizeSource((params as { reason: string }).reason.trim());
+          if (!reason) throw new Error('需要具体的配置更新原因');
+          config.record({ runId: context.runId, targetCommit: context.targetCommit, reason });
+          return createTextResult('已记录提醒，启动配置保持不变，等待用户点击更新。');
+        },
+      },
+    ];
   }
 
   private sanitizeSource(text: string): string {

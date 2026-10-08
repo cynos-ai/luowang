@@ -27,8 +27,14 @@ export function ConfirmDialog({
   useEffect(() => {
     const element = dialog.current;
     if (!element) return;
+    const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     if (open && !element.open) element.showModal();
     if (!open && element.open) element.close();
+    return () => {
+      if (!open) return;
+      if (element.open) element.close();
+      if (opener?.isConnected) opener.focus();
+    };
   }, [open]);
   return (
     <dialog

@@ -191,7 +191,6 @@ try {
     await repositorySection.getByText('4/4 项通过', { exact: true }).waitFor();
 
     const automationSection = page.locator('section').filter({ hasText: '自动触发' }).first();
-    await automationSection.getByText('自动测试默认关闭', { exact: false }).waitFor();
     assert.equal(
       await automationSection.getByRole('checkbox', { name: /新 commit 自动测试/ }).isChecked(),
       false,
@@ -267,6 +266,7 @@ try {
     await page.getByRole('link', { name: /login\.png/ }).waitFor();
     await page.getByRole('button', { name: '重试归档', exact: true }).click();
     await page.getByRole('dialog').getByRole('button', { name: '确认重试' }).click();
+    await page.locator('.app-message-success').filter({ hasText: '归档重试已完成' }).waitFor();
     await page.getByText('report：published', { exact: false }).waitFor();
     assert.equal(await page.getByRole('button', { name: '重试归档', exact: true }).count(), 0);
 
@@ -284,7 +284,8 @@ try {
     expireNextDashboard = true;
     await page.getByRole('button', { name: '刷新', exact: true }).first().click();
     await page.getByRole('heading', { name: '管理员登录' }).waitFor();
-    await page.getByText('登录已过期，请重新登录', { exact: true }).waitFor();
+    await page.locator('.app-message').filter({ hasText: '登录已过期，请重新登录' }).waitFor();
+    assert.equal(await page.locator('.login-panel .notice-error').count(), 0);
 
     await page.getByLabel('管理员密码').fill(ADMIN_PASSWORD);
     await page.getByRole('button', { name: '登录', exact: true }).click();

@@ -16,6 +16,12 @@ export type RunRuntimeEnvironment = {
   applicationService: string | null;
   commandService: string | null;
   serviceImages?: Record<string, string>;
+  initializationResults?: Array<{
+    step: number;
+    service: string;
+    exitCode: number | null;
+    finishedAt: string;
+  }>;
 };
 export interface ManagedApplicationRuntime {
   readonly containerId: string;
@@ -370,6 +376,12 @@ export async function startComposeApplication(input: {
   let endpoint: { baseUrl: string; close(): Promise<void> } | null = null;
   const imageIds: Record<string, string> = {};
   const containerIds: Record<string, string> = {};
+  const initializationResults: Array<{
+    step: number;
+    service: string;
+    exitCode: number | null;
+    finishedAt: string;
+  }> = [];
   try {
     input.signal?.throwIfAborted();
     if (Object.values(controlled.services).some((service) => service.build))
@@ -475,12 +487,50 @@ export async function startComposeApplication(input: {
       }
     }
     input.signal?.throwIfAborted();
-    await success(
-      input.docker,
-      [...composePrefix, file, 'start', ...Object.keys(controlled.services)],
-      5 * 60_000,
-      input.signal,
-    );
+    const steps = input.runtime.initializationSteps ?? [];
+    if (steps.length) {
+      const dependencies = Object.keys(controlled.services).filter(
+        (name) => name !== input.definition.applicationService,
+      );
+      await success(
+        input.docker,
+        [...composePrefix, file, 'start', ...dependencies],
+        5 * 60_000,
+        input.signal,
+      );
+      for (const [index, step] of steps.entries()) {
+        input.signal?.throwIfAborted();
+        if (!containerIds[step.service]) throw new Error('初始化服务不属于本 Run');
+        const result = await input.docker.run(
+          ['exec', containerIds[step.service], '/bin/sh', '-lc', step.command],
+          { timeoutMs: step.timeoutSeconds * 1000, signal: input.signal },
+        );
+        initializationResults.push({
+          step: index + 1,
+          service: step.service,
+          exitCode: result.exitCode,
+          finishedAt: new Date().toISOString(),
+        });
+        if (result.exitCode !== 0)
+          throw new ControlledCommandError(
+            'COMMAND_FAILED',
+            `初始化步骤失败：${step.service}（第 ${index + 1} 步，退出码 ${result.exitCode}）；请检查初始化脚本`,
+          );
+      }
+      await success(
+        input.docker,
+        [...composePrefix, file, 'start', input.definition.applicationService],
+        5 * 60_000,
+        input.signal,
+      );
+    } else {
+      await success(
+        input.docker,
+        [...composePrefix, file, 'start', ...Object.keys(controlled.services)],
+        5 * 60_000,
+        input.signal,
+      );
+    }
     let hostPort: number | null = null;
     if (input.resolveBaseUrl || !controlNetwork) {
       const port = await success(
@@ -548,6 +598,7 @@ export async function startComposeApplication(input: {
         applicationService: input.definition.applicationService,
         commandService: input.definition.commandService,
         serviceImages: imageIds,
+        initializationResults,
       },
       async close() {
         if (closed) return;

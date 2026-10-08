@@ -17,7 +17,8 @@
 
 ## 仓库与分支
 
-- 执行服务器、应用启动和 Compose 的下一步方案位于 `docs/changes/luowang-execution-server-redesign/`。当前为评审建议，尚未实施，不覆盖现行运行规则；各服务器使用自己的 Docker，首版包含 Compose。实施前读取该目录并确认 Spec 状态，不把已保存的服务器/受控文件当作远程执行或注入已启用。
+- 执行服务器、应用启动和 Compose 的规则位于 `docs/changes/luowang-execution-server-redesign/`。执行链与本机工程验证已接入，各服务器使用自己的 Docker；真实远程和模型联合验收进度以 Plan 为准，不把保存服务器资源当作已经验证远程运行。
+- AI 启动配置、文件/脚本初始化和项目设置调整位于 `docs/changes/luowang-ai-test-environment/`。生成/更新只由用户点击并手动保存；正常分析只提醒。实现范围与本机、真实模型和远程验证分别见该目录 Spec/Plan，不增加数据库同步平台或另一条 Run 执行链。
 
 - 项目并行开发位于 `docs/changes/luowang-project-concurrency/`：跨项目有界并行、同项目串行，准备阶段计入容量；实现与验收进度见 Plan，发布前不视为已上线。其 Spec 覆盖旧多项目全局单槽约束。
 

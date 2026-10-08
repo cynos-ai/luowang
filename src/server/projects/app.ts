@@ -67,6 +67,12 @@ import { registerProjectRunRoutes } from './run-routes.js';
 import { assertProjectSchema } from './schema-mode.js';
 import { CONNECTION_RESOURCES_VERSION } from '../db/migrations/0021-connection-resources.js';
 import { EXECUTION_RUNTIME_VERSION } from '../db/migrations/0022-execution-runtime.js';
+import { createEnvironmentGenerationService } from './environment-generation.js';
+import { createGitPoller } from '../automation/poller.js';
+import { createProjectAutomationStateStore } from '../automation/state.js';
+import { createProjectRunStore } from '../runs/store.js';
+import { createProjectRepositoryService } from '../repository/service.js';
+import { createProjectRuntimeConfiguration } from './runtime-access.js';
 import { createConnectionResourceService } from './connection-resources.js';
 import { createProjectStore } from './store.js';
 import {
@@ -146,6 +152,14 @@ export async function createProjectApp(options: ProjectAppOptions) {
     });
   const projects = createProjectStore(database);
   const configuration = createProjectConfigurationStore(database);
+  const environmentGeneration = createEnvironmentGenerationService({
+    database,
+    deployment,
+    configuration,
+    secrets: scoped,
+    resources: connectionResources,
+    repoRoot: options.config.repoDir,
+  });
   const profile = createAdminProfileStore(database);
   const readiness = createProjectReadinessService({
     database,
@@ -207,6 +221,7 @@ export async function createProjectApp(options: ProjectAppOptions) {
   options.config.masterKey = undefined;
 
   const app = Fastify({
+    bodyLimit: 15 * 1024 * 1024,
     loggerInstance: (options.logger ?? createLogger(options.config)) as FastifyBaseLogger,
     routerOptions: { maxParamLength: 2048 },
   });
@@ -556,11 +571,58 @@ export async function createProjectApp(options: ProjectAppOptions) {
     secrets: scoped,
     readiness,
     images,
+    environmentGeneration,
     connectionResources,
     allowedOrigin: options.config.allowedOrigin,
     verifyRepository: options.verifyRepository,
   });
   await registerProjectRunRoutes(app, {
+    checkForTest: async (projectId) => {
+      const pending = database
+        .prepare(
+          "SELECT 1 FROM test_request_queue WHERE project_id=? AND status IN ('queued','running','waiting_archive')",
+        )
+        .get(projectId);
+      if (pending)
+        return {
+          status: 'no_change',
+          trigger: 'manual',
+          scenarioBranch: configuration.get(projectId).scenarioBranch,
+          currentHead: null,
+          baselineCommit: null,
+          includedCommits: [],
+          queue: null,
+          message: '项目已有待处理任务，不重复创建',
+        };
+      return createGitPoller({
+        hasPendingRequest: () =>
+          Boolean(
+            database
+              .prepare(
+                "SELECT 1 FROM test_request_queue WHERE project_id=? AND status IN ('queued','running','waiting_archive')",
+              )
+              .get(projectId),
+          ),
+        configuration: createProjectRuntimeConfiguration(projectId, deployment, configuration, {
+          repoRoot: options.config.repoDir,
+          reportRoot: options.config.reportDir,
+        }),
+        repository: createProjectRepositoryService(
+          database,
+          projectId,
+          configuration,
+          scoped,
+          options.config.repoDir,
+        ),
+        state: createProjectAutomationStateStore(database, projectId),
+        runStore: createProjectRunStore(database, projectId),
+        submitter: {
+          async submitTestRequest(request) {
+            return { queue: dispatcher.enqueue(projectId, request) };
+          },
+        },
+      }).poll('manual');
+    },
     reportRoot: options.config.reportDir,
     database,
     auth,
@@ -596,6 +658,7 @@ export async function createProjectApp(options: ProjectAppOptions) {
     return reply.status(404).send(toErrorResponse('NOT_FOUND', 'Resource not found', request.id));
   });
   app.addHook('onClose', async () => {
+    await environmentGeneration.close();
     await sharedDependencies.stop();
     await background.stop();
     options.database.close();

@@ -14,6 +14,7 @@ import {
   type ProjectRuntimeDefinition,
   type ProjectConfiguration,
 } from './configuration.js';
+import { normalizeGeneratedDefinition, type GeneratedDefinition } from './generated-definition.js';
 import type { ProjectStore } from './store.js';
 
 const SNAPSHOT_FIELDS = new Set([
@@ -33,6 +34,8 @@ const SNAPSHOT_FIELDS = new Set([
   'runtimeMode',
   'startType',
   'runtime',
+  'generatedDefinition',
+  'scheduleIntervalSeconds',
 ]);
 
 export interface ProjectTaskRuntime {
@@ -48,6 +51,7 @@ export interface ProjectTaskRuntime {
   runtimeMode: ProjectConfiguration['runtimeMode'];
   startType: ProjectConfiguration['startType'];
   runtime: ProjectRuntimeDefinition;
+  generatedDefinition?: GeneratedDefinition | null;
   configuration: ConfigurationStore;
 }
 
@@ -144,6 +148,8 @@ export function createProjectTaskRuntime(
     runtimeMode: _runtimeMode,
     startType: _startType,
     runtime: _runtime,
+    generatedDefinition: _generated,
+    scheduleIntervalSeconds: _schedule,
     ...repositoryFields
   } = snapshot;
   void _language;
@@ -153,6 +159,8 @@ export function createProjectTaskRuntime(
   void _runtimeMode;
   void _startType;
   void _runtime;
+  void _generated;
+  void _schedule;
   const repository = mergeRepositoryConfiguration(
     normalizeRepository({ repository: repositoryUrl }),
     repositoryFields,
@@ -183,6 +191,7 @@ export function createProjectTaskRuntime(
     runtimeMode,
     startType,
     runtime,
+    generatedDefinition: normalizeGeneratedDefinition(snapshot.generatedDefinition),
     configuration: {
       getHarness: () => structuredClone(harness),
       getRepository: () => structuredClone(repository),

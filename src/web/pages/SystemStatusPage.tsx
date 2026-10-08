@@ -109,7 +109,6 @@ export function SystemStatusPage() {
               <section className="content-block">
                 <div className="content-block-heading">
                   <h2>共享依赖</h2>
-                  <p>配置变更后自动检查，并每 30 分钟刷新；也可手动立即检查。</p>
                 </div>
                 <div className="dependency-list">
                   {status.value.dependencies.map((row) => {
@@ -167,10 +166,9 @@ export function SystemStatusPage() {
                 </div>
                 <p>
                   {status.value.recovery.available
-                    ? '恢复说明可用：multi-project-recovery。'
+                    ? '恢复文档：multi-project-recovery'
                     : '当前没有恢复说明。'}
                 </p>
-                <p className="muted-copy">系统未持久化恢复演练历史，因此不展示“最近演练”。</p>
               </section>
             </>
           )}
@@ -178,7 +176,6 @@ export function SystemStatusPage() {
         <section className="content-block">
           <div className="content-block-heading">
             <h2>执行资源盘点</h2>
-            <p>只读盘点，不提供删除操作；候选体积不等于 Docker 实际可回收空间。</p>
           </div>
           <AsyncRegion
             loading={resources.loading && !resources.value}

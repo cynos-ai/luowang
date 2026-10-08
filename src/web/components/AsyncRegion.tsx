@@ -17,7 +17,6 @@ export function AsyncRegion({
     return (
       <section className="async-region" aria-busy="true" aria-live="polite">
         <strong>正在读取</strong>
-        <p>请稍候。</p>
       </section>
     );
   }

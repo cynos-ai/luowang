@@ -32,6 +32,8 @@ import { normalizeComposeDefinition, resolveNativeComposeConfig } from './compos
 import { createExecutionResourceLedger } from './resource-ledger.js';
 import { createHash } from 'node:crypto';
 import { projectImageTag } from './image-builder.js';
+import { materializeGeneratedDefinition, generatedDefinitionHash } from './generated-definition.js';
+import { decodeProjectFileContent } from './file-content.js';
 
 export function createProjectRunRuntimeEnvironmentFactory(input: {
   database: Database.Database;
@@ -194,6 +196,10 @@ export function createProjectRunRuntimeEnvironmentFactory(input: {
           storageRoot: input.storageRoot,
           signal: context.signal,
         });
+        await materializeGeneratedDefinition(
+          source.directory,
+          input.task.generatedDefinition ?? null,
+        );
         if (remoteSource)
           await adapter.uploadTree(source.directory, remoteSource, {
             signal: context.signal,
@@ -209,7 +215,18 @@ export function createProjectRunRuntimeEnvironmentFactory(input: {
             throw new Error('受控配置文件版本与任务快照不一致');
           const content = input.secrets.resource('project-file', reference.id).get('content');
           if (!content) throw new Error('受控配置文件内容不可用');
-          return { ...reference, content };
+          const decoded = decodeProjectFileContent(content);
+          return {
+            ...reference,
+            serviceName:
+              reference.serviceName ??
+              (input.task.generatedDefinition && decoded.purpose === 'config'
+                ? input.task.runtime.applicationService
+                : null),
+            content: decoded.purpose === 'config' ? decoded.bytes.toString('utf8') : '',
+            bytes: decoded.bytes,
+            purpose: decoded.purpose,
+          };
         });
         const ledger = createExecutionResourceLedger(
           input.database,
@@ -257,12 +274,16 @@ export function createProjectRunRuntimeEnvironmentFactory(input: {
                 sourceKind: 'image-sources',
                 signal: context.signal,
               });
+              await materializeGeneratedDefinition(
+                composeBuildSource.directory,
+                input.task.generatedDefinition ?? null,
+              );
               const stagedFiles = await stageComposeManagedFiles(
                 composeBuildSource.directory,
                 // Managed env_file inputs may be read during native Compose resolution. The
                 // implicit project .env remains fixed-commit input so a runtime Secret cannot
                 // silently become a build argument.
-                files.filter((file) => file.path !== '.env'),
+                files.filter((file) => file.purpose === 'config' && file.path !== '.env'),
               );
               let composeSource: string;
               try {
@@ -303,6 +324,9 @@ export function createProjectRunRuntimeEnvironmentFactory(input: {
                 servicePort: input.task.runtime.servicePort!,
                 publishHost,
                 composeFile: input.task.runtime.composeFile,
+                generatedContentHash: input.task.generatedDefinition
+                  ? generatedDefinitionHash(input.task.generatedDefinition)
+                  : undefined,
               });
               runtimeDefinitionHash = definition.definitionHash;
               const cachedImageIds: Record<string, string> = {};
@@ -470,7 +494,20 @@ export function createProjectRunRuntimeEnvironmentFactory(input: {
           runtimeDefinitionHash,
           owner.imageIds[owner.environment.applicationService ?? 'app'] ?? image.imageId,
           source.scenarioPatchSha256,
-          JSON.stringify(owner.environment),
+          JSON.stringify({
+            ...owner.environment,
+            managedFiles: files.map((file) => ({
+              id: file.id,
+              revision: file.revision,
+              path: file.path,
+              purpose: file.purpose,
+              serviceName: file.serviceName ?? owner.environment.commandService,
+              byteSize: file.bytes.length,
+              ...(file.purpose === 'data'
+                ? { sha256: createHash('sha256').update(file.bytes).digest('hex') }
+                : {}),
+            })),
+          }),
           new Date().toISOString(),
         );
       input.setManagedCommandTarget?.(context.runId, {

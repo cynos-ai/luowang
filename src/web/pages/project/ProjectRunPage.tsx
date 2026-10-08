@@ -371,7 +371,6 @@ function ScenariosTab({ projectId, run }: { projectId: string; run: OperationsRu
     <section className="detail-panel">
       <header>
         <h2>场景结果</h2>
-        <p>证据状态与功能结论分别展示。</p>
       </header>
       {run.scenarioResults.length ? (
         <table className="record-table">
@@ -425,7 +424,6 @@ function ArtifactTab({
     <section className="detail-panel">
       <header>
         <h2>{title}</h2>
-        <p>这是 AI 角色工件，不是人工评分。</p>
       </header>
       {content ? (
         <MarkdownView content={content} label={title} />
@@ -479,7 +477,6 @@ function EvidenceTab({ projectId, run }: { projectId: string; run: OperationsRun
     <section className="detail-panel">
       <header>
         <h2>证据</h2>
-        <p>证据缺失或读取失败影响审核可信度，但不自动改写场景功能结论。</p>
       </header>
       {run.evidence?.length ? (
         <div className="evidence-grid">
@@ -543,7 +540,6 @@ function TechnicalTab({ projectId, run }: { projectId: string; run: OperationsRu
     <section className="detail-panel">
       <header>
         <h2>技术信息</h2>
-        <p>只展示安全标识和状态代码。</p>
       </header>
       <details className="technical-record" open>
         <summary>完整标识</summary>

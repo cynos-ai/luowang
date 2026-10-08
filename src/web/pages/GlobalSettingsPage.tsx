@@ -23,6 +23,7 @@ import {
   SelectBox,
 } from '../components/FormControls';
 import { PageHeading } from '../components/PageHeading';
+import { StatusLabel } from '../components/ui';
 import {
   globalSettingSectionPatch,
   globalSettingSectionValue,
@@ -500,14 +501,17 @@ function ModelSettings({
             const sourceBusy = busy.endsWith(`:${source.id}`);
             const sourceLabel = providerSourceLabel(source, providers);
             return (
-              <article className="provider-source-card" key={source.id}>
+              <article
+                className="provider-source-card"
+                key={source.id}
+                data-status={source.verifiedAt ? 'success' : undefined}
+              >
                 <div className="provider-source-card-heading">
                   <strong>{sourceLabel}</strong>
-                  <span
-                    className={`source-status ${source.verifiedAt ? 'is-verified' : ''}`}
-                    role="status"
-                  >
-                    {source.verifiedAt ? '已验证' : '待验证'}
+                  <span role="status">
+                    <StatusLabel tone={source.verifiedAt ? 'success' : 'warning'}>
+                      {source.verifiedAt ? '已验证' : '待验证'}
+                    </StatusLabel>
                   </span>
                 </div>
                 {metadata?.configured ? (
@@ -830,8 +834,8 @@ function GlobalSection({
   if (section === 'object-storage')
     return (
       <>
-        <SectionTitle title="对象存储" text="配置所有项目共用的 S3 兼容存储。" />
-        <SettingsSubsection title="连接信息" text="完成连接所需的必填项。" />
+        <SectionTitle title="对象存储" />
+        <SettingsSubsection title="连接信息" />
         <div className="form-grid">
           <Field
             label={
@@ -914,10 +918,7 @@ function GlobalSection({
           onSave={onSaveSecret}
           onClear={onClearSecret}
         />
-        <SettingsSubsection
-          title="高级选项"
-          text="选填；只有公开访问或需要统一目录前缀时才配置。"
-        />
+        <SettingsSubsection title="高级选项（可选）" />
         <div className="form-grid">
           <Field
             label={
@@ -982,7 +983,6 @@ function GlobalSection({
           onChange={(retentionDays) => set({ local: { ...value.local, retentionDays } })}
         />
       </Field>
-      <p className="muted-copy">清理与占用只展示可确认事实；保存保留天数不会立即执行清理。</p>
     </>
   );
 }
@@ -1013,7 +1013,7 @@ function DeploymentSecrets({
   };
   return (
     <section>
-      <SectionTitle title={title} text="凭据加密保存，不会回显或进入普通配置导出。" />
+      <SectionTitle title={title} />
       <div className="secret-list">
         {keys.map((key) => (
           <article className="secret-row" data-configured={metadata[key]?.configured} key={key}>
@@ -1060,11 +1060,10 @@ function DeploymentSecrets({
     </section>
   );
 }
-function SettingsSubsection({ title, text }: { title: string; text: string }) {
+function SettingsSubsection({ title }: { title: string }) {
   return (
     <div className="settings-subsection-heading">
       <h3>{title}</h3>
-      <p>{text}</p>
     </div>
   );
 }

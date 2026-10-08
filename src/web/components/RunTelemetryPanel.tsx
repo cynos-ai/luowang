@@ -40,7 +40,6 @@ export function RunTelemetryPanel({
         最近活动：{lastActivityAt ?? '未知'}
         {active && lastActivityAt ? `（距今 ${duration(lastActivityAt, now)}）` : ''}
       </p>
-      {active && <p>没有新活动不代表已挂死；可能仍在等待模型或工具。刷新失败时以上为上次记录。</p>}
       {compact ? (
         <p>
           阶段开始：{current?.startedAt ?? stageStartedAt ?? '未知'} · 阶段耗时：
@@ -76,7 +75,6 @@ export function RunTelemetryPanel({
       <p>
         SDK 估价（已知部分）：
         {usage.sdkEstimatedCostUsd === null ? '未知' : `$${usage.sdkEstimatedCostUsd.toFixed(6)}`}
-        ；不是 Provider 账单。
       </p>
       {!compact &&
         telemetry?.sessions.map((session) => (

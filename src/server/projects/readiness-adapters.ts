@@ -19,6 +19,8 @@ import type { ProjectRecord } from './store.js';
 import { checkEnvironmentAccess } from '../runs/capabilities.js';
 import { resolveProjectExecutionLocation } from './execution-location.js';
 import { createLocalExecutionAdapter } from './execution-adapter.js';
+import { createProjectExecutionAdapter } from './execution-target.js';
+import { createDockerRuntimeFromAdapter } from './execution-container.js';
 
 /** Live, side-effect-free readiness checks. Image construction is a separate explicit operation. */
 export function createLiveProjectReadinessAdapters(input: {
@@ -29,6 +31,7 @@ export function createLiveProjectReadinessAdapters(input: {
   repoRoot: string;
   fetch?: typeof fetch;
   inspectImage?: typeof inspectProjectImage;
+  executionAdapter?: typeof createProjectExecutionAdapter;
   github?: (
     project: ProjectRecord,
     token: string,
@@ -164,7 +167,24 @@ export function createLiveProjectReadinessAdapters(input: {
       if (state?.status !== 'ready' || !state.imageId) {
         return { id: 'image', status: 'not_configured', message: '当前提交的项目镜像尚未准备' };
       }
-      return (await inspect({ ...key, imageId: state.imageId }))
+      const adapter = input.inspectImage
+        ? null
+        : await (input.executionAdapter ?? createProjectExecutionAdapter)({
+            database: input.database,
+            secrets: input.secrets,
+            locationId: location.id,
+            revision: location.revision,
+          });
+      let valid: boolean;
+      try {
+        valid = await inspect(
+          { ...key, imageId: state.imageId },
+          adapter ? createDockerRuntimeFromAdapter(adapter) : undefined,
+        );
+      } finally {
+        await adapter?.close();
+      }
+      return valid
         ? ok('image', `项目镜像已核验：${commit.slice(0, 12)}`)
         : failed('image', '项目镜像已丢失或标签不匹配，请重建');
     },

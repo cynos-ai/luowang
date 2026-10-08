@@ -47,11 +47,15 @@ export function createProjectRuntimeConfiguration(
         language: _language,
         executionDockerfile: _dockerfile,
         testDataCleanupUrl: _cleanupUrl,
+        generatedDefinition: _generated,
+        scheduleIntervalSeconds: _schedule,
         ...repository
       } = projects.get(projectId);
       void _language;
       void _dockerfile;
       void _cleanupUrl;
+      void _generated;
+      void _schedule;
       // Repository identity is read from the immutable project row, never the old global key.
       return { ...repository, repository: projectRepositoryUrl(projectId, projects) };
     },

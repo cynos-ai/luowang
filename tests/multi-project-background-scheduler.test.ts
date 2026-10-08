@@ -16,6 +16,81 @@ import { createProjectConfigurationStore } from '../src/server/projects/configur
 import { createProjectStore } from '../src/server/projects/store.js';
 import { createScopedSecretStore } from '../src/server/security/scoped-secret-store.js';
 
+it('persists second-based schedule checks across restart without catch-up ticks or paused-project runs', async () => {
+  const database = new Database(':memory:');
+  runMigrations(database);
+  runMigrations(database, [projectIdentityMigration]);
+  migrateLegacyRunOwnership(database, null);
+  migrateLegacyConfigurationOwnership(database, null);
+  migrateProjectQueueContext(database);
+  const projects = createProjectStore(database);
+  const project = projects.createVerified({
+    displayName: 'interval',
+    repository: { githubRepositoryId: '103', owner: 'example', name: 'interval' },
+  });
+  const configuration = createProjectConfigurationStore(database);
+  configuration.update(project.projectId, { pollIntervalSeconds: 0, scheduleIntervalSeconds: 7 });
+  assert.throws(
+    () => configuration.update(project.projectId, { cron: '* * * * *' }),
+    /只能启用一种/,
+  );
+  database.prepare("UPDATE projects SET status='active' WHERE project_id=?").run(project.projectId);
+  let checks = 0;
+  const makeScheduler = () =>
+    createProjectBackgroundScheduler({
+      database,
+      projects,
+      configuration,
+      deployment: createConfigurationStore(database, { repoDir: '/repos', reportDir: '/reports' }),
+      secrets: createScopedSecretStore(database, 'fixture'),
+      repoRoot: '/repos',
+      reportRoot: '/reports',
+      dispatcher: {
+        drain: async () => {},
+        retryArchives: async () => {},
+        stop: async () => {},
+      } as never,
+      createIndexer: () => ({ sync: async () => ({ status: 'synced' }) as never }),
+      createPoller: () => ({
+        reset() {},
+        poll: async (trigger = 'git') => {
+          checks++;
+          return {
+            status: 'no_change',
+            trigger,
+            scenarioBranch: 'scenario-testing',
+            currentHead: 'a'.repeat(40),
+            baselineCommit: 'a'.repeat(40),
+            includedCommits: [],
+            queue: null,
+            message: 'already tested',
+          };
+        },
+      }),
+    });
+  try {
+    const first = makeScheduler();
+    await first.tick(new Date('2026-10-07T00:00:00Z'));
+    await first.tick(new Date('2026-10-07T00:00:06Z'));
+    assert.equal(checks, 0);
+    await first.stop();
+    const second = makeScheduler();
+    await second.tick(new Date('2026-10-07T00:00:07Z'));
+    await second.tick(new Date('2026-10-07T00:00:07Z'));
+    assert.equal(checks, 1);
+    await second.tick(new Date('2026-10-07T00:01:00Z'));
+    assert.equal(checks, 2);
+    database
+      .prepare("UPDATE projects SET status='paused' WHERE project_id=?")
+      .run(project.projectId);
+    await second.tick(new Date('2026-10-07T00:02:00Z'));
+    assert.equal(checks, 2);
+    await second.stop();
+  } finally {
+    database.close();
+  }
+});
+
 it('polls active projects independently and drains through one global dispatcher', async () => {
   const database = new Database(':memory:');
   try {

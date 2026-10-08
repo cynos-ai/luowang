@@ -20,7 +20,6 @@ export function Shell({
           <h1 id="page-title">
             <BrandLogo tone="white" size="hero" />
           </h1>
-          <p className="intro">面向可信场景测试的独立控制台。</p>
         </div>
         <section className="health-strip" aria-label="系统状态">
           <HealthItem label="服务" value="Gateway" status={serviceStatus} />

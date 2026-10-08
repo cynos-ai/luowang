@@ -22,6 +22,7 @@ import { checkEnvironmentAccess } from '../runs/capabilities.js';
 import { createProjectRunRuntimeEnvironmentFactory } from './run-runtime-factory.js';
 import { createRemoteProjectRunCommandSessionFactory } from './remote-command-session.js';
 import { createAttachedProjectCommandSession, type DockerRuntime } from './execution-container.js';
+import { recordEnvironmentRecommendation } from './environment-recommendation.js';
 
 /** Assemble every Run dependency from one claimed task; never consult a selected project. */
 export function createProjectRunServices(options: {
@@ -89,6 +90,14 @@ export function createProjectRunServices(options: {
           }),
       });
   const runs = createRunOrchestrator({
+    environmentRecommendation: task.generatedDefinition
+      ? {
+          sourceCommit: task.generatedDefinition.sourceCommit,
+          summary: task.generatedDefinition.summary,
+          record: (value) =>
+            recordEnvironmentRecommendation(database, projectId, task.generatedDefinition!, value),
+        }
+      : undefined,
     browserAllowedOrigins: task.browserAllowedOrigins,
     capabilityConfiguration: { projectId, revision: task.configRevision },
     checkEnvironment: (baseUrl, signal) => checkEnvironmentAccess(baseUrl, fetch, signal),

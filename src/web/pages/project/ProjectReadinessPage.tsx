@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useMemo, useState, type ReactNode } from 'react';
 
 import type { ConsoleReadinessCheck, ConsoleReadinessSnapshot } from '../../../shared/types';
 import { requestJson, toUserMessage } from '../../api';
@@ -56,7 +56,7 @@ export function ProjectReadinessPage({ projectId }: { projectId: string }) {
     try {
       await operation();
       reload();
-      setMessage(`${label}完成；请根据需要重新检查。`);
+      setMessage(`${label}完成`);
     } catch (cause) {
       setError(toUserMessage(cause, `${label}失败`));
     } finally {
@@ -331,7 +331,7 @@ function SectionHeading({
   );
 }
 
-function Fact({ label, value, mono = false }: { label: string; value: string; mono?: boolean }) {
+function Fact({ label, value, mono = false }: { label: string; value: ReactNode; mono?: boolean }) {
   return (
     <div>
       <dt>{label}</dt>
@@ -364,7 +364,9 @@ function checkStatus(status: ConsoleReadinessCheck['status'] | undefined) {
 }
 
 function configured(value: boolean) {
-  return value ? '已配置（不回显）' : '未配置';
+  return (
+    <StatusLabel tone={value ? 'success' : 'neutral'}>{value ? '已配置' : '未配置'}</StatusLabel>
+  );
 }
 function shortSha(value: string | null) {
   return value ? value.slice(0, 12) : '尚无';

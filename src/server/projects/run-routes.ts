@@ -2,6 +2,7 @@ import type Database from 'better-sqlite3';
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import type { Logger } from 'pino';
 import type { OssObject } from '../storage/oss.js';
+import type { GitPollResult } from '../automation/poller.js';
 
 import type { ProjectAutomationDispatcher } from '../automation/project-dispatcher.js';
 import { createProjectTestRequestQueue } from '../automation/queue.js';
@@ -54,6 +55,7 @@ export async function registerProjectRunRoutes(
     logger?: Logger;
     reportRoot?: string;
     readEvidence: (projectId: string, key: string) => Promise<OssObject>;
+    checkForTest?: (projectId: string) => Promise<GitPollResult>;
   },
 ): Promise<void> {
   await app.register(async (routes) => {
@@ -67,6 +69,16 @@ export async function registerProjectRunRoutes(
       if (!project) throw new AppError('PROJECT_NOT_FOUND', '项目不存在', 404);
       return project;
     };
+    if (options.checkForTest)
+      routes.post<{ Params: { projectId: string } }>(
+        '/api/projects/:projectId/check-for-test',
+        async (request) => {
+          requireProject(request.params.projectId);
+          const result = await options.checkForTest!(request.params.projectId);
+          if (result.status === 'queued') void options.dispatcher.drain().catch(() => undefined);
+          return result;
+        },
+      );
     const queueFor = (projectId: string) =>
       createProjectTestRequestQueue(options.database, requireProject(projectId).projectId);
     const runStoreFor = (projectId: string) =>

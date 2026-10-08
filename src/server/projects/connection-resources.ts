@@ -6,6 +6,7 @@ import { ConfigurationError } from '../configuration.js';
 import type { ScopedSecretStore } from '../security/scoped-secret-store.js';
 import { isManagedFilePath } from './managed-file-path.js';
 import { invalidateProjectReadiness } from './readiness.js';
+import { encodeUploadedContent, decodeProjectFileContent } from './file-content.js';
 
 export type GithubCredential = {
   id: string;
@@ -50,6 +51,8 @@ export type ProjectManagedFile = {
   revision: number;
   serviceName: string | null;
   runtimeInjectionEnabled: boolean;
+  purpose?: 'config' | 'data';
+  byteSize?: number;
 };
 
 export interface ConnectionResourceService {
@@ -74,12 +77,24 @@ export interface ConnectionResourceService {
   listProjectFiles(projectId: string): ProjectManagedFile[];
   createProjectFile(
     projectId: string,
-    input: { path: unknown; content: unknown; serviceName?: unknown },
+    input: {
+      path: unknown;
+      content?: unknown;
+      encodedContent?: unknown;
+      purpose?: unknown;
+      serviceName?: unknown;
+    },
   ): ProjectManagedFile;
   updateProjectFile(
     projectId: string,
     fileId: string,
-    input: { path?: unknown; content?: unknown; serviceName?: unknown },
+    input: {
+      path?: unknown;
+      content?: unknown;
+      encodedContent?: unknown;
+      purpose?: unknown;
+      serviceName?: unknown;
+    },
   ): ProjectManagedFile;
   deleteProjectFile(projectId: string, fileId: string): void;
 }
@@ -432,7 +447,7 @@ export function createConnectionResourceService(input: {
       assertProjectIdle(input.database, projectId);
       const fileId = id();
       const path = managedFilePath(value.path);
-      const content = managedFileContent(value.content);
+      const content = submittedFileContent(value);
       const serviceName = managedFileService(value.serviceName);
       assertManagedFileService(input.database, projectId, serviceName);
       const timestamp = now();
@@ -458,6 +473,8 @@ export function createConnectionResourceService(input: {
       if (
         value.path === undefined &&
         value.content === undefined &&
+        value.encodedContent === undefined &&
+        value.purpose === undefined &&
         value.serviceName === undefined
       ) {
         throw new ConfigurationError('没有需要更新的配置文件内容');
@@ -476,10 +493,23 @@ export function createConnectionResourceService(input: {
               'UPDATE project_managed_files SET path = ?, service_name = ?, revision = revision + 1, updated_at = ? WHERE project_id = ? AND file_id = ?',
             )
             .run(path, serviceName, timestamp, projectId, fileId);
-          if (value.content !== undefined) {
+          if (
+            value.content !== undefined ||
+            value.encodedContent !== undefined ||
+            value.purpose !== undefined
+          ) {
+            const fileValue =
+              value.content !== undefined || value.encodedContent !== undefined
+                ? { ...value, purpose: value.purpose ?? current.purpose }
+                : {
+                    encodedContent: decodeProjectFileContent(
+                      input.secrets.resource('project-file', fileId).get('content')!,
+                    ).bytes.toString('base64'),
+                    purpose: value.purpose,
+                  };
             input.secrets
               .resource('project-file', fileId)
-              .set('content', managedFileContent(value.content));
+              .set('content', submittedFileContent(fileValue));
           }
         })();
       } catch (error) {
@@ -575,6 +605,9 @@ function executionServer(row: ExecutionServerRow, secrets: ScopedSecretStore): E
 }
 
 function projectFile(row: ProjectFileRow, secrets: ScopedSecretStore): ProjectManagedFile {
+  const store = secrets.resource('project-file', row.file_id);
+  const value = store.isAvailable() ? store.get('content') : undefined;
+  const content = value ? decodeProjectFileContent(value) : null;
   return {
     id: row.file_id,
     path: row.path,
@@ -584,6 +617,8 @@ function projectFile(row: ProjectFileRow, secrets: ScopedSecretStore): ProjectMa
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     runtimeInjectionEnabled: true,
+    purpose: content?.purpose ?? 'config',
+    byteSize: content?.bytes.length ?? 0,
   };
 }
 
@@ -779,6 +814,26 @@ function managedFileContent(value: unknown): string {
     throw new ConfigurationError('配置文件内容无效或超过 256 KiB');
   }
   return value;
+}
+
+function submittedFileContent(value: {
+  content?: unknown;
+  encodedContent?: unknown;
+  purpose?: unknown;
+}): string {
+  if (value.purpose !== undefined && value.purpose !== 'config' && value.purpose !== 'data')
+    throw new ConfigurationError('文件用途无效');
+  if (value.encodedContent === undefined) {
+    if (value.purpose === 'data' && typeof value.content === 'string')
+      return encodeUploadedContent(Buffer.from(value.content, 'utf8').toString('base64'), 'data');
+    return managedFileContent(value.content);
+  }
+  if (
+    typeof value.encodedContent !== 'string' ||
+    (value.purpose !== undefined && value.purpose !== 'config' && value.purpose !== 'data')
+  )
+    throw new ConfigurationError('文件用途或上传内容无效');
+  return encodeUploadedContent(value.encodedContent, value.purpose === 'data' ? 'data' : 'config');
 }
 
 function requireProject(database: Database.Database, projectId: string): void {

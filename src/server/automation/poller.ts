@@ -8,7 +8,7 @@ export interface GitPollerSubmitter {
   submitTestRequest(input: TestRequestInput): Promise<{ queue: TestRequestRecord }>;
 }
 
-export type GitPollTrigger = 'git' | 'schedule';
+export type GitPollTrigger = 'git' | 'schedule' | 'manual' | 'api';
 
 export interface GitPollResult {
   status: 'queued' | 'no_change' | 'ignored' | 'disabled' | 'not_configured' | 'failed';
@@ -27,6 +27,7 @@ export interface GitPoller {
 }
 
 export interface GitPollerOptions {
+  hasPendingRequest?: () => boolean;
   configuration: ConfigurationStore;
   repository: RepositoryService;
   submitter: GitPollerSubmitter;
@@ -85,6 +86,8 @@ class DefaultGitPoller implements GitPoller {
     if (!config.repository.trim()) {
       return this.empty('not_configured', trigger, scenarioBranch, '目标 GitHub 仓库尚未配置');
     }
+    if (this.options.hasPendingRequest?.())
+      return this.empty('no_change', trigger, scenarioBranch, '项目已有待处理任务，不重复创建');
 
     let currentHead: string | null = null;
     try {
@@ -117,6 +120,28 @@ class DefaultGitPoller implements GitPoller {
 
       const lastSeen = this.options.state.get(LAST_SEEN_KEY);
       const progress = this.options.runStore?.getLastCompletedTarget() ?? null;
+      if (progress) {
+        const remaining =
+          progress === currentHead ? [] : await repository.commitsBetween(progress, currentHead);
+        if (!remaining.some(({ paths }) => hasTestableChanges(paths))) {
+          const ignored = remaining.length > 0 && lastSeen !== currentHead;
+          this.options.state.set(LAST_REPOSITORY_KEY, config.repository);
+          this.options.state.set(LAST_BRANCH_KEY, scenarioBranch);
+          this.options.state.set(LAST_SEEN_KEY, currentHead);
+          return {
+            status: ignored ? 'ignored' : 'no_change',
+            trigger,
+            scenarioBranch,
+            currentHead,
+            baselineCommit: ignored ? (lastSeen ?? progress) : progress,
+            includedCommits: [],
+            queue: null,
+            message: ignored
+              ? '新提交只修改场景或报告目录，未创建自动测试请求'
+              : '没有尚未完成的可测试提交',
+          };
+        }
+      }
       const baselineCommit = lastSeen ?? progress;
       if (!baselineCommit) {
         this.options.state.set(LAST_REPOSITORY_KEY, config.repository);
@@ -169,10 +194,14 @@ class DefaultGitPoller implements GitPoller {
         };
       }
 
+      // Another trigger may have queued work while Git fetch/diff was awaiting.
+      if (this.options.hasPendingRequest?.())
+        return this.empty('no_change', trigger, scenarioBranch, '项目已有待处理任务，不重复创建');
       const submission = await this.options.submitter.submitTestRequest({
         trigger,
-        request: `${trigger === 'git' ? 'Git Poll' : 'Cron'} 检测到场景测试分支有待测试提交：${includedCommits.join(', ')}`,
-        requestKind: 'automatic-head',
+        request: `${trigger === 'git' ? 'Git Poll' : trigger === 'schedule' ? 'Cron' : '人工检查'} 检测到场景测试分支有待测试提交：${includedCommits.join(', ')}`,
+        requestKind:
+          trigger === 'git' || trigger === 'schedule' ? 'automatic-head' : 'manual-current-head',
       });
       this.options.state.set(LAST_REPOSITORY_KEY, config.repository);
       this.options.state.set(LAST_BRANCH_KEY, scenarioBranch);

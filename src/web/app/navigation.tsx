@@ -47,11 +47,11 @@ export function AppLink({
       event.button !== 0 ||
       event.metaKey ||
       event.ctrlKey ||
-      event.shiftKey ||
-      event.altKey
+      event.shiftKey
     ) {
       return;
     }
+    // Alt-click otherwise downloads the HTML document instead of opening this menu.
     event.preventDefault();
     navigation.navigate(to);
   };

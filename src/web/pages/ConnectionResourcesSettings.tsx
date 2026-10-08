@@ -6,6 +6,7 @@ import { AsyncRegion } from '../components/AsyncRegion';
 import { useAppDialog } from '../components/AppDialogProvider';
 import { useAppMessage } from '../components/AppMessageProvider';
 import { Field, NumberInput, SelectBox } from '../components/FormControls';
+import { StatusLabel } from '../components/ui';
 import type {
   ConnectionResourcesResponse,
   ExecutionServer,
@@ -97,7 +98,7 @@ export function ConnectionResourcesSettings({ kind }: { kind: 'github' | 'server
     >
       <div className="connection-settings-stack">
         {kind === 'github' && (
-          <ResourcePanel title="GitHub Token" description="命名保存后，可被多个项目安全复用。">
+          <ResourcePanel title="GitHub Token">
             <form
               className="form-grid resource-editor"
               onSubmit={(event: FormEvent) => {
@@ -159,7 +160,8 @@ export function ConnectionResourcesSettings({ kind }: { kind: 'github' | 'server
                 <ResourceRow
                   key={item.id}
                   title={item.name}
-                  detail={item.configured ? '已安全保存' : '未配置'}
+                  status={item.configured ? 'success' : 'warning'}
+                  statusLabel={item.configured ? '已安全保存' : '未配置'}
                 >
                   <button
                     className="button button-secondary"
@@ -203,10 +205,7 @@ export function ConnectionResourcesSettings({ kind }: { kind: 'github' | 'server
         )}
 
         {kind === 'servers' && (
-          <ResourcePanel
-            title="执行服务器"
-            description="确认主机指纹并通过 Docker、Compose 检查后，项目才会在这台服务器执行。"
-          >
+          <ResourcePanel title="执行服务器">
             <form
               className="form-grid resource-editor"
               onSubmit={(event) => {
@@ -347,7 +346,23 @@ export function ConnectionResourcesSettings({ kind }: { kind: 'github' | 'server
                 <ResourceRow
                   key={item.id}
                   title={item.name}
-                  detail={`${item.username}@${item.host}:${item.port} · 容量 ${item.capacity} · ${item.healthStatus === 'ready' ? '已验证' : item.healthStatus === 'changed' ? '主机指纹已变化' : '待验证'}`}
+                  detail={`${item.username}@${item.host}:${item.port} · 容量 ${item.capacity}`}
+                  status={
+                    item.healthStatus === 'ready'
+                      ? 'success'
+                      : ['changed', 'unavailable'].includes(item.healthStatus)
+                        ? 'danger'
+                        : 'warning'
+                  }
+                  statusLabel={
+                    item.healthStatus === 'ready'
+                      ? '已验证'
+                      : item.healthStatus === 'changed'
+                        ? '主机指纹已变化'
+                        : item.healthStatus === 'unavailable'
+                          ? '不可用'
+                          : '待验证'
+                  }
                 >
                   <button
                     className="button button-secondary"
@@ -456,20 +471,11 @@ export function ConnectionResourcesSettings({ kind }: { kind: 'github' | 'server
   );
 }
 
-function ResourcePanel({
-  title,
-  description,
-  children,
-}: {
-  title: string;
-  description: string;
-  children: ReactNode;
-}) {
+function ResourcePanel({ title, children }: { title: string; children: ReactNode }) {
   return (
     <section className="settings-panel resource-panel">
       <header>
         <h2>{title}</h2>
-        <p>{description}</p>
       </header>
       {children}
     </section>
@@ -481,17 +487,22 @@ function ResourceList({ empty, children }: { empty: string; children: ReactNode 
 function ResourceRow({
   title,
   detail,
+  status,
+  statusLabel,
   children,
 }: {
   title: string;
-  detail: string;
+  detail?: string;
+  status: 'success' | 'warning' | 'danger';
+  statusLabel: string;
   children: ReactNode;
 }) {
   return (
-    <article className="resource-row">
+    <article className="resource-row" data-status={status}>
       <div>
         <strong>{title}</strong>
-        <span>{detail}</span>
+        {detail && <span>{detail}</span>}
+        <StatusLabel tone={status}>{statusLabel}</StatusLabel>
       </div>
       <div className="row-actions">{children}</div>
     </article>

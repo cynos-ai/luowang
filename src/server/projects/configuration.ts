@@ -1,4 +1,5 @@
 import type Database from 'better-sqlite3';
+import { normalizeGeneratedDefinition, type GeneratedDefinition } from './generated-definition.js';
 
 import type { RepositoryConfig } from '../../shared/types.js';
 import {
@@ -16,6 +17,8 @@ export type ProjectConfiguration = Omit<RepositoryConfig, 'repository'> & {
   runtimeMode: 'managed' | 'external' | 'repository-only';
   startType: 'single-container' | 'compose';
   runtime: ProjectRuntimeDefinition;
+  generatedDefinition?: GeneratedDefinition | null;
+  scheduleIntervalSeconds?: number;
 };
 
 export type ProjectRuntimeDefinition = {
@@ -29,6 +32,7 @@ export type ProjectRuntimeDefinition = {
   composeServices: string[];
   applicationService: string;
   commandService: string;
+  initializationSteps?: Array<{ service: string; command: string; timeoutSeconds: number }>;
 };
 
 const ALLOWED_FIELDS = new Set([
@@ -48,6 +52,8 @@ const ALLOWED_FIELDS = new Set([
   'runtimeMode',
   'startType',
   'runtime',
+  'generatedDefinition',
+  'scheduleIntervalSeconds',
 ]);
 const TASK_SEMANTIC_FIELDS = [
   'language',
@@ -63,6 +69,7 @@ const TASK_SEMANTIC_FIELDS = [
   'runtimeMode',
   'startType',
   'runtime',
+  'generatedDefinition',
 ] as const;
 
 export interface ProjectConfigurationStore {
@@ -119,6 +126,8 @@ export function createProjectConfigurationStore(
         runtimeMode,
         startType,
         runtime,
+        generatedDefinition: normalizeGeneratedDefinition(source.generatedDefinition),
+        scheduleIntervalSeconds: normalizeScheduleInterval(source.scheduleIntervalSeconds),
       },
     };
   }
@@ -149,6 +158,8 @@ export function createProjectConfigurationStore(
           runtimeMode: runtimeModePatch,
           startType: startTypePatch,
           runtime: runtimePatch,
+          generatedDefinition: generatedPatch,
+          scheduleIntervalSeconds: schedulePatch,
           ...repositoryPatch
         } = patch;
         const merged = mergeRepositoryConfiguration(
@@ -193,7 +204,15 @@ export function createProjectConfigurationStore(
           runtimeMode,
           startType,
           runtime,
+          generatedDefinition: normalizeGeneratedDefinition(
+            generatedPatch === undefined ? current.config.generatedDefinition : generatedPatch,
+          ),
+          scheduleIntervalSeconds: normalizeScheduleInterval(
+            schedulePatch === undefined ? current.config.scheduleIntervalSeconds : schedulePatch,
+          ),
         };
+        if (config.cron.trim() && config.scheduleIntervalSeconds > 0)
+          throw new ConfigurationError('定时间隔与 Cron 只能启用一种');
         const semanticChange = TASK_SEMANTIC_FIELDS.some(
           (key) => JSON.stringify(config[key]) !== JSON.stringify(current.config[key]),
         );
@@ -226,6 +245,13 @@ export function createProjectConfigurationStore(
       })();
     },
   };
+}
+
+export function normalizeScheduleInterval(value: unknown): number {
+  if (value === undefined) return 0;
+  if (!Number.isInteger(value) || (value as number) < 0 || (value as number) > 7 * 86400)
+    throw new ConfigurationError('定时间隔须为 0–604800 秒');
+  return value as number;
 }
 
 export function normalizeBrowserAllowedOrigins(value: unknown): string[] {
@@ -348,7 +374,43 @@ export function normalizeRuntimeDefinition(value: unknown): ProjectRuntimeDefini
     composeServices: services as string[],
     applicationService,
     commandService,
+    initializationSteps: normalizeInitializationSteps(
+      source.initializationSteps,
+      services as string[],
+      applicationService,
+    ),
   };
+}
+
+function normalizeInitializationSteps(
+  value: unknown,
+  services: string[],
+  applicationService: string,
+): ProjectRuntimeDefinition['initializationSteps'] {
+  if (value === undefined) return [];
+  if (!Array.isArray(value) || value.length > 16) throw new ConfigurationError('初始化步骤无效');
+  return value.map((entry: unknown) => {
+    const step = entry as Record<string, unknown> | null;
+    if (
+      !step ||
+      typeof step.service !== 'string' ||
+      !services.includes(step.service) ||
+      step.service === applicationService ||
+      typeof step.command !== 'string' ||
+      !step.command.trim() ||
+      step.command.length > 16_384 ||
+      step.command.includes('\0') ||
+      !Number.isInteger(step.timeoutSeconds) ||
+      (step.timeoutSeconds as number) < 1 ||
+      (step.timeoutSeconds as number) > 900
+    )
+      throw new ConfigurationError('初始化步骤须指定非应用服务、命令和 1–900 秒超时');
+    return {
+      service: step.service,
+      command: step.command,
+      timeoutSeconds: step.timeoutSeconds as number,
+    };
+  });
 }
 
 function httpPath(value: unknown): string {

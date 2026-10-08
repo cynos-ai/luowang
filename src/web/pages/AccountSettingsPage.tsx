@@ -112,7 +112,6 @@ export function AccountSettingsContent({ onPasswordChanged }: { onPasswordChange
             <form className="content-block settings-form" onSubmit={saveProfile}>
               <div className="content-block-heading">
                 <h2>显示名称</h2>
-                <p>用于当前控制台，不包含邮箱、头像或权限配置。</p>
               </div>
               <Field label="管理员显示名称">
                 <input
@@ -136,7 +135,6 @@ export function AccountSettingsContent({ onPasswordChanged }: { onPasswordChange
             <form className="content-block settings-form" onSubmit={changePassword}>
               <div className="content-block-heading">
                 <h2>更换密码</h2>
-                <p>密码长度必须为 12–128 个字符。成功后当前会话立即退出。</p>
               </div>
               <Field label="当前密码">
                 <input
@@ -154,6 +152,7 @@ export function AccountSettingsContent({ onPasswordChanged }: { onPasswordChange
                   type="password"
                   minLength={12}
                   maxLength={128}
+                  placeholder="12–128 个字符"
                   autoComplete="new-password"
                   disabled={Boolean(busy)}
                   value={newPassword}

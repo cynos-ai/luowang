@@ -14,7 +14,7 @@ export function ConfigurationTransferSection({
       id="configuration-file-title"
       eyebrow="CONFIGURATION FILE"
       title="配置文件"
-      description="导出或导入版本化 YAML 普通配置。API Key、Token、账号和密码不会写入文件；导入也不会覆盖 Secret Store。"
+      description="YAML 配置备份（不含凭据）"
       actions={
         <>
           <button
@@ -41,10 +41,6 @@ export function ConfigurationTransferSection({
           </label>
         </>
       }
-    >
-      <p className="notice notice-neutral">
-        YAML 是备份与迁移载体，不是运行时事实源。导入会原子替换普通配置并将旧连接结果标记为待检查。
-      </p>
-    </SectionCard>
+    ></SectionCard>
   );
 }

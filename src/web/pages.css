@@ -1,7 +1,14 @@
 .lw-main,
 .page-content {
-  min-height: calc(100vh - 94px);
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
   background: var(--lw-paper);
+}
+
+.lw-main {
+  display: flex;
+  flex-direction: column;
 }
 
 .page-content {
@@ -534,6 +541,10 @@
   color: #fff;
 }
 
+.project-action-delete {
+  color: var(--lw-red);
+}
+
 .project-onboarding-dialog {
   width: min(840px, calc(100vw - 48px));
   max-width: none;
@@ -709,16 +720,6 @@
 
 .provider-source-actions {
   justify-content: flex-start;
-}
-
-.source-status {
-  color: var(--lw-muted);
-  font-size: 0.8rem;
-  font-weight: 700;
-}
-
-.source-status.is-verified {
-  color: var(--lw-green);
 }
 
 .button-compact {
@@ -1023,13 +1024,15 @@
 }
 
 .settings-panel {
+  display: grid;
+  gap: 24px;
   padding: clamp(20px, 3vw, 34px);
   border: 3px solid var(--lw-ink);
   background: var(--lw-paper);
 }
 
 .settings-panel > header {
-  margin-bottom: 24px;
+  margin: 0;
   padding-bottom: 15px;
   border-bottom: 4px solid var(--lw-ink);
 }
@@ -1043,6 +1046,164 @@
 .settings-panel header p {
   margin: 0;
   color: var(--lw-muted);
+}
+
+.settings-stack,
+.settings-group {
+  display: grid;
+  gap: 20px;
+  min-width: 0;
+}
+
+.settings-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: start;
+  gap: 20px;
+  min-width: 0;
+}
+
+.settings-fields > .field {
+  min-width: 0;
+}
+
+.settings-fields > .field > span {
+  min-height: 24px;
+}
+
+.settings-group {
+  padding-top: 22px;
+  border-top: 2px solid var(--lw-line);
+}
+
+.settings-stack > .settings-group:first-child {
+  padding-top: 0;
+  border-top: 0;
+}
+
+.settings-group h3 {
+  margin: 0;
+  font-size: 22px;
+}
+
+.settings-group-heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.settings-group-heading .row-actions {
+  flex-wrap: wrap;
+}
+
+.environment-editor > p {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.environment-editor pre {
+  max-height: 420px;
+  overflow: auto;
+}
+
+.environment-editor textarea {
+  font-family: var(--lw-mono);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.settings-details {
+  min-width: 0;
+  border-top: 2px solid var(--lw-line);
+}
+
+.settings-details > summary {
+  padding: 14px 0;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.settings-details[open] > summary {
+  margin-bottom: 6px;
+}
+
+.settings-details > :not(summary) + :not(summary) {
+  margin-top: 16px;
+}
+
+.credential-field-label {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.trigger-rule {
+  display: grid;
+  gap: 22px;
+  padding: 20px;
+  border: 2px solid var(--lw-line);
+  border-left: 6px solid var(--lw-line);
+  background: var(--lw-paper-soft);
+}
+
+.trigger-rule[data-enabled='true'] {
+  border-left-color: var(--lw-green);
+  background: var(--lw-paper);
+}
+
+.trigger-rule-heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px 16px;
+}
+
+.trigger-rule-heading h3 {
+  margin: 0;
+  font-size: 22px;
+}
+
+.trigger-rule[data-enabled='false'] > .interval-control {
+  opacity: 0.6;
+}
+
+.interval-control {
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.interval-control legend {
+  padding: 0 0 7px;
+}
+
+.interval-inputs {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 304px;
+}
+
+.interval-inputs .number-input {
+  flex: 0 1 200px;
+  grid-template-columns: 40px minmax(40px, 1fr) 40px;
+}
+
+.interval-inputs .select-box {
+  flex: 0 0 96px;
+  min-width: 0;
+}
+
+@media (max-width: 720px) {
+  .settings-fields {
+    grid-template-columns: 1fr;
+  }
 }
 
 .read-only-field {
@@ -1069,8 +1230,8 @@
 .profile-grid .field {
   gap: 4px;
   padding: 10px 12px;
-  border: 2px solid var(--lw-line);
-  background: #fff;
+  border: 2px solid var(--lw-field-border, var(--lw-line));
+  background: var(--lw-field-background, #fff);
 }
 
 .profile-grid .field:focus-within {
@@ -2090,6 +2251,7 @@
 .secret-row[data-configured='true'] .secret-input,
 .secret-editor[data-configured='true'] input {
   border-color: var(--lw-green);
+  background: var(--lw-green-soft);
 }
 
 .browser-runtime-fact {
@@ -2245,12 +2407,17 @@
   gap: 20px;
 }
 
-.resource-editor,
-.managed-file-editor {
+.resource-editor {
   padding: 18px;
   border: 1px solid var(--lw-line);
   border-radius: 14px;
   background: color-mix(in srgb, var(--lw-paper-soft) 76%, transparent);
+}
+
+.managed-file-editor {
+  display: grid;
+  gap: 20px;
+  min-width: 0;
 }
 
 .resource-list {

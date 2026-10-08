@@ -75,6 +75,7 @@ export async function resolveNativeComposeConfig(input: {
 }
 
 export function normalizeComposeDefinition(input: {
+  generatedContentHash?: string;
   source: string;
   instanceId: string;
   projectId: string;
@@ -179,6 +180,7 @@ export function normalizeComposeDefinition(input: {
   // Runs using args build independently while non-secret definitions retain cross-Run reuse.
   const canonical = JSON.stringify({
     buildInputs,
+    generatedContentHash: input.generatedContentHash ?? null,
     buildArgsScope: hasBuildArgs ? input.attemptId : null,
   });
   return {
@@ -259,7 +261,8 @@ function resolveFromComposeDirectory(value: unknown, composeDirectory: string): 
     /^[A-Za-z]:/.test(value)
   )
     throw new ConfigurationError('Compose 路径必须位于项目内');
-  const normalized = posix.normalize(posix.join(composeDirectory, value));
+  const normalized =
+    posix.normalize(posix.join(composeDirectory, value)).replace(/\/+$/, '') || '.';
   if (normalized === '..' || normalized.startsWith('../'))
     throw new ConfigurationError('Compose 路径越界');
   return normalized;

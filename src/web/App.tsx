@@ -3,7 +3,7 @@ import { screenshotInspectionLabel } from '../shared/types';
 
 import { requestJson, toUserMessage } from './api';
 import { useAppDialog } from './components/AppDialogProvider';
-import { AppMessageFeedback } from './components/AppMessageProvider';
+import { AppMessageFeedback, useAppMessage } from './components/AppMessageProvider';
 import { Field } from './components/FormControls';
 import { LoginPanel } from './components/LoginPanel';
 import { Shell } from './components/Shell';
@@ -215,6 +215,7 @@ export default function App() {
 
 function RepositoryWorkspace() {
   const dialogs = useAppDialog();
+  const notify = useAppMessage();
   const [status, setStatus] = useState<RepositoryStatusResponse | null>(null);
   const [scenarios, setScenarios] = useState<IndexedScenario[]>([]);
   const [reports, setReports] = useState<IndexedReport[]>([]);
@@ -275,7 +276,7 @@ function RepositoryWorkspace() {
       setMessage(result.message);
       await load();
     } catch (cause: unknown) {
-      setError(toUserMessage(cause, '仓库同步失败'));
+      notify.error(toUserMessage(cause, '仓库同步失败'));
     } finally {
       setBusy(null);
     }
@@ -308,7 +309,7 @@ function RepositoryWorkspace() {
       setMessage(`首次创建与初始化请求已进入队列：#${result.queueId}`);
       await load();
     } catch (cause: unknown) {
-      setError(toUserMessage(cause, '场景测试分支创建失败'));
+      notify.error(toUserMessage(cause, '场景测试分支创建失败'));
     } finally {
       setBusy(null);
     }
@@ -339,7 +340,7 @@ function RepositoryWorkspace() {
       setMessage(`merge 与固定 target 测试请求已进入队列：#${result.queueId}`);
       await load();
     } catch (cause: unknown) {
-      setError(toUserMessage(cause, '来源 ref 合并失败'));
+      notify.error(toUserMessage(cause, '来源 ref 合并失败'));
     } finally {
       setBusy(null);
     }
@@ -381,7 +382,7 @@ function RepositoryWorkspace() {
           </button>
         </div>
       </div>
-      {message && <p className="notice notice-success">{message}</p>}
+      <AppMessageFeedback success={message} />
       {error && <p className="notice notice-error">{error}</p>}
       {(status?.errorMessage || treeStaleReason) && (
         <p className="notice notice-warning" role="status">
@@ -569,10 +570,9 @@ function DashboardPanel({ onNavigate }: { onNavigate: (view: ConsoleView) => voi
         {dashboard.stale && (
           <p className="notice notice-warning" role="status">
             数据可能陈旧：{dashboard.staleReason ?? '外部依赖暂时不可用'}
-            。页面保留最近一次事实，不把陈旧缓存显示为最新成功。
           </p>
         )}
-        {message && <p className="notice notice-success">{message}</p>}
+        <AppMessageFeedback success={message} />
         {error && <p className="notice notice-error">{error}</p>}
         <div className="operations-metrics">
           <Metric
@@ -787,7 +787,7 @@ function RunRequestForm({ onSubmitted }: { onSubmitted: (message: string) => voi
         target 将在该请求轮到执行时固定为远端场景测试分支 HEAD；指定 branch、tag 或 SHA
         请使用仓库页的 merge-source 入口。
       </p>
-      {error && <p className="notice notice-error">{error}</p>}
+      <AppMessageFeedback error={error} />
       <button className="button" type="submit" disabled={busy || request.trim() === ''}>
         {busy ? '提交中…' : '提交测试请求'}
       </button>
@@ -895,7 +895,7 @@ function ScenariosPanel() {
         </p>
       )}
       {!loading && scenarios.length === 0 && (
-        <p className="empty-state">没有符合筛选条件的场景。场景正文只读自 Git 缓存。</p>
+        <p className="empty-state">没有符合筛选条件的场景。</p>
       )}
       <div className="scenario-list">
         {scenarios.map((scenario) => (
@@ -953,6 +953,7 @@ function ScenariosPanel() {
 
 function RunsPanel() {
   const dialogs = useAppDialog();
+  const notify = useAppMessage();
   const [runs, setRuns] = useState<OperationsRunSummary[]>([]);
   const [selected, setSelected] = useState<OperationsRunDetail | null>(null);
   const [filter, setFilter] = useState('');
@@ -1006,11 +1007,16 @@ function RunsPanel() {
       return;
     setBusyRun(runId);
     try {
-      await requestJson(`/api/runs/${encodeURIComponent(runId)}/archive`, { method: 'POST' });
+      const { archive } = await requestJson<{
+        archive: { status: 'completed' | 'partial' | 'failed' };
+      }>(`/api/runs/${encodeURIComponent(runId)}/archive`, { method: 'POST' });
+      if (archive.status === 'completed') notify.success('归档重试已完成');
+      else if (archive.status === 'partial') notify.warning('归档部分完成，请查看测试记录');
+      else notify.error('归档未完成，请查看测试记录');
       await load();
       await openRun(runId);
     } catch (cause: unknown) {
-      setError(toUserMessage(cause, '归档重试失败'));
+      notify.error(toUserMessage(cause, '归档重试失败'));
     } finally {
       setBusyRun('');
     }
@@ -1165,7 +1171,7 @@ function ActiveRunPanel() {
         <div>
           <h3>关键活动</h3>
           {current.activities.length === 0 ? (
-            <p className="muted">暂无可展示的活动（隐藏推理不会显示）。</p>
+            <p className="muted">暂无可展示的活动。</p>
           ) : (
             <div className="activity-list">
               {current.activities.map((activity, index) => (
