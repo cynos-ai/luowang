@@ -245,7 +245,23 @@ export function ProjectEnvironmentEditor({
           )}
         </div>
       </header>
-      <Field label="补充要求（可选）">
+      <p>
+        这里为 AI 测试准备执行环境与测试数据。大多数情况无需人工介入：AI
+        读源码生成准备方案，保存后每次测试自动构建、初始化、启动；你只需做简单确认。
+      </p>
+      <p role="status">
+        {saved
+          ? `AI 测试将按这份配置准备环境与数据（来源源码 ${saved.sourceCommit.slice(0, 8)}）。${
+              pendingDraft ? '下方是 AI 新草案，应用前仍按现有配置准备。' : ''
+            }`
+          : pendingDraft
+            ? 'AI 测试还没有可用的环境配置——没有它，测试无法准备环境、无法启动。下方是 AI 草案，看一眼摘要合理的话点「保存启动配置」即可。'
+            : 'AI 测试还没有可用的环境配置。点击「AI 生成配置」即可，通常不需要手工填写。'}
+      </p>
+      <Field
+        label="补充要求（可选）"
+        hint="对环境或测试数据有特定要求时告诉 AI（例如使用 seed 初始化数据），填好后重新生成；留空由 AI 自行决定"
+      >
         <textarea
           rows={2}
           maxLength={4096}
@@ -282,6 +298,10 @@ export function ProjectEnvironmentEditor({
               </li>
             ))}
           </ul>
+          <p>
+            这些是 AI 准备测试环境/数据还缺的信息：在上方「补充要求」中填写后，点击「AI
+            生成配置」重新生成。
+          </p>
         </section>
       )}
       {pendingDraft && task.stale && (
@@ -298,9 +318,16 @@ export function ProjectEnvironmentEditor({
           <div className="settings-group-heading">
             <p>{draft.generatedDefinition.summary}</p>
             <StatusLabel tone={editing === null ? 'neutral' : 'warning'}>
-              {editing === null ? '已保存' : '待确认'}
+              {editing === null ? '已生效' : '待确认（未生效）'}
             </StatusLabel>
           </div>
+          {pendingDraft && (
+            <p role="status">
+              这是 AI 依据源码 <code>{draft.generatedDefinition.sourceCommit.slice(0, 8)}</code>{' '}
+              自动生成的准备方案，通常无需细看：摘要合理就点「保存启动配置」，之后每次测试都按它准备环境；特殊调整可展开高级
+              JSON 修改，或在上方补充要求后重新生成。
+            </p>
+          )}
           <dl className="environment-summary">
             <div>
               <dt>应用服务</dt>
@@ -385,7 +412,7 @@ export function ProjectEnvironmentEditor({
       {(editing !== null || saved) && (
         <>
           <details className="settings-details">
-            <summary>高级：查看 / 编辑原始 JSON</summary>
+            <summary>高级：查看 / 编辑原始 JSON（特殊配置才需要）</summary>
             {editing !== null && current && (
               <details>
                 <summary>上次保存的配置</summary>
