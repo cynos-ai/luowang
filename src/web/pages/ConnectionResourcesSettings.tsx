@@ -274,7 +274,10 @@ export function ConnectionResourcesSettings({ kind }: { kind: 'github' | 'server
                   onChange={(e) => setServer({ ...server, username: e.target.value })}
                 />
               </Field>
-              <Field label="并发项目数">
+              <Field
+                label="并发项目数"
+                hint="该服务器最多同时承担的项目执行任务数。构建、启动验证也占用名额；同项目仍串行，实际并发还受全局上限限制。"
+              >
                 <NumberInput
                   ariaLabel="并发项目数"
                   min={1}
@@ -346,7 +349,7 @@ export function ConnectionResourcesSettings({ kind }: { kind: 'github' | 'server
                 <ResourceRow
                   key={item.id}
                   title={item.name}
-                  detail={`${item.username}@${item.host}:${item.port} · 容量 ${item.capacity}`}
+                  detail={`${item.username}@${item.host}:${item.port} · 最多并行 ${item.capacity} 个项目`}
                   status={
                     item.healthStatus === 'ready'
                       ? 'success'

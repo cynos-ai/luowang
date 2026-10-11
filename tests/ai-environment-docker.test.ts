@@ -54,6 +54,8 @@ dockerIt(
       repository: { githubRepositoryId: '101', owner: 'example', name: 'fixture' },
     });
     const secrets = createScopedSecretStore(database, 'synthetic-fixture-key');
+    secrets.project(project.projectId).set('testUsername', 'synthetic-user@example.test');
+    secrets.project(project.projectId).set('testPassword', 'synthetic-password-for-docker-only');
     const resources = createConnectionResourceService({ database, secrets });
     const upload = resources.createProjectFile(project.projectId, {
       path: 'seed-upload.sql',
@@ -71,7 +73,7 @@ dockerIt(
     await git(['config', 'user.email', 'fixture@example.test']);
     await writeFile(
       join(repo, 'app.js'),
-      "const http=require('http'),fs=require('fs');http.createServer((_q,r)=>{try{r.end(fs.readFileSync('/proof/value','utf8').trim())}catch{r.statusCode=503;r.end('not initialized')}}).listen(8080,'0.0.0.0');\n",
+      `const http=require('http'),fs=require('fs');http.createServer((q,r)=>{if(q.url==='/login'){let body='';q.on('data',chunk=>body+=chunk);q.on('end',()=>{try{const actual=JSON.parse(body),expected=JSON.parse(fs.readFileSync('/proof/account.json','utf8'));if(actual.username!==expected.username||actual.password!==expected.password){r.statusCode=401;r.end('denied')}else r.end('authenticated')}catch{r.statusCode=400;r.end('invalid')}});return}try{r.end(fs.readFileSync('/proof/value','utf8').trim())}catch{r.statusCode=503;r.end('not initialized')}}).listen(8080,'0.0.0.0');\n`,
     );
     await git(['add', '.']);
     await git(['commit', '-m', 'fixed product']);
@@ -90,11 +92,19 @@ dockerIt(
     const generatedDefinition = {
       sourceCommit: commit,
       summary: 'fixture',
+      preparation: {
+        scope: '合成账号登录 fixture',
+        data: '导入合成 SQL',
+        account: { mode: 'provided' as const, description: '受控测试账号' },
+        externalServices: '无外部服务',
+        decisions: [],
+        evidence: ['app.js'],
+      },
       files: [
         {
           path: '.luowang-generated/app.Dockerfile',
           content:
-            'FROM docker.m.daocloud.io/library/node:24.14.1-bookworm-slim@sha256:b506e7321f176aae77317f99d67a24b272c1f09f1d10f1761f2773447d8da26c\nWORKDIR /app\nCOPY app.js ./\nCMD ["node","app.js"]\n',
+            'FROM docker.m.daocloud.io/library/node:24.14.1-bookworm-slim@sha256:b506e7321f176aae77317f99d67a24b272c1f09f1d10f1761f2773447d8da26c\nWORKDIR /app\nCOPY . .\nCMD ["node","app.js"]\n',
         },
         {
           path: '.luowang-generated/compose.yml',
@@ -111,12 +121,29 @@ dockerIt(
       composeServices: ['app', 'db', 'tools'],
       applicationService: 'app',
       commandService: 'tools',
+      preparationChecks: [
+        {
+          kind: 'data',
+          label: '必要数据可读',
+          service: 'tools',
+          command: 'test "$(cat /proof/value)" = initial',
+          timeoutSeconds: 30,
+        },
+        {
+          kind: 'account',
+          label: '主身份登录',
+          service: 'tools',
+          command:
+            'wget -q -O /tmp/login-proof --header="Content-Type: application/json" --post-file=/workspace/.luowang-runtime/test-account.json http://app:8080/login && grep -q authenticated /tmp/login-proof',
+          timeoutSeconds: 30,
+        },
+      ],
       initializationSteps: [
         {
           service: 'tools',
           timeoutSeconds: 60,
           command:
-            'set -eu; until pg_isready -h db -U postgres; do sleep 1; done; psql -v ON_ERROR_STOP=1 -h db -U postgres -f /workspace/seed-upload.sql; psql -At -h db -U postgres -c \'SELECT name FROM items WHERE id=42\' > /proof/value; test "$(cat /proof/value)" = initial',
+            'set -eu; cp /workspace/.luowang-runtime/test-account.json /proof/account.json; until pg_isready -h db -U postgres; do sleep 1; done; psql -v ON_ERROR_STOP=1 -h db -U postgres -f /workspace/seed-upload.sql; psql -At -h db -U postgres -c \'SELECT name FROM items WHERE id=42\' > /proof/value; test "$(cat /proof/value)" = initial',
         },
       ],
     });
@@ -182,6 +209,41 @@ dockerIt(
           .digest('hex'),
       );
       assert.equal(JSON.parse(first).initializationResults[0].exitCode, 0);
+      const timings = JSON.parse(first).preparationTimings;
+      for (const stage of ['build', 'create', 'files', 'dependencies', 'initialize', 'health']) {
+        assert.ok(
+          timings.some(
+            (step: { stage: string; durationMs: number; status: string }) =>
+              step.stage === stage && step.status === 'passed' && step.durationMs >= 0,
+          ),
+        );
+      }
+      assert.deepEqual(
+        JSON.parse(first).preparationResults.map((result: { kind: string; exitCode: number }) => [
+          result.kind,
+          result.exitCode,
+        ]),
+        [
+          ['data', 0],
+          ['account', 0],
+        ],
+      );
+      assert.ok(!first.includes('synthetic-password-for-docker-only'));
+      assert.ok(
+        !JSON.stringify(configuration.get(project.projectId)).includes(
+          'synthetic-password-for-docker-only',
+        ),
+      );
+      assert.ok(owner.sensitiveValues?.includes('synthetic-password-for-docker-only'));
+      await exec('docker', [
+        'run',
+        '--rm',
+        '--entrypoint',
+        'sh',
+        JSON.parse(first).serviceImages.app,
+        '-c',
+        'test ! -e /app/.luowang-runtime/test-account.json && test ! -e /app/seed-upload.sql',
+      ]);
       const attached = target! as {
         docker: DockerRuntime;
         containerId: string;
@@ -205,6 +267,16 @@ dockerIt(
       assert.equal(result.exitCode, 0);
       await session.close();
       await owner.close();
+      const closed = JSON.parse(
+        (
+          database
+            .prepare('SELECT runtime_environment_json FROM run_execution_context WHERE run_id=?')
+            .get(run1) as { runtime_environment_json: string }
+        ).runtime_environment_json,
+      );
+      assert.equal(closed.preparationTimings.at(-1).stage, 'cleanup');
+      assert.equal(closed.preparationTimings.at(-1).status, 'passed');
+      assert.ok(closed.preparationTimings.at(-1).durationMs >= 0);
       owner = undefined;
       const run2 = '01K00000000000000000000012';
       owner = await factory({ repository, runId: run2, targetCommit: commit });

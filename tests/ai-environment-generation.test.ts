@@ -1,6 +1,7 @@
 import { strict as assert } from 'node:assert';
 import Database from 'better-sqlite3';
 import { it, vi } from 'vitest';
+import { preparationFixture } from './environment-fixture.js';
 import { runMigrations } from '../src/server/db/migrate.js';
 import { createConfigurationStore } from '../src/server/configuration.js';
 import { createScopedSecretStore } from '../src/server/security/scoped-secret-store.js';
@@ -68,7 +69,9 @@ it('generates an isolated draft from a fixed commit and never saves or starts a 
     sessions: {
       async create(input) {
         assert.equal(input.role, 'main-a');
-        assert.equal(input.config.thinking, 'low');
+        assert.equal(input.thinkingPolicy, 'highest');
+        assert.equal(input.config.thinking, deployment.getHarness().agents.main.thinking);
+        input.onThinkingResolved?.('high');
         assert.equal(deployment.getHarness().agents.main.thinking, 'high');
         assert.deepEqual(input.toolNames, [
           'read_project_file',
@@ -104,8 +107,9 @@ it('generates an isolated draft from a fixed commit and never saves or starts a 
             await input.customTools[1].execute(
               'submit',
               {
-                definition: JSON.stringify({
+                definition: {
                   summary: 'fixture',
+                  preparation: preparationFixture,
                   files: [
                     {
                       path: '.luowang-generated/compose.yml',
@@ -120,7 +124,7 @@ it('generates an isolated draft from a fixed commit and never saves or starts a 
                     applicationService: 'app',
                     commandService: 'tools',
                   },
-                }),
+                },
               },
               input.signal,
               undefined,
@@ -163,7 +167,7 @@ it('cancels source preparation and does not start a model session afterwards', a
   let models = 0;
   const generation = createEnvironmentGenerationService({
     database,
-    deployment: {} as never,
+    deployment: { getHarness: () => ({ agents: { main: { model: 'fixture' } } }) } as never,
     configuration: { get: () => ({}) } as never,
     resources: { listProjectFiles: () => [] } as never,
     secrets: {} as never,
@@ -221,8 +225,9 @@ it('persists missing inputs and draft decisions, carries manual runtime and fail
               mode === 'missing'
                 ? { items: [{ item: '.env.test', reason: '需要提供测试服务地址配置' }] }
                 : {
-                    definition: JSON.stringify({
+                    definition: {
                       summary: 'application and tools',
+                      preparation: preparationFixture,
                       files: [
                         {
                           path: '.luowang-generated/compose.yml',
@@ -231,7 +236,7 @@ it('persists missing inputs and draft decisions, carries manual runtime and fail
                         },
                       ],
                       runtime: f.configuration.get(f.project.projectId).runtime,
-                    }),
+                    },
                   },
               input.signal,
               undefined,

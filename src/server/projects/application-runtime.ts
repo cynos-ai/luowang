@@ -17,6 +17,12 @@ export type RunRuntimeEnvironment = {
   applicationService: string | null;
   commandService: string | null;
   serviceImages?: Record<string, string>;
+  preparationResults?: Array<{
+    kind: 'data' | 'account';
+    step: number;
+    exitCode: number | null;
+    finishedAt: string;
+  }>;
   initializationResults?: Array<{
     step: number;
     service: string;
@@ -399,6 +405,7 @@ export async function startComposeApplication(input: {
         input.signal,
       );
     input.signal?.throwIfAborted();
+    input.onStage?.('create');
     await success(
       input.docker,
       [...composePrefix, file, 'create', '--no-build', ...Object.keys(controlled.services)],
@@ -422,7 +429,7 @@ export async function startComposeApplication(input: {
       );
       controlNetwork = { name: networkName, containerId: controlId };
     }
-    input.onStage?.('initialize');
+    input.onStage?.('files');
     for (const sourceVolume of sourceVolumes) {
       const service = controlled.services[sourceVolume.service];
       const image = String(service.image ?? '');
@@ -500,12 +507,14 @@ export async function startComposeApplication(input: {
       const dependencies = Object.keys(controlled.services).filter(
         (name) => name !== input.definition.applicationService,
       );
+      input.onStage?.('dependencies');
       await success(
         input.docker,
         [...composePrefix, file, 'start', ...dependencies],
         5 * 60_000,
         input.signal,
       );
+      input.onStage?.('initialize');
       for (const [index, step] of steps.entries()) {
         input.signal?.throwIfAborted();
         if (!containerIds[step.service]) throw new Error('初始化服务不属于本 Run');
@@ -584,6 +593,31 @@ export async function startComposeApplication(input: {
       input.runtime.healthTimeoutSeconds,
       input.signal,
     );
+    const preparationResults: NonNullable<RunRuntimeEnvironment['preparationResults']> = [];
+    for (const kind of ['data', 'account'] as const) {
+      const checks = (input.runtime.preparationChecks ?? []).filter((check) => check.kind === kind);
+      if (!checks.length) continue;
+      input.onStage?.(kind);
+      for (const check of checks) {
+        input.signal?.throwIfAborted();
+        if (!containerIds[check.service]) throw new Error('核验服务不属于本 Run');
+        const result = await input.docker.run(
+          ['exec', containerIds[check.service], '/bin/sh', '-lc', check.command],
+          { timeoutMs: check.timeoutSeconds * 1000, signal: input.signal },
+        );
+        preparationResults.push({
+          kind,
+          step: preparationResults.length + 1,
+          exitCode: result.exitCode,
+          finishedAt: new Date().toISOString(),
+        });
+        if (result.exitCode !== 0)
+          throw new ControlledCommandError(
+            'COMMAND_FAILED',
+            `${kind === 'data' ? '测试数据' : '测试账号'}核验未通过（退出码 ${result.exitCode}），请让 AI 分析并修正方案`,
+          );
+      }
+    }
     const commandId = (
       await success(
         input.docker,
@@ -610,6 +644,7 @@ export async function startComposeApplication(input: {
         commandService: input.definition.commandService,
         serviceImages: imageIds,
         initializationResults,
+        preparationResults,
       },
       async close() {
         if (closed) return;

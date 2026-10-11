@@ -483,7 +483,10 @@ function SettingsSection({
               onSaveConfiguration({ runtimeMode: configuration.runtimeMode });
             }}
           >
-            <Field label="执行服务器">
+            <Field
+              label="执行服务器"
+              hint="并行数是执行名额，不是硬件容量。不同项目可并行，同项目串行；构建和环境验证也占名额，且受全局上限限制。"
+            >
               <SelectBox
                 ariaLabel="执行服务器"
                 disabled={disabled}
@@ -528,7 +531,7 @@ function SettingsSection({
                   return (
                     <StatusLabel tone={server?.remoteExecutionEnabled ? 'success' : 'warning'}>
                       {server?.remoteExecutionEnabled
-                        ? `服务器已验证 · 容量 ${server.capacity}`
+                        ? `连接已验证 · 最多并行 ${server.capacity} 个项目`
                         : '服务器待验证'}
                     </StatusLabel>
                   );
@@ -863,6 +866,21 @@ function SettingsSection({
         <section className="settings-group" aria-labelledby="test-account-title">
           <header>
             <h3 id="test-account-title">测试账号</h3>
+            <p>
+              {configuration.runtimeMode === 'managed'
+                ? '独立环境优先由罗网按方案准备合成账号。只有需要复用已有测试身份时才手动填写；保存凭据不代表已创建账号或验证登录。'
+                : '提供已有非生产环境的测试身份。保存凭据不代表账号可以登录。'}
+            </p>
+            <AppLink
+              className="text-link"
+              to={{
+                name: 'project-settings',
+                projectId: data.detail.project.projectId,
+                section: 'execution',
+              }}
+            >
+              返回项目测试准备
+            </AppLink>
           </header>
           <form
             className="settings-stack"

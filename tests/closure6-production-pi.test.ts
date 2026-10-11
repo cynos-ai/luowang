@@ -358,6 +358,20 @@ describe('Closure 6 local production Pi path', () => {
       'main-b',
     ]);
     assert.equal(new Set(context.model.sessions.map((session) => session.id)).size, 6);
+    assert.deepEqual(
+      context.model.sessions.map((session) => session.thinking),
+      Array(6).fill('high'),
+    );
+    assert.deepEqual(
+      result.telemetry?.sessions.map((session) => session.thinking),
+      Array(6).fill('high'),
+    );
+    for (const session of context.model.sessions) {
+      assert.ok(session.prompts.some((prompt) => prompt.includes('fixture-project-mock-only')));
+      assert.ok(session.prompts.some((prompt) => prompt.includes('fixture-login-check')));
+      assert.match(session.systemPrompt, /已知问题与继续执行/);
+      assert.match(session.systemPrompt, /不能证明注册/);
+    }
     const metadata = JSON.parse(result.artifacts['plan.md']!.split('\n')[1]!);
     const reads = JSON.parse(
       await readFile(
@@ -699,6 +713,23 @@ tags:
     },
   });
   const orchestrator = createRunOrchestrator({
+    testPreparation: {
+      sourceCommit: 'a'.repeat(40),
+      plan: {
+        scope: 'fixture-project-mock-only',
+        data: 'synthetic data',
+        account: { mode: 'provided', description: 'fixture user' },
+        externalServices: 'project mock only; no real payments',
+        decisions: [],
+        evidence: ['fixture source'],
+      },
+    },
+    runtimeEnvironmentFactory: async () => ({
+      baseUrl: null,
+      browserAvailable: false,
+      preparationResults: [{ kind: 'account', label: 'fixture-login-check', exitCode: 0 }],
+      async close() {},
+    }),
     configuration,
     repository,
     reportDir,

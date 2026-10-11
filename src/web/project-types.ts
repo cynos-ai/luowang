@@ -1,4 +1,5 @@
 import type { RepositoryConfig, SecretMetadata } from '../shared/types';
+import type { PreparationPlan, PreparationCheck } from '../shared/project-preparation';
 
 export type ProjectReference = {
   projectId: string;
@@ -30,11 +31,13 @@ export type ProjectConfiguration = Omit<RepositoryConfig, 'repository'> & {
     applicationService: string;
     commandService: string;
     initializationSteps?: Array<{ service: string; command: string; timeoutSeconds: number }>;
+    preparationChecks?: PreparationCheck[];
   };
   generatedDefinition?: {
     sourceCommit: string;
     summary: string;
     files: Array<{ path: string; content: string }>;
+    preparation: PreparationPlan;
   } | null;
   scheduleIntervalSeconds?: number;
 };

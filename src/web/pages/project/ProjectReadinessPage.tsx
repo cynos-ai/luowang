@@ -110,6 +110,15 @@ export function ProjectReadinessPage({ projectId }: { projectId: string }) {
         }
       />
       <div className="page-body readiness-layout">
+        <p>
+          这里检查仓库、执行工具与共享依赖，不等于应用、数据和账号已经实际验证。
+          <AppLink
+            className="text-link"
+            to={{ name: 'project-settings', projectId, section: 'execution' }}
+          >
+            进入项目测试准备
+          </AppLink>
+        </p>
         <AppMessageFeedback success={message} error={error} />
         <AsyncRegion
           loading={readiness.loading && !readiness.value}
@@ -211,10 +220,16 @@ export function ProjectReadinessPage({ projectId }: { projectId: string }) {
                 <dl className="fact-list">
                   <Fact
                     label="非生产环境"
-                    value={detail.value.detail.configuration.baseUrl || '未配置'}
+                    value={
+                      detail.value.detail.configuration.runtimeMode === 'managed'
+                        ? '由罗网在每次测试时创建独立环境，自动提供临时网址'
+                        : detail.value.detail.configuration.runtimeMode === 'repository-only'
+                          ? '仅测试仓库内容，无需应用网址'
+                          : detail.value.detail.configuration.baseUrl || '未配置'
+                    }
                   />
                   <Fact
-                    label="测试账号"
+                    label="账号凭据（非登录验证）"
                     value={configured(detail.value.detail.secrets.testUsername.configured)}
                   />
                   <Fact
@@ -222,11 +237,13 @@ export function ProjectReadinessPage({ projectId }: { projectId: string }) {
                     value={configured(detail.value.detail.secrets.testPassword.configured)}
                   />
                   <Fact
-                    label="清理能力"
+                    label="清理方式"
                     value={
-                      detail.value.detail.configuration.testDataCleanupUrl
-                        ? configured(detail.value.detail.secrets.testDataCleanupToken.configured)
-                        : '未配置'
+                      detail.value.detail.configuration.runtimeMode === 'managed'
+                        ? '临时环境由罗网回收；外部副作用仍需单独处理'
+                        : detail.value.detail.configuration.testDataCleanupUrl
+                          ? configured(detail.value.detail.secrets.testDataCleanupToken.configured)
+                          : '未配置清理接口'
                     }
                   />
                 </dl>

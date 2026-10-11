@@ -7,6 +7,22 @@ export function environmentFingerprint(...values: unknown[]): string {
   return createHash('sha256').update(JSON.stringify(values)).digest('hex');
 }
 
+/** Opaque encrypted-entry revisions, never plaintext or a password hash. */
+export function preparationCredentialRevision(
+  database: Database.Database,
+  projectId: string,
+): unknown {
+  if (
+    !database
+      .prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='secret_entries'")
+      .get()
+  )
+    return [];
+  return database
+    .prepare('SELECT key, nonce FROM secret_entries WHERE key IN (?, ?) ORDER BY key')
+    .all(`project:${projectId}:testUsername`, `project:${projectId}:testPassword`);
+}
+
 /** Latest preparation facts share the project's existing persistent state and deletion owner. */
 export function environmentState<T>(
   database: Database.Database,

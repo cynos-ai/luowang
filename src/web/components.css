@@ -964,3 +964,88 @@
   font-family: var(--lw-display);
   font-size: 34px;
 }
+
+.busy-overlay {
+  width: min(540px, calc(100vw - 64px));
+}
+.busy-overlay-signal {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 24px;
+}
+.busy-overlay-signal span {
+  width: 16px;
+  height: 16px;
+  background: var(--lw-red);
+  border: 2px solid var(--lw-ink);
+  animation: busy-block 1.2s ease-in-out infinite;
+}
+.busy-overlay-signal span:nth-child(2) {
+  animation-delay: 0.15s;
+}
+.busy-overlay-signal span:nth-child(3) {
+  animation-delay: 0.3s;
+}
+.busy-overlay-footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-top: 24px;
+}
+.busy-overlay-hint {
+  color: var(--lw-muted);
+  font-size: 13px;
+}
+.busy-overlay p {
+  overflow-wrap: anywhere;
+  line-height: 1.6;
+}
+@keyframes busy-block {
+  0%,
+  75%,
+  100% {
+    transform: translateY(0);
+  }
+  35% {
+    transform: translateY(-8px);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .busy-overlay-signal span {
+    animation: none;
+  }
+}
+
+/* Preparation facts on paper must not inherit dark-shell definition-list colors. */
+.lw-shell .environment-editor dt,
+.lw-shell .environment-editor dd {
+  color: var(--lw-ink);
+}
+.lw-shell .environment-editor dt,
+.preparation-flow,
+.preparation-facts small {
+  color: var(--lw-muted);
+}
+.preparation-flow li {
+  border-bottom: 2px solid var(--lw-line);
+}
+.preparation-flow li[aria-current='step'] {
+  color: var(--lw-ink);
+  border-color: var(--lw-red);
+  font-weight: 800;
+}
+.preparation-facts > div + div,
+.preparation-todos li + li {
+  border-top: 1px solid var(--lw-line);
+}
+.preparation-plan,
+.preparation-validation {
+  padding-top: 22px;
+  border-top: 2px solid var(--lw-line);
+}
+.preparation-decisions {
+  padding: var(--lw-panel-pad);
+  background: var(--lw-paper-soft);
+}

@@ -38,6 +38,14 @@ describe('claimed project task runtime', () => {
       const generatedDefinition = {
         sourceCommit: 'a'.repeat(40),
         summary: 'original',
+        preparation: {
+          scope: '合成运行快照测试',
+          data: '使用合成 seed',
+          account: { mode: 'none', description: '无需登录' },
+          externalServices: '无外部服务',
+          decisions: [],
+          evidence: ['seed script'],
+        },
         files: [{ path: '.luowang-generated/compose.yml', content: 'services: {}\n' }],
       };
       config.update(a.projectId, {

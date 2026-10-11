@@ -56,6 +56,10 @@ it('validates a frozen environment, shares capacity and configuration locks, and
     unblock();
     await vi.waitFor(() => assert.equal(service.current(f.project.projectId)?.status, 'passed'));
     assert.equal(service.current(f.project.projectId)?.cleanupConfirmed, true);
+    for (const step of service.current(f.project.projectId)!.steps) {
+      assert.ok(step.startedAt && step.finishedAt);
+      assert.ok(typeof step.durationMs === 'number' && step.durationMs >= 0);
+    }
     assert.equal(
       (f.database.prepare('SELECT count(*) n FROM test_request_queue').get() as { n: number }).n,
       0,
@@ -71,6 +75,10 @@ it('validates a frozen environment, shares capacity and configuration locks, and
       storageRoot: '/tmp',
     });
     assert.equal(restored.current(f.project.projectId)?.id, started.id);
+    f.secrets.project(f.project.projectId).set('testPassword', 'synthetic-new-password');
+    assert.equal(restored.current(f.project.projectId)?.stale, true);
+    f.secrets.project(f.project.projectId).delete('testPassword');
+    assert.equal(restored.current(f.project.projectId)?.stale, false);
     f.configuration.update(f.project.projectId, { environmentDescription: 'changed' });
     assert.equal(restored.current(f.project.projectId)?.stale, true);
     await restored.close();

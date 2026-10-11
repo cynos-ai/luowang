@@ -3,11 +3,13 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { ConfigurationError } from '../configuration.js';
 import { isManagedFilePath } from './managed-file-path.js';
+import type { PreparationPlan } from '../../shared/project-preparation.js';
 
 export type GeneratedDefinition = {
   sourceCommit: string;
   summary: string;
   files: Array<{ path: string; content: string }>;
+  preparation: PreparationPlan;
 };
 
 export function normalizeGeneratedDefinition(value: unknown): GeneratedDefinition | null {
@@ -44,7 +46,13 @@ export function normalizeGeneratedDefinition(value: unknown): GeneratedDefinitio
     seen.add(entry.path);
     return { path: entry.path, content: entry.content };
   });
-  return { sourceCommit: source.sourceCommit.toLowerCase(), summary: source.summary, files };
+  const preparation = normalizePreparation(source.preparation);
+  return {
+    sourceCommit: source.sourceCommit.toLowerCase(),
+    summary: source.summary,
+    files,
+    preparation,
+  };
 }
 
 export function generatedDefinitionHash(definition: GeneratedDefinition): string {
@@ -64,4 +72,33 @@ export async function materializeGeneratedDefinition(
     await mkdir(dirname(target), { recursive: true });
     await writeFile(target, file.content, { flag: 'wx', mode: 0o600 });
   }
+}
+
+function normalizePreparation(value: unknown): PreparationPlan {
+  if (!value || typeof value !== 'object' || Array.isArray(value))
+    throw new ConfigurationError('测试准备方案无效');
+  const source = value as Record<string, unknown>;
+  const text = (v: unknown): string => {
+    if (typeof v !== 'string' || !v.trim() || v.length > 2000)
+      throw new ConfigurationError('测试准备说明必须为 1–2000 字');
+    return v.trim();
+  };
+  const list = (v: unknown): string[] => {
+    if (!Array.isArray(v) || v.length > 16) throw new ConfigurationError('测试准备事项无效');
+    return v.map(text);
+  };
+  const account = source.account as Record<string, unknown> | null;
+  if (!account || !['none', 'provided', 'generated'].includes(String(account.mode)))
+    throw new ConfigurationError('测试账号策略无效');
+  return {
+    scope: text(source.scope),
+    data: text(source.data),
+    account: {
+      mode: account.mode as PreparationPlan['account']['mode'],
+      description: text(account.description),
+    },
+    externalServices: text(source.externalServices),
+    decisions: list(source.decisions),
+    evidence: list(source.evidence),
+  };
 }

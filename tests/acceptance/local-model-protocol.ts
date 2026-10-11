@@ -98,7 +98,7 @@ export async function startLocalModelProtocol(
             {
               id: 'deterministic-tool-model',
               name: 'Deterministic local tool model',
-              reasoning: false,
+              reasoning: true,
               input: ['text'],
               contextWindow: 128000,
               maxTokens: 4096,
@@ -176,7 +176,13 @@ class LocalProvider implements ProviderAdapter {
         name: this.model.name,
         reasoning: this.model.reasoning,
         input: [...this.model.input],
-        thinkingLevels: ['off' as const],
+        thinkingLevels: [
+          'off' as const,
+          'minimal' as const,
+          'low' as const,
+          'medium' as const,
+          'high' as const,
+        ],
         available: true,
       },
     ];
@@ -199,7 +205,14 @@ class RecordingProductionFactory implements AgentSessionFactory {
   ) {}
 
   async create(input: AgentSessionInput): Promise<AgentSession> {
-    const session = await this.delegate.create(input);
+    let resolvedThinking = input.config.thinking;
+    const session = await this.delegate.create({
+      ...input,
+      onThinkingResolved: (level) => {
+        resolvedThinking = level;
+        input.onThinkingResolved?.(level);
+      },
+    });
     const instructionInput = input as AgentSessionInput & {
       sessionKind?: string;
       roleInstructionVersions?: LocalPiSessionRecord['roleInstructionVersions'];
@@ -208,7 +221,7 @@ class RecordingProductionFactory implements AgentSessionFactory {
       id: session.sessionId ?? `pi-session-${this.records.length + 1}`,
       role: input.role,
       model: input.config.model,
-      thinking: input.config.thinking,
+      thinking: resolvedThinking,
       tools: input.customTools.map((tool) => tool.name),
       systemPrompt: input.systemPrompt,
       sessionKind: instructionInput.sessionKind ?? null,

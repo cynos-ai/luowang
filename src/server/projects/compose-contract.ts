@@ -74,6 +74,39 @@ export async function resolveNativeComposeConfig(input: {
   return result.stdout;
 }
 
+/** Declared port consistency only; actual listening/health still requires execution. */
+export function assertDeclaredApplicationPort(
+  source: string,
+  applicationService: string,
+  servicePort: number,
+): void {
+  let document: unknown;
+  try {
+    document = parse(source, { maxAliasCount: 0 });
+  } catch {
+    throw new ConfigurationError('Compose 文件无法解析');
+  }
+  if (!record(document) || !record(document.services)) return;
+  const service = document.services[applicationService];
+  if (!record(service)) return;
+  const declarations = [
+    ...(Array.isArray(service.expose) ? service.expose : []),
+    ...(Array.isArray(service.ports)
+      ? service.ports.map((port: unknown) =>
+          record(port) ? port.target : String(port).split(':').at(-1),
+        )
+      : []),
+  ];
+  const ports = declarations
+    .map((value: unknown) => String(value).replace(/\/tcp$/, ''))
+    .filter((value: string) => /^\d+$/.test(value))
+    .map(Number);
+  if (ports.length && !ports.includes(servicePort))
+    throw new ConfigurationError(
+      'applicationService 与 servicePort 不匹配：入口服务显式声明的端口不包含所选端口，请核对前端/后端服务',
+    );
+}
+
 export function normalizeComposeDefinition(input: {
   generatedContentHash?: string;
   source: string;
@@ -98,6 +131,7 @@ export function normalizeComposeDefinition(input: {
   }
   if (!record(document)) throw new ConfigurationError('Compose 根配置无效');
   if (!record(document.services)) throw new ConfigurationError('Compose services 缺失');
+  assertDeclaredApplicationPort(input.source, input.applicationService, input.servicePort);
   const composeDirectory = composeBaseDirectory(input.composeFile ?? 'compose.yml');
   const enabled = new Set(input.enabledServices);
   if (!enabled.has(input.applicationService) || !enabled.has(input.commandService))

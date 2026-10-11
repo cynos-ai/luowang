@@ -8,7 +8,7 @@ import { startComposeApplication } from '../src/server/projects/application-runt
 import { normalizeComposeDefinition } from '../src/server/projects/compose-contract.js';
 import type { DockerRuntime } from '../src/server/projects/execution-container.js';
 
-for (const fail of [false, true])
+for (const fail of [false, true, 'check'] as const)
   it(`runs initialization before application health and ${fail ? 'stops on failure' : 'reinitializes recreated environments'}`, async () => {
     const root = await mkdtemp(join(tmpdir(), 'luowang-init-'));
     const calls: string[][] = [];
@@ -33,8 +33,14 @@ for (const fail of [false, true])
         if (args[0] === 'inspect') return { stdout: image, stderr: '', exitCode: 0 };
         if (args[0] === 'exec') {
           assert.equal(options.timeoutMs, 30_000);
+          if (args.at(-1) === 'verify-login')
+            return {
+              stdout: '',
+              stderr: 'synthetic-secret-must-not-leak',
+              exitCode: fail === 'check' ? 1 : 0,
+            };
           initialized++;
-          return { stdout: '', stderr: '', exitCode: fail ? 1 : 0 };
+          return { stdout: '', stderr: '', exitCode: fail === true ? 1 : 0 };
         }
         if (args[0] === 'compose' && args.includes('port'))
           return { stdout: '127.0.0.1:1234', stderr: '', exitCode: 0 };
@@ -73,13 +79,29 @@ for (const fail of [false, true])
           composeServices: ['app', 'db', 'tools'],
           applicationService: 'app',
           commandService: 'tools',
+          preparationChecks: [
+            {
+              kind: 'account',
+              label: '验证登录',
+              service: 'tools',
+              command: 'verify-login',
+              timeoutSeconds: 30,
+            },
+          ],
           initializationSteps: [
             { service: 'tools', command: 'seed && verify', timeoutSeconds: 30 },
           ],
         },
       });
     try {
-      if (fail) {
+      if (fail === 'check') {
+        await assert.rejects(start(), (error: Error) => {
+          assert.match(error.message, /测试账号核验未通过/);
+          assert.ok(!error.message.includes('synthetic-secret'));
+          return true;
+        });
+        assert.ok(calls.some((args) => args.includes('down')));
+      } else if (fail) {
         await assert.rejects(start(), /初始化步骤失败/);
         assert.equal(
           calls.some((args) => args.includes('start') && args.at(-1) === 'app'),
@@ -97,6 +119,8 @@ for (const fail of [false, true])
           (args) => args.includes('start') && args.at(-1) === 'app',
         );
         assert.ok(initIndex >= 0 && startIndex > initIndex);
+        const checkIndex = calls.findIndex((args) => args.at(-1) === 'verify-login');
+        assert.ok(checkIndex > startIndex);
       }
     } finally {
       await new Promise<void>((resolve) => server.close(() => resolve()));

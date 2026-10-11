@@ -90,6 +90,12 @@ export function createProjectRunServices(options: {
           }),
       });
   const runs = createRunOrchestrator({
+    testPreparation: task.generatedDefinition
+      ? {
+          sourceCommit: task.generatedDefinition.sourceCommit,
+          plan: structuredClone(task.generatedDefinition.preparation),
+        }
+      : undefined,
     environmentRecommendation: task.generatedDefinition
       ? {
           sourceCommit: task.generatedDefinition.sourceCommit,

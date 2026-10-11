@@ -1,4 +1,5 @@
 export { Button, type ButtonVariant } from './Button';
+export { BusyOverlay } from './BusyOverlay';
 export { BrandLogo } from './BrandLogo';
 export { useAppDialog, type ConfirmOptions } from './AppDialogProvider';
 export { AppMessageFeedback, AppMessageProvider, useAppMessage } from './AppMessageProvider';

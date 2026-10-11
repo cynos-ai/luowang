@@ -57,7 +57,7 @@ import {
   createRunnerEvidenceTools,
   type RunEvidenceStore,
 } from './evidence.js';
-import { createProviderAdapter, type ProviderAdapter } from './provider.js';
+import { createProviderAdapter, ProviderError, type ProviderAdapter } from './provider.js';
 import { createIssueCandidateController, createRunHistoryTool } from './run-history.js';
 import { createScenarioProgressController, type ProgressScenario } from './scenario-progress.js';
 import { scenarioReviewSummary } from './scenario-review-summary.js';
@@ -133,6 +133,7 @@ export interface RunOrchestratorOptions {
   commandRunner?: ControlledCommandRunner;
   commandSessionFactory?: RunCommandSessionFactory;
   runtimeEnvironmentFactory?: RunRuntimeEnvironmentFactory;
+  testPreparation?: RunContext['testPreparation'];
   browser?: BrowserMcpAdapter;
   oss?: OssAdapter;
   testData?: TestDataManager;
@@ -149,6 +150,7 @@ export type RunRuntimeEnvironmentOwner = {
   baseUrl: string | null;
   browserAvailable: boolean;
   sensitiveValues?: readonly string[];
+  preparationResults?: RunContext['preparationResults'];
   close(): Promise<void>;
 };
 export type RunRuntimeEnvironmentFactory = (input: {
@@ -476,6 +478,9 @@ class DefaultRunOrchestrator implements RunOrchestrator {
         evidence: [],
         blockingReasons: [],
         runtimeBaseUrl: null,
+        testPreparation: this.options.testPreparation
+          ? structuredClone(this.options.testPreparation)
+          : undefined,
         browserRequired: false,
         scenarioMode: this.options.configuration.getRepository().scenarioMode,
         initialization: input.initialization === true,
@@ -488,6 +493,7 @@ class DefaultRunOrchestrator implements RunOrchestrator {
       });
 
       const registerRuntimeSecrets = (owner: RunRuntimeEnvironmentOwner | undefined) => {
+        context.preparationResults = structuredClone(owner?.preparationResults ?? []);
         for (const value of owner?.sensitiveValues ?? []) {
           evidenceStore.registerSensitiveValue?.(value);
         }
@@ -1937,6 +1943,12 @@ class DefaultRunOrchestrator implements RunOrchestrator {
         extensionFactories,
       );
       input.signal = this.activeRun?.stopController?.signal;
+      // The argument controls role-resource loading (Runner/Reviewer pass false),
+      // while the Run flag governs the thinking policy for every initialization role.
+      if (this.activeRun?.initialization || initialization) input.thinkingPolicy = 'highest';
+      input.onThinkingResolved = (thinking) => {
+        sessionRecord.thinking = thinking;
+      };
       stage = 'session-create';
       session = await this.sessions.create(input);
       if (this.activeRun?.telemetry) {
@@ -2838,6 +2850,8 @@ function normalizeFinalReportFrontmatter(content: string): string {
 }
 
 function safeMessage(error: unknown): string {
+  if (error instanceof ProviderError && error.code === 'THINKING_UNSUPPORTED')
+    return '当前角色模型不支持所需思考等级；初始化要求最高可用思考等级，请检查 Main/Runner/Reviewer 模型能力后重试';
   if (error instanceof AgentSessionTerminationError) {
     return new AgentSessionTerminationError(error.reason).message;
   }
@@ -2967,6 +2981,7 @@ function reviewerOutputContract(): string {
 
 function finalizationPromptContext(context: RunContext): Record<string, unknown> {
   return {
+    ...preparationContext(context),
     runId: context.runId,
     request: context.request,
     trigger: context.trigger,
@@ -3008,8 +3023,16 @@ scenario_results 必须是 YAML 数组，每项只能有 id 和 result。confirm
 证据只写在正文并引用稳定 URL。不得复述任何测试账号字段、Secret、隐藏推理、短期签名 URL 或绝对路径。结束前通过 write_report 写完整 report.md。`;
 }
 
+function preparationContext(context: RunContext) {
+  return {
+    testPreparation: context.testPreparation ?? null,
+    preparationResults: context.preparationResults ?? [],
+  };
+}
+
 function mainPlanningContext(context: RunContext) {
   return {
+    ...preparationContext(context),
     capabilities: context.capabilities ?? null,
     runId: context.runId,
     request: context.request,
@@ -3028,6 +3051,7 @@ function mainPlanningContext(context: RunContext) {
 
 function runnerContext(context: RunContext) {
   return {
+    ...preparationContext(context),
     capabilities: context.capabilities ?? null,
     runId: context.runId,
     request: context.request,
@@ -3045,6 +3069,7 @@ function runnerContext(context: RunContext) {
 
 function reviewerContext(context: RunContext) {
   return {
+    ...preparationContext(context),
     capabilities: context.capabilities ?? null,
     runId: context.runId,
     trigger: context.trigger,

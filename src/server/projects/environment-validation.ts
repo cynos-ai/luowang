@@ -1,4 +1,5 @@
 import type Database from 'better-sqlite3';
+import { createEnvironmentTimeline } from './environment-timing.js';
 import type { ConfigurationStore } from '../configuration.js';
 import { ConfigurationError } from '../configuration.js';
 import { AppError } from '../errors.js';
@@ -24,6 +25,7 @@ import {
   assertEnvironmentIdle,
   environmentFingerprint,
   environmentState,
+  preparationCredentialRevision,
 } from './environment-state.js';
 import {
   ENVIRONMENT_STAGES,
@@ -59,6 +61,7 @@ export function createEnvironmentValidationService(input: {
       input.configuration.get(projectId),
       input.resources.listProjectFiles(projectId),
       resolveProjectExecutionLocation(input.database, projectId),
+      preparationCredentialRevision(input.database, projectId),
     );
   const persist = (task: EnvironmentValidationTask) =>
     environmentState<EnvironmentValidationTask>(input.database, task.projectId, 'validation').set(
@@ -74,7 +77,9 @@ export function createEnvironmentValidationService(input: {
       const step = task.steps.find((value) => value.status === 'running');
       if (step) {
         step.status = 'failed';
-        step.message = '服务重启，验证中断';
+        step.message = '服务重启，验证中断；实际结束时间与耗时未知';
+        step.durationMs = null;
+        step.finishedAt = null;
       }
       task.failure = {
         stage: step?.stage ?? 'source',
@@ -102,11 +107,10 @@ export function createEnvironmentValidationService(input: {
       Awaited<ReturnType<ReturnType<typeof createProjectRunRuntimeEnvironmentFactory>>> | undefined;
     let runtimeStarted = false;
     let stage: EnvironmentStage = 'source';
+    const timeline = createEnvironmentTimeline(task.steps);
     const onStage = (next: EnvironmentStage) => {
-      const previous = task.steps.find((step) => step.status === 'running');
-      if (previous) previous.status = 'passed';
+      timeline.enter(next);
       stage = next;
-      task.steps.push({ stage: next, status: 'running' });
       persist(task);
     };
     try {
@@ -161,11 +165,7 @@ export function createEnvironmentValidationService(input: {
           ? error.message
           : `${ENVIRONMENT_STAGES[stage]}失败，请检查该阶段配置和执行端连接`;
       task.failure = { stage, message };
-      const step = task.steps.find((value) => value.status === 'running');
-      if (step) {
-        step.status = 'failed';
-        step.message = message;
-      }
+      timeline.finish('failed', message);
     } finally {
       onStage('cleanup');
       try {
@@ -196,7 +196,7 @@ export function createEnvironmentValidationService(input: {
       }
       task.cleanupConfirmed = ledger().get(task.resourceId).state === 'released';
       const cleanup = task.steps.at(-1)!;
-      cleanup.status = task.cleanupConfirmed ? 'passed' : 'failed';
+      timeline.finish(task.cleanupConfirmed ? 'passed' : 'failed');
       if (!task.cleanupConfirmed) {
         cleanup.message = '清理尚未确认，服务器名额暂不释放';
         task.failure ??= { stage: 'cleanup', message: cleanup.message };

@@ -3,6 +3,7 @@ import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { it } from 'vitest';
+import { preparationFixture } from './environment-fixture.js';
 import {
   normalizeGeneratedDefinition,
   materializeGeneratedDefinition,
@@ -19,6 +20,7 @@ it('materializes generated files without a product Dockerfile and changes cache 
   const definition = normalizeGeneratedDefinition({
     sourceCommit: 'a'.repeat(40),
     summary: 'fixture',
+    preparation: preparationFixture,
     files: [{ path: '.luowang-generated/app.Dockerfile', content: 'FROM node:24\n' }],
   })!;
   const changed = {
@@ -78,6 +80,7 @@ it('rejects generated paths outside the reserved preparation directory', () => {
       normalizeGeneratedDefinition({
         sourceCommit: 'a'.repeat(40),
         summary: '',
+        preparation: preparationFixture,
         files: [{ path, content: 'x' }],
       }),
     );

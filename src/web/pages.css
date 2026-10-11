@@ -1111,7 +1111,7 @@
   overflow: auto;
 }
 
-.environment-editor textarea {
+.environment-editor .preparation-technical textarea {
   font-family: var(--lw-mono);
   font-size: 13px;
   line-height: 1.5;
@@ -2470,6 +2470,99 @@
 .environment-summary dd {
   margin: 0;
   overflow-wrap: anywhere;
+}
+.preparation-heading,
+.preparation-next,
+.preparation-plan,
+.preparation-validation,
+.preparation-feedback {
+  display: grid;
+  gap: 16px;
+  min-width: 0;
+}
+.environment-editor h4 {
+  margin: 0;
+  font-size: 18px;
+}
+.environment-editor p {
+  line-height: 1.65;
+  overflow-wrap: anywhere;
+}
+.preparation-heading p {
+  margin-top: 10px;
+}
+.preparation-flow {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  padding: 0;
+  margin: 0;
+  list-style: none;
+}
+.preparation-flow li {
+  padding: 12px 0;
+}
+.preparation-flow span {
+  display: block;
+  font-family: var(--lw-mono);
+  font-size: 13px;
+  margin-bottom: 6px;
+}
+.preparation-next p,
+.preparation-validation p {
+  margin: 0;
+}
+.preparation-facts {
+  display: grid;
+  margin: 0;
+}
+.preparation-facts > div {
+  display: grid;
+  grid-template-columns: 100px minmax(0, 1fr);
+  gap: 20px;
+  padding: 16px 0;
+}
+.preparation-facts dd {
+  margin: 0;
+  line-height: 1.65;
+  overflow-wrap: anywhere;
+}
+.preparation-facts small {
+  display: block;
+  margin-top: 5px;
+}
+.preparation-todos ul {
+  list-style: none;
+  padding: 0;
+}
+.preparation-todos li {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 0;
+}
+.preparation-todos li > div {
+  flex: 1 1 240px;
+}
+.preparation-todos p {
+  margin: 6px 0;
+}
+.preparation-feedback {
+  scroll-margin-top: 20px;
+}
+.preparation-technical pre {
+  overflow-wrap: anywhere;
+}
+@media (max-width: 720px) {
+  .preparation-flow {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .preparation-facts > div {
+    grid-template-columns: 1fr;
+    gap: 6px;
+  }
 }
 .environment-validation-steps li {
   display: flex;

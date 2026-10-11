@@ -1,6 +1,8 @@
 import type Database from 'better-sqlite3';
 import { normalizeGeneratedDefinition, type GeneratedDefinition } from './generated-definition.js';
+import { assertDeclaredApplicationPort } from './compose-contract.js';
 import { assertEnvironmentIdle } from './environment-state.js';
+import type { PreparationCheck } from '../../shared/project-preparation.js';
 
 import type { RepositoryConfig } from '../../shared/types.js';
 import {
@@ -34,6 +36,7 @@ export type ProjectRuntimeDefinition = {
   applicationService: string;
   commandService: string;
   initializationSteps?: Array<{ service: string; command: string; timeoutSeconds: number }>;
+  preparationChecks?: PreparationCheck[];
 };
 
 const ALLOWED_FIELDS = new Set([
@@ -212,6 +215,21 @@ export function createProjectConfigurationStore(
             schedulePatch === undefined ? current.config.scheduleIntervalSeconds : schedulePatch,
           ),
         };
+        if (
+          config.generatedDefinition &&
+          config.startType === 'compose' &&
+          config.runtime.servicePort
+        ) {
+          const compose = config.generatedDefinition.files.find(
+            (file) => file.path === config.runtime.composeFile,
+          );
+          if (compose)
+            assertDeclaredApplicationPort(
+              compose.content,
+              config.runtime.applicationService,
+              config.runtime.servicePort,
+            );
+        }
         if (config.cron.trim() && config.scheduleIntervalSeconds > 0)
           throw new ConfigurationError('定时间隔与 Cron 只能启用一种');
         const semanticChange = TASK_SEMANTIC_FIELDS.some(
@@ -376,6 +394,15 @@ export function normalizeRuntimeDefinition(value: unknown): ProjectRuntimeDefini
     composeServices: services as string[],
     applicationService,
     commandService,
+    ...(source.preparationChecks === undefined
+      ? {}
+      : {
+          preparationChecks: normalizePreparationChecks(
+            source.preparationChecks,
+            services as string[],
+            applicationService,
+          ),
+        }),
     initializationSteps: normalizeInitializationSteps(
       source.initializationSteps,
       services as string[],
@@ -412,6 +439,25 @@ function normalizeInitializationSteps(
       command: step.command,
       timeoutSeconds: step.timeoutSeconds as number,
     };
+  });
+}
+
+function normalizePreparationChecks(
+  value: unknown,
+  services: string[],
+  applicationService: string,
+): PreparationCheck[] {
+  const steps = normalizeInitializationSteps(value, services, applicationService)!;
+  return steps.map((step, index) => {
+    const source = (value as Record<string, unknown>[])[index];
+    if (
+      !['data', 'account'].includes(String(source.kind)) ||
+      typeof source.label !== 'string' ||
+      !source.label.trim() ||
+      source.label.length > 200
+    )
+      throw new ConfigurationError('准备核验须指定数据/账号类型和名称');
+    return { ...step, kind: source.kind as PreparationCheck['kind'], label: source.label.trim() };
   });
 }
 

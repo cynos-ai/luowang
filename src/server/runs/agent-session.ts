@@ -21,7 +21,7 @@ import {
   type TargetTextReadResult,
   type TargetChangeEvidenceOptions,
 } from './change-evidence.js';
-import { selectStageThinking, type ProviderAdapter } from './provider.js';
+import { selectHighestThinking, selectStageThinking, type ProviderAdapter } from './provider.js';
 import type {
   AgentRole,
   AgentSession,
@@ -55,7 +55,11 @@ class PiAgentSessionFactory implements AgentSessionFactory {
   async create(input: AgentSessionInput): Promise<AgentSession> {
     input.signal?.throwIfAborted();
     const model = await this.provider.resolveModel(input.role);
-    const thinking = selectStageThinking(model, input.role, input.config.thinking);
+    const thinking =
+      input.thinkingPolicy === 'highest'
+        ? selectHighestThinking(model)
+        : selectStageThinking(model, input.role, input.config.thinking);
+    input.onThinkingResolved?.(thinking);
     input.signal?.throwIfAborted();
     const runtime = await this.provider.getRuntime();
     input.signal?.throwIfAborted();

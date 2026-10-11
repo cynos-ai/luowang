@@ -353,6 +353,7 @@ export interface ModelUsage {
 }
 
 export interface SessionUsageRecord {
+  thinking?: ThinkingLevel;
   settled?: boolean;
   sessionId: string;
   kind: string;

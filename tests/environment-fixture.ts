@@ -12,6 +12,15 @@ import { createDeploymentConfigurationStore } from '../src/server/projects/deplo
 import { createConnectionResourceService } from '../src/server/projects/connection-resources.js';
 import { createScopedSecretStore } from '../src/server/security/scoped-secret-store.js';
 
+export const preparationFixture = {
+  scope: '合成应用准备测试',
+  data: '不需要业务初始数据',
+  account: { mode: 'none' as const, description: '此合成应用不需要账号' },
+  externalServices: '没有外部服务',
+  decisions: [],
+  evidence: ['package.json：测试启动脚本'],
+};
+
 export function environmentFixture() {
   const database = new Database(':memory:');
   database.pragma('foreign_keys=ON');

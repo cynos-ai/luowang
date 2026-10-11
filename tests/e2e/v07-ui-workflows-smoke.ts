@@ -96,6 +96,14 @@ const environmentDraft = {
   generatedDefinition: {
     sourceCommit: 'a'.repeat(40),
     summary: 'AI 草案',
+    preparation: {
+      scope: '完整网页与后端（合成交互测试）',
+      data: '每次创建合成数据',
+      account: { mode: 'generated', description: '创建普通测试用户' },
+      externalServices: '不发送真实短信',
+      decisions: ['短信使用模拟发送'],
+      evidence: ['src/auth.ts：登录入口'],
+    },
     files: [
       {
         path: '.luowang-generated/compose.yml',
@@ -114,6 +122,7 @@ const environmentDraft = {
   },
 };
 let generationNeedsInput = false;
+let holdGeneration = false;
 let generationTask: Record<string, unknown> | null = null;
 let validationTask: Record<string, unknown> | null = null;
 let validationShouldFail = true;
@@ -880,6 +889,12 @@ try {
       generationTask = {
         id: 'fixture-generation',
         status: 'running',
+        startedAt: new Date().toISOString(),
+        model: 'synthetic-main-model',
+        thinking: 'high',
+        activity: '已读取 package.json，等待模型下一步',
+        filesRead: 1,
+        definitionAttempts: 0,
         draft: null,
         error: null,
         targetCommit: null,
@@ -888,14 +903,20 @@ try {
       };
       return route.fulfill({ json: { task: generationTask } });
     }
+    if (suffix === '/environment-generation/fixture-generation' && method === 'DELETE') {
+      generationTask = { ...generationTask, status: 'cancelled', error: '配置生成已停止' };
+      return route.fulfill({ json: { task: generationTask } });
+    }
     if (suffix === '/environment-generation/fixture-generation' && method === 'GET') {
+      if (holdGeneration || generationTask?.status !== 'running')
+        return route.fulfill({ json: { task: generationTask } });
       generationTask = {
         ...generationTask,
         status: generationNeedsInput ? 'needs_input' : 'completed',
         draft: generationNeedsInput ? null : environmentDraft,
         targetCommit: 'a'.repeat(40),
         missingInputs: generationNeedsInput
-          ? [{ item: '上传 .env.test', reason: '需要测试配置文件' }]
+          ? [{ item: '上传 .env.test', reason: '需要测试配置文件', destination: 'files' }]
           : [],
       };
       return route.fulfill({ json: { task: generationTask } });
@@ -928,8 +949,12 @@ try {
           targetCommit: 'a'.repeat(40),
           cleanupConfirmed: true,
           steps: [
-            { stage: 'health', status: validationShouldFail ? 'failed' : 'passed' },
-            { stage: 'cleanup', status: 'passed' },
+            {
+              stage: 'health',
+              status: validationShouldFail ? 'failed' : 'passed',
+              durationMs: 1250,
+            },
+            { stage: 'cleanup', status: 'passed', durationMs: 50 },
           ],
           failure: validationShouldFail
             ? { stage: 'health', message: '应用健康检查超时：HTTP 503' }
@@ -1074,41 +1099,111 @@ try {
   await page.getByRole('link', { name: '运行环境', exact: true }).click();
   assert.equal(await page.getByLabel('测试网址').count(), 0);
   assert.equal(writes.filter((write) => write.endsWith('/environment-generation')).length, 0);
-  await page.getByRole('button', { name: 'AI 生成配置', exact: true }).click();
+  holdGeneration = true;
+  await page.getByRole('button', { name: '分析项目并准备方案', exact: true }).click();
+  const progress = page.getByRole('dialog', { name: 'AI 正在准备测试方案', exact: true });
+  await progress.waitFor();
+  await progress.getByText(/synthetic-main-model.*最高可用思考等级.*high/).waitFor();
+  await progress.getByText(/总时限 30 分钟/).waitFor();
+  await page.keyboard.press('Escape');
+  assert.equal(await progress.isVisible(), true);
+  await assert.rejects(() =>
+    page.getByRole('combobox', { name: '执行服务器', exact: true }).click({ timeout: 250 }),
+  );
+  await page.keyboard.press('Tab');
+  assert.equal(
+    await progress.evaluate((element) => element.contains(document.activeElement)),
+    true,
+  );
+  for (const width of [768, 1024, 1440]) {
+    await page.setViewportSize({ width, height: 1000 });
+    const bounds = await progress.boundingBox();
+    assert.ok(bounds && bounds.x >= 0 && bounds.x + bounds.width <= width);
+    if (process.env.LUOWANG_PREPARATION_EVIDENCE_DIR)
+      await page.screenshot({
+        path: `${process.env.LUOWANG_PREPARATION_EVIDENCE_DIR}/synthetic-loading-overlay-${width}.png`,
+        fullPage: false,
+      });
+  }
+  await page.reload();
+  await progress.waitFor();
+  await progress.getByRole('button', { name: '停止分析', exact: true }).click();
+  await progress.waitFor({ state: 'hidden' });
+  holdGeneration = false;
+  await page.getByRole('button', { name: '分析项目并准备方案', exact: true }).click();
   const definitionEditor = page.getByLabel('配置内容（JSON）');
-  await page.getByText('AI 草案', { exact: true }).waitFor();
+  await page.getByText('完整网页与后端（合成交互测试）', { exact: true }).waitFor();
   assert.equal(await definitionEditor.isVisible(), false);
+  for (const width of [768, 1024, 1440]) {
+    await page.setViewportSize({ width, height: 1000 });
+    assert.equal(
+      await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth),
+      true,
+    );
+    if (process.env.LUOWANG_PREPARATION_EVIDENCE_DIR)
+      await page.screenshot({
+        path: `${process.env.LUOWANG_PREPARATION_EVIDENCE_DIR}/synthetic-preparation-${width}.png`,
+        fullPage: true,
+      });
+  }
+  assert.equal(writes.filter((write) => write.endsWith('/environment-validation')).length, 0);
+  await page.getByLabel('告诉 AI 要调整什么（可选）').fill('需要管理员身份');
+  await page.getByRole('button', { name: '按我的要求调整方案', exact: true }).click();
+  await page.getByRole('dialog').getByRole('button', { name: '重新生成', exact: true }).click();
+  await page.getByRole('button', { name: '仅保存方案', exact: true }).waitFor();
+  await page.getByText('技术详情与高级编辑（通常无需修改）', { exact: true }).click();
   await page.getByText('高级：查看 / 编辑原始 JSON', { exact: true }).click();
   await definitionEditor.waitFor();
   assert.equal(configuration.generatedDefinition, null);
   const draft = JSON.parse(await definitionEditor.inputValue());
+  const withoutPlan = structuredClone(draft);
+  delete withoutPlan.generatedDefinition.preparation;
+  await definitionEditor.fill(JSON.stringify(withoutPlan));
+  assert.equal(
+    await page.getByRole('button', { name: '仅保存方案', exact: true }).isDisabled(),
+    true,
+  );
+  assert.equal(await page.getByText('查看旧方案说明', { exact: true }).count(), 0);
   draft.generatedDefinition.summary = '人工修改';
   await definitionEditor.fill(JSON.stringify(draft));
-  await saveConfiguration('保存启动配置');
+  await saveConfiguration('仅保存方案');
   assert.equal(configuration.generatedDefinition!.summary, '人工修改');
-  await page.getByRole('button', { name: 'AI 更新配置', exact: true }).click();
-  await page.getByRole('button', { name: '保存启动配置', exact: true }).waitFor();
+  await page.getByRole('button', { name: '重新分析项目', exact: true }).click();
+  await page.getByRole('button', { name: '仅保存方案', exact: true }).waitFor();
+  if (!(await page.getByText('高级：查看 / 编辑原始 JSON', { exact: true }).isVisible()))
+    await page.getByText('技术详情与高级编辑（通常无需修改）', { exact: true }).click();
   if (!(await definitionEditor.isVisible()))
     await page.getByText('高级：查看 / 编辑原始 JSON', { exact: true }).click();
   await page.getByText('上次保存的配置', { exact: true }).waitFor();
   assert.equal(configuration.generatedDefinition!.summary, '人工修改');
-  await page.getByRole('button', { name: '取消修改', exact: true }).click();
-  await page.getByRole('button', { name: '验证已保存环境', exact: true }).click();
-  await page.getByRole('button', { name: '根据本次失败更新配置', exact: true }).waitFor();
+  await saveConfiguration('确认方案，保存并验证');
+  await page.getByRole('button', { name: '让 AI 分析失败并提出修正', exact: true }).waitFor();
   const retryRequest = page.waitForRequest(
     (request) => request.method() === 'POST' && request.url().endsWith('/environment-generation'),
   );
-  await page.getByRole('button', { name: '根据本次失败更新配置', exact: true }).click();
+  await page.getByRole('button', { name: '让 AI 分析失败并提出修正', exact: true }).click();
   assert.equal((await retryRequest).postDataJSON().useValidationFailure, true);
-  await page.getByRole('button', { name: '保存启动配置', exact: true }).waitFor();
-  await page.getByRole('button', { name: '取消修改', exact: true }).click();
+  await page.getByRole('button', { name: '仅保存方案', exact: true }).waitFor();
+  await page.getByRole('button', { name: '放弃草案', exact: true }).click();
   validationShouldFail = false;
-  await page.getByRole('button', { name: '验证已保存环境', exact: true }).click();
-  await page.getByText('验证通过', { exact: true }).waitFor();
+  await page.getByRole('button', { name: '验证已保存方案', exact: true }).click();
+  await page.getByText('已完成所配置的准备核验', { exact: true }).waitFor();
+  await page.getByText('检查应用健康 · 1.3 秒', { exact: true }).waitFor();
+  await page.getByText('清理验证环境 · 不到 1 秒', { exact: true }).waitFor();
+  await page
+    .getByText('测试账号登录与身份：未验证。当前方案未配置专门核验，可让 AI 补充。', {
+      exact: true,
+    })
+    .waitFor();
   generationNeedsInput = true;
-  await page.getByRole('button', { name: 'AI 更新配置', exact: true }).click();
+  await page.getByRole('button', { name: '重新分析项目', exact: true }).click();
   await page.getByText('上传 .env.test', { exact: true }).waitFor();
-  assert.equal(await page.getByRole('button', { name: '保存启动配置', exact: true }).count(), 0);
+  assert.equal(await page.getByRole('button', { name: '仅保存方案', exact: true }).count(), 0);
+  assert.ok(
+    (
+      await page.getByRole('link', { name: '上传配置文件', exact: true }).getAttribute('href')
+    )?.endsWith('/settings/files'),
+  );
   await page.reload();
   await page.getByText('上传 .env.test', { exact: true }).waitFor();
   generationNeedsInput = false;

@@ -389,6 +389,19 @@ export function selectStageThinking(
   return selected;
 }
 
+/** Foundation work must use a real supported reasoning level, never silently fall back to off. */
+export function selectHighestThinking(model: PiModel): ThinkingLevel {
+  const selected = supportedThinkingLevels(model)
+    .filter((level) => level !== 'off')
+    .at(-1);
+  if (!selected)
+    throw new ProviderError(
+      'THINKING_UNSUPPORTED',
+      '环境准备与初始化要求支持思考的模型；当前模型不支持，请更换模型后重试',
+    );
+  return selected;
+}
+
 export function supportedThinkingLevels(model: PiModel): ThinkingLevel[] {
   return THINKING_LEVELS.filter((level) => isThinkingSupported(model, level));
 }

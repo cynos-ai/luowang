@@ -35,6 +35,9 @@ import { projectImageTag } from './image-builder.js';
 import { materializeGeneratedDefinition, generatedDefinitionHash } from './generated-definition.js';
 import { decodeProjectFileContent } from './file-content.js';
 import type { EnvironmentStage } from '../../shared/environment-preparation.js';
+import { TEST_ACCOUNT_FILE } from '../../shared/project-preparation.js';
+import { createEnvironmentTimeline } from './environment-timing.js';
+import type { EnvironmentValidationTask } from '../../shared/environment-preparation.js';
 
 export function createProjectRunRuntimeEnvironmentFactory(input: {
   database: Database.Database;
@@ -54,6 +57,12 @@ export function createProjectRunRuntimeEnvironmentFactory(input: {
   ) => void;
 }): RunRuntimeEnvironmentFactory {
   return async (context) => {
+    const preparationTimings: EnvironmentValidationTask['steps'] = [];
+    const timeline = createEnvironmentTimeline(preparationTimings);
+    const onStage = (stage: EnvironmentStage) => {
+      timeline.enter(stage);
+      input.onStage?.(stage);
+    };
     const repositoryConfig = input.task.configuration.getRepository();
     if (input.task.runtimeMode !== 'managed') {
       const environment = staticRunEnvironment(input.task.runtimeMode, repositoryConfig.baseUrl);
@@ -63,6 +72,7 @@ export function createProjectRunRuntimeEnvironmentFactory(input: {
         async close() {},
       };
     }
+    onStage('source');
     const adapter: ExecutionAdapter = input.task.executionLocationId.startsWith('local:')
       ? createLocalExecutionAdapter(input.task.executionLocationId)
       : await (async () => {
@@ -173,7 +183,7 @@ export function createProjectRunRuntimeEnvironmentFactory(input: {
                 ).capabilities_json,
               ) as { platform?: string }
             ).platform ?? 'linux/unknown');
-        input.onStage?.('executor');
+        onStage('executor');
         const image = await ensureProjectImage(
           {
             repository: context.repository,
@@ -232,6 +242,26 @@ export function createProjectRunRuntimeEnvironmentFactory(input: {
             purpose: decoded.purpose,
           };
         });
+        const accountMode = input.task.generatedDefinition?.preparation.account.mode;
+        if (accountMode && accountMode !== 'none') {
+          const store = input.secrets.project(input.task.projectId);
+          const username = store.get('testUsername');
+          const password = store.get('testPassword');
+          if (!username || !password)
+            throw new Error('测试账号尚未准备，请在项目测试准备中保存方案或补充测试账号');
+          if (files.some((file) => file.path === TEST_ACCOUNT_FILE))
+            throw new Error('测试账号注入路径冲突');
+          const content = JSON.stringify({ username, password });
+          files.push({
+            id: 'test-account',
+            revision: 0,
+            path: TEST_ACCOUNT_FILE,
+            serviceName: input.task.runtime.commandService,
+            content,
+            bytes: Buffer.from(content),
+            purpose: 'config',
+          });
+        }
         const ledger = createExecutionResourceLedger(
           input.database,
           readInstanceId(input.database),
@@ -289,11 +319,16 @@ export function createProjectRunRuntimeEnvironmentFactory(input: {
                 // Managed env_file inputs may be read during native Compose resolution. The
                 // implicit project .env remains fixed-commit input so a runtime Secret cannot
                 // silently become a build argument.
-                files.filter((file) => file.purpose === 'config' && file.path !== '.env'),
+                files.filter(
+                  (file) =>
+                    file.purpose === 'config' &&
+                    file.path !== '.env' &&
+                    file.path !== TEST_ACCOUNT_FILE,
+                ),
               );
               let composeSource: string;
               try {
-                input.onStage?.('parse');
+                onStage('parse');
                 if (input.task.executionLocationId.startsWith('server:')) {
                   remoteBuildSource = `/tmp/luowang/${readInstanceId(input.database)}/${input.task.projectId}/build-${context.runId}`;
                   await adapter.uploadTree(composeBuildSource.directory, remoteBuildSource, {
@@ -353,7 +388,7 @@ export function createProjectRunRuntimeEnvironmentFactory(input: {
                   cachedImageIds[serviceName] = cached.imageId;
               }
               return startComposeApplication({
-                onStage: input.onStage,
+                onStage,
                 docker: selectedDocker,
                 definition,
                 buildSourceDirectory: buildSource,
@@ -437,7 +472,7 @@ export function createProjectRunRuntimeEnvironmentFactory(input: {
               });
             })()
           : await startSingleContainerApplication({
-              onStage: input.onStage,
+              onStage,
               docker: selectedDocker,
               instanceId: readInstanceId(input.database),
               projectId: input.task.projectId,
@@ -487,6 +522,7 @@ export function createProjectRunRuntimeEnvironmentFactory(input: {
           }
         }
       }
+      timeline.finish('passed');
       ledger.transition(resource.resourceId, 'planned', 'created', owner.resourceExternalId);
       if (!input.preparationResourceId)
         input.database
@@ -506,6 +542,7 @@ export function createProjectRunRuntimeEnvironmentFactory(input: {
             source.scenarioPatchSha256,
             JSON.stringify({
               ...owner.environment,
+              preparationTimings,
               managedFiles: files.map((file) => ({
                 id: file.id,
                 revision: file.revision,
@@ -534,7 +571,14 @@ export function createProjectRunRuntimeEnvironmentFactory(input: {
         baseUrl: owner.environment.baseUrl,
         browserAvailable: owner.environment.browserAvailable,
         sensitiveValues: managedFileSensitiveValues(files),
+        preparationResults: (owner.environment.preparationResults ?? []).map((result) => ({
+          kind: result.kind,
+          label: input.task.runtime.preparationChecks?.[result.step - 1]?.label ?? result.kind,
+          exitCode: result.exitCode,
+        })),
         async close() {
+          onStage('cleanup');
+          let cleanupSucceeded = false;
           input.setManagedCommandTarget?.(context.runId, null);
           ledger.transition(resource.resourceId, 'created', 'cleanup_pending');
           input.database
@@ -550,6 +594,7 @@ export function createProjectRunRuntimeEnvironmentFactory(input: {
             input.database
               .prepare("UPDATE run_execution_context SET cleanup_state='released' WHERE run_id=?")
               .run(context.runId);
+            cleanupSucceeded = true;
           } catch (error) {
             ledger.transition(
               resource.resourceId,
@@ -563,9 +608,20 @@ export function createProjectRunRuntimeEnvironmentFactory(input: {
               .run(context.runId);
             throw error;
           } finally {
-            await source.cleanup();
-            await composeBuildSource?.cleanup();
-            await adapter.close();
+            let finalized = false;
+            try {
+              await source.cleanup();
+              await composeBuildSource?.cleanup();
+              await adapter.close();
+              finalized = true;
+            } finally {
+              timeline.finish(cleanupSucceeded && finalized ? 'passed' : 'failed');
+              input.database
+                .prepare(
+                  "UPDATE run_execution_context SET runtime_environment_json=json_set(runtime_environment_json,'$.preparationTimings',json(?)) WHERE run_id=? AND project_id=?",
+                )
+                .run(JSON.stringify(preparationTimings), context.runId, input.task.projectId);
+            }
           }
         },
       };
